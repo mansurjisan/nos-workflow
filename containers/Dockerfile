@@ -524,11 +524,11 @@ RUN mkdir -p /usr/share/modulefiles/models/adcirc && \
   } >> /etc/environment-modules/initrc
 
 # Set up the environment file
-COPY containers/environment.sh /home/wcoss2/environment.sh
+COPY environment.sh /home/wcoss2/environment.sh
 RUN chown wcoss2:wcoss2 /home/wcoss2/environment.sh && \
     mkdir -p /home/wcoss2/sandbox/date && \
     mkdir -p /home/wcoss2/sandbox/stofs3d/versions
-COPY containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
+COPY run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
 
 # Set up the stofs-3d model data
 #RUN mkdir -p /home/wcoss2/sandbox/stofs_3d/dataroot/fix && \
@@ -557,7 +557,7 @@ RUN mkdir -p /lfs/h1/gfs/v16.3 && \
     mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs && \
     chown -R wcoss2:wcoss2 /home/wcoss2/sandbox
 
-COPY containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
+COPY sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
 
 ENTRYPOINT [ "/entrypoint.sh" ]
 CMD [ "/usr/bin/bash" ]
