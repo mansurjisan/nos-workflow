@@ -331,7 +331,7 @@ RUN groupadd -r --gid=990 slurm \
     && chmod go-rwx /opt/slurm/etc/slurmdbd.conf \
     && chmod go-rw /run/munge \
     && /sbin/create-munge-key \
-    && ln -s /usr/bin/python3 /usr/bin/python
+    && RUN [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
 
 # Install CFP replacement
 #COPY containers/install-cfp.sh /tmp/
