@@ -109,7 +109,8 @@ RUN git clone --depth 1 --branch v${ADCIRC_VERSION} https://github.com/adcirc/ad
         -DENABLE_DATETIME=ON && \
     make && make install
 
-RUN ln -s /usr/bin/python3 /usr/bin/python
+# RUN ln -s /usr/bin/python3 /usr/bin/python
+RUN [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
 ARG SCHISM_VERSION
 RUN git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism && \
     mkdir schism_build && \
