@@ -17,5 +17,5 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
 
-      - name: Build Docker image from containers/
-        run: docker build -t nos-workflow-container ./containers
+      - name: Build Docker image
+        run: docker build -t nos-workflow-container -f containers/Dockerfile .
