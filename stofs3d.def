@@ -1,0 +1,505 @@
+Bootstrap: docker
+From: rockylinux/rockylinux:9-ubi
+
+%arguments
+    SLURM_VERSION=slurm-24-11-1-1
+    ECFLOW_VERSION=5.6.0
+    ADCIRC_VERSION=56.0.3
+    SCHISM_VERSION=5.11.0
+    GOSU_VERSION=1.17
+
+%post
+    # Set environment variables
+    export SLURM_VERSION="{{ SLURM_VERSION }}"
+    export ECFLOW_VERSION="{{ ECFLOW_VERSION }}"
+    export ADCIRC_VERSION="{{ ADCIRC_VERSION }}"
+    export SCHISM_VERSION="{{ SCHISM_VERSION }}"
+    export GOSU_VERSION="{{ GOSU_VERSION }}"
+
+    # Disable HDF5 file locking to avoid NetCDF HDF errors
+    export HDF5_USE_FILE_LOCKING=FALSE
+
+    # Update system and install EPEL
+    dnf update -y && dnf install -y epel-release
+
+    # Install development tools and libraries
+    dnf install -y --enablerepo=crb which gcc gcc-c++ gcc-gfortran make cmake git \
+                   openmpi openmpi-devel \
+                   boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
+                   netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
+                   libtool ncurses-devel expat-devel openssl-devel python3-devel \
+                   automake expat-devel wget hostname zlib-devel \
+                   jasper udunits2 nco ImageMagick proj proj-devel \
+                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel \
+                   environment-modules emacs sudo
+
+    # Install Python packages
+    pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
+                cftime termcolor shapely numpy pandas pluggy geopy attrs pyproj cython schema
+
+    # Install SLURM job scheduler
+    set -x
+    git clone -b ${SLURM_VERSION} --single-branch --depth=1 https://github.com/SchedMD/slurm.git
+    cd slurm
+    ./configure --prefix=/opt/slurm --sysconfdir=/opt/slurm/etc \
+        --with-mysql_config=/usr/bin --libdir=/opt/slurm/lib64 \
+        --enable-cgroupv2=no
+    make install
+    install -D -m644 etc/cgroup.conf.example /opt/slurm/etc/cgroup.conf.example
+    install -D -m644 etc/slurm.conf.example /opt/slurm/etc/slurm.conf.example
+    install -D -m644 etc/slurmdbd.conf.example /opt/slurm/etc/slurmdbd.conf.example
+    install -D -m644 contribs/slurm_completion_help/slurm_completion.sh /etc/profile.d/slurm_completion.sh
+    cd /
+    rm -rf slurm
+    groupadd -r --gid=990 slurm
+    useradd -r -g slurm --uid=990 slurm
+    mkdir /etc/sysconfig/slurm \
+        /var/spool/slurmd \
+        /var/run/slurmd \
+        /var/run/slurmdbd \
+        /var/lib/slurmd \
+        /var/log/slurm \
+        /data
+    touch /var/lib/slurmd/node_state \
+        /var/lib/slurmd/front_end_state \
+        /var/lib/slurmd/job_state \
+        /var/lib/slurmd/resv_state \
+        /var/lib/slurmd/trigger_state \
+        /var/lib/slurmd/assoc_mgr_state \
+        /var/lib/slurmd/assoc_usage \
+        /var/lib/slurmd/qos_usage \
+        /var/lib/slurmd/fed_mgr_state
+    chown -R slurm:slurm /var/*/slurm*
+    chown -R munge:munge /run/munge
+    chmod go-rw /run/munge
+    /sbin/create-munge-key
+
+    # Build and install ECFLOW
+    mkdir ecflow_build && cd ecflow_build
+    wget -O ecflow.tar.gz https://confluence.ecmwf.int/download/attachments/8650755/ecFlow-${ECFLOW_VERSION}-Source.tar.gz?api=v2
+    tar -xvf ecflow.tar.gz && rm ecflow.tar.gz
+    mv ecFlow* ecflow
+    cd ecflow && mkdir build && cd build
+    cmake .. -DENABLE_UI=OFF \
+        -DBoost_ROOT=/usr \
+        -DENABLE_TESTS=OFF \
+        -DENABLE_STATIC_BOOST_LIBS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/opt/ecflow
+    make -j4 && make install
+    cd /
+
+    # Copy fortran netcdf.mod
+    cp /usr/lib64/gfortran/modules/netcdf.mod /usr/include/netcdf.mod
+
+    # Install ADCIRC
+    git clone --depth 1 --branch v${ADCIRC_VERSION} https://github.com/adcirc/adcirc
+    mkdir adcirc_build
+    cd adcirc_build
+    export PATH=$PATH:/usr/lib64/openmpi/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
+    cmake ../adcirc -DCMAKE_INSTALL_PREFIX=/opt/models/adcirc \
+        -DENABLE_OUTPUT_NETCDF=ON \
+        -DBUILD_ADCIRC=ON \
+        -DBUILD_ADCPREP=ON \
+        -DBUILD_PADCIRC=ON \
+        -DNETCDFHOME=/usr \
+        -DENABLE_GRIB2=ON \
+        -DENABLE_DATETIME=ON
+    make && make install
+    cd /
+
+    # Install SCHISM
+    ln -s /usr/bin/python3 /usr/bin/python
+    git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism
+    mkdir schism_build
+    cd schism_build
+    export PATH=$PATH:/usr/lib64/openmpi/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
+    cmake ../schism/src -DCMAKE_INSTALL_PREFIX=/opt/models/schism -DBLD_STANDALONE=ON
+    make && mkdir /opt/models/schism && mv bin /opt/models/schism/bin
+    cd /
+
+    # Enable CRB and update metadata
+    dnf config-manager --set-enabled crb && dnf makecache
+
+    # Install additional libraries
+    dnf install -y jasper jasper-devel
+    dnf install -y libpng libpng-devel
+    dnf install -y libjpeg-turbo libjpeg-turbo-devel
+    dnf install -y blas-devel lapack-devel openblas-devel
+    dnf install -y zlib-devel bzip2-devel
+
+    # Clean to reduce image size
+    dnf clean all
+
+    # Create symbolic links for libraries
+    ln -sf /usr/lib64/libjasper.so.4 /usr/lib64/libjasper.so
+    ln -sf /usr/lib64/libpng16.so.16 /usr/lib64/libpng.so
+
+    # Build NCEP libraries
+    set -x
+    # Build BACIO library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git
+    cd NCEPLIBS-bacio
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF
+    make && make install
+    cd / && rm -rf NCEPLIBS-bacio
+
+    # Build W3EMC library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3emc.git
+    cd NCEPLIBS-w3emc
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-w3emc
+
+    # Build W3NCO library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3nco.git
+    cd NCEPLIBS-w3nco
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-w3nco
+
+    # Build prod_util
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-prod_util.git
+    cd NCEPLIBS-prod_util
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-prod_util
+
+    # Build IP library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-ip.git
+    cd NCEPLIBS-ip
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-ip
+
+    # Build G2C library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2c.git
+    cd NCEPLIBS-g2c
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-g2c
+
+    # Build G2 library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2.git
+    cd NCEPLIBS-g2
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-g2
+
+    # Build BUFR library
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bufr.git
+    cd NCEPLIBS-bufr
+    mkdir build && cd build
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep
+    make && make install
+    cd / && rm -rf NCEPLIBS-bufr
+
+    # Build wgrib2
+    cd /
+    wget https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz
+    tar -xzf wgrib2.tgz
+    cd grib2
+    export CC=gcc
+    export FC=gfortran
+    make
+    mkdir -p /opt/wgrib2/bin
+    cp wgrib2/wgrib2 /opt/wgrib2/bin/
+    cd /
+    rm -rf wgrib2.tgz grib2
+
+    # Create symbolic link for wgrib2
+    ln -s /opt/wgrib2/bin/wgrib2 /usr/local/bin/wgrib2
+
+    # Set permissions
+    chmod -R a+rx /opt/ncep/bin
+
+    # Install gosu
+    set -ex
+    wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-amd64"
+    wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-amd64.asc"
+    export GNUPGHOME="$(mktemp -d)"
+    gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4
+    gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu
+    rm -rf "${GNUPGHOME}" /usr/local/bin/gosu.asc
+    chmod +x /usr/local/bin/gosu
+    gosu nobody true
+
+    # Initialize MySQL database
+    chown -R mysql:mysql /var/lib/mysql
+    chown mysql:mysql /var/run/mysqld
+    chown mysql:mysql /usr/libexec/mysqld
+    /usr/libexec/mysqld --initialize-insecure --user=mysql --datadir=/var/lib/mysql
+
+    # Add slurm user and create directories (already done above, but ensuring permissions)
+    chown -R slurm:slurm /opt/slurm/etc
+    chmod go-rwx /opt/slurm/etc/slurmdbd.conf
+
+    # Set root password
+    echo "root:root" | chpasswd
+
+    # Add wcoss2 user and setup
+    useradd -m wcoss2
+    chown wcoss2:wcoss2 /home/wcoss2
+    echo "wcoss2 ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wcoss2
+    chmod 0440 /etc/sudoers.d/wcoss2
+
+    # Setup .bashrc with color support and aliases
+    echo '# Enable color support for ls and also add handy aliases' >> /home/wcoss2/.bashrc
+    echo 'if [ -x /usr/bin/dircolors ]; then' >> /home/wcoss2/.bashrc
+    echo '    eval "$(dircolors -b)"' >> /home/wcoss2/.bashrc
+    echo '    alias ls="ls --color=auto"' >> /home/wcoss2/.bashrc
+    echo '    alias dir="dir --color=auto"' >> /home/wcoss2/.bashrc
+    echo '    alias vdir="vdir --color=auto"' >> /home/wcoss2/.bashrc
+    echo '    alias grep="grep --color=auto"' >> /home/wcoss2/.bashrc
+    echo '    alias fgrep="fgrep --color=auto"' >> /home/wcoss2/.bashrc
+    echo '    alias egrep="egrep --color=auto"' >> /home/wcoss2/.bashrc
+    echo 'fi' >> /home/wcoss2/.bashrc
+    echo 'alias ll="ls -lt --color=auto"' >> /home/wcoss2/.bashrc
+    chown wcoss2:wcoss2 /home/wcoss2/.bashrc
+
+    # Create required directory structure
+    mkdir -p /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl
+    mkdir -p /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
+    mkdir -p /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/pysh
+    mkdir -p /home/wcoss2/sandbox/stofs3d/fix/stofs_3d_atl
+    mkdir -p /lfs/h1/ops/prod/com/nwm/v3.0
+    mkdir -p /lfs/h1/ops/prod/com/
+    mkdir -p /lfs/h1/ops/prod/dcom/
+    mkdir -p /home/wcoss2/sandbox/dcom_root
+    mkdir -p /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+    mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs
+    mkdir -p /home/wcoss2/sandbox/date
+    mkdir -p /home/wcoss2/sandbox/stofs3d/versions
+    mkdir -p /home/wcoss2/sandbox/stofs3d/prev
+    mkdir -p /home/wcoss2/sandbox/stofs3d/rerun
+    mkdir -p /home/wcoss2/dcom_root
+
+    # Dummy up WCOSS paths
+    mkdir -p /lfs/h1/gfs/v16.3
+    mkdir -p /lfs/h1/hrrr/v4.1
+    mkdir -p /lfs/h1/nwm/v3.0
+    mkdir -p /lfs/h1/rtofs/v2.4
+    mkdir -p /lfs/h1/ops/prod/config
+
+    # Add OpenMPI binaries to system PATH
+    echo 'export PATH=$PATH:/usr/lib64/openmpi/bin' >> /etc/bashrc
+    echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64/openmpi/lib' >> /etc/bashrc
+    ln -sf /usr/lib64/openmpi/bin/mpiexec /usr/bin/mpiexec
+    ln -sf /usr/lib64/openmpi/bin/mpirun /usr/bin/mpirun
+
+    # Set ownership
+    chown -R wcoss2:wcoss2 /home/wcoss2/sandbox
+
+    # Generate modulefiles
+    mkdir -p /usr/share/modulefiles/models/adcirc
+    mkdir -p /usr/share/modulefiles/models/schism
+    mkdir -p /usr/share/modulefiles/ecflow
+    mkdir -p /usr/share/modulefiles/slurm
+    mkdir -p /usr/share/modulefiles/ncep
+
+    # Create ADCIRC module
+    cat > /usr/share/modulefiles/models/adcirc/${ADCIRC_VERSION} << 'EOF'
+#%Module 1.0
+#
+#  ADCIRC module for use with environment-modules package:
+#
+conflict		adcirc
+module load mpi
+prepend-path 		PATH 		/opt/models/adcirc/bin
+EOF
+
+    # Create SCHISM module
+    cat > /usr/share/modulefiles/models/schism/${SCHISM_VERSION} << 'EOF'
+#%Module 1.0
+#
+#  SCHISM module for use with environment-modules package:
+#
+conflict		schism
+module load mpi
+prepend-path 		PATH 		/opt/models/schism/bin
+EOF
+
+    # Create ecFlow module
+    cat > /usr/share/modulefiles/ecflow/${ECFLOW_VERSION} << 'EOF'
+#%Module 1.0
+#
+#  ecFlow module for use with environment-modules package:
+#
+conflict		ecflow
+prepend-path 		PATH 		/opt/ecflow/bin
+prepend-path 		LD_LIBRARY_PATH 		/opt/ecflow/lib
+prepend-path     PYTHONPATH    /opt/ecflow/lib/python3.9/site-packages
+setenv ECF_HOST localhost
+setenv ECF_PORT 3121
+EOF
+
+    # Create SLURM module
+    cat > /usr/share/modulefiles/slurm/24.11.1.1 << 'EOF'
+#%Module 1.0
+#
+#  slurm module for use with environment-modules package:
+#
+conflict		slurm
+prepend-path 		PATH 		/opt/slurm/bin
+EOF
+
+    # Create NCEP module
+    cat > /usr/share/modulefiles/ncep/develop << 'EOF'
+#%Module 1.0
+#
+#  Modulefile for NCEP libs
+#
+conflict ncep
+prepend-path PATH /opt/ncep/bin
+EOF
+
+    # Add module loads to environment initialization
+    cat >> /etc/environment-modules/initrc << 'EOF'
+module load slurm
+module load ecflow
+module load ncep
+EOF
+
+%files
+    containers/cgroup.conf /opt/slurm/etc/cgroup.conf
+    containers/slurm.conf /opt/slurm/etc/slurm.conf
+    containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
+    containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
+    containers/install-cfp.sh /tmp/install-cfp.sh
+    containers/install-mpi-wrapper.sh /tmp/install-mpi-wrapper.sh
+    containers/environment.sh /home/wcoss2/environment.sh
+    containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
+    containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
+    
+    # Copy source code and scripts
+    src /home/wcoss2/stofs_workflow/src
+    pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
+    examples/stofs_scripts /home/wcoss2/data/stofs_scripts
+    examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
+    examples/config_schism.yaml /home/wcoss2/config_schism.yaml
+    
+    # Copy ush files
+    ush/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
+    
+    # Copy exec files
+    exec/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+
+%post
+    # Install CFP replacement and MPI wrapper
+    bash /tmp/install-cfp.sh
+    bash /tmp/install-mpi-wrapper.sh
+    rm /tmp/install-cfp.sh /tmp/install-mpi-wrapper.sh
+
+    # Install the stofs workflow manager
+    mkdir -p /home/wcoss2/stofs_workflow
+    pip install /home/wcoss2/stofs_workflow
+    rm -rf /home/wcoss2/stofs_workflow
+
+    # Set permissions for scripts
+    chmod -R +x /home/wcoss2/data/stofs_scripts/stofs_3d_atl
+    chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
+    chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+
+    # Copy scripts to expected locations
+    cp -p /home/wcoss2/data/stofs_scripts/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl/
+    chmod -R +x /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl
+
+    # Set final permissions
+    chown -R wcoss2:wcoss2 /home/wcoss2
+
+%environment
+    export HDF5_USE_FILE_LOCKING=FALSE
+    export PATH=$PATH:/usr/lib64/openmpi/bin:/opt/slurm/bin:/opt/ecflow/bin:/opt/ncep/bin:/opt/wgrib2/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64/openmpi/lib:/opt/ecflow/lib
+    export PYTHONPATH=$PYTHONPATH:/opt/ecflow/lib/python3.9/site-packages
+
+%runscript
+    #!/bin/bash
+    echo "STOFS-3D Atlantic Workflow Container"
+    echo "Starting services..."
+    
+    # Start munge authentication daemon
+    echo "[INIT] Starting munge authentication daemon..."
+    /usr/sbin/munged --force
+    
+    # Start MySQL server daemon
+    echo "[INIT] Starting the mysql server daemon..."
+    /usr/libexec/mysqld --user mysql --datadir=/var/lib/mysql &
+    
+    # Wait for MySQL to start
+    echo "[INIT] Waiting for MySQL to start..."
+    sleep 5
+    
+    # Initialize MySQL database for SLURM
+    echo "[INIT] Initializing MySQL database for SLURM..."
+    mysql -u root -e "CREATE DATABASE IF NOT EXISTS slurm_acct_db"
+    mysql -u root -e "CREATE USER IF NOT EXISTS 'slurm'@'localhost' IDENTIFIED BY 'slurm'"
+    mysql -u root -e "GRANT ALL PRIVILEGES ON slurm_acct_db.* TO 'slurm'@'localhost'"
+    mysql -u root -e "FLUSH PRIVILEGES"
+    
+    # Start SLURM database daemon
+    echo "[INIT] Starting the SLURM database daemon..."
+    /opt/slurm/sbin/slurmdbd &
+    
+    # Generate SLURM node configuration
+    echo "[INIT] Generating SLURM node configuration..."
+    python3 /opt/slurm/etc/get_slurm_node.py
+    
+    # Update slurm configuration file with hostname
+    echo "[INIT] Updating the slurm configuration file..."
+    THISHOST=$(hostname)
+    sed -i "s/<<HOSTNAME>>/$THISHOST/g" /opt/slurm/etc/slurm.conf
+    
+    # Start SLURM job controller daemon
+    echo "[INIT] Starting SLURM job controller daemon..."
+    /opt/slurm/sbin/slurmctld &
+    
+    # Start SLURM node daemon
+    echo "[INIT] Starting SLURM node daemon..."
+    /opt/slurm/sbin/slurmd &
+    
+    # Start ecFlow server
+    echo "[INIT] Starting ecFlow server..."
+    su - wcoss2 -c "/opt/ecflow/bin/ecflow_start.sh -p 3121 > /home/wcoss2/ecflow.log 2>&1" &
+    
+    echo "[INIT] All services started. Switching to user: wcoss2"
+    
+    # Execute command as wcoss2 user or start interactive shell
+    if [ $# -eq 0 ]; then
+        exec su - wcoss2
+    else
+        exec su - wcoss2 -c "$*"
+    fi
+
+%help
+    This is a Singularity container for the STOFS-3D Atlantic Workflow.
+    
+    The container includes:
+    - SLURM job scheduler
+    - ecFlow workflow manager
+    - ADCIRC and SCHISM ocean models
+    - NCEP libraries and utilities
+    - Complete STOFS workflow scripts and utilities
+    
+    To run interactively:
+        singularity run stofs3d.sif
+    
+    To run a specific command:
+        singularity exec stofs3d.sif <command>
+    
+    To use the STOFS workflow:
+        singularity exec stofs3d.sif stofs-workflow prep-forecast --config /path/to/config.yaml
+
+%labels
+    Author Mansur Jisan (mansur.jisan@noaa.gov)
+    Description STOFS-3D Atlantic Workflow Container
+    Version v2.1.0
