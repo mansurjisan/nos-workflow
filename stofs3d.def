@@ -8,6 +8,30 @@ From: rockylinux/rockylinux:9-ubi
     SCHISM_VERSION=5.11.0
     GOSU_VERSION=1.17
 
+%files
+    containers/cgroup.conf /opt/slurm/etc/cgroup.conf
+    containers/slurm.conf /opt/slurm/etc/slurm.conf
+    containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
+    containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
+    containers/install-cfp.sh /tmp/install-cfp.sh
+    containers/install-mpi-wrapper.sh /tmp/install-mpi-wrapper.sh
+    containers/environment.sh /home/wcoss2/environment.sh
+    containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
+    containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
+
+    # Copy source code and scripts
+    src /home/wcoss2/stofs_workflow/src
+    pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
+    examples/stofs_scripts /home/wcoss2/data/stofs_scripts
+    examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
+    examples/config_schism.yaml /home/wcoss2/config_schism.yaml
+
+    # Copy ush files
+    ush/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
+
+    # Copy exec files
+    exec/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+
 %post
     # Set environment variables
     export SLURM_VERSION="{{ SLURM_VERSION }}"
@@ -110,7 +134,8 @@ From: rockylinux/rockylinux:9-ubi
     cd /
 
     # Install SCHISM
-    ln -s /usr/bin/python3 /usr/bin/python
+    #ln -s /usr/bin/python3 /usr/bin/python
+    [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
     git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism
     mkdir schism_build
     cd schism_build
@@ -369,35 +394,125 @@ module load ecflow
 module load ncep
 EOF
 
-%files
-    containers/cgroup.conf /opt/slurm/etc/cgroup.conf
-    containers/slurm.conf /opt/slurm/etc/slurm.conf
-    containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
-    containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
-    containers/install-cfp.sh /tmp/install-cfp.sh
-    containers/install-mpi-wrapper.sh /tmp/install-mpi-wrapper.sh
-    containers/environment.sh /home/wcoss2/environment.sh
-    containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
-    containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
-    
-    # Copy source code and scripts
-    src /home/wcoss2/stofs_workflow/src
-    pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
-    examples/stofs_scripts /home/wcoss2/data/stofs_scripts
-    examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
-    examples/config_schism.yaml /home/wcoss2/config_schism.yaml
-    
-    # Copy ush files
-    ush/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
-    
-    # Copy exec files
-    exec/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+# Install CFP replacement
+    echo "Installing CFP replacement..."
+    cat > /usr/bin/cfp << 'EOF'
+#!/bin/bash
+#
+# CFP Replacement Script (v2.0.4 compatible)
+# This script mimics the behavior of the WCOSS2 cfp utility
+#
 
-%post
-    # Install CFP replacement and MPI wrapper
-    bash /tmp/install-cfp.sh
-    bash /tmp/install-mpi-wrapper.sh
-    rm /tmp/install-cfp.sh /tmp/install-mpi-wrapper.sh
+# Print version information
+VERSION="2.0.4"
+
+# Check arguments
+if [ "$#" -ne 1 ]; then
+    echo "Error: Invalid number of arguments"
+    echo "Usage: cfp <command_file>"
+    exit 1
+fi
+
+COMMAND_FILE="$1"
+
+# Check if the command file exists
+if [ ! -f "$COMMAND_FILE" ]; then
+    echo "Error: Command file '$COMMAND_FILE' not found"
+    exit 1
+fi
+
+# Get environment variables
+CFP_VERBOSE=${CFP_VERBOSE:-}
+CFP_DOALL=${CFP_DOALL:-}
+CFP_DELAY=${CFP_DELAY:-0}
+CFP_MINMEM=${CFP_MINMEM:-0}
+
+# Print verbose information if requested
+if [ -n "$CFP_VERBOSE" ]; then
+    echo "CFP_VERBOSE: Enabled"
+    echo "CFP_DOALL: ${CFP_DOALL:+Enabled}"
+    echo "CFP_DELAY: $CFP_DELAY seconds"
+    echo "CFP_MINMEM: $CFP_MINMEM GB"
+    echo "Command file: $COMMAND_FILE"
+fi
+
+# Count total commands
+TOTAL_CMDS=$(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]*$' | wc -l)
+echo "Total commands to execute: $TOTAL_CMDS"
+
+# Read and process commands
+CMD_NUM=0
+FAILED=0
+
+# Process all commands sequentially
+while IFS= read -r CMD || [[ -n "$CMD" ]]; do
+    # Skip empty lines and comments
+    if [[ -z "$CMD" || "$CMD" =~ ^[[:space:]]*# ]]; then
+        continue
+    fi
+
+    CMD_NUM=$((CMD_NUM + 1))
+    echo "[$CMD_NUM/$TOTAL_CMDS] Executing: $CMD"
+
+    # Execute the command
+    eval "$CMD"
+    STATUS=$?
+
+    if [ $STATUS -ne 0 ]; then
+        echo "Command $CMD_NUM failed with exit code $STATUS"
+        FAILED=$((FAILED + 1))
+
+        # If CFP_DOALL is not set, stop processing
+        if [ -z "$CFP_DOALL" ]; then
+            echo "Error detected and CFP_DOALL not set. Stopping."
+            break
+        fi
+    fi
+done < <(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]*$')
+
+# Final status report
+echo "CFP execution completed"
+echo "Total commands executed: $CMD_NUM"
+echo "Failed commands: $FAILED"
+
+# Return non-zero if any command failed
+if [ $FAILED -gt 0 ]; then
+    exit 1
+fi
+
+exit 0
+EOF
+
+    chmod +x /usr/bin/cfp
+
+    # Create MPI wrapper
+    echo "Creating MPI wrapper..."
+    cat > /usr/bin/mpiexec << 'EOF'
+#!/bin/bash
+#
+# mpiexec wrapper for use with cfp
+# This script ignores MPI-specific arguments and just runs the command
+#
+
+# Find the command to execute (last argument)
+for arg in "$@"; do
+    LAST_ARG="$arg"
+done
+
+# Extract "cfp" and its argument if present
+if [[ "$LAST_ARG" == cfp* ]]; then
+    # If it's a cfp command, run it directly
+    eval "$LAST_ARG"
+else
+    # Otherwise, just run the last argument as a command
+    eval "$LAST_ARG"
+fi
+EOF
+
+    chmod +x /usr/bin/mpiexec
+    ln -sf /usr/bin/mpiexec /usr/bin/mpirun
+
+    echo "CFP and MPI wrapper installed successfully"
 
     # Install the stofs workflow manager
     mkdir -p /home/wcoss2/stofs_workflow
