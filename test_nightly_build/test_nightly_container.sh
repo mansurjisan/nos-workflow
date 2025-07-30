@@ -22,3 +22,4 @@ sudo docker run --rm -it \
     echo '[INFO] Running STOFS workflow prep-forecast...';
     stofs prep-forecast --config config_schism.yaml
   "
+echo "[SUCCESS] STOFS nightly run completed at $(date)"
