@@ -6,15 +6,23 @@
 # Modes: 'run' (default), 'debug', 'interactive'
 
 # Default values
-
 DATE=${1:-"20250504"}
 HOUR=${2:-"12"}
 SANDBOX_PATH=${3:-"/home/wcoss2/sandbox/"}
 CONFIG_FILE=${4:-"config_schism.yaml"}
 MODE=${5:-"run"}
 
-# Create log directory and filename
+# Check if running in a TTY (interactive) or not (cron)
 
+if [ -t 1 ]; then
+    DOCKER_INTERACTIVE="-it"
+    echo "Running in interactive mode"
+else
+    DOCKER_INTERACTIVE=""
+    echo "Running in non-interactive mode (likely cron)"
+fi
+
+# Create log directory and filename
 LOG_DIR="./logs"
 mkdir -p $LOG_DIR
 LOG_FILE="$LOG_DIR/stofs_workflow_${DATE}_${HOUR}_$(date +%Y%m%d_%H%M%S).log"
@@ -28,7 +36,7 @@ echo "Mode: $MODE"
 echo "Log file: $LOG_FILE"
 echo
 
-# Docker run 
+# Docker run options for STOFS3D Atlantic Workflow
 
 DOCKER_OPTS="--tmpfs /tmp:rw,size=2g \
   -v /lustre/mjisan/20250504_datasets/extracted_gfs/lfs/h1/ops/prod/com/gfs:/lfs/h1/ops/prod/com/gfs \
@@ -41,20 +49,21 @@ DOCKER_OPTS="--tmpfs /tmp:rw,size=2g \
   -v /lustre/mjisan/stofs_dataroot:/home/wcoss2/sandbox/stofs3d/dataroot \
   -v $(pwd)/logs:/logs"
 
-# Pull latest Docker
+# Pull the latest Docker image from Docker Hub
 
 echo "Pulling Docker image..." | tee -a $LOG_FILE
-
 sudo docker pull mjisan/stofsworkflow:nightly 2>&1 | tee -a $LOG_FILE
 
 case $MODE in
   "interactive")
     echo "Starting interactive container..."
+
+    # Force interactive mode for this option
     sudo docker run -it $DOCKER_OPTS mjisan/stofsworkflow:nightly bash
     ;;
   "debug")
     echo "Running in debug mode - checking environment first..." | tee -a $LOG_FILE
-    sudo docker run -it $DOCKER_OPTS mjisan/stofsworkflow:nightly bash -c "
+    sudo docker run $DOCKER_INTERACTIVE $DOCKER_OPTS mjisan/stofsworkflow:nightly bash -c "
       echo '=== Initial environment ===' && \
       echo 'Initial PATH:' \$PATH && \
       echo '=== Sourcing environment ===' && \
@@ -73,12 +82,12 @@ case $MODE in
     ;;
   "run"|*)
     echo "Starting Docker container and running STOFS workflow..." | tee -a $LOG_FILE
-    sudo docker run -it $DOCKER_OPTS mjisan/stofsworkflow:nightly bash -c "
+    sudo docker run $DOCKER_INTERACTIVE $DOCKER_OPTS mjisan/stofsworkflow:nightly bash -c "
       set -e
       echo 'Sourcing environment...'
       source environment.sh $DATE $HOUR $SANDBOX_PATH
       echo 'Environment sourced, fixing PATH manually...'
-      # Set PATH manually with the correct directories from interactive session
+      # Set PATH manually with the correct directories from your interactive session
       export PATH=\"/home/wcoss2/.local/bin:/home/wcoss2/bin:/usr/share/Modules/bin:/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib64/openmpi/bin:\$HOMEstofs/exec/\"
       echo 'Fixed PATH:' \$PATH
       echo 'Running stofs prep-forecast...'
