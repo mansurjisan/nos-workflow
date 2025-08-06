@@ -13,7 +13,6 @@ CONFIG_FILE=${4:-"config_schism.yaml"}
 MODE=${5:-"run"}
 
 # Check if running in a TTY (interactive) or not (cron)
-
 if [ -t 1 ]; then
     DOCKER_INTERACTIVE="-it"
     echo "Running in interactive mode"
@@ -36,8 +35,7 @@ echo "Mode: $MODE"
 echo "Log file: $LOG_FILE"
 echo
 
-# Docker run options for STOFS3D Atlantic Workflow
-
+# Common Docker run options
 DOCKER_OPTS="--tmpfs /tmp:rw,size=2g \
   -v /lustre/mjisan/20250504_datasets/extracted_gfs/lfs/h1/ops/prod/com/gfs:/lfs/h1/ops/prod/com/gfs \
   -v /lustre/mjisan/20250504_datasets/extracted_hrrr/lfs/h1/ops/prod/com/hrrr:/lfs/h1/ops/prod/com/hrrr \
@@ -49,34 +47,32 @@ DOCKER_OPTS="--tmpfs /tmp:rw,size=2g \
   -v /lustre/mjisan/stofs_dataroot:/home/wcoss2/sandbox/stofs3d/dataroot \
   -v $(pwd)/logs:/logs"
 
-# Pull the latest Docker image from Docker Hub
-
+# Pull the latest Docker image
 echo "Pulling Docker image..." | tee -a $LOG_FILE
 sudo docker pull mjisan/stofsworkflow:nightly 2>&1 | tee -a $LOG_FILE
 
 case $MODE in
   "interactive")
     echo "Starting interactive container..."
-
     # Force interactive mode for this option
     sudo docker run -it $DOCKER_OPTS mjisan/stofsworkflow:nightly bash
     ;;
   "debug")
     echo "Running in debug mode - checking environment first..." | tee -a $LOG_FILE
     sudo docker run $DOCKER_INTERACTIVE $DOCKER_OPTS mjisan/stofsworkflow:nightly bash -c "
-      echo '=== Initial environment ===' && \
-      echo 'Initial PATH:' \$PATH && \
-      echo '=== Sourcing environment ===' && \
-      source environment.sh $DATE $HOUR $SANDBOX_PATH && \
-      echo '=== After sourcing ===' && \
-      echo 'Raw PATH:' \$PATH && \
-      echo 'HOMEstofs:' \$HOMEstofs && \
-      echo '=== Fixing PATH manually ===' && \
-      export PATH=\"/home/wcoss2/.local/bin:/home/wcoss2/bin:/usr/share/Modules/bin:/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib64/openmpi/bin:\$HOMEstofs/exec/\" && \
-      echo 'Fixed PATH:' \$PATH && \
-      echo 'Checking for setpdy.sh:' && \
-      test -f /opt/ncep/bin/setpdy.sh && echo 'setpdy.sh found!' || echo 'setpdy.sh not found' && \
-      echo '=== Running stofs ===' && \
+      echo '=== Initial environment ==='
+      echo 'Initial PATH:' \$PATH
+      echo '=== Sourcing environment ==='
+      source environment.sh $DATE $HOUR $SANDBOX_PATH
+      echo '=== After sourcing ==='
+      echo 'Raw PATH:' \$PATH
+      echo 'HOMEstofs:' \$HOMEstofs
+      echo '=== Fixing PATH manually ==='
+      export PATH='/home/wcoss2/.local/bin:/home/wcoss2/bin:/usr/share/Modules/bin:/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib64/openmpi/bin:'\$HOMEstofs'/exec/'
+      echo 'Fixed PATH:' \$PATH
+      echo 'Checking for setpdy.sh:'
+      test -f /opt/ncep/bin/setpdy.sh && echo 'setpdy.sh found!' || echo 'setpdy.sh not found'
+      echo '=== Running stofs ==='
       stofs prep-forecast --config $CONFIG_FILE
     " 2>&1 | tee -a $LOG_FILE
     ;;
@@ -87,8 +83,7 @@ case $MODE in
       echo 'Sourcing environment...'
       source environment.sh $DATE $HOUR $SANDBOX_PATH
       echo 'Environment sourced, fixing PATH manually...'
-      # Set PATH manually with the correct directories from your interactive session
-      export PATH=\"/home/wcoss2/.local/bin:/home/wcoss2/bin:/usr/share/Modules/bin:/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib64/openmpi/bin:\$HOMEstofs/exec/\"
+      export PATH='/home/wcoss2/.local/bin:/home/wcoss2/bin:/usr/share/Modules/bin:/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/lib64/openmpi/bin:'\$HOMEstofs'/exec/'
       echo 'Fixed PATH:' \$PATH
       echo 'Running stofs prep-forecast...'
       stofs prep-forecast --config $CONFIG_FILE
