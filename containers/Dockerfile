@@ -125,24 +125,6 @@ COPY containers/cgroup.conf /opt/slurm/etc/cgroup.conf
 COPY containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
 COPY containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
 
-# Build the NCEPLIBS projects
-#RUN git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git && \
-#    cd NCEPLIBS-bacio && \
-#    mkdir build && cd build && \
-#    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF && \
-#    make && make install
-#RUN git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3emc.git && \
-#    cd NCEPLIBS-w3emc && \
-#    mkdir build && cd build && \
-#    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep && \
-#    make && make install
-#RUN git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-prod_util.git && \
-#    cd NCEPLIBS-prod_util && \
-#    mkdir build && cd build && \
-#    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep && \
-#    make && make install
-
-
 # Enable CRB and update metadata
 RUN dnf config-manager --set-enabled crb && dnf makecache
 
@@ -249,6 +231,44 @@ RUN cd / && \
     cd / && \
     rm -rf wgrib2.tgz grib2
 
+
+RUN mkdir -p /opt/stofs/exec
+
+# Build STOFS 3D Atlantic utilities
+COPY sorc /tmp/stofs_sorc
+
+# Build stofs_3d_atl_tide_fac
+RUN cd /tmp/stofs_sorc/stofs_3d_atl_tide_fac.fd && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_tide_fac /opt/stofs/exec/ && \
+    make clean
+
+# Build stofs_3d_atl_netcdf2shef
+RUN cd /tmp/stofs_sorc/stofs_3d_atl_netcdf2shef.fd && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_netcdf2shef /opt/stofs/exec/ && \
+    make clean
+
+# Build stofs_3d_atl_gen_3Dth_from_hycom
+RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_3Dth_from_hycom.fd && \
+    export PATH=$PATH:/usr/lib64/openmpi/bin && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_gen_3Dth_from_hycom /opt/stofs/exec/ && \
+    make clean
+
+# Build stofs_3d_atl_gen_nudge_from_hycom
+RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
+    export PATH=$PATH:/usr/lib64/openmpi/bin && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_gen_nudge_from_hycom /opt/stofs/exec/ && \
+    make clean
+
 # --------------------------
 FROM rockylinux/rockylinux:9-ubi AS wcoss2
 
@@ -332,15 +352,6 @@ RUN groupadd -r --gid=990 slurm \
     && chmod go-rw /run/munge \
     && /sbin/create-munge-key \
     && [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
-
-# Install CFP replacement
-#COPY containers/install-cfp.sh /tmp/
-#RUN bash /tmp/install-cfp.sh && rm /tmp/install-cfp.sh
-#
-## Create MPI wrapper
-#COPY containers/install-mpi-wrapper.sh /tmp/
-#RUN bash /tmp/install-mpi-wrapper.sh && rm /tmp/install-mpi-wrapper.sh
-
 
 # Add the su password for the root user
 RUN echo "root:root" | chpasswd
@@ -457,11 +468,11 @@ RUN chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/pysh
 #COPY fix/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/fix/stofs_3d_atl/
 
 # Copy exec files
-COPY exec/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+#COPY exec/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
 RUN chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
 
 # Copy exec files
-COPY exec/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+#COPY exec/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
 RUN chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
 
 # Copy scripts to the expected locations
@@ -558,6 +569,7 @@ RUN mkdir -p /lfs/h1/gfs/v16.3 && \
     mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs && \
     chown -R wcoss2:wcoss2 /home/wcoss2/sandbox
 
+COPY --from=builder /opt/stofs/exec/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
 COPY containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
 
 ENTRYPOINT [ "/entrypoint.sh" ]
