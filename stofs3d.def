@@ -13,8 +13,6 @@ From: rockylinux/rockylinux:9-ubi
     containers/slurm.conf /opt/slurm/etc/slurm.conf
     containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
     containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
-    containers/install-cfp.sh /tmp/install-cfp.sh
-    containers/install-mpi-wrapper.sh /tmp/install-mpi-wrapper.sh
     containers/environment.sh /home/wcoss2/environment.sh
     containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
     containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
@@ -29,16 +27,19 @@ From: rockylinux/rockylinux:9-ubi
     # Copy ush files
     ush/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
 
-    # Copy exec files
-    exec/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+    # Copy exec files (pre-built as backup)
+    exec/stofs_3d_atl /home/wcoss2/sandbox/stofs3d/exec_backup/stofs_3d_atl
+
+    # Copy STOFS source code - CRITICAL for building capability
+    sorc /tmp/stofs_sorc
 
 %post
-    # Set environment variables
-    export SLURM_VERSION="{{ SLURM_VERSION }}"
-    export ECFLOW_VERSION="{{ ECFLOW_VERSION }}"
-    export ADCIRC_VERSION="{{ ADCIRC_VERSION }}"
-    export SCHISM_VERSION="{{ SCHISM_VERSION }}"
-    export GOSU_VERSION="{{ GOSU_VERSION }}"
+    # Set environment variables (hardcoded values)
+    export SLURM_VERSION="slurm-24-11-1-1"
+    export ECFLOW_VERSION="5.6.0"
+    export ADCIRC_VERSION="56.0.3"
+    export SCHISM_VERSION="5.11.0"
+    export GOSU_VERSION="1.17"
 
     # Disable HDF5 file locking to avoid NetCDF HDF errors
     export HDF5_USE_FILE_LOCKING=FALSE
@@ -112,6 +113,7 @@ From: rockylinux/rockylinux:9-ubi
         -DCMAKE_INSTALL_PREFIX=/opt/ecflow
     make -j4 && make install
     cd /
+    rm -rf ecflow_build
 
     # Copy fortran netcdf.mod
     cp /usr/lib64/gfortran/modules/netcdf.mod /usr/include/netcdf.mod
@@ -132,9 +134,9 @@ From: rockylinux/rockylinux:9-ubi
         -DENABLE_DATETIME=ON
     make && make install
     cd /
+    rm -rf adcirc adcirc_build
 
     # Install SCHISM
-    #ln -s /usr/bin/python3 /usr/bin/python
     [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
     git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism
     mkdir schism_build
@@ -144,6 +146,7 @@ From: rockylinux/rockylinux:9-ubi
     cmake ../schism/src -DCMAKE_INSTALL_PREFIX=/opt/models/schism -DBLD_STANDALONE=ON
     make && mkdir /opt/models/schism && mv bin /opt/models/schism/bin
     cd /
+    rm -rf schism schism_build
 
     # Enable CRB and update metadata
     dnf config-manager --set-enabled crb && dnf makecache
@@ -247,6 +250,78 @@ From: rockylinux/rockylinux:9-ubi
     # Set permissions
     chmod -R a+rx /opt/ncep/bin
 
+#  BUILD STOFS EXECUTABLES FROM SOURCE
+
+    echo "=============================================="
+    echo "STARTING STOFS PREPPROCESSING SOURCE BUILDING"
+    echo "=============================================="
+    
+    # Find the actual stofs_sorc location
+    STOFS_SORC_DIR=$(find /tmp -name "stofs_sorc" -type d 2>/dev/null | head -1)
+    
+    if [ -z "$STOFS_SORC_DIR" ] || [ ! -d "$STOFS_SORC_DIR" ]; then
+        echo "✗ ERROR: Cannot find stofs_sorc directory"
+        find /tmp -name "*stofs*" -type d 2>/dev/null || echo "No stofs directories found"
+        exit 1
+    fi
+    
+    echo "Found STOFS source at: $STOFS_SORC_DIR"
+    ls -la "$STOFS_SORC_DIR/"
+
+    # Create directories for STOFS building
+    mkdir -p /opt/stofs/exec
+    mkdir -p /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
+
+    # Set up build environment
+    export PATH=$PATH:/usr/lib64/openmpi/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
+    export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/ncep/lib/pkgconfig
+
+    # Build stofs_3d_atl_tide_fac
+    echo "Building stofs_3d_atl_tide_fac..."
+    cd "$STOFS_SORC_DIR/stofs_3d_atl_tide_fac.fd"
+    make clean || true
+    make
+    cp -p stofs_3d_atl_tide_fac /opt/stofs/exec/
+    cp -p stofs_3d_atl_tide_fac /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+    echo "Built stofs_3d_atl_tide_fac"
+
+    # Build stofs_3d_atl_netcdf2shef
+    echo "Building stofs_3d_atl_netcdf2shef..."
+    cd "$STOFS_SORC_DIR/stofs_3d_atl_netcdf2shef.fd"
+    make clean || true
+    make
+    cp -p stofs_3d_atl_netcdf2shef /opt/stofs/exec/
+    cp -p stofs_3d_atl_netcdf2shef /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+    echo "Built stofs_3d_atl_netcdf2shef"
+
+    # Build stofs_3d_atl_gen_3Dth_from_hycom
+    echo "Building stofs_3d_atl_gen_3Dth_from_hycom..."
+    cd "$STOFS_SORC_DIR/stofs_3d_atl_gen_3Dth_from_hycom.fd"
+    make clean || true
+    make
+    cp -p stofs_3d_atl_gen_3Dth_from_hycom /opt/stofs/exec/
+    cp -p stofs_3d_atl_gen_3Dth_from_hycom /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+    echo "Built stofs_3d_atl_gen_3Dth_from_hycom"
+
+    # Build stofs_3d_atl_gen_nudge_from_hycom
+    echo "Building stofs_3d_atl_gen_nudge_from_hycom..."
+    cd "$STOFS_SORC_DIR/stofs_3d_atl_gen_nudge_from_hycom.fd"
+    make clean || true
+    make
+    cp -p stofs_3d_atl_gen_nudge_from_hycom /opt/stofs/exec/
+    cp -p stofs_3d_atl_gen_nudge_from_hycom /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+    echo "Built stofs_3d_atl_gen_nudge_from_hycom"
+
+    # Preserve source for development
+    mkdir -p /home/wcoss2/stofs_source
+    cp -r "$STOFS_SORC_DIR" /home/wcoss2/stofs_source/
+    
+    echo "STOFS building completed successfully!"
+    echo "Built executables:"
+    ls -la /opt/stofs/exec/
+    echo "=============================================="
+
     # Install gosu
     set -ex
     wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-amd64"
@@ -264,7 +339,7 @@ From: rockylinux/rockylinux:9-ubi
     chown mysql:mysql /usr/libexec/mysqld
     /usr/libexec/mysqld --initialize-insecure --user=mysql --datadir=/var/lib/mysql
 
-    # Add slurm user and create directories (already done above, but ensuring permissions)
+    # Add slurm user and create directories
     chown -R slurm:slurm /opt/slurm/etc
     chmod go-rwx /opt/slurm/etc/slurmdbd.conf
 
@@ -300,7 +375,6 @@ From: rockylinux/rockylinux:9-ubi
     mkdir -p /lfs/h1/ops/prod/com/
     mkdir -p /lfs/h1/ops/prod/dcom/
     mkdir -p /home/wcoss2/sandbox/dcom_root
-    mkdir -p /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
     mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs
     mkdir -p /home/wcoss2/sandbox/date
     mkdir -p /home/wcoss2/sandbox/stofs3d/versions
@@ -323,6 +397,7 @@ From: rockylinux/rockylinux:9-ubi
 
     # Set ownership
     chown -R wcoss2:wcoss2 /home/wcoss2/sandbox
+    chown -R wcoss2:wcoss2 /home/wcoss2/stofs_source
 
     # Generate modulefiles
     mkdir -p /usr/share/modulefiles/models/adcirc
@@ -394,7 +469,7 @@ module load ecflow
 module load ncep
 EOF
 
-# Install CFP replacement
+    # Install CFP replacement (inline since script missing)
     echo "Installing CFP replacement..."
     cat > /usr/bin/cfp << 'EOF'
 #!/bin/bash
@@ -437,7 +512,7 @@ if [ -n "$CFP_VERBOSE" ]; then
 fi
 
 # Count total commands
-TOTAL_CMDS=$(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]*$' | wc -l)
+TOTAL_CMDS=$(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]* | wc -l)
 echo "Total commands to execute: $TOTAL_CMDS"
 
 # Read and process commands
@@ -468,7 +543,7 @@ while IFS= read -r CMD || [[ -n "$CMD" ]]; do
             break
         fi
     fi
-done < <(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]*$')
+done < <(grep -v '^[[:space:]]*#' "$COMMAND_FILE" | grep -v '^[[:space:]]*)
 
 # Final status report
 echo "CFP execution completed"
@@ -485,9 +560,9 @@ EOF
 
     chmod +x /usr/bin/cfp
 
-    # Create MPI wrapper
+    # Create MPI wrapper (inline since script missing)
     echo "Creating MPI wrapper..."
-    cat > /usr/bin/mpiexec << 'EOF'
+    cat > /usr/bin/mpiexec_cfp << 'EOF'
 #!/bin/bash
 #
 # mpiexec wrapper for use with cfp
@@ -509,9 +584,7 @@ else
 fi
 EOF
 
-    chmod +x /usr/bin/mpiexec
-    ln -sf /usr/bin/mpiexec /usr/bin/mpirun
-
+    chmod +x /usr/bin/mpiexec_cfp
     echo "CFP and MPI wrapper installed successfully"
 
     # Install the stofs workflow manager
@@ -522,7 +595,6 @@ EOF
     # Set permissions for scripts
     chmod -R +x /home/wcoss2/data/stofs_scripts/stofs_3d_atl
     chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl
-    chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl
 
     # Copy scripts to expected locations
     cp -p /home/wcoss2/data/stofs_scripts/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl/
@@ -530,6 +602,68 @@ EOF
 
     # Set final permissions
     chown -R wcoss2:wcoss2 /home/wcoss2
+
+    # Create build script for future development
+    cat > /home/wcoss2/rebuild_stofs.sh << 'EOF'
+#!/bin/bash
+#
+# Script to rebuild STOFS executables from source
+# Usage: ./rebuild_stofs.sh [component_name]
+#
+# If no component specified, builds all components
+#
+
+set -e
+
+STOFS_SOURCE_DIR="/home/wcoss2/stofs_source/stofs_sorc"
+INSTALL_DIR="/home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl"
+
+# Set up build environment
+export PATH=$PATH:/usr/lib64/openmpi/bin
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
+export PKG_CONFIG_PATH=$PKG_CONFIG_PATH:/opt/ncep/lib/pkgconfig
+
+COMPONENTS=("stofs_3d_atl_tide_fac" "stofs_3d_atl_netcdf2shef" "stofs_3d_atl_gen_3Dth_from_hycom" "stofs_3d_atl_gen_nudge_from_hycom")
+
+if [ $# -eq 1 ]; then
+    COMPONENTS=("$1")
+fi
+
+for component in "${COMPONENTS[@]}"; do
+    echo "=============================================="
+    echo "Building $component..."
+    echo "=============================================="
+    
+    if [ -d "$STOFS_SOURCE_DIR/${component}.fd" ]; then
+        cd "$STOFS_SOURCE_DIR/${component}.fd"
+        echo "Current directory: $(pwd)"
+        
+        make clean || echo "Clean failed (might be expected)"
+        make
+        
+        if [ -f "$component" ]; then
+            cp -p "$component" "$INSTALL_DIR/"
+            echo "Successfully built and installed $component"
+        else
+            echo "Build failed for $component"
+            exit 1
+        fi
+    else
+        echo "ERROR: Cannot find $STOFS_SOURCE_DIR/${component}.fd"
+        exit 1
+    fi
+done
+
+echo "=============================================="
+echo "Rebuild completed! Updated executables:"
+ls -la "$INSTALL_DIR/"
+echo "=============================================="
+EOF
+
+    chmod +x /home/wcoss2/rebuild_stofs.sh
+    chown wcoss2:wcoss2 /home/wcoss2/rebuild_stofs.sh
+
+    echo "Container build completed with source building capability!"
 
 %environment
     export HDF5_USE_FILE_LOCKING=FALSE
@@ -539,64 +673,96 @@ EOF
 
 %runscript
     #!/bin/bash
-    echo "STOFS-3D Atlantic Workflow Container"
+    echo "STOFS-3D Atlantic Workflow Container with Source Building Capability"
     echo "Starting services..."
     
-    # Start munge authentication daemon
-    echo "[INIT] Starting munge authentication daemon..."
-    /usr/sbin/munged --force
+    # Create temporary directories in writable locations
+    export TMPDIR=${TMPDIR:-/tmp}
+    export TEMP_CONFIG_DIR="$TMPDIR/stofs_config_$"
+    export TEMP_LOG_DIR="$TMPDIR/stofs_logs_$"
+    export TEMP_DATA_DIR="$TMPDIR/stofs_data_$"
     
-    # Start MySQL server daemon
-    echo "[INIT] Starting the mysql server daemon..."
-    /usr/libexec/mysqld --user mysql --datadir=/var/lib/mysql &
+    mkdir -p "$TEMP_CONFIG_DIR" "$TEMP_LOG_DIR" "$TEMP_DATA_DIR"
     
-    # Wait for MySQL to start
-    echo "[INIT] Waiting for MySQL to start..."
-    sleep 5
+    # Copy configuration files to writable location
+    if [ -r /opt/slurm/etc/slurm.conf ]; then
+        cp /opt/slurm/etc/slurm.conf "$TEMP_CONFIG_DIR/"
+        cp /opt/slurm/etc/slurmdbd.conf "$TEMP_CONFIG_DIR/" 2>/dev/null || true
+    fi
     
-    # Initialize MySQL database for SLURM
-    echo "[INIT] Initializing MySQL database for SLURM..."
-    mysql -u root -e "CREATE DATABASE IF NOT EXISTS slurm_acct_db"
-    mysql -u root -e "CREATE USER IF NOT EXISTS 'slurm'@'localhost' IDENTIFIED BY 'slurm'"
-    mysql -u root -e "GRANT ALL PRIVILEGES ON slurm_acct_db.* TO 'slurm'@'localhost'"
-    mysql -u root -e "FLUSH PRIVILEGES"
-    
-    # Start SLURM database daemon
-    echo "[INIT] Starting the SLURM database daemon..."
-    /opt/slurm/sbin/slurmdbd &
-    
-    # Generate SLURM node configuration
+    # Generate SLURM node configuration in writable location
     echo "[INIT] Generating SLURM node configuration..."
-    python3 /opt/slurm/etc/get_slurm_node.py
+    if [ -f /opt/slurm/etc/get_slurm_node.py ]; then
+        python3 /opt/slurm/etc/get_slurm_node.py --output "$TEMP_CONFIG_DIR/auto_nodes.conf" 2>/dev/null || {
+            # Fallback: create a simple node configuration
+            echo "NodeName=$(hostname) NodeHostname=$(hostname) CPUs=4 Boards=1 SocketsPerBoard=1 CoresPerSocket=2 ThreadsPerCore=2 RealMemory=8192 State=UNKNOWN" > "$TEMP_CONFIG_DIR/auto_nodes.conf"
+        }
+    fi
     
     # Update slurm configuration file with hostname
     echo "[INIT] Updating the slurm configuration file..."
-    THISHOST=$(hostname)
-    sed -i "s/<<HOSTNAME>>/$THISHOST/g" /opt/slurm/etc/slurm.conf
+    if [ -f "$TEMP_CONFIG_DIR/slurm.conf" ]; then
+        THISHOST=$(hostname)
+        sed -i "s/<<HOSTNAME>>/$THISHOST/g" "$TEMP_CONFIG_DIR/slurm.conf" 2>/dev/null || true
+    fi
     
-    # Start SLURM job controller daemon
-    echo "[INIT] Starting SLURM job controller daemon..."
-    /opt/slurm/sbin/slurmctld &
+    # Set up environment for services
+    export SLURM_CONF="$TEMP_CONFIG_DIR/slurm.conf"
+    export SLURMDBD_CONF="$TEMP_CONFIG_DIR/slurmdbd.conf"
     
-    # Start SLURM node daemon
-    echo "[INIT] Starting SLURM node daemon..."
-    /opt/slurm/sbin/slurmd &
+    # Container status report
+    echo "[INIT] Container initialized with source building capability"
+    echo "[INIT] Available tools:"
+    echo "  - Python: $(python3 --version 2>/dev/null || echo 'not available')"
+    echo "  - MPI: $(mpirun --version 2>/dev/null | head -1 || echo 'not available')"
+    echo "  - wgrib2: $(wgrib2 -version 2>/dev/null | head -1 || echo 'not available')"
+    echo "  - STOFS Workflow: $(python3 -c 'import StofsWorkflow; print("available")' 2>/dev/null || echo 'not available')"
+    echo "  - CFP: $(which cfp >/dev/null && echo 'available' || echo 'not available')"
     
-    # Start ecFlow server
-    echo "[INIT] Starting ecFlow server..."
-    su - wcoss2 -c "/opt/ecflow/bin/ecflow_start.sh -p 3121 > /home/wcoss2/ecflow.log 2>&1" &
-    
-    echo "[INIT] All services started. Switching to user: wcoss2"
-    
-    # Execute command as wcoss2 user or start interactive shell
-    if [ $# -eq 0 ]; then
-        exec su - wcoss2
+    # Check for STOFS executables
+    echo "  - STOFS Executables (built from source):"
+    if [ -d "/home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl" ]; then
+        for exe in stofs_3d_atl_tide_fac stofs_3d_atl_netcdf2shef stofs_3d_atl_gen_3Dth_from_hycom stofs_3d_atl_gen_nudge_from_hycom; do
+            if [ -x "/home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/$exe" ]; then
+                echo "    $exe"
+            else
+                echo "    $exe (missing)"
+            fi
+        done
     else
-        exec su - wcoss2 -c "$*"
+        echo "    STOFS exec directory not found"
+    fi
+    
+    # Check for source code
+    echo "  - STOFS Source Code:"
+    if [ -d "/home/wcoss2/stofs_source/stofs_sorc" ]; then
+        echo "    Source code available in /home/wcoss2/stofs_source/"
+        echo "    Rebuild script: /home/wcoss2/rebuild_stofs.sh"
+    else
+        echo "    Source code not found"
+    fi
+    
+    # Set up environment
+    export PATH=$PATH:/opt/slurm/bin:/opt/ecflow/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/opt/ecflow/lib:/usr/lib64/openmpi/lib
+    export PYTHONPATH=$PYTHONPATH:/opt/ecflow/lib/python3.9/site-packages
+    
+    echo "[INIT] Environment configured. Starting shell..."
+    echo ""
+    echo "To rebuild STOFS executables from source, run:"
+    echo "  /home/wcoss2/rebuild_stofs.sh"
+    echo ""
+    
+    # If no arguments provided, start interactive shell
+    if [ $# -eq 0 ]; then
+        exec /bin/bash
+    else
+        # Execute the provided command
+        exec "$@"
     fi
 
 %help
-    This is a Singularity container for the STOFS-3D Atlantic Workflow.
+    This is a Singularity container for the STOFS-3D Atlantic Workflow with source building capability.
     
     The container includes:
     - SLURM job scheduler
@@ -604,17 +770,35 @@ EOF
     - ADCIRC and SCHISM ocean models
     - NCEP libraries and utilities
     - Complete STOFS workflow scripts and utilities
+    - STOFS executables built from source during container build
+    - Source code preserved for development and rebuilding
     
+    Features:
+    - All STOFS executables built from source code
+    - Source code preserved in /home/wcoss2/stofs_source/
+    - Rebuild script available: /home/wcoss2/rebuild_stofs.sh
+    - Full development environment for modifying and rebuilding
+    
+    To build the container from .def on ParallelWorks:
+        sudo singularity build stofs3d_fixed.sif stofs3d_fixed2.def 2>&1 | tee build.log
+
     To run interactively:
         singularity run stofs3d.sif
     
     To run a specific command:
         singularity exec stofs3d.sif <command>
     
+    To rebuild STOFS executables:
+        singularity exec stofs3d.sif /home/wcoss2/rebuild_stofs.sh
+    
+    To rebuild a specific component:
+        singularity exec stofs3d.sif /home/wcoss2/rebuild_stofs.sh stofs_3d_atl_tide_fac
+    
     To use the STOFS workflow:
         singularity exec stofs3d.sif stofs-workflow prep-forecast --config /path/to/config.yaml
 
 %labels
     Author Mansur Jisan (mansur.jisan@noaa.gov)
-    Description STOFS-3D Atlantic Workflow Container
-    Version v2.1.0
+    Description STOFS-3D Atlantic Workflow Container with Source Building Capability
+    Version v2.1.1
+    Features Source building, development environment, rebuild capability
