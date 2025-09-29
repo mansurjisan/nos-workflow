@@ -17,8 +17,18 @@ FROM rockylinux/rockylinux:9-ubi AS builder
 
 # Install all the libs we need to build the software we are interested in. When we build our final container,
 # we will do the same thing, but remove the devel libs to save some space
+#RUN dnf update -y && dnf install -y epel-release && \
+#    dnf install -y --enablerepo=crb which gcc gcc-c++ gcc-gfortran make cmake git \
+#                   openmpi openmpi-devel \
+#                   boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
+#                   netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
+#                   libtool ncurses-devel expat-devel openssl-devel python3-devel \
+#                   automake expat-devel wget hostname zlib-devel  \
+#                   jasper udunits2 nco ImageMagick proj proj-devel \
+#                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+#                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
 RUN dnf update -y && dnf install -y epel-release && \
-    dnf install -y --enablerepo=crb which gcc gcc-c++ gcc-gfortran make cmake git \
+    dnf install -y --enablerepo=crb --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
                    boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
                    netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
@@ -27,7 +37,6 @@ RUN dnf update -y && dnf install -y epel-release && \
                    jasper udunits2 nco ImageMagick proj proj-devel \
                    bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
                    mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
-
 
 # Install the python packages we'll be using. This just helps replicate the environment we use during the build
 RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
