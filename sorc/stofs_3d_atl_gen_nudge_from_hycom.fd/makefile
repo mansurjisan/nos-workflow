@@ -1,5 +1,7 @@
-FC=gfortran
-OPT= -O2 -fbounds-check -fbacktrace -mcmodel=medium
+# Use ifort for Intel build (WCOSS2 compatible)
+FC=ifort
+# Intel compiler flags: -CB enables bounds checking
+OPT= -O2 -CB -mcmodel=medium
 LIB= -I/usr/lib64/gfortran/modules -I/usr/include -L/usr/lib64 -lnetcdf -lnetcdff
 
 all: compute_zcor.mod pt_in_poly_test.mod 

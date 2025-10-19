@@ -1,6 +1,8 @@
-FC = gfortran
+# Use ifort for Intel build (WCOSS2 compatible)
+FC = ifort
 
-#FC=ifort #Frontera
+# Alternative compilers:
+#FC = gfortran
 #FC=${COMP_F} #WCOSS2
 
 

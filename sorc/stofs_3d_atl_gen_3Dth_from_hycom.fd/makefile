@@ -1,6 +1,7 @@
-#FC=${COMP_F} #WCOSS2
-FC=gfortran
-OPT= -O2 -fbounds-check -fbacktrace
+# Use ifort for Intel build (WCOSS2 compatible)
+FC=ifort
+# Intel compiler flags: -CB enables bounds checking, -assume byterecl for binary I/O compatibility
+OPT= -O2 -CB -mcmodel=medium -assume byterecl
 LIB= -I/usr/lib64/gfortran/modules -I/usr/include -L/usr/lib64 -lnetcdf -lnetcdff
 
 

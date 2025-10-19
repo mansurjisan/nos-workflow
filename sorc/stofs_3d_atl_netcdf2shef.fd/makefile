@@ -4,7 +4,9 @@
 
 SRCS = stofs_3d_atl_netcdf2shef.f
 OBJS = stofs_3d_atl_netcdf2shef.o
-FC = gfortran
+
+# Use ifort for Intel build (WCOSS2 compatible)
+FC = ifort
 LDFLAGS = -cpp -DHAVE_NETCDF4 -DNETCDF_CAN_DEFLATE
 
 # Include paths (equivalent to original G2_INC4, NETCDF_INCLUDES, HDF5_INCLUDES, Z_INC)
@@ -17,10 +19,13 @@ LIBS = -L/opt/ncep/lib64 -L/opt/ncep/lib -L/usr/lib64 \
        -ljasper -lpng -lnetcdf -lnetcdff -lhdf5 -lz
 
 CMD = stofs_3d_atl_netcdf2shef
-FFLAGS = -O2 -fdefault-real-8 -fdefault-double-8 $(INCS)
+
+# Intel Fortran compiler flags (using fp-model strict for WCOSS2 compatibility)
+FFLAGS = -O2 -fp-model strict $(INCS)
 
 ifeq ($(DEBUG),full)
-FFLAGS = -DDEBUG -g -O0 -fbacktrace -fbounds-check -Wall $(INCS)
+# Intel debug flags
+FFLAGS = -DDEBUG -g -O0 -traceback -check all $(INCS)
 endif
 
 # Build rules

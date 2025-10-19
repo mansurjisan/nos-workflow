@@ -1,0 +1,659 @@
+# WCOSS2-compatible container with Intel Compilers (intel-19.1.3.304 compatible)
+# This Dockerfile adds Intel oneAPI compilers to mimic WCOSS2 HPC environment
+
+# Versions of software to grab and build
+ARG SLURM_VERSION=slurm-24-11-1-1
+ARG ECFLOW_VERSION=5.6.0
+ARG ADCIRC_VERSION=56.0.3
+ARG SCHISM_VERSION=5.11.0
+ARG GOSU_VERSION=1.17
+
+FROM rockylinux/rockylinux:9-ubi AS builder
+
+# Install base development tools and libraries
+# Note: Keeping gfortran initially for comparison, will phase out later
+RUN dnf update -y && dnf install -y epel-release && \
+    dnf install -y --enablerepo=crb --nobest --allowerasing which gcc gcc-c++ gcc-gfortran make cmake git \
+                   openmpi openmpi-devel \
+                   boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
+                   netcdf netcdf-devel hdf5 hdf5-devel \
+                   libtool ncurses-devel expat-devel openssl-devel python3-devel \
+                   automake expat-devel wget hostname zlib-devel  \
+                   jasper udunits2 nco ImageMagick proj proj-devel \
+                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel yum-utils curl m4
+
+# Import Intel GPG key first (required for non-interactive build)
+RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+
+# Add Intel oneAPI repository
+RUN cat > /tmp/oneAPI.repo << 'EOF'
+[oneAPI]
+name=Intel® oneAPI repository
+baseurl=https://yum.repos.intel.com/oneapi
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+EOF
+
+RUN mv /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo && dnf makecache
+
+# Install Intel oneAPI compilers (classic ifort & icc for WCOSS2 compatibility)
+# Using 2023.2.1 which includes ifort (classic compiler version 2021.10.0)
+# This is compatible with WCOSS2's intel-19.1.3.304 codebase
+RUN dnf install -y \
+    intel-oneapi-compiler-fortran-2023.2.1 \
+    intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic-2023.2.1 \
+    intel-oneapi-mpi-2021.16
+
+# Create environment setup script for Intel compilers
+RUN echo '#!/bin/bash' > /opt/intel_env.sh && \
+    echo 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh --force' >> /opt/intel_env.sh && \
+    chmod +x /opt/intel_env.sh
+
+# Test Intel compiler installation
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && icc --version && ifort --version'
+
+# Build NetCDF-Fortran from source with Intel compilers
+# This is necessary because the system NetCDF-Fortran is built with gfortran and incompatible with ifort
+ARG NETCDF_FORTRAN_VERSION=4.6.1
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp && \
+    wget https://github.com/Unidata/netcdf-fortran/archive/refs/tags/v${NETCDF_FORTRAN_VERSION}.tar.gz && \
+    tar -xzf v${NETCDF_FORTRAN_VERSION}.tar.gz && \
+    cd netcdf-fortran-${NETCDF_FORTRAN_VERSION} && \
+    export CC=icc && \
+    export FC=ifort && \
+    export F77=ifort && \
+    export CPPFLAGS="-I/usr/include" && \
+    export LDFLAGS="-L/usr/lib64" && \
+    ./configure --prefix=/usr --libdir=/usr/lib64 && \
+    make -j4 && \
+    make install && \
+    cd /tmp && \
+    rm -rf netcdf-fortran-${NETCDF_FORTRAN_VERSION} v${NETCDF_FORTRAN_VERSION}.tar.gz'
+
+# Install Python packages
+RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
+                cftime termcolor shapely numpy pandas pluggy geopy attrs pyproj cython schema
+
+# Install the SLURM job scheduler
+ARG SLURM_VERSION
+RUN set -x \
+    && git clone -b ${SLURM_VERSION} --single-branch --depth=1 https://github.com/SchedMD/slurm.git \
+    && pushd slurm \
+    && ./configure --prefix=/opt/slurm --sysconfdir=/opt/slurm/etc \
+        --with-mysql_config=/usr/bin  --libdir=/opt/slurm/lib64 \
+        --enable-cgroupv2=no \
+    && make install \
+    && install -D -m644 etc/cgroup.conf.example /opt/slurm/etc/cgroup.conf.example \
+    && install -D -m644 etc/slurm.conf.example /opt/slurm/etc/slurm.conf.example \
+    && install -D -m644 etc/slurmdbd.conf.example /opt/slurm/etc/slurmdbd.conf.example \
+    && install -D -m644 contribs/slurm_completion_help/slurm_completion.sh /etc/profile.d/slurm_completion.sh \
+    && popd \
+    && rm -rf slurm \
+    && groupadd -r --gid=990 slurm \
+    && useradd -r -g slurm --uid=990 slurm \
+    && mkdir /etc/sysconfig/slurm \
+        /var/spool/slurmd \
+        /var/run/slurmd \
+        /var/run/slurmdbd \
+        /var/lib/slurmd \
+        /var/log/slurm \
+        /data \
+    && touch /var/lib/slurmd/node_state \
+        /var/lib/slurmd/front_end_state \
+        /var/lib/slurmd/job_state \
+        /var/lib/slurmd/resv_state \
+        /var/lib/slurmd/trigger_state \
+        /var/lib/slurmd/assoc_mgr_state \
+        /var/lib/slurmd/assoc_usage \
+        /var/lib/slurmd/qos_usage \
+        /var/lib/slurmd/fed_mgr_state \
+    && chown -R slurm:slurm /var/*/slurm* \
+    && chown -R munge:munge /run/munge \
+    && chmod go-rw /run/munge \
+    && /sbin/create-munge-key
+
+# Build and install ECFLOW
+ARG ECFLOW_VERSION
+RUN mkdir ecflow_build && cd ecflow_build && \
+    wget -O ecflow.tar.gz https://confluence.ecmwf.int/download/attachments/8650755/ecFlow-${ECFLOW_VERSION}-Source.tar.gz?api=v2 && \
+    tar -xvf ecflow.tar.gz && rm ecflow.tar.gz && \
+    mv ecFlow* ecflow && \
+    cd ecflow && mkdir build && cd build && \
+    cmake .. -DENABLE_UI=OFF \
+        -DBoost_ROOT=/usr \
+        -DENABLE_TESTS=OFF \
+        -DENABLE_STATIC_BOOST_LIBS=OFF \
+        -DCMAKE_INSTALL_PREFIX=/opt/ecflow && \
+    make -j4 && make install
+
+# Note: NetCDF-Fortran module files are now built with ifort and installed in /usr/include
+
+# Build OpenMPI from source with Intel compilers for Fortran module compatibility
+ARG OPENMPI_VERSION=4.1.6
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp && \
+    wget https://download.open-mpi.org/release/open-mpi/v4.1/openmpi-${OPENMPI_VERSION}.tar.gz && \
+    tar -xzf openmpi-${OPENMPI_VERSION}.tar.gz && \
+    cd openmpi-${OPENMPI_VERSION} && \
+    export CC=icc && \
+    export CXX=icpc && \
+    export FC=ifort && \
+    export F77=ifort && \
+    ./configure --prefix=/opt/openmpi \
+        --enable-mpi-fortran=usempi \
+        --enable-mpi-cxx && \
+    make -j4 && \
+    make install && \
+    cd /tmp && \
+    rm -rf openmpi-${OPENMPI_VERSION} openmpi-${OPENMPI_VERSION}.tar.gz'
+
+# Add OpenMPI to PATH
+ENV PATH=/opt/openmpi/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/openmpi/lib
+
+# Install ADCIRC with Intel compilers and Intel-built OpenMPI
+ARG ADCIRC_VERSION
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    export PATH=/opt/openmpi/bin:$PATH && \
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:$LD_LIBRARY_PATH && \
+    git clone --depth 1 --branch v${ADCIRC_VERSION} https://github.com/adcirc/adcirc && \
+    mkdir adcirc_build && \
+    cd adcirc_build && \
+    export CC=icc && \
+    export CXX=icpc && \
+    export FC=ifort && \
+    export F77=ifort && \
+    cmake ../adcirc -DCMAKE_INSTALL_PREFIX=/opt/models/adcirc \
+        -DCMAKE_C_COMPILER=icc \
+        -DCMAKE_CXX_COMPILER=icpc \
+        -DCMAKE_Fortran_COMPILER=ifort \
+        -DCMAKE_Fortran_FLAGS="-heap-arrays 8192" \
+        -DMPI_C_COMPILER=/opt/openmpi/bin/mpicc \
+        -DMPI_CXX_COMPILER=/opt/openmpi/bin/mpicxx \
+        -DMPI_Fortran_COMPILER=/opt/openmpi/bin/mpifort \
+        -DENABLE_OUTPUT_NETCDF=ON \
+        -DBUILD_ADCIRC=ON \
+        -DBUILD_ADCPREP=ON \
+        -DBUILD_PADCIRC=ON \
+        -DNETCDFHOME=/usr \
+        -DENABLE_GRIB2=ON \
+        -DENABLE_DATETIME=ON && \
+    make && make install'
+
+# Install SCHISM with Intel compilers and Intel-built OpenMPI
+RUN [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
+ARG SCHISM_VERSION
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    export PATH=/opt/openmpi/bin:$PATH && \
+    export LD_LIBRARY_PATH=/opt/openmpi/lib:$LD_LIBRARY_PATH && \
+    git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism && \
+    mkdir schism_build && \
+    cd schism_build && \
+    export CC=icc && \
+    export CXX=icpc && \
+    export FC=ifort && \
+    export F77=ifort && \
+    cmake ../schism/src -DCMAKE_INSTALL_PREFIX=/opt/models/schism \
+        -DCMAKE_C_COMPILER=icc \
+        -DCMAKE_CXX_COMPILER=icpc \
+        -DCMAKE_Fortran_COMPILER=ifort \
+        -DCMAKE_Fortran_FLAGS="-heap-arrays 8192" \
+        -DMPI_C_COMPILER=/opt/openmpi/bin/mpicc \
+        -DMPI_Fortran_COMPILER=/opt/openmpi/bin/mpifort \
+        -DBLD_STANDALONE=ON && \
+    make && mkdir -p /opt/models/schism && mv bin /opt/models/schism/bin'
+
+COPY containers/slurm.conf /opt/slurm/etc/slurm.conf
+COPY containers/cgroup.conf /opt/slurm/etc/cgroup.conf
+COPY containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
+COPY containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
+
+# Install additional image libraries
+RUN dnf config-manager --set-enabled crb && dnf makecache && \
+    dnf install -y jasper jasper-devel libpng libpng-devel libjpeg-turbo libjpeg-turbo-devel \
+    blas-devel lapack-devel openblas-devel zlib-devel bzip2-devel && \
+    dnf clean all
+
+# Build NCEP libraries with Intel compilers
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    set -x && \
+    export CC=icc && \
+    export FC=ifort && \
+    export F77=ifort && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git && \
+    cd NCEPLIBS-bacio && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-bacio && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3emc.git && \
+    cd NCEPLIBS-w3emc && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-w3emc && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3nco.git && \
+    cd NCEPLIBS-w3nco && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-w3nco && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-prod_util.git && \
+    cd NCEPLIBS-prod_util && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-prod_util && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-ip.git && \
+    cd NCEPLIBS-ip && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-ip && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2c.git && \
+    cd NCEPLIBS-g2c && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-g2c && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2.git && \
+    cd NCEPLIBS-g2 && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-g2 && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bufr.git && \
+    cd NCEPLIBS-bufr && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make && make install && \
+    cd / && rm -rf NCEPLIBS-bufr'
+
+# Build wgrib2
+ARG WGRIB2_VERSION=2.0.8
+RUN cd / && \
+    wget https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
+    tar -xzf wgrib2.tgz && \
+    cd grib2 && \
+    export CC=gcc && \
+    export FC=gfortran && \
+    make && \
+    mkdir -p /opt/wgrib2/bin && \
+    cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
+    cd / && \
+    rm -rf wgrib2.tgz grib2
+
+RUN mkdir -p /opt/stofs/exec
+
+# Build STOFS 3D Atlantic utilities
+# TODO: These will be converted to ifort in subsequent steps
+COPY sorc /tmp/stofs_sorc
+
+# Build stofs_3d_atl_tide_fac with Intel Fortran
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp/stofs_sorc/stofs_3d_atl_tide_fac.fd && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_tide_fac /opt/stofs/exec/ && \
+    make clean'
+
+# Build stofs_3d_atl_netcdf2shef with Intel Fortran
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp/stofs_sorc/stofs_3d_atl_netcdf2shef.fd && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_netcdf2shef /opt/stofs/exec/ && \
+    make clean'
+
+# Build stofs_3d_atl_gen_3Dth_from_hycom with Intel Fortran
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp/stofs_sorc/stofs_3d_atl_gen_3Dth_from_hycom.fd && \
+    export PATH=$PATH:/usr/lib64/openmpi/bin && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_gen_3Dth_from_hycom /opt/stofs/exec/ && \
+    make clean'
+
+# Build stofs_3d_atl_gen_nudge_from_hycom with Intel Fortran
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
+    export PATH=$PATH:/usr/lib64/openmpi/bin && \
+    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
+    make clean && \
+    make && \
+    cp -p stofs_3d_atl_gen_nudge_from_hycom /opt/stofs/exec/ && \
+    make clean'
+
+# --------------------------
+# Final runtime stage
+FROM rockylinux/rockylinux:9-ubi AS wcoss2
+
+RUN dnf update -y && dnf install -y epel-release && \
+    dnf install -y --enablerepo=crb --allowerasing \
+        which gcc gcc-c++ make cmake git \
+        boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono boost-python3 \
+        netcdf netcdf-devel hdf5 hdf5-devel libtool python3-devel automake wget hostname \
+        jasper udunits2 nco ImageMagick proj bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+        mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs yum-utils curl m4
+
+# Import Intel GPG key and add repository
+RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \
+    cat > /tmp/oneAPI.repo << 'EOF'
+[oneAPI]
+name=Intel® oneAPI repository
+baseurl=https://yum.repos.intel.com/oneapi
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+EOF
+
+RUN mv /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo && dnf makecache
+
+# Install Intel compiler runtime libraries and Intel MPI
+RUN dnf install -y \
+    intel-oneapi-compiler-fortran-runtime-2023.2.1 \
+    intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic-runtime-2023.2.1 \
+    intel-oneapi-compiler-shared-runtime-2023.2.1 \
+    intel-oneapi-mpi-2021.16 \
+    intel-oneapi-openmp-2023.2.1
+
+RUN ln -sf /usr/lib64/libjasper.so.4 /usr/lib64/libjasper.so && \
+    ln -sf /usr/lib64/libpng16.so.16 /usr/lib64/libpng.so
+
+# Install Python packages
+RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
+                cftime termcolor shapely numpy pandas pluggy geopy attrs pyproj cython schema
+
+COPY --from=builder /opt/slurm /opt/slurm
+COPY --from=builder /opt/ecflow /opt/ecflow
+COPY --from=builder /opt/openmpi /opt/openmpi
+COPY --from=builder /opt/models/adcirc /opt/models/adcirc
+COPY --from=builder /opt/models/schism /opt/models/schism
+COPY --from=builder /opt/wgrib2 /opt/wgrib2
+COPY --from=builder /opt/ncep /opt/ncep
+
+# Set OpenMPI environment variables
+ENV PATH=/opt/openmpi/bin:${PATH}
+ENV LD_LIBRARY_PATH=/opt/openmpi/lib
+
+# Copy Intel-compiled NetCDF-Fortran libraries and modules from builder
+COPY --from=builder /usr/lib64/libnetcdff.* /usr/lib64/
+COPY --from=builder /usr/lib64/pkgconfig/netcdf-fortran.pc /usr/lib64/pkgconfig/
+COPY --from=builder /usr/include/netcdf*.mod /usr/include/
+COPY --from=builder /usr/include/typesizes.mod /usr/include/
+
+RUN ln -s /opt/wgrib2/bin/wgrib2 /usr/local/bin/wgrib2 && \
+    chmod -R a+rx /opt/ncep/bin
+
+# Install CFP replacement
+COPY containers/install-cfp.sh /tmp/
+RUN bash /tmp/install-cfp.sh && rm /tmp/install-cfp.sh
+
+# Install MPI wrapper
+COPY containers/install-mpi-wrapper.sh /tmp/
+RUN bash /tmp/install-mpi-wrapper.sh && rm /tmp/install-mpi-wrapper.sh
+
+ARG GOSU_VERSION
+RUN set -ex \
+    && wget -O /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-amd64" \
+    && wget -O /usr/local/bin/gosu.asc "https://github.com/tianon/gosu/releases/download/${GOSU_VERSION}/gosu-amd64.asc" \
+    && export GNUPGHOME="$(mktemp -d)" \
+    && gpg --batch --keyserver hkps://keys.openpgp.org --recv-keys B42F6819007F00F88E364FD4036A9C25BF357DD4 \
+    && gpg --batch --verify /usr/local/bin/gosu.asc /usr/local/bin/gosu \
+    && rm -rf "${GNUPGHOME}" /usr/local/bin/gosu.asc \
+    && chmod +x /usr/local/bin/gosu \
+    && gosu nobody true
+
+# Initialize MySQL database
+RUN chown -R mysql:mysql /var/lib/mysql && \
+    chown mysql:mysql /var/run/mysqld && \
+    chown mysql:mysql /usr/libexec/mysqld && \
+    /usr/libexec/mysqld --initialize-insecure --user=mysql --datadir=/var/lib/mysql
+
+# Add slurm user and create directories
+RUN groupadd -r --gid=990 slurm \
+    && useradd -r -g slurm --uid=990 slurm \
+    && mkdir /etc/sysconfig/slurm \
+        /var/spool/slurmd \
+        /var/run/slurmd \
+        /var/run/slurmdbd \
+        /var/lib/slurmd \
+        /var/log/slurm \
+        /data \
+    && touch /var/lib/slurmd/node_state \
+        /var/lib/slurmd/front_end_state \
+        /var/lib/slurmd/job_state \
+        /var/lib/slurmd/resv_state \
+        /var/lib/slurmd/trigger_state \
+        /var/lib/slurmd/assoc_mgr_state \
+        /var/lib/slurmd/assoc_usage \
+        /var/lib/slurmd/qos_usage \
+        /var/lib/slurmd/fed_mgr_state \
+    && chown -R slurm:slurm /var/*/slurm* \
+    && chown -R munge:munge /run/munge \
+    && chown -R slurm:slurm /opt/slurm/etc \
+    && chmod go-rwx /opt/slurm/etc/slurmdbd.conf \
+    && chmod go-rw /run/munge \
+    && /sbin/create-munge-key \
+    && [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
+
+# Add root password
+RUN echo "root:root" | chpasswd
+
+# Add sudo for wcoss2 user
+RUN dnf install -y sudo && \
+    echo "wcoss2 ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/wcoss2 && \
+    chmod 0440 /etc/sudoers.d/wcoss2
+
+# Generate entrypoint script with Intel compiler environment sourcing
+RUN useradd -m wcoss2 && chown wcoss2:wcoss2 /home/wcoss2 && \
+    echo '# Enable color support for ls and also add handy aliases' >> /home/wcoss2/.bashrc && \
+    echo 'if [ -x /usr/bin/dircolors ]; then' >> /home/wcoss2/.bashrc && \
+    echo '    eval "$(dircolors -b)"' >> /home/wcoss2/.bashrc && \
+    echo '    alias ls="ls --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '    alias dir="dir --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '    alias vdir="vdir --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '    alias grep="grep --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '    alias fgrep="fgrep --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '    alias egrep="egrep --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo 'fi' >> /home/wcoss2/.bashrc && \
+    echo 'alias ll="ls -lt --color=auto"' >> /home/wcoss2/.bashrc && \
+    echo '# Source Intel compilers' >> /home/wcoss2/.bashrc && \
+    echo 'source /opt/intel/oneapi/setvars.sh --force > /dev/null 2>&1' >> /home/wcoss2/.bashrc && \
+    chown wcoss2:wcoss2 /home/wcoss2/.bashrc && \
+  { \
+     echo '#!/usr/bin/bash' \
+  && echo 'echo [INIT] Starting munge authentication daemon...' \
+  && echo 'gosu munge /usr/sbin/munged' \
+  && echo 'echo [INIT] Starting the mysql server daemon...' \
+  && echo '/usr/libexec/mysqld --user mysql --datadir=/var/lib/mysql &' \
+  && echo 'echo [INIT] Waiting for MySQL to start...' \
+  && echo 'sleep 5' \
+  && echo 'echo [INIT] Initializing MySQL database for SLURM...' \
+  && echo 'mysql -u root -e "CREATE DATABASE IF NOT EXISTS slurm_acct_db"' \
+  && echo 'mysql -u root -e "CREATE USER IF NOT EXISTS '\''slurm'\''@'\''localhost'\'' IDENTIFIED BY '\''slurm'\''"' \
+  && echo 'mysql -u root -e "GRANT ALL PRIVILEGES ON slurm_acct_db.* TO '\''slurm'\''@'\''localhost'\''"' \
+  && echo 'mysql -u root -e "FLUSH PRIVILEGES"' \
+  && echo 'echo [INIT] Starting the SLURM database daemon...' \
+  && echo 'gosu slurm /opt/slurm/sbin/slurmdbd' \
+  && echo 'echo [INIT] Generating SLURM node configuration...' \
+  && echo 'python3 /opt/slurm/etc/get_slurm_node.py' \
+  && echo 'echo [INIT] Updating the slurm configuration file...' \
+  && echo 'THISHOST=$(hostname) && perl -w -pi -e "s/<<HOSTNAME>>/$THISHOST/g" /opt/slurm/etc/slurm.conf' \
+  && echo 'echo [INIT] Starting SLURM job controller daemon...' \
+  && echo 'gosu slurm /opt/slurm/sbin/slurmctld' \
+  && echo 'echo [INIT] Starting SLURM node daemon...' \
+  && echo '/opt/slurm/sbin/slurmd' \
+  && echo 'echo [INIT] Starting ecFlow server...' \
+  && echo 'gosu wcoss2 bash -c log=$(/opt/ecflow/bin/ecflow_start.sh -p 3121 1>/home/wcoss2/ecflow.log 2>&1)' \
+  && echo 'echo [INIT] Sourcing Intel compiler environment...' \
+  && echo 'source /opt/intel/oneapi/setvars.sh --force' \
+  && echo 'echo [INIT] Intel Fortran compiler: $(which ifort)' \
+  && echo 'echo [INIT] Switching to user: wcoss2' \
+  && echo 'exec gosu wcoss2 "$@"'; \
+    } > /entrypoint.sh \
+  && chmod a+x /entrypoint.sh
+
+# Install stofs workflow manager
+RUN mkdir -p /home/wcoss2/stofs_workflow && mkdir -p /home/wcoss2/data
+COPY src /home/wcoss2/stofs_workflow/src
+COPY pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
+COPY examples/stofs_scripts /home/wcoss2/data/stofs_scripts
+COPY examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
+COPY examples/config_schism.yaml /home/wcoss2/config_schism.yaml
+RUN pip install /home/wcoss2/stofs_workflow && \
+    rm -rf /home/wcoss2/stofs_workflow && \
+    chmod ugo+x /home/wcoss2/data/stofs_scripts/stofs_3d_atl/*
+
+# Create required directory structure
+RUN mkdir -p /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl \
+    && mkdir -p /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl \
+    && mkdir -p /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/pysh \
+    && mkdir -p /home/wcoss2/sandbox/stofs3d/fix/stofs_3d_atl \
+    && mkdir -p /lfs/h1/ops/prod/com/nwm/v3.0 \
+    && mkdir -p /lfs/h1/ops/prod/com/ \
+    && mkdir -p /lfs/h1/ops/prod/dcom/ \
+    && mkdir -p /home/wcoss2/sandbox/dcom_root \
+    && mkdir -p /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl \
+    && mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs
+
+# Copy ush files
+COPY ush/stofs_3d_atl/*.sh /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/
+COPY ush/stofs_3d_atl/pysh/* /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/pysh
+
+# Set permissions
+RUN chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/ \
+    && chmod -R +x /lfs/h1/ops/prod/com/nwm/v3.0/ \
+    && chmod -R +x /lfs/h1/ops/prod/com/ \
+    && chmod -R +x /lfs/h1/ops/prod/dcom/ \
+    && chmod -R +x /home/wcoss2/sandbox/dcom_root/ \
+    && chmod -R +x /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1 \
+    && chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/pysh \
+    && chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+
+# Copy scripts
+RUN cp -p /home/wcoss2/data/stofs_scripts/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl/ \
+    && chmod -R +x /home/wcoss2/sandbox/stofs3d/scripts/stofs_3d_atl
+
+# Generate modulefiles
+ARG ADCIRC_VERSION
+ARG SCHISM_VERSION
+ARG ECFLOW_VERSION
+RUN mkdir -p /usr/share/modulefiles/models/adcirc && \
+    mkdir -p /usr/share/modulefiles/models/schism && \
+    mkdir -p /usr/share/modulefiles/ecflow && \
+    mkdir -p /usr/share/modulefiles/slurm && \
+    mkdir -p /usr/share/modulefiles/ncep && \
+    mkdir -p /usr/share/modulefiles/intel && \
+  {  echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  ADCIRC module for use with environment-modules package:' \
+  && echo '#' \
+  && echo 'conflict		adcirc' \
+  && echo 'module load mpi' \
+  && echo 'prepend-path 		PATH 		/opt/models/adcirc/bin'; \
+  } > /usr/share/modulefiles/models/adcirc/${ADCIRC_VERSION} \
+  && {  echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  SCHISM module for use with environment-modules package:' \
+  && echo '#' \
+  && echo 'conflict		schism' \
+  && echo 'module load mpi' \
+  && echo 'prepend-path 		PATH 		/opt/models/schism/bin'; \
+  } > /usr/share/modulefiles/models/schism/${SCHISM_VERSION} \
+  && {  echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  ecFlow module for use with environment-modules package:' \
+  && echo '#' \
+  && echo 'conflict		ecflow' \
+  && echo 'prepend-path 		PATH 		/opt/ecflow/bin' \
+  && echo 'prepend-path 		LD_LIBRARY_PATH 		/opt/ecflow/lib' \
+  && echo 'prepend-path     PYTHONPATH    /opt/ecflow/lib/python3.9/site-packages' \
+  && echo 'setenv ECF_HOST localhost' \
+  && echo 'setenv ECF_PORT 3121'; \
+  } > /usr/share/modulefiles/ecflow/${ECFLOW_VERSION} \
+  && {  echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  slurm module for use with environment-modules package:' \
+  && echo '#' \
+  && echo 'conflict		slurm' \
+  && echo 'prepend-path 		PATH 		/opt/slurm/bin'; \
+  } > /usr/share/modulefiles/slurm/24.11.1.1 \
+  && { echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  Modulefile for NCEP libs' \
+  && echo '#' \
+  && echo 'conflict ncep' \
+  && echo 'prepend-path PATH /opt/ncep/bin'; \
+  } > /usr/share/modulefiles/ncep/develop \
+  && { echo '#%Module 1.0' \
+  && echo '#' \
+  && echo '#  Intel compiler module' \
+  && echo '#' \
+  && echo 'conflict intel' \
+  && echo 'if { [module-info mode load] } {' \
+  && echo '    puts stderr "Loading Intel oneAPI compilers..."' \
+  && echo '    puts stderr "Run: source /opt/intel/oneapi/setvars.sh"' \
+  && echo '}'; \
+  } > /usr/share/modulefiles/intel/2024.2 \
+  && { echo "module load slurm" \
+  && echo "module load ecflow" \
+  && echo "module load ncep"; \
+  } >> /etc/environment-modules/initrc
+
+# Set up environment file
+COPY containers/environment.sh /home/wcoss2/environment.sh
+RUN chown wcoss2:wcoss2 /home/wcoss2/environment.sh && \
+    mkdir -p /home/wcoss2/sandbox/date && \
+    mkdir -p /home/wcoss2/sandbox/stofs3d/versions
+COPY containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
+
+# Add OpenMPI to system PATH
+RUN echo 'export PATH=$PATH:/usr/lib64/openmpi/bin' >> /etc/bashrc && \
+    echo 'export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64/openmpi/lib' >> /etc/bashrc && \
+    ln -sf /usr/lib64/openmpi/bin/mpiexec /usr/bin/mpiexec && \
+    ln -sf /usr/lib64/openmpi/bin/mpirun /usr/bin/mpirun
+
+# Create WCOSS-like directory structure
+RUN mkdir -p /lfs/h1/gfs/v16.3 && \
+    mkdir -p /lfs/h1/hrrr/v4.1 && \
+    mkdir -p /lfs/h1/nwm/v3.0 && \
+    mkdir -p /lfs/h1/rtofs/v2.4 && \
+    mkdir -p /lfs/h1/ops/prod/config && \
+    mkdir -p /lfs/h1/ops/prod/dcom && \
+    mkdir -p /home/wcoss2/sandbox/date && \
+    mkdir -p /home/wcoss2/sandbox/stofs3d/versions && \
+    mkdir -p /home/wcoss2/sandbox/stofs3d/prev && \
+    mkdir -p /home/wcoss2/sandbox/stofs3d/rerun && \
+    mkdir -p /home/wcoss2/dcom_root && \
+    mkdir -p /home/wcoss2/sandbox/stofs3d/dataroot/stofs_3d_atl_run_12_prod_v2.1/outputs && \
+    chown -R wcoss2:wcoss2 /home/wcoss2/sandbox
+
+COPY --from=builder /opt/stofs/exec/* /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/
+COPY containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
+
+ENTRYPOINT [ "/entrypoint.sh" ]
+CMD [ "/usr/bin/bash" ]
+WORKDIR /home/wcoss2
