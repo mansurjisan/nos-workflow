@@ -27,17 +27,14 @@ RUN dnf update -y && dnf install -y epel-release && \
 RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
 
 # Add Intel oneAPI repository
-RUN cat > /tmp/oneAPI.repo << 'EOF'
-[oneAPI]
-name=Intel® oneAPI repository
-baseurl=https://yum.repos.intel.com/oneapi
-enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
-EOF
-
-RUN mv /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo && dnf makecache
+RUN printf '[oneAPI]\n\
+name=Intel® oneAPI repository\n\
+baseurl=https://yum.repos.intel.com/oneapi\n\
+enabled=1\n\
+gpgcheck=1\n\
+repo_gpgcheck=0\n\
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB\n' > /etc/yum.repos.d/oneAPI.repo \
+    && dnf makecache
 
 # Install Intel oneAPI compilers (classic ifort & icc for WCOSS2 compatibility)
 # Using 2023.2.1 which includes ifort (classic compiler version 2021.10.0)
@@ -359,17 +356,14 @@ RUN dnf update -y && dnf install -y epel-release && \
 
 # Import Intel GPG key and add repository
 RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \
-    cat > /tmp/oneAPI.repo << 'EOF'
-[oneAPI]
-name=Intel® oneAPI repository
-baseurl=https://yum.repos.intel.com/oneapi
-enabled=1
-gpgcheck=1
-repo_gpgcheck=0
-gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
-EOF
-
-RUN mv /tmp/oneAPI.repo /etc/yum.repos.d/oneAPI.repo && dnf makecache
+    printf '[oneAPI]\n\
+name=Intel® oneAPI repository\n\
+baseurl=https://yum.repos.intel.com/oneapi\n\
+enabled=1\n\
+gpgcheck=1\n\
+repo_gpgcheck=0\n\
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB\n' > /etc/yum.repos.d/oneAPI.repo \
+    && dnf makecache
 
 # Install Intel compiler runtime libraries and Intel MPI
 RUN dnf install -y \
