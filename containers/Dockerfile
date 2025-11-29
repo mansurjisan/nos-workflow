@@ -27,8 +27,10 @@ FROM rockylinux/rockylinux:9 AS builder
 #                   jasper udunits2 nco ImageMagick proj proj-devel \
 #                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
 #                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
-RUN dnf update -y && dnf install -y epel-release && \
+RUN dnf update -y && \
+    dnf install -y epel-release && \
     dnf config-manager --set-enabled crb && \
+    dnf config-manager --set-enabled epel && \
     dnf makecache && \
     dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
@@ -283,8 +285,10 @@ RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
 # --------------------------
 FROM rockylinux/rockylinux:9 AS wcoss2
 
-RUN dnf update -y && dnf install -y epel-release && \
+RUN dnf update -y && \
+    dnf install -y epel-release && \
     dnf config-manager --set-enabled crb && \
+    dnf config-manager --set-enabled epel && \
     dnf makecache && \
     dnf install -y \
         which gcc gcc-c++ gcc-gfortran make cmake git \
