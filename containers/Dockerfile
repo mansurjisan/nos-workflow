@@ -30,7 +30,9 @@ FROM rockylinux/rockylinux:9 AS builder
 RUN dnf update -y && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
     /usr/bin/crb enable && \
+    sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/epel*.repo && \
     dnf clean all && \
+    dnf repolist && \
     dnf makecache && \
     dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
@@ -288,7 +290,9 @@ FROM rockylinux/rockylinux:9 AS wcoss2
 RUN dnf update -y && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
     /usr/bin/crb enable && \
+    sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/epel*.repo && \
     dnf clean all && \
+    dnf repolist && \
     dnf makecache && \
     dnf install -y \
         which gcc gcc-c++ gcc-gfortran make cmake git \
