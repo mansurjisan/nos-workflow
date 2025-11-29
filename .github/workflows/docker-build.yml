@@ -32,3 +32,5 @@ jobs:
           file: ./containers/Dockerfile
           push: true
           tags: mjisan/stofsworkflow:nightly
+          platforms: linux/amd64
+          provenance: false
