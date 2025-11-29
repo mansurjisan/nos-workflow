@@ -13,7 +13,7 @@ ARG GOSU_VERSION=1.17
 #ARG ENVIRONMENT_CYC=00
 #ARG ENVIRONMENT_WORKDIR=/home/wcoss2/sandbox
 
-FROM rockylinux/rockylinux:9-ubi AS builder
+FROM rockylinux/rockylinux:9 AS builder
 
 # Install all the libs we need to build the software we are interested in. When we build our final container,
 # we will do the same thing, but remove the devel libs to save some space
@@ -281,7 +281,7 @@ RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
     make clean
 
 # --------------------------
-FROM rockylinux/rockylinux:9-ubi AS wcoss2
+FROM rockylinux/rockylinux:9 AS wcoss2
 
 RUN dnf update -y && dnf install -y epel-release && \
     dnf config-manager --set-enabled crb && \
