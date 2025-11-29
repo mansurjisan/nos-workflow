@@ -39,8 +39,8 @@ RUN dnf update -y && \
                    jasper udunits2 nco ImageMagick \
                    bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
                    mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel && \
-    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-9.1.1-1.el9.x86_64.rpm \
-                   https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-devel-9.1.1-1.el9.x86_64.rpm
+    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-8.2.0-1.el9.x86_64.rpm \
+                   https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-devel-8.2.0-1.el9.x86_64.rpm
 
 # Install the python packages we'll be using. This just helps replicate the environment we use during the build
 RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
@@ -294,7 +294,7 @@ RUN dnf update -y && \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel libtool python3-devel automake wget hostname \
         jasper udunits2 nco ImageMagick bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
         mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs && \
-    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-9.1.1-1.el9.x86_64.rpm
+    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-8.2.0-1.el9.x86_64.rpm
 
 RUN ln -sf /usr/lib64/libjasper.so.4 /usr/lib64/libjasper.so && \
     ln -sf /usr/lib64/libpng16.so.16 /usr/lib64/libpng.so
