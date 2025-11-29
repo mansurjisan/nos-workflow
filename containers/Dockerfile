@@ -28,7 +28,9 @@ FROM rockylinux/rockylinux:9-ubi AS builder
 #                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
 #                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
 RUN dnf update -y && dnf install -y epel-release && \
-    dnf install -y --enablerepo=crb --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
+    dnf config-manager --set-enabled crb && \
+    dnf makecache && \
+    dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
                    boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
                    netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
@@ -282,7 +284,9 @@ RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
 FROM rockylinux/rockylinux:9-ubi AS wcoss2
 
 RUN dnf update -y && dnf install -y epel-release && \
-    dnf install -y --enablerepo=crb \
+    dnf config-manager --set-enabled crb && \
+    dnf makecache && \
+    dnf install -y \
         which gcc gcc-c++ gcc-gfortran make cmake git \
         openmpi openmpi-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono boost-python3 \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel libtool python3-devel automake wget hostname \
