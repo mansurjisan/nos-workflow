@@ -30,19 +30,17 @@ FROM rockylinux/rockylinux:9 AS builder
 RUN dnf update -y && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
     /usr/bin/crb enable && \
-    sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/epel*.repo && \
-    dnf clean all && \
-    dnf repolist && \
-    dnf makecache && \
     dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
                    boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
                    netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
                    libtool ncurses-devel expat-devel openssl-devel python3-devel \
                    automake expat-devel wget hostname zlib-devel  \
-                   jasper udunits2 nco ImageMagick proj proj-devel \
+                   jasper udunits2 nco ImageMagick \
                    bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
-                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
+                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-9.1.1-1.el9.x86_64.rpm \
+                   https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-devel-9.1.1-1.el9.x86_64.rpm
 
 # Install the python packages we'll be using. This just helps replicate the environment we use during the build
 RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
@@ -290,16 +288,13 @@ FROM rockylinux/rockylinux:9 AS wcoss2
 RUN dnf update -y && \
     dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
     /usr/bin/crb enable && \
-    sed -i 's/enabled=0/enabled=1/g' /etc/yum.repos.d/epel*.repo && \
-    dnf clean all && \
-    dnf repolist && \
-    dnf makecache && \
     dnf install -y \
         which gcc gcc-c++ gcc-gfortran make cmake git \
         openmpi openmpi-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono boost-python3 \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel libtool python3-devel automake wget hostname \
-        jasper udunits2 nco ImageMagick proj bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
-        mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs
+        jasper udunits2 nco ImageMagick bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+        mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/9/Everything/x86_64/Packages/p/proj-9.1.1-1.el9.x86_64.rpm
 
 RUN ln -sf /usr/lib64/libjasper.so.4 /usr/lib64/libjasper.so && \
     ln -sf /usr/lib64/libpng16.so.16 /usr/lib64/libpng.so
