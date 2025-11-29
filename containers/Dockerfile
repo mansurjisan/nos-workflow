@@ -13,7 +13,7 @@ ARG GOSU_VERSION=1.17
 #ARG ENVIRONMENT_CYC=00
 #ARG ENVIRONMENT_WORKDIR=/home/wcoss2/sandbox
 
-FROM rockylinux/rockylinux:9-ubi AS builder
+FROM rockylinux/rockylinux:9 AS builder
 
 # Install all the libs we need to build the software we are interested in. When we build our final container,
 # we will do the same thing, but remove the devel libs to save some space
@@ -27,16 +27,31 @@ FROM rockylinux/rockylinux:9-ubi AS builder
 #                   jasper udunits2 nco ImageMagick proj proj-devel \
 #                   bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
 #                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
-RUN dnf update -y && dnf install -y epel-release && \
-    dnf install -y --enablerepo=crb --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
                    boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
                    netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
                    libtool ncurses-devel expat-devel openssl-devel python3-devel \
                    automake expat-devel wget hostname zlib-devel  \
-                   jasper udunits2 nco ImageMagick proj proj-devel \
+                   jasper udunits2 nco ImageMagick \
                    bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
-                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
+                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel \
+                   sqlite-devel libtiff-devel libcurl-devel libwebp-devel jbigkit-devel
+
+# Build PROJ from source (not available in EPEL 9)
+ARG PROJ_VERSION=9.3.1
+RUN cd /tmp && \
+    wget https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz && \
+    tar -xzf proj-${PROJ_VERSION}.tar.gz && \
+    cd proj-${PROJ_VERSION} && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf proj-${PROJ_VERSION}*
 
 # Install the python packages we'll be using. This just helps replicate the environment we use during the build
 RUN pip install xarray pyyaml matplotlib cartopy netCDF4 pyshp more-itertools pytest pytz scikit-learn dateutils pyparsing \
@@ -279,15 +294,30 @@ RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
     make clean
 
 # --------------------------
-FROM rockylinux/rockylinux:9-ubi AS wcoss2
+FROM rockylinux/rockylinux:9 AS wcoss2
 
-RUN dnf update -y && dnf install -y epel-release && \
-    dnf install -y --enablerepo=crb \
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y \
         which gcc gcc-c++ gcc-gfortran make cmake git \
         openmpi openmpi-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono boost-python3 \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel libtool python3-devel automake wget hostname \
-        jasper udunits2 nco ImageMagick proj bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
-        mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs
+        jasper udunits2 nco ImageMagick bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
+        mysql mysql-server mysql-libs environment-modules libjpeg-turbo emacs \
+        sqlite-devel libtiff-devel libcurl-devel
+
+# Build PROJ from source (not available in EPEL 9)
+ARG PROJ_VERSION=9.3.1
+RUN cd /tmp && \
+    wget https://download.osgeo.org/proj/proj-${PROJ_VERSION}.tar.gz && \
+    tar -xzf proj-${PROJ_VERSION}.tar.gz && \
+    cd proj-${PROJ_VERSION} && \
+    mkdir build && cd build && \
+    cmake .. -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_BUILD_TYPE=Release && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf proj-${PROJ_VERSION}*
 
 RUN ln -sf /usr/lib64/libjasper.so.4 /usr/lib64/libjasper.so && \
     ln -sf /usr/lib64/libpng16.so.16 /usr/lib64/libpng.so
