@@ -29,10 +29,9 @@ FROM rockylinux/rockylinux:9 AS builder
 #                   mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel
 RUN dnf update -y && \
     dnf install -y epel-release && \
-    dnf config-manager --set-enabled crb && \
-    dnf config-manager --set-enabled epel && \
+    /usr/bin/crb enable && \
     dnf makecache && \
-    dnf install -y --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
+    dnf install -y --enablerepo=epel --nobest which gcc gcc-c++ gcc-gfortran make cmake git \
                    openmpi openmpi-devel \
                    boost-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono \
                    netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
@@ -287,10 +286,9 @@ FROM rockylinux/rockylinux:9 AS wcoss2
 
 RUN dnf update -y && \
     dnf install -y epel-release && \
-    dnf config-manager --set-enabled crb && \
-    dnf config-manager --set-enabled epel && \
+    /usr/bin/crb enable && \
     dnf makecache && \
-    dnf install -y \
+    dnf install -y --enablerepo=epel \
         which gcc gcc-c++ gcc-gfortran make cmake git \
         openmpi openmpi-devel boost-system boost-filesystem boost-timer boost-date-time boost-program-options boost-chrono boost-python3 \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel libtool python3-devel automake wget hostname \
