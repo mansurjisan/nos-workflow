@@ -39,7 +39,7 @@ RUN dnf update -y && \
                    jasper udunits2 nco ImageMagick \
                    bzip2 gnupg munge munge-devel psmisc bash-completion json-c http-parser \
                    mysql mysql-server mysql-devel libjpeg-turbo libjpeg-turbo-devel \
-                   sqlite-devel libtiff-devel libcurl-devel
+                   sqlite-devel libtiff-devel libcurl-devel libwebp-devel jbigkit-devel
 
 # Build PROJ from source (not available in EPEL 9)
 ARG PROJ_VERSION=9.3.1
