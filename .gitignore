@@ -1,0 +1,80 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Testing
+.coverage
+.pytest_cache/
+htmlcov/
+.tox/
+.nox/
+
+# Documentation
+docs/_build/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Work directories (contains large data files)
+work/
+DATA/
+COMOUT/
+*.nc
+*.grib2
+*.grb2
+
+# Log files
+*.log
+jlogfile
+nos_jlogfile
+corms.log
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+
+# Large binary files
+*.tar
+*.tar.gz
+*.zip
+
+# Secrets and credentials
+.env.local
+.env.*.local
+credentials.json
+secrets.yaml

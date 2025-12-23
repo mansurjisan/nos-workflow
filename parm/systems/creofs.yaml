@@ -1,0 +1,175 @@
+# CREOFS Configuration
+# Columbia River Estuary Operational Forecast System
+#
+# Inherits from base SCHISM configuration and overrides specific values.
+# This config maps to nosofs (COMF) shell script environment variables.
+
+_base: schism
+
+system:
+  name: creofs
+  description: "Columbia River Estuary Operational Forecast System"
+  region: pacific_northwest
+  framework: comf
+  version: "3.7.0"
+  prefix: creofs
+
+# Grid configuration - SCHISM unstructured grid
+grid:
+  type: unstructured
+  # CREOFS grid dimensions (approximate based on similar SCHISM systems)
+  n_nodes: 120000
+  n_elements: 230000
+  n_sides: 350000
+  n_levels: 20
+  files:
+    horizontal: creofs.hgrid.gr3
+    vertical: creofs.vgrid.in
+    horizontal_ll: creofs.hgrid.ll
+    station: creofs.station.in
+  # Columbia River Estuary domain bounds
+  domain:
+    lon_min: -124.5
+    lon_max: -122.0
+    lat_min: 45.5
+    lat_max: 47.0
+  igrd_met: 0
+  igrd_obc: 1
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    met_num: 2
+    primary: GFS
+    secondary: HRRR
+    forecast_source: GFS
+    forecast_source2: HRRR
+    scale_hflux: 1.0
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    # Columbia River is the primary input
+    sources:
+      - name: columbia_river
+        usgs_id: "14105700"
+      - name: willamette_river
+        usgs_id: "14211720"
+    files:
+      ctl_file: creofs.river.ctl
+      clim_file: nos.river.clim.usgs.nc
+      nwm_reach: creofs.nwm.reach.dat
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+      files:
+        obc_ctl: creofs.obc.ctl
+        obc_clim: nos.clim.WOA05.nc
+    nudging:
+      enabled: true
+      timescale_seconds: 10800.0
+      files:
+        nudge_weight: creofs.nudge.gr3
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    create_forcing: 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      harmonic_constants_obc: creofs.bctides.in
+      harmonic_constants_ofs: creofs.bctides.in_template
+
+# Model physics
+model:
+  executable: schism_creofs
+  ocean_model: SCHISM
+  physics:
+    dt: 100.0
+    extstep_seconds: 100.0
+    nws: 2
+    ndtfast: 20
+    min_depth: 0.01
+  run:
+    hindcast_days: 0.25       # 6-hour nowcast
+    forecast_days: 2.0        # 2-day forecast
+  runtime:
+    ctl_file: creofs.param.nml
+    met_ctl_file: creofs.sflux_inputs.txt
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: creofs
+  nstation: 50
+  stations:
+    enabled: true
+    interval: 360             # 6 minutes
+    file: creofs.station.in
+  fields:
+    interval: 3600            # 1 hour
+    def_interval: 86400
+  restart:
+    interval: 21600           # 6 hours
+
+# Computational resources
+resources:
+  nprocs: 480
+  nscribes: 4
+  memory_gb: 500
+  walltime_hours: 2
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings for nosofs shell scripts
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    DELT_MODEL: model.physics.dt
+    TOTAL_TASKS: resources.nprocs

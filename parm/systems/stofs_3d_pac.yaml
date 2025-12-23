@@ -1,0 +1,209 @@
+# STOFS 3D Pacific Configuration
+# Storm Surge and Tide Operational Forecast System - 3D Pacific
+#
+# Inherits from base SCHISM configuration and overrides specific values.
+# This config maps to IT-STOFS shell script environment variables.
+# NOTE: This is a placeholder config - Pacific STOFS may have different parameters
+
+_base: schism
+
+system:
+  name: stofs_3d_pac
+  description: "Storm Surge and Tide Operational Forecast System - 3D Pacific"
+  region: pacific
+  framework: stofs
+  version: "2.2.0"
+  prefix: stofs_3d_pac
+
+# Grid configuration - maps to shell variables
+grid:
+  type: unstructured
+  # SCHISM grid dimensions (estimates based on Pacific domain)
+  n_nodes: 2000000
+  n_elements: 4000000
+  n_sides: 6000000
+  n_levels: 51
+  files:
+    horizontal: stofs_3d_pac.hgrid.gr3
+    vertical: stofs_3d_pac.vgrid.in
+    horizontal_ll: stofs_3d_pac.hgrid.ll
+  # Pacific domain bounds (US West Coast to Hawaii)
+  domain:
+    lon_min: -180.0
+    lon_max: -115.0
+    lat_min: 10.0
+    lat_max: 62.0
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs
+    fallback: null
+    gfs:
+      resolution: "0.25"
+      levels: [10, 2]
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - RH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+    # No HRRR for Pacific (out of CONUS domain)
+    hrrr_blend:
+      enabled: false
+
+  river:
+    enabled: true
+    primary: nwm
+    n_rivers: 5000            # Estimated Pacific coast rivers
+    version: "v3.0"
+    n_list_target: 121
+    n_list_min: 97
+    files:
+      sources_json: stofs_3d_pac_sources.json
+      sinks_json: stofs_3d_pac_sinks.json
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: rtofs
+      ts_source: rtofs
+      ssh_offset: 0.04
+      n_list_target_2d: 21
+      n_list_target_3d: 21
+      # RTOFS region of interest indices (Pacific specific)
+      roi_2ds:
+        x1: 100
+        x2: 500
+        y1: 200
+        y2: 800
+      roi_3dz:
+        x1: 50
+        x2: 250
+        y1: 100
+        y2: 400
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+      files:
+        sal_nudge: stofs_3d_pac.SAL_nudge.gr3
+        tem_nudge: stofs_3d_pac.TEM_nudge.gr3
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      bctides_template: bctides.in_template
+      harmonic_constants: stofs_3d_pac.tidal_hc.nc
+
+# Model physics and runtime configuration
+model:
+  executable: pschism_WCOSS2
+  physics:
+    dt: 150.0
+    slam0: -140.0             # Reference longitude (Pacific)
+    sfea0: 40.0               # Reference latitude
+    nws: 2
+    wtiminc: 3600
+  run:
+    hindcast_days: 0.25
+    forecast_days: 5.25
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: stofs_3d_pac
+  stations:
+    enabled: true
+    interval: 360.0
+    file: stofs_3d_pac.station.in
+  fields_2d:
+    enabled: true
+    interval: 3600.0
+    variables:
+      - elevation
+      - dahv
+      - windSpeedX
+      - windSpeedY
+  fields_3d:
+    enabled: true
+    interval: 3600.0
+    variables:
+      - salinity
+      - temperature
+      - horizontalVelX
+      - horizontalVelY
+  restart:
+    interval_days: 1.0
+
+# Computational resources
+resources:
+  nprocs: 1200
+  nscribes: 8
+  memory_gb: 2500
+  walltime_hours: 4
+
+# STOFS workflow stages
+stages:
+  - prep_nowcast
+  - now_forecast
+  - post_1
+  - post_2
+  - temp_salt_restart
+
+# Legacy shell script execution configuration
+legacy:
+  enabled: true
+  ush_dir: ""
+  pysh_dir: ""
+  fix_dir: ""
+  scripts:
+    gfs: true
+    hrrr: false               # No HRRR for Pacific
+    river: true
+    obc: true
+    tides: true
+  script_names:
+    gfs: stofs_3d_pac_create_surface_forcing_gfs.sh
+    river: stofs_3d_pac_create_river_forcing_nwm.sh
+    obc: stofs_3d_pac_create_obc_3d_th.sh
+    tides: stofs_3d_pac_create_bctides_in.sh
+
+# Environment variable mappings for shell scripts
+shell_mappings:
+  framework: stofs
+  env_prefix: stofs3d
+  variables:
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    GRIDFILE: grid.files.horizontal
+    VGRID_CTL: grid.files.vertical
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+    N_RIVERS: forcing.river.n_rivers
+    N_list_target: forcing.river.n_list_target
+    N_list_min: forcing.river.n_list_min
+    N_list_target_2D: forcing.ocean.obc.n_list_target_2d
+    N_list_target_3D: forcing.ocean.obc.n_list_target_3d
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset

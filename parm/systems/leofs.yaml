@@ -1,0 +1,68 @@
+# LEOFS Configuration
+# Lake Erie Operational Forecast System
+#
+# Inherits from base FVCOM configuration and overrides specific values.
+
+_base: fvcom
+
+system:
+  name: leofs
+  description: "Lake Erie Operational Forecast System"
+  region: great_lakes
+  framework: comf
+  version: "3.7.0"
+
+grid:
+  type: unstructured
+  files:
+    horizontal: leofs_grd.dat
+    depth: leofs_dep.dat
+    obc: leofs_obc.dat
+  domain:
+    lon_min: -83.5
+    lon_max: -78.8
+    lat_min: 41.3
+    lat_max: 42.9
+
+# Override forcing for Great Lakes
+forcing:
+  atmospheric:
+    primary: hrrr             # High-resolution for Great Lakes
+    fallback: gfs
+    blend_enabled: true
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: detroit_river
+      - name: maumee_river
+      - name: cuyahoga_river
+
+  ocean:
+    enabled: false            # Lake - no ocean BC
+
+  tidal:
+    enabled: false            # Lake - no ocean tides
+
+# Override model settings
+model:
+  physics:
+    dt: 0.5
+    dti: 5.0
+  run:
+    hindcast_days: 0.0        # Cold start for lakes
+    forecast_days: 5.0
+
+# Computational resources
+resources:
+  nprocs: 240
+  memory_gb: 400
+  walltime_hours: 2
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post

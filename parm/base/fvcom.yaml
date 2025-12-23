@@ -1,0 +1,85 @@
+# Base configuration for all FVCOM-based OFS systems
+# Systems inherit from this via _base: fvcom
+#
+# FVCOM systems: LEOFS, LOOFS, LMHOFS, LSOFS, NGOFS2, SFBOFS, SSCOFS
+
+model:
+  type: fvcom
+  version: "4.1"
+
+  # Default physics parameters
+  physics:
+    dt: 0.5                   # External timestep (seconds)
+    dti: 10.0                 # Internal timestep (seconds)
+    isplit: 20                # Ratio of external to internal timestep
+    horzmix: closure          # Horizontal mixing scheme
+    vertmix: gotm             # Vertical mixing (GOTM)
+    bottom_roughness: 0.001   # Default bottom roughness
+
+  # Vertical grid settings
+  vertical:
+    ksl: 1                    # Sigma layer type
+    kb: 21                    # Number of sigma levels
+    p_sigma: 1.0              # Power for sigma distribution
+
+  # Default run configuration
+  run:
+    hindcast_days: 0.0        # No hindcast for lakes (cold start)
+    forecast_days: 5.0        # 5-day forecast
+
+# Default forcing sources for FVCOM
+# Great Lakes use high-resolution atmospheric forcing
+forcing:
+  atmospheric:
+    primary: hrrr             # High-Resolution Rapid Refresh (3km)
+    fallback: gfs             # Global fallback
+    blend_enabled: true       # Blend HRRR + GFS at boundaries
+    variables:
+      - uwind
+      - vwind
+      - air_temperature
+      - relative_humidity
+      - air_pressure
+      - precipitation
+      - shortwave
+      - longwave
+
+  ocean:
+    enabled: false            # Most FVCOM systems are lakes (no open ocean BC)
+
+  river:
+    enabled: true
+    primary: nwm              # National Water Model for river inflows
+
+  tidal:
+    enabled: false            # Lakes don't have ocean tides
+    # NGOFS2 overrides this - Gulf of Mexico has tides
+
+# Default output configuration
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    interval: 360.0           # Station output every 6 minutes
+  fields_2d:
+    enabled: true
+    variables:
+      - zeta                  # Sea surface height
+      - ubar                  # Barotropic u velocity
+      - vbar                  # Barotropic v velocity
+  fields_3d:
+    enabled: true
+    variables:
+      - temp                  # Temperature
+      - salinity              # Salinity
+      - u                     # U velocity
+      - v                     # V velocity
+  intervals:
+    hotstart_days: 1.0
+    history_hours: 1.0
+
+# Default computational resources
+resources:
+  nprocs: 240                 # Override per system
+  memory_gb: 400
+  walltime_hours: 2

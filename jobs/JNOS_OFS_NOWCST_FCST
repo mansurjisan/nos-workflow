@@ -1,0 +1,171 @@
+#!/bin/bash
+set -x
+
+########################################
+# NOS_OFS_NOWCST_FCST - Unified Nowcast/Forecast Job
+#
+# Supports both nosofs/COMF and IT-STOFS frameworks with YAML configuration
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Load shared library if available
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+    export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+fi
+
+########################################
+# Set HOME directories
+########################################
+export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_ofs.${nos_ofs_ver:?}}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name
+####################################
+export NET=${NET:-nosofs}
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# IT-STOFS specific paths
+export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
+export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
+
+####################################
+# YAML Configuration Loading
+####################################
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+        if [ -f "${USHstofs3d}/stofs_3d_atl_config.sh" ]; then
+            source "${USHstofs3d}/stofs_3d_atl_config.sh"
+            load_stofs_config "${OFS_CONFIG}"
+        fi
+        ;;
+    secofs|creofs)
+        export OFS_FRAMEWORK="comf"
+        export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+        if [ -f "${USHnos}/nosofs/nos_ofs_config.sh" ]; then
+            source "${USHnos}/nosofs/nos_ofs_config.sh"
+            load_nosofs_config "${OFS_CONFIG}"
+        fi
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+if command -v compath.py &> /dev/null; then
+    export COMIN=${COMIN:-$(compath.py ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nos_ofs_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+else
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${nos_ofs_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nos_ofs_ver}}
+    export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+fi
+
+mkdir -m 775 -p $COMOUT
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute appropriate script
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # IT-STOFS now_forecast script (combined nowcast+forecast)
+        if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_now_forecast.sh" ]; then
+            ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_now_forecast.sh
+        else
+            echo "ERROR: STOFS now_forecast script not found" >&2
+            exit 1
+        fi
+        ;;
+    comf|*)
+        # nosofs/COMF nowcast_forecast script
+        if [ -f "${SCRIPTSnos}/nosofs/exnos_ofs_nowcast_forecast.sh" ]; then
+            ${SCRIPTSnos}/nosofs/exnos_ofs_nowcast_forecast.sh $OFS
+        else
+            echo "ERROR: nosofs nowcast_forecast script not found" >&2
+            exit 1
+        fi
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

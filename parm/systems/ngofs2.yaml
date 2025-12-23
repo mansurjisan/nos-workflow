@@ -1,0 +1,147 @@
+# NGOFS2 Configuration
+# Northern Gulf of Mexico Operational Forecast System (version 2)
+#
+# Inherits from base FVCOM configuration and overrides specific values.
+
+_base: fvcom
+
+system:
+  name: ngofs2
+  description: "Northern Gulf of Mexico Operational Forecast System v2"
+  region: gulf_of_mexico
+  framework: comf
+  version: "3.7.0"
+  prefix: ngofs2
+
+# Grid configuration - FVCOM unstructured grid
+grid:
+  type: unstructured
+  # NGOFS2 grid dimensions
+  n_nodes: 85000
+  n_elements: 160000
+  n_levels: 41
+  files:
+    horizontal: ngofs2_grd.dat
+    depth: ngofs2_dep.dat
+    obc: ngofs2_obc.dat
+  # Northern Gulf of Mexico domain bounds
+  domain:
+    lon_min: -98.0
+    lon_max: -81.0
+    lat_min: 24.0
+    lat_max: 31.0
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs
+    fallback: nam
+    # Gulf region benefits from NAM
+    blend_enabled: false
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    # Major Gulf rivers
+    sources:
+      - name: mississippi_river
+        usgs_id: "07374000"
+      - name: atchafalaya_river
+        usgs_id: "07381490"
+      - name: mobile_river
+        usgs_id: "02428400"
+      - name: sabine_river
+        usgs_id: "08030500"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Model physics - FVCOM specific
+model:
+  executable: fvcom_ngofs2
+  ocean_model: FVCOM
+  physics:
+    dt: 0.5                   # External time step (seconds)
+    dti: 10.0                 # Internal time step (seconds)
+    bottom_roughness: 0.001
+    horizontal_mixing: smagorinsky
+    vertical_mixing: mellor_yamada25
+  run:
+    hindcast_days: 0.25       # 6-hour nowcast
+    forecast_days: 3.0        # 3-day forecast (longer for Gulf)
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: ngofs2
+  stations:
+    enabled: true
+    interval: 360             # 6 minutes
+  fields:
+    interval: 3600            # 1 hour
+    variables:
+      - zeta                  # Water level
+      - ua                    # Depth-averaged velocity
+      - va
+      - temp                  # Temperature
+      - salinity
+  restart:
+    interval: 21600           # 6 hours
+
+# Computational resources
+resources:
+  nprocs: 360
+  memory_gb: 600
+  walltime_hours: 2
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    DELT_MODEL: model.physics.dt
+    TOTAL_TASKS: resources.nprocs

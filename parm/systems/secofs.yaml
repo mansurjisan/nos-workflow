@@ -1,0 +1,297 @@
+# SECOFS Configuration
+# Southeast Coastal Ocean Forecast System
+#
+# Values synchronized from official secofs.ctl file
+# Inherits from base SCHISM configuration and overrides specific values.
+# This config maps to nosofs (COMF) shell script environment variables.
+
+_base: schism
+
+system:
+  name: secofs
+  description: "Southeast Coastal Ocean Forecast System"
+  region: southeast_coast
+  framework: comf
+  version: "3.7.0"
+  # Shell prefix for file naming -> PREFIXNOS, RUN
+  prefix: secofs
+
+# Grid configuration - maps to nosofs shell variables
+# Values from secofs.ctl
+grid:
+  type: unstructured
+  # SCHISM grid dimensions for SECOFS (from secofs.ctl)
+  n_nodes: 1684786            # -> np_global (from .ctl)
+  n_elements: 3322329         # -> ne_global (from .ctl)
+  n_sides: 5007180            # -> ns_global (from .ctl)
+  n_levels: 63                # -> nvrt, KBm (from .ctl)
+  files:
+    horizontal: secofs.hgrid.gr3       # -> GRIDFILE
+    vertical: secofs.vgrid.in          # -> VGRID_CTL
+    vertical_nu: secofs.vgrid.nu.in    # -> VGRID_NU_CTL
+    vertical_fake: secofs.vgrid.fake.in # -> VGRID_FAKE_CTL
+    horizontal_ll: secofs.hgrid.ll     # -> GRIDFILE_LL
+    shapiro: secofs.shapiro.gr3
+    diffmin: secofs.diffmin.gr3
+    diffmax: secofs.diffmax.gr3
+    albedo: secofs.albedo.gr3
+    rough: secofs.rough.gr3
+    station: secofs.station.in         # -> STA_OUT_CTL
+  # Domain bounds -> MINLON, MAXLON, MINLAT, MAXLAT (from secofs.ctl)
+  domain:
+    lon_min: -88.0
+    lon_max: -63.0
+    lat_min: 17.0
+    lat_max: 40.0
+  # Grid interpolation settings (from secofs.ctl)
+  igrd_met: 0                 # -> IGRD_MET (0=native grid)
+  igrd_obc: 1                 # -> IGRD_OBC (1=interpolated to model grid)
+
+# Forcing configuration - maps to DBASE_* variables
+forcing:
+  atmospheric:
+    # MET_NUM=1 means single met source (GFS only for CI testing)
+    # Set to 2 with HRRR for production
+    met_num: 1
+    primary: GFS              # -> DBASE_MET_NOW (from .ctl)
+    secondary: GFS            # -> DBASE_MET_NOW2 (disabled, same as primary)
+    forecast_source: GFS      # -> DBASE_MET_FOR
+    forecast_source2: GFS     # -> DBASE_MET_FOR2 (disabled, same as primary)
+    scale_hflux: 1.0          # -> SCALE_HFLUX (from .ctl)
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm              # National Water Model
+    # nosofs river control files (from secofs.ctl)
+    files:
+      ctl_file: secofs.river.ctl          # -> RIVER_CTL_FILE
+      clim_file: nos.river.clim.usgs.nc   # -> RIVER_CLIM_FILE (from .ctl)
+      nwm_reach: secofs.nwm.reach.dat     # -> NWM_REACHID_FILE
+
+  ocean:
+    enabled: true
+    primary: rtofs            # -> DBASE_TS_NOW, DBASE_TS_FOR
+    # Open boundary settings (from secofs.ctl)
+    obc:
+      wl_source: RTOFS        # -> DBASE_WL_NOW, DBASE_WL_FOR (water level)
+      ts_source: RTOFS        # -> DBASE_TS_NOW, DBASE_TS_FOR (temp/salt)
+      # Control files (from secofs.ctl)
+      files:
+        obc_ctl: secofs.obc.ctl           # -> OBC_CTL_FILE
+        obc_clim: nos.clim.WOA05.nc       # -> OBC_CLIM_FILE (from .ctl)
+    nudging:
+      enabled: true
+      timescale_seconds: 10800.0  # -> STEP_NU_VALUE (from .ctl)
+      files:
+        nudge_weight: secofs.nudge.gr3    # -> Nudging_weight (from .ctl)
+        nudge_index: secofs.nobc_nudge_index.dat
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    # -> CREATE_TIDEFORCING = 1 (generate tide at runtime) (from .ctl)
+    create_forcing: 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      # From secofs.ctl: HC_FILE_OBC and HC_FILE_OFS point to bctides files
+      harmonic_constants_obc: secofs.bctides.in           # -> HC_FILE_OBC
+      harmonic_constants_ofs: secofs.bctides.in_template  # -> HC_FILE_OFS
+      harmonic_nwlon: nos.HC_NWLON.nc                     # -> HC_FILE_NWLON
+
+# Model physics and runtime configuration (from secofs.ctl)
+model:
+  executable: schism_secofs
+  # -> OCEAN_MODEL = "SCHISM" (from .ctl)
+  ocean_model: SCHISM
+  physics:
+    dt: 120.0                 # -> DELT_MODEL (from .ctl: 120)
+    extstep_seconds: 120.0    # -> EXTSTEP_SECONDS (from .ctl)
+    # Reference point for coordinate transformation
+    cpp_lon: -124             # -> CPP_LON_VALUE (from .ctl)
+    cpp_lat: 45               # -> CPP_LAT_VALUE (from .ctl)
+    # SCHISM parameters (from secofs.ctl)
+    nws: 2                    # -> NWS_VALUE (atmospheric forcing format)
+    nrampwind: 1              # -> NRAMPWIND_VALUE
+    drampwind: 1.0            # -> DRAMPWIND_VALUE
+    iwindoff: 0               # -> IWINDOFF_VALUE
+    ndtfast: 20               # -> NDTFAST (barotropic steps)
+    ihorcon: 0                # -> IHORCON_VALUE
+    ihdif: 0                  # -> IHDIF_VALUE
+    idrag: 2                  # -> IDRAG_VALUE
+    bfric: 0                  # -> BFRIC_VALUE
+    ihhat: 1                  # -> IHHAT_VALUE
+    inunfl: 0                 # -> INUNFL_VALUE
+    min_depth: 0.01           # -> MIN_DEPTH
+    # Bottom friction (from .ctl)
+    rdrg: 3.0e-03             # -> RDRG
+    rdrg2: 0.005              # -> RDRG2
+    zob: 0.0005               # -> Zob (bottom roughness in m)
+    # Viscosity (from .ctl)
+    visc2: 0.0                # -> VISC2
+    visc4: 0.0                # -> VISC4
+    # Mixing coefficients (from .ctl)
+    akt_bak: 5.0e-6           # -> AKT_BAK (tracer mixing)
+    akv_bak: 5.0e-5           # -> AKV_BAK (momentum mixing)
+    akk_bak: 5.0e-6           # -> AKK_BAK (TKE mixing)
+    akp_bak: 5.0e-6           # -> AKP_BAK (psi mixing)
+    dcrit: 0.10               # -> DCRIT (wetting/drying depth in m)
+    dstart: 151.0             # -> DSTART (initialization timestamp in days)
+    tide_start: 0.0           # -> TIDE_START (tidal reference time)
+  run:
+    hindcast_days: 0.25       # 6-hour nowcast -> LEN_NOWCAST = 6
+    forecast_days: 2.0        # 2-day forecast -> LEN_FORECAST = 48 (from .ctl)
+    base_date: "2011010100"   # -> BASE_DATE (from .ctl)
+    time_start: "2011090100"  # -> TIME_START (from .ctl)
+  # Runtime control file template (from secofs.ctl)
+  runtime:
+    ctl_file: secofs.param.nml            # -> RUNTIME_CTL (from .ctl)
+    met_ctl_file: secofs.sflux_inputs.txt # -> RUNTIME_MET_CTL (from .ctl)
+
+# Output configuration - maps to N* variables (from secofs.ctl)
+output:
+  format: netcdf
+  prefix: secofs              # -> PREFIXNOS prefix for output files
+  nstation: 97                # -> NSTATION (number of output stations)
+  stations:
+    enabled: true
+    interval: 360             # seconds -> NSTA (from .ctl: 360)
+    file: secofs.station.in   # -> STA_OUT_CTL
+  fields:
+    # History file output
+    interval: 3600            # seconds -> NHIS (from .ctl: 3600)
+    def_interval: 86400       # seconds -> NDEFHIS (file split interval)
+  quicksave:
+    interval: 3600            # seconds -> NQCK
+    def_interval: 86400       # seconds -> NDEFQCK
+  average:
+    interval: 3600            # seconds -> NAVG (from .ctl: 3600)
+  float:
+    interval: 3600            # seconds -> NFLT (from .ctl: 3600)
+  restart:
+    interval: 21600           # seconds -> NRST (from .ctl: 21600 = 6 hours)
+
+# Computational resources (from secofs.ctl)
+resources:
+  nprocs: 1200                # -> TOTAL_TASKS (from .ctl: 1200)
+  nscribes: 4                 # SCHISM I/O server processes
+  memory_gb: 1500
+  walltime_hours: 2
+
+# COMF/nosofs workflow stages (separate nowcast and forecast)
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings for nosofs shell scripts
+# These help yaml_to_env.py generate correct shell variables
+shell_mappings:
+  # nosofs/COMF specific environment variables
+  framework: comf
+  env_prefix: nos             # For HOMEnos, FIXofs, etc.
+  # Map YAML paths to shell variable names
+  variables:
+    # Model identification
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    # Grid files
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    VGRID_NU_CTL: grid.files.vertical_nu
+    VGRID_FAKE_CTL: grid.files.vertical_fake
+    STA_OUT_CTL: grid.files.station
+    Nudging_weight: forcing.ocean.nudging.files.nudge_weight
+
+    # Grid dimensions
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    NNODE: grid.n_nodes
+    NELE: grid.n_elements
+
+    # Domain bounds
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    IGRD_MET: grid.igrd_met
+    IGRD_OBC: grid.igrd_obc
+
+    # Atmospheric forcing
+    MET_NUM: forcing.atmospheric.met_num
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
+    SCALE_HFLUX: forcing.atmospheric.scale_hflux
+
+    # Ocean forcing
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+
+    # Control files
+    RIVER_CTL_FILE: forcing.river.files.ctl_file
+    RIVER_CLIM_FILE: forcing.river.files.clim_file
+    OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
+    OBC_CLIM_FILE: forcing.ocean.obc.files.obc_clim
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
+    HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
+
+    # Tidal
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+
+    # Runtime control
+    RUNTIME_CTL: model.runtime.ctl_file
+    RUNTIME_MET_CTL: model.runtime.met_ctl_file
+    DELT_MODEL: model.physics.dt
+    EXTSTEP_SECONDS: model.physics.extstep_seconds
+    NDTFAST: model.physics.ndtfast
+    NWS_VALUE: model.physics.nws
+    STEP_NU_VALUE: forcing.ocean.nudging.timescale_seconds
+    MIN_DEPTH: model.physics.min_depth
+    BASE_DATE: model.run.base_date
+    TIME_START: model.run.time_start
+
+    # Run length
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+
+    # Output intervals
+    NSTA: output.stations.interval
+    NSTATION: output.nstation
+    NHIS: output.fields.interval
+    NDEFHIS: output.fields.def_interval
+    NQCK: output.quicksave.interval
+    NDEFQCK: output.quicksave.def_interval
+    NAVG: output.average.interval
+    NFLT: output.float.interval
+    NRST: output.restart.interval
+
+    # Resources
+    TOTAL_TASKS: resources.nprocs

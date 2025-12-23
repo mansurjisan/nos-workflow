@@ -1,0 +1,168 @@
+#!/bin/bash
+set -x
+
+########################################
+# NOS_OFS_POST - Unified Post-Processing Job
+#
+# Supports both nosofs/COMF and IT-STOFS frameworks with YAML configuration
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Set HOME directories
+########################################
+export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_ofs.${nos_ofs_ver:?}}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name
+####################################
+export NET=${NET:-nosofs}
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# IT-STOFS specific paths
+export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
+export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
+
+####################################
+# Determine framework and load config
+####################################
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+        if [ -f "${USHstofs3d}/stofs_3d_atl_config.sh" ]; then
+            source "${USHstofs3d}/stofs_3d_atl_config.sh"
+            load_stofs_config "${OFS_CONFIG}"
+        fi
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+# Post-processing stage (for STOFS two-phase post)
+export POST_STAGE=${POST_STAGE:-1}
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+if command -v compath.py &> /dev/null; then
+    export COMIN=${COMIN:-$(compath.py ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nos_ofs_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+else
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${nos_ofs_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nos_ofs_ver}}
+    export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+fi
+
+mkdir -m 775 -p $COMOUT
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute appropriate post-processing script
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # IT-STOFS has two-phase post-processing
+        case "${POST_STAGE}" in
+            1)
+                if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_1.sh" ]; then
+                    ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_1.sh
+                else
+                    echo "ERROR: STOFS post_1 script not found" >&2
+                    exit 1
+                fi
+                ;;
+            2)
+                if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_2.sh" ]; then
+                    ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_2.sh
+                else
+                    echo "ERROR: STOFS post_2 script not found" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "ERROR: Invalid POST_STAGE: ${POST_STAGE}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    comf|*)
+        # nosofs/COMF single post-processing stage
+        echo "INFO: COMF post-processing not yet implemented in unified package"
+        echo "INFO: Please use legacy nosofs post-processing scripts"
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

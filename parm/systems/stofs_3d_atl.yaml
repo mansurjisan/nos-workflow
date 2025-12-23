@@ -1,0 +1,281 @@
+# STOFS 3D Atlantic Configuration
+# Storm Surge and Tide Operational Forecast System - 3D Atlantic
+#
+# Inherits from base SCHISM configuration and overrides specific values.
+# This config maps to IT-STOFS shell script environment variables.
+
+_base: schism
+
+system:
+  name: stofs_3d_atl
+  description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic"
+  region: atlantic
+  framework: stofs
+  version: "2.2.0"
+  # Shell prefix for file naming (RUN in nosofs, used as prefix)
+  prefix: stofs_3d_atl
+
+# Grid configuration - maps to shell variables
+grid:
+  type: unstructured
+  # SCHISM grid dimensions
+  n_nodes: 1813443           # -> np_global
+  n_elements: 3564104        # -> ne_global
+  n_sides: 5377546           # -> ns_global
+  n_levels: 51               # -> nvrt, KBm
+  files:
+    horizontal: stofs_3d_atl.hgrid.gr3    # -> GRIDFILE
+    vertical: stofs_3d_atl.vgrid.in       # -> VGRID_CTL
+    horizontal_ll: stofs_3d_atl.hgrid.ll  # -> GRIDFILE_LL
+  # Domain bounds - IT-STOFS hardcoded values
+  # Maps to: LONMIN, LONMAX, LATMIN, LATMAX (IT-STOFS)
+  # or MINLON, MAXLON, MINLAT, MAXLAT (nosofs)
+  domain:
+    lon_min: -98.5035
+    lon_max: -52.4867
+    lat_min: 7.347
+    lat_max: 52.5904
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs             # -> DBASE_MET_NOW, DBASE_MET_FOR
+    fallback: null
+    gfs:
+      resolution: "0.25"     # GFS 0.25 degree
+      levels: [10, 2]        # Heights for wind (10m), temp/humidity (2m)
+    variables:
+      - PRMSL                # Pressure reduced to MSL
+      - TMP                  # Temperature
+      - SPFH                 # Specific humidity
+      - RH                   # Relative humidity
+      - UGRD                 # U-component of wind
+      - VGRD                 # V-component of wind
+      - PRATE                # Precipitation rate
+      - DSWRF                # Downward shortwave radiation flux
+      - DLWRF                # Downward longwave radiation flux
+    # HRRR blending for high-resolution coastal
+    hrrr_blend:
+      enabled: true
+      domain: conus
+      resolution: "3km"
+      # HRRR domain bounds (different from GFS)
+      lon_min: -98.5
+      lon_max: -49.5
+      lat_min: 5.5
+      lat_max: 50.0
+
+  river:
+    enabled: true
+    primary: nwm              # National Water Model -> DBASE_RIVER="NWM"
+    n_rivers: 7690            # Total river sources
+    version: "v3.0"
+    # Target number of NWM files to process (126hr forecast + 6hr nowcast)
+    n_list_target: 121        # -> N_list_target: 121*3600/86400=1+4.0417 days
+    n_list_min: 97            # -> N_list_min: minimum files needed (121-24)
+    # Files for river forcing
+    files:
+      sources_json: stofs_3d_atl_sources.json
+      sinks_json: stofs_3d_atl_sinks.json
+    # St. Lawrence River from Canadian data
+    st_lawrence:
+      enabled: true
+      source: DCOMROOT
+      clim_file: stofs_3d_atl_st_lawrence_river_clim.nc
+
+  ocean:
+    enabled: true
+    primary: rtofs            # -> DBASE_TS_NOW, DBASE_TS_FOR = "RTOFS"
+    # Open boundary settings
+    obc:
+      # SSH (water level) data source
+      wl_source: rtofs        # -> DBASE_WL_NOW, DBASE_WL_FOR
+      ts_source: rtofs        # Temperature/Salinity source
+      ssh_offset: 0.04        # SSH offset correction (meters)
+      # Target number of RTOFS files (126hr/6hr = 21 points)
+      n_list_target_2d: 21    # -> N_list_target_2D
+      n_list_target_3d: 21    # -> N_list_target_3D
+      # RTOFS region of interest indices for subsetting
+      # 2D surface fields (ssh)
+      roi_2ds:
+        x1: 2805              # -> idx_x1_2ds
+        x2: 2923              # -> idx_x2_2ds
+        y1: 1598              # -> idx_y1_2ds
+        y2: 2325              # -> idx_y2_2ds
+      # 3D fields (temp, salt, velocity)
+      roi_3dz:
+        x1: 482               # -> idx_x1_3dz
+        x2: 600               # -> idx_x2_3dz
+        y1: 94                # -> idx_y1_3dz
+        y2: 821               # -> idx_y2_3dz
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+      files:
+        sal_nudge: stofs_3d_atl.SAL_nudge.gr3
+        tem_nudge: stofs_3d_atl.TEM_nudge.gr3
+    # ADT satellite data for SSH boundary correction
+    adt:
+      enabled: true
+      satellite: jason3
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    # -> CREATE_TIDEFORCING = 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      bctides_template: bctides.in_template
+      harmonic_constants: stofs_3d_atl.tidal_hc.nc  # -> HC_FILE_OBC
+
+# Model physics and runtime configuration
+model:
+  executable: pschism_WCOSS2
+  physics:
+    dt: 150.0                 # Timestep in seconds -> DELT_MODEL
+    slam0: -77.0              # Reference longitude
+    sfea0: 35.0               # Reference latitude
+    # Additional SCHISM parameters
+    nws: 2                    # Atmospheric forcing format
+    wtiminc: 3600             # Wind time increment (seconds)
+  run:
+    # IT-STOFS: continuous run spanning nowcast + forecast
+    hindcast_days: 0.25       # 6-hour hindcast (nowcast back from cyc)
+    forecast_days: 5.25       # 5.25-day total forecast
+    # Total run period for IT-STOFS
+    # N_DAYS_MODEL_RUN_PERIOD = hindcast_days + forecast_days = 5.5
+
+# Output configuration
+output:
+  format: netcdf
+  # File naming prefix
+  prefix: stofs_3d_atl
+  stations:
+    enabled: true
+    interval: 360.0           # 6 minutes -> NSTA
+    file: stofs_3d_atl.station.in
+  fields_2d:
+    enabled: true
+    interval: 3600.0          # 1 hour
+    variables:
+      - elevation
+      - dahv                  # Depth-averaged horizontal velocity
+      - windSpeedX
+      - windSpeedY
+  fields_3d:
+    enabled: true
+    interval: 3600.0
+    variables:
+      - salinity
+      - temperature
+      - horizontalVelX
+      - horizontalVelY
+  # Restart/hotstart output
+  restart:
+    interval_days: 1.0        # Daily restart files -> NRST
+
+# Computational resources for STOFS-3D-ATL
+resources:
+  nprocs: 960                 # Number of MPI processes
+  nscribes: 8                 # SCHISM I/O server processes
+  memory_gb: 2000
+  walltime_hours: 3
+
+# STOFS workflow stages (different from nosofs)
+stages:
+  - prep_nowcast
+  - now_forecast             # Combined nowcast+forecast run
+  - post_1                   # 2D field extraction
+  - post_2                   # Final products (ADCIRC format, GeoPackage)
+  - temp_salt_restart        # T/S restart for next cycle
+
+# Legacy shell script execution configuration
+# When enabled, Python workflow calls the original IT-STOFS shell scripts
+# instead of native Python implementations
+legacy:
+  enabled: true                   # Use legacy shell scripts
+  # Path to IT-STOFS ush directory (auto-detected from HOMEstofs if not set)
+  ush_dir: ""
+  # Path to pysh directory for Python helper scripts
+  pysh_dir: ""
+  # Path to FIX files (auto-detected from FIXstofs3d if not set)
+  fix_dir: ""
+  # Individual script toggles (override global enabled flag)
+  scripts:
+    gfs: true                     # stofs_3d_atl_create_surface_forcing_gfs.sh
+    hrrr: true                    # stofs_3d_atl_create_surface_forcing_hrrr.sh
+    river: true                   # stofs_3d_atl_create_river_forcing_nwm.sh
+    obc: true                     # stofs_3d_atl_create_obc_3d_th.sh
+    tides: true                   # stofs_3d_atl_create_bctides_in.sh
+  # Custom script names (if different from defaults)
+  script_names:
+    gfs: stofs_3d_atl_create_surface_forcing_gfs.sh
+    hrrr: stofs_3d_atl_create_surface_forcing_hrrr.sh
+    river: stofs_3d_atl_create_river_forcing_nwm.sh
+    obc: stofs_3d_atl_create_obc_3d_th.sh
+    tides: stofs_3d_atl_create_bctides_in.sh
+
+# Environment variable mappings for shell scripts
+# These help yaml_to_env.py generate correct shell variables
+shell_mappings:
+  # IT-STOFS specific environment variables
+  framework: stofs
+  env_prefix: stofs3d        # For HOMEstofs3d, FIXstofs3d, etc.
+  # Map YAML paths to shell variable names
+  variables:
+    # Model identification
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+
+    # Grid files
+    GRIDFILE: grid.files.horizontal
+    VGRID_CTL: grid.files.vertical
+
+    # Grid dimensions
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+
+    # GFS domain bounds (primary forcing)
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+
+    # HRRR domain bounds (for blending)
+    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.lon_min
+    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
+    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
+    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
+
+    # River forcing parameters
+    N_RIVERS: forcing.river.n_rivers
+    N_list_target: forcing.river.n_list_target
+    N_list_min: forcing.river.n_list_min
+
+    # RTOFS OBC parameters
+    N_list_target_2D: forcing.ocean.obc.n_list_target_2d
+    N_list_target_3D: forcing.ocean.obc.n_list_target_3d
+    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
+    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
+    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
+    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
+    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
+    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
+    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
+    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset
+
+    # Computed values (derived at runtime)
+    LEN_FORECAST: _computed.len_forecast_hours
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days

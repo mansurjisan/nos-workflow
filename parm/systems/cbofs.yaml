@@ -1,0 +1,88 @@
+# CBOFS Configuration
+# Chesapeake Bay Operational Forecast System
+#
+# Inherits from base ROMS configuration and overrides specific values.
+
+_base: roms
+
+system:
+  name: cbofs
+  description: "Chesapeake Bay Operational Forecast System"
+  region: chesapeake
+  framework: comf
+  version: "3.7.0"
+
+grid:
+  type: curvilinear
+  files:
+    grid: cbofs_grid.nc
+    forcing: cbofs_forcing.nc
+  domain:
+    lon_min: -77.5
+    lon_max: -75.0
+    lat_min: 36.5
+    lat_max: 39.7
+
+# Override forcing configuration
+forcing:
+  atmospheric:
+    primary: nam
+    fallback: gfs
+    variables:
+      - Uwind
+      - Vwind
+      - Pair
+      - Tair
+      - Qair
+      - rain
+      - swrad
+      - lwrad
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: susquehanna
+        usgs_id: "01578310"
+      - name: potomac
+        usgs_id: "01646500"
+      - name: james
+        usgs_id: "02037500"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+
+  tidal:
+    enabled: true
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Override model settings
+model:
+  physics:
+    dt: 4.0
+    ndtfast: 20
+  run:
+    hindcast_days: 0.25
+    forecast_days: 2.0
+
+# Computational resources
+resources:
+  nprocs: 120
+  memory_gb: 200
+  walltime_hours: 1
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
