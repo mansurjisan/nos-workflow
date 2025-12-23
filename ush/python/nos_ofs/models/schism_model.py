@@ -28,7 +28,7 @@ from .grid import SCHISMGrid
 from .schism_config import StofsConfig
 
 # Import forcing processors from local package (not external schism_workflow)
-from .forcing import (
+from ..forcing import (
     ForcingResult,
     GFSProcessor,
     HRRRProcessor,
@@ -39,7 +39,7 @@ from .forcing import (
 
 # Import workflow components
 from .workflow import SchismModel as SchismWorkflowModel
-from .model.param import ParamNmlGenerator
+from .param import ParamNmlGenerator
 
 
 class SCHISMModel(BaseModel):

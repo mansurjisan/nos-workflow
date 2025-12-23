@@ -36,7 +36,7 @@ from typing import Dict, List, Optional, Tuple
 
 from .schism_config import StofsConfig
 from .stage import Stage
-from .forcing import (
+from ..forcing import (
     ForcingResult,
     GFSProcessor,
     HRRRProcessor,
@@ -47,7 +47,7 @@ from .forcing import (
     ADTProcessor,
     TidalProcessor,
 )
-from .model import ParamNmlGenerator
+from .param import ParamNmlGenerator
 from .legacy_runner import LegacyScriptRunner
 
 

@@ -7,39 +7,49 @@ This package provides model implementations for NOS OFS:
 - ROMS: CBOFS, DBOFS, TBOFS, GOMOFS, etc.
 
 Usage:
-    from nos_ofs.models import SCHISMModel, SCHISMConfig
+    from nos_ofs.models import SCHISMModel, StofsConfig
     from nos_ofs import OFSRegistry
 
     # Create via registry (recommended)
     model = OFSRegistry.create_model("stofs_3d_atl")
 
     # Or directly
-    config = SCHISMConfig.from_yaml("stofs_3d_atl.yaml")
+    config = StofsConfig.from_yaml("stofs_3d_atl.yaml")
     model = SCHISMModel(config)
 """
 
 from .schism_model import SCHISMModel
-from .schism_config import SCHISMConfig
-from .workflow import WorkflowStage, WorkflowRunner
-from .stage import StageRunner
-from .legacy_runner import LegacyShellRunner
-from .grid import GridProcessor
-from .param import ParamGenerator
-from .validation import ModelValidator
+from .schism_config import StofsConfig
+from .workflow import SchismModel as SchismWorkflowModel
+from .stage import Stage
+from .legacy_runner import LegacyScriptRunner
+from .grid import SCHISMGrid
+from .param import ParamNmlGenerator
+from .validation import InputValidator, OutputValidator
+
+# Aliases for backward compatibility
+SCHISMConfig = StofsConfig
+LegacyShellRunner = LegacyScriptRunner
+GridProcessor = SCHISMGrid
+ParamGenerator = ParamNmlGenerator
 
 __all__ = [
     # SCHISM
     "SCHISMModel",
+    "StofsConfig",
     "SCHISMConfig",
     # Workflow
-    "WorkflowStage",
-    "WorkflowRunner",
-    "StageRunner",
+    "SchismWorkflowModel",
+    "Stage",
+    "LegacyScriptRunner",
     "LegacyShellRunner",
     # Grid utilities
+    "SCHISMGrid",
     "GridProcessor",
     # Parameter generation
+    "ParamNmlGenerator",
     "ParamGenerator",
     # Validation
-    "ModelValidator",
+    "InputValidator",
+    "OutputValidator",
 ]
