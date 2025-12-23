@@ -2,7 +2,7 @@
 STOFS Workflow Stage Definitions
 
 Defines the workflow stages for STOFS 3D Atlantic matching the
-IT-STOFS operational ecFlow suite structure.
+STOFS operational ecFlow suite structure.
 """
 
 from enum import Enum, auto
@@ -12,7 +12,7 @@ class Stage(Enum):
     """
     Workflow stages for STOFS 3D Atlantic.
 
-    These stages match the IT-STOFS operational ecFlow suite:
+    These stages match the STOFS operational ecFlow suite:
     - prep_nowcast: Prepare all forcing data
     - now_forecast: Run combined nowcast and forecast simulation
     - post_1: Post-processing part 1 (2D fields, station data)

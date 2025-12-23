@@ -436,7 +436,7 @@ class SystemConfig:
 
     @property
     def is_stofs(self) -> bool:
-        """Check if this uses IT-STOFS framework."""
+        """Check if this uses STOFS framework."""
         return self.framework.lower() == "stofs"
 
     @property

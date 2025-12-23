@@ -3,11 +3,11 @@
 Enhanced YAML-to-Shell Environment Variable Bridge
 
 This module provides a bridge between YAML configuration and shell scripts,
-allowing both IT-STOFS and nosofs (COMF) shell scripts to read configuration
+allowing both STOFS and nosofs (COMF) shell scripts to read configuration
 values from the unified YAML configuration system.
 
 Features:
-- Supports both IT-STOFS (stofs_3d_atl) and nosofs (secofs) frameworks
+- Supports both STOFS (stofs_3d_atl) and nosofs (secofs) frameworks
 - Uses shell_mappings from YAML to determine variable names
 - Computes derived values (LEN_FORECAST, N_DAYS_MODEL_RUN_PERIOD, etc.)
 - Outputs shell export statements or JSON
@@ -231,7 +231,7 @@ def get_standard_exports(
     # Domain bounds
     domain = grid.get('domain', {})
     if framework == 'stofs':
-        # IT-STOFS uses LONMIN, LONMAX, etc.
+        # STOFS uses LONMIN, LONMAX, etc.
         exports['LONMIN'] = domain.get('lon_min', '')
         exports['LONMAX'] = domain.get('lon_max', '')
         exports['LATMIN'] = domain.get('lat_min', '')
@@ -258,7 +258,7 @@ def get_standard_exports(
     exports['LEN_NOWCAST'] = computed.get('len_nowcast_hours', '')
     exports['LEN_FORECAST'] = computed.get('len_forecast_hours', '')
 
-    # IT-STOFS specific
+    # STOFS specific
     if framework == 'stofs':
         exports['N_DAYS_MODEL_RUN_PERIOD'] = computed.get('total_run_days', '')
         if 'PDYHH_NCAST_BEGIN' in computed:
@@ -441,7 +441,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Export all variables for IT-STOFS:
+  # Export all variables for STOFS:
   eval $(python3 -m nos_ofs.yaml_to_env config/systems/stofs_3d_atl.yaml)
 
   # Export all variables for nosofs:
@@ -465,7 +465,7 @@ Available sections:
 
 Frameworks:
   auto  - Auto-detect from system.framework in YAML
-  stofs - IT-STOFS (stofs_3d_atl, stofs_3d_pac)
+  stofs - STOFS (stofs_3d_atl, stofs_3d_pac)
   comf  - nosofs/COMF (secofs, leofs, cbofs, etc.)
         """
     )

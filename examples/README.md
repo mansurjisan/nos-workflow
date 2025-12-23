@@ -6,7 +6,7 @@ This directory contains example scripts for running preprocessing for different 
 
 | Script | OFS | Framework | Model | Region |
 |--------|-----|-----------|-------|--------|
-| `run_stofs_3d_atl_prep.sh` | STOFS 3D Atlantic | IT-STOFS | SCHISM | Atlantic Coast |
+| `run_stofs_3d_atl_prep.sh` | STOFS 3D Atlantic | STOFS | SCHISM | Atlantic Coast |
 | `run_secofs_prep.sh` | SECOFS | COMF | SCHISM | Southeast Coast |
 | `run_cbofs_prep.sh` | CBOFS | COMF | ROMS | Chesapeake Bay |
 | `run_leofs_prep.sh` | LEOFS | COMF | FVCOM | Lake Erie |
@@ -55,7 +55,7 @@ export DCOMROOT=/path/to/your/data    # COMF models
 
 | Framework | Models | Variable Naming | Workflow |
 |-----------|--------|-----------------|----------|
-| IT-STOFS | stofs_3d_atl, stofs_3d_pac | `LONMIN`, `LATMAX` | Single continuous run |
+| STOFS | stofs_3d_atl, stofs_3d_pac | `LONMIN`, `LATMAX` | Single continuous run |
 | COMF | secofs, cbofs, leofs, etc. | `MINLON`, `MAXLAT` | Separate nowcast/forecast |
 
 ### By Ocean Model
@@ -103,7 +103,7 @@ nos_ofs/parm/systems/
 The framework is determined by `system.framework` in the YAML:
 
 ```yaml
-# IT-STOFS models
+# STOFS models
 system:
   framework: stofs    # -> LONMIN, LATMAX, N_DAYS_MODEL_RUN_PERIOD
 
@@ -146,7 +146,7 @@ system:
 
 ## Output Structure
 
-### STOFS (IT-STOFS Framework)
+### STOFS Framework
 
 ```
 work/stofs_3d_atl/
@@ -217,14 +217,14 @@ Each OFS requires static files in `FIXofs`:
 
 ```bash
 # wgrib2
-export WGRIB2=/home/mjisan/miniconda3/envs/nos_ofs_prep/bin/wgrib2
+export WGRIB2=$(which wgrib2 2>/dev/null || echo "/path/to/wgrib2")
 
 # NCO tools
 conda activate nos_ofs_prep
 which ncks ncap2 ncrcat
 
-# Library path
-export LD_LIBRARY_PATH=/home/mjisan/miniconda3/envs/nos_ofs_prep/lib:$LD_LIBRARY_PATH
+# Library path (adjust to your conda environment)
+export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH
 ```
 
 ## Adding New OFS

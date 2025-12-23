@@ -12,8 +12,8 @@ Configuration Priority:
 4. Default values - lowest priority
 
 Supported Systems:
-- STOFS 3D Atlantic (IT-STOFS)
-- STOFS 3D Pacific (IT-STOFS)
+- STOFS 3D Atlantic (STOFS)
+- STOFS 3D Pacific (STOFS)
 - SECOFS (COMF)
 - Other SCHISM-based systems
 """
@@ -285,7 +285,7 @@ class StofsConfig:
         Load legacy script execution configuration from YAML.
 
         This allows the Python workflow to delegate to the original
-        IT-STOFS shell scripts from /ush instead of using Python
+        STOFS shell scripts from /ush instead of using Python
         forcing generators.
         """
         legacy = self._yaml_config.get("legacy", {})
@@ -293,12 +293,12 @@ class StofsConfig:
         # Master switch: use legacy shell scripts instead of Python modules
         self.use_legacy_scripts = legacy.get("enabled", False)
 
-        # Path to legacy USH directory (IT-STOFS shell scripts)
+        # Path to legacy USH directory (STOFS shell scripts)
         self.legacy_ush_dir = legacy.get("ush_dir", "")
         if not self.legacy_ush_dir:
-            # Try to find IT-STOFS ush directory relative to HOMEstofs
+            # Try to find STOFS ush directory relative to HOMEstofs
             if self.HOMEstofs:
-                possible_path = Path(self.HOMEstofs).parent / "IT-STOFS" / "ush" / "stofs_3d_atl"
+                possible_path = Path(self.HOMEstofs).parent / "STOFS" / "ush" / "stofs_3d_atl"
                 if possible_path.exists():
                     self.legacy_ush_dir = str(possible_path)
 
@@ -479,7 +479,7 @@ class StofsConfig:
     # =========================================================================
 
     def is_stofs(self) -> bool:
-        """Check if this is a STOFS system (IT-STOFS)."""
+        """Check if this is a STOFS system (STOFS)."""
         return self.framework.lower() == "stofs"
 
     def is_comf(self) -> bool:

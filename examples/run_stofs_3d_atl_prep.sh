@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 # STOFS 3D Atlantic Preprocessing Script
-# Storm Surge and Tide Operational Forecast System - IT-STOFS Framework
+# Storm Surge and Tide Operational Forecast System - STOFS Framework
 #
 # This script runs STOFS 3D Atlantic preprocessing using YAML configuration.
 #

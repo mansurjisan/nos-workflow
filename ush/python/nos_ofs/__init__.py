@@ -2,7 +2,7 @@
 NOS OFS Unified Python Package
 
 This package provides a unified API for NOAA's Operational Ocean Forecast Systems,
-supporting both IT-STOFS (STOFS-3D) and nosofs/COMF frameworks.
+supporting both STOFS (STOFS-3D) and nosofs/COMF frameworks.
 
 Directory Structure (NCO Standard):
     nos_ofs/

@@ -1,14 +1,14 @@
 """
 Legacy Shell Script Runner for STOFS Workflow
 
-This module provides a wrapper to execute the original IT-STOFS shell scripts
+This module provides a wrapper to execute the original STOFS shell scripts
 from the /ush directory. This allows the Python workflow package to use YAML
 configuration while delegating actual processing to the proven legacy scripts.
 
 Usage in YAML config:
     legacy:
       enabled: true
-      ush_dir: "/path/to/IT-STOFS/ush/stofs_3d_atl"
+      ush_dir: "/path/to/STOFS/ush/stofs_3d_atl"
       scripts:
         river: true
         gfs: true
@@ -35,7 +35,7 @@ log = logging.getLogger(__name__)
 
 class LegacyScriptRunner:
     """
-    Runner for executing IT-STOFS legacy shell scripts.
+    Runner for executing STOFS legacy shell scripts.
 
     This class wraps the original shell scripts and provides:
     - Environment variable setup from YAML config
@@ -50,14 +50,14 @@ class LegacyScriptRunner:
 
         Args:
             config: StofsConfig instance with legacy settings
-            exec_dir: Optional path to compiled executables (defaults to IT-STOFS/exec/stofs_3d_atl)
+            exec_dir: Optional path to compiled executables (defaults to STOFS/exec/stofs_3d_atl)
         """
         self.config = config
         self.ush_dir = Path(config.legacy_ush_dir) if config.legacy_ush_dir else None
         self.pysh_dir = Path(config.legacy_pysh_dir) if config.legacy_pysh_dir else None
         self.fix_dir = Path(config.legacy_fix_dir) if config.legacy_fix_dir else None
 
-        # Executable directory - defaults to IT-STOFS/exec/stofs_3d_atl
+        # Executable directory - defaults to STOFS/exec/stofs_3d_atl
         if exec_dir:
             self.exec_dir = Path(exec_dir)
         elif self.ush_dir:
@@ -192,7 +192,7 @@ class LegacyScriptRunner:
         log.info(f"  Date variables: PDYHH={pdyhh}, NCAST_BEGIN={env['PDYHH_NCAST_BEGIN']}, prev={env['yyyymmdd_prev']}")
 
         # Work subdirectories used by scripts
-        # Matches operational IT-STOFS JSTOFS_3D_ATL_PREP structure
+        # Matches operational STOFS JSTOFS_3D_ATL_PREP structure
         env["DATA_prep_nwm"] = str(work_dir / "river")
         env["DATA_prep_river_st_lawrence"] = str(work_dir / "river_st_lawrence")
         env["DATA_prep_gfs"] = str(work_dir / "gfs")
@@ -419,7 +419,7 @@ class LegacyScriptRunner:
                 log.debug(f"  Copied: {src_name}")
 
     def _link_nwm_files(self, work_dir: Path) -> int:
-        """Link NWM files in IT-STOFS naming format."""
+        """Link NWM files in STOFS naming format."""
         nwm_path = Path(self.config.COMINnwm)
         if not nwm_path.exists():
             log.warning(f"NWM path not found: {nwm_path}")

@@ -4,7 +4,7 @@ set -x
 ########################################
 # NOS_OFS_POST - Unified Post-Processing Job
 #
-# Supports both nosofs/COMF and IT-STOFS frameworks with YAML configuration
+# Supports both nosofs/COMF and STOFS frameworks with YAML configuration
 ########################################
 export PS4=' $SECONDS + '
 date
@@ -53,7 +53,7 @@ export PARMnos=${PARMnos:-${HOMEnos}/parm}
 export USHnos=${USHnos:-${HOMEnos}/ush}
 export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
-# IT-STOFS specific paths
+# STOFS specific paths
 export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
 export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
 export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
@@ -118,7 +118,7 @@ env
 ########################################################
 case "${OFS_FRAMEWORK}" in
     stofs)
-        # IT-STOFS has two-phase post-processing
+        # STOFS has two-phase post-processing
         case "${POST_STAGE}" in
             1)
                 if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_1.sh" ]; then

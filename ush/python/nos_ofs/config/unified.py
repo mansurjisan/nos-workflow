@@ -454,7 +454,7 @@ class OFSConfig:
         return self.system.is_roms
 
     def is_stofs(self) -> bool:
-        """Check if this uses IT-STOFS framework."""
+        """Check if this uses STOFS framework."""
         return self.system.is_stofs
 
     def is_comf(self) -> bool:

@@ -2,15 +2,15 @@
 SCHISM Model Workflow Implementation
 
 NCO-compliant Python implementation for SCHISM model execution.
-Supports both IT-STOFS (STOFS 3D Atlantic/Pacific) and COMF (SECOFS).
+Supports both STOFS (STOFS 3D Atlantic/Pacific) and COMF (SECOFS).
 
 This workflow is YAML-driven, allowing the same code to run different
 forecast systems by changing the configuration file.
 
 Execution Modes:
-1. "legacy": Use IT-STOFS scripts from external directory (via YAML config)
+1. "legacy": Use STOFS scripts from external directory (via YAML config)
    - Enabled by setting legacy.enabled: true in YAML
-   - Uses LegacyScriptRunner to call shell/Python scripts from IT-STOFS
+   - Uses LegacyScriptRunner to call shell/Python scripts from STOFS
    - Best for validation and gradual migration
 
 2. "native": Call original USH shell scripts in HOMEstofs (production mode)
@@ -69,8 +69,8 @@ class SchismModel:
     SCHISM model workflow implementation.
 
     Supports:
-    - STOFS 3D Atlantic (IT-STOFS)
-    - STOFS 3D Pacific (IT-STOFS)
+    - STOFS 3D Atlantic (STOFS)
+    - STOFS 3D Pacific (STOFS)
     - SECOFS (COMF)
 
     All configuration is driven by YAML, including:
@@ -135,7 +135,7 @@ class SchismModel:
     ]
 
     # Framework-aware stage mapping
-    # IT-STOFS stage names -> COMF (NOSOFS) stage names
+    # STOFS stage names -> COMF (NOSOFS) stage names
     STOFS_TO_COMF_STAGES = {
         "prep_nowcast": "prep",
         "now_forecast": "nowcast_forecast",
@@ -144,7 +144,7 @@ class SchismModel:
         "temp_salt_restart": "ts_restart",
     }
 
-    # COMF (NOSOFS) stage names -> IT-STOFS stage names
+    # COMF (NOSOFS) stage names -> STOFS stage names
     COMF_TO_STOFS_STAGES = {
         "prep": "prep_nowcast",
         "nowcast_forecast": "now_forecast",
@@ -376,7 +376,7 @@ class SchismModel:
 
         # =====================================================================
         # Work subdirectories used by scripts
-        # Matches operational IT-STOFS JSTOFS_3D_ATL_PREP structure:
+        # Matches operational STOFS JSTOFS_3D_ATL_PREP structure:
         #   DATA_prep_nwm=${DATA}/river
         #   DATA_prep_gfs=${DATA}/gfs
         #   DATA_prep_hrrr=${DATA}/hrrr
@@ -538,15 +538,15 @@ class SchismModel:
 
     def _normalize_stage_name(self, stage_name: str) -> str:
         """
-        Normalize stage name to internal (IT-STOFS) format.
+        Normalize stage name to internal (STOFS) format.
 
-        Accepts both IT-STOFS and COMF stage naming conventions.
+        Accepts both STOFS and COMF stage naming conventions.
 
         Args:
             stage_name: Stage name in either framework's format
 
         Returns:
-            Normalized stage name (IT-STOFS format)
+            Normalized stage name (STOFS format)
         """
         # Convert to lowercase for comparison
         stage_lower = stage_name.lower().strip()
@@ -557,7 +557,7 @@ class SchismModel:
             log.debug(f"Mapped COMF stage '{stage_name}' -> '{normalized}'")
             return normalized
 
-        # Already in IT-STOFS format or unknown
+        # Already in STOFS format or unknown
         return stage_lower
 
     def get_framework_stage_name(self, stage_name: str) -> str:
@@ -565,7 +565,7 @@ class SchismModel:
         Get the stage name in the current framework's naming convention.
 
         Args:
-            stage_name: Internal (IT-STOFS) stage name
+            stage_name: Internal (STOFS) stage name
 
         Returns:
             Stage name in the appropriate framework's convention
@@ -578,11 +578,11 @@ class SchismModel:
         """
         Run a workflow stage.
 
-        Accepts stage names in either IT-STOFS or COMF naming convention.
-        Internally normalizes to IT-STOFS format for processing.
+        Accepts stage names in either STOFS or COMF naming convention.
+        Internally normalizes to STOFS format for processing.
 
         Args:
-            stage_name: Name of the stage to run (IT-STOFS or COMF format)
+            stage_name: Name of the stage to run (STOFS or COMF format)
 
         Raises:
             ValueError: If stage name is invalid
@@ -623,14 +623,14 @@ class SchismModel:
         Run prep_nowcast stage - prepare all forcing data.
 
         Execution modes:
-        - "legacy": Use IT-STOFS shell/Python scripts from external directory
+        - "legacy": Use STOFS shell/Python scripts from external directory
         - "native": Execute original USH shell scripts (production)
         - "python": Use pure Python forcing processors (development)
 
         Legacy mode is enabled via YAML config:
             legacy:
               enabled: true
-              ush_dir: "/path/to/IT-STOFS/ush/stofs_3d_atl"
+              ush_dir: "/path/to/STOFS/ush/stofs_3d_atl"
         """
         log.info("Running prep_nowcast stage")
 
@@ -639,7 +639,7 @@ class SchismModel:
 
         # Check for legacy mode first (YAML-driven)
         if self.config.use_legacy_scripts:
-            log.info("Execution mode: LEGACY (IT-STOFS scripts)")
+            log.info("Execution mode: LEGACY (STOFS scripts)")
             self._run_prep_nowcast_legacy(data_dir)
         elif self.exec_mode == "native":
             log.info("Execution mode: NATIVE (USH shell scripts)")
@@ -652,23 +652,23 @@ class SchismModel:
 
     def _run_prep_nowcast_legacy(self, data_dir: Path) -> None:
         """
-        Run prep_nowcast using legacy IT-STOFS scripts.
+        Run prep_nowcast using legacy STOFS scripts.
 
         This mode uses the LegacyScriptRunner to execute shell scripts
-        and Python scripts from an external IT-STOFS installation.
+        and Python scripts from an external STOFS installation.
 
         Configured via YAML:
             legacy:
               enabled: true
-              ush_dir: "/path/to/IT-STOFS/ush/stofs_3d_atl"
-              pysh_dir: "/path/to/IT-STOFS/ush/stofs_3d_atl/pysh"
+              ush_dir: "/path/to/STOFS/ush/stofs_3d_atl"
+              pysh_dir: "/path/to/STOFS/ush/stofs_3d_atl/pysh"
               scripts:
                 river: true
                 gfs: false  # Requires NCO tools
                 hrrr: false  # Requires NCO tools
                 obc: false   # Requires Fortran executables
         """
-        log.info("Running prep_nowcast in LEGACY mode (IT-STOFS scripts)")
+        log.info("Running prep_nowcast in LEGACY mode (STOFS scripts)")
         log.info(f"Legacy USH dir: {self.config.legacy_ush_dir}")
         log.info(f"Legacy pysh dir: {self.config.legacy_pysh_dir}")
 
@@ -721,7 +721,7 @@ class SchismModel:
         """
         Run prep_nowcast using original USH shell scripts.
 
-        This matches the operational IT-STOFS workflow exactly.
+        This matches the operational STOFS workflow exactly.
         """
         log.info("Running prep_nowcast in NATIVE mode (USH shell scripts)")
 
@@ -774,7 +774,7 @@ class SchismModel:
     def _create_prep_directories(self, data_dir: Path) -> None:
         """Create directories needed for preprocessing.
 
-        Matches operational IT-STOFS JSTOFS_3D_ATL_PREP directory structure.
+        Matches operational STOFS JSTOFS_3D_ATL_PREP directory structure.
         """
         log.info("Creating prep directories")
 

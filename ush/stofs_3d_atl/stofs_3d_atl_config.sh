@@ -114,7 +114,7 @@ load_stofs_config() {
 ###############################################################################
 # _load_stofs_defaults - Load default STOFS-3D-ATL values
 #
-# These values match the hardcoded values in the original IT-STOFS scripts
+# These values match the hardcoded values in the original STOFS scripts
 ###############################################################################
 _load_stofs_defaults() {
     echo "Loading STOFS-3D-ATL default values"

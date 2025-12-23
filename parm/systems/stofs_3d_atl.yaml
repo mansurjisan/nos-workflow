@@ -2,7 +2,7 @@
 # Storm Surge and Tide Operational Forecast System - 3D Atlantic
 #
 # Inherits from base SCHISM configuration and overrides specific values.
-# This config maps to IT-STOFS shell script environment variables.
+# This config maps to STOFS shell script environment variables.
 
 _base: schism
 
@@ -27,8 +27,8 @@ grid:
     horizontal: stofs_3d_atl.hgrid.gr3    # -> GRIDFILE
     vertical: stofs_3d_atl.vgrid.in       # -> VGRID_CTL
     horizontal_ll: stofs_3d_atl.hgrid.ll  # -> GRIDFILE_LL
-  # Domain bounds - IT-STOFS hardcoded values
-  # Maps to: LONMIN, LONMAX, LATMIN, LATMAX (IT-STOFS)
+  # Domain bounds - STOFS hardcoded values
+  # Maps to: LONMIN, LONMAX, LATMIN, LATMAX (STOFS)
   # or MINLON, MAXLON, MINLAT, MAXLAT (nosofs)
   domain:
     lon_min: -98.5035
@@ -147,10 +147,10 @@ model:
     nws: 2                    # Atmospheric forcing format
     wtiminc: 3600             # Wind time increment (seconds)
   run:
-    # IT-STOFS: continuous run spanning nowcast + forecast
+    # STOFS: continuous run spanning nowcast + forecast
     hindcast_days: 0.25       # 6-hour hindcast (nowcast back from cyc)
     forecast_days: 5.25       # 5.25-day total forecast
-    # Total run period for IT-STOFS
+    # Total run period for STOFS
     # N_DAYS_MODEL_RUN_PERIOD = hindcast_days + forecast_days = 5.5
 
 # Output configuration
@@ -198,11 +198,11 @@ stages:
   - temp_salt_restart        # T/S restart for next cycle
 
 # Legacy shell script execution configuration
-# When enabled, Python workflow calls the original IT-STOFS shell scripts
+# When enabled, Python workflow calls the original STOFS shell scripts
 # instead of native Python implementations
 legacy:
   enabled: true                   # Use legacy shell scripts
-  # Path to IT-STOFS ush directory (auto-detected from HOMEstofs if not set)
+  # Path to STOFS ush directory (auto-detected from HOMEstofs if not set)
   ush_dir: ""
   # Path to pysh directory for Python helper scripts
   pysh_dir: ""
@@ -226,7 +226,7 @@ legacy:
 # Environment variable mappings for shell scripts
 # These help yaml_to_env.py generate correct shell variables
 shell_mappings:
-  # IT-STOFS specific environment variables
+  # STOFS specific environment variables
   framework: stofs
   env_prefix: stofs3d        # For HOMEstofs3d, FIXstofs3d, etc.
   # Map YAML paths to shell variable names

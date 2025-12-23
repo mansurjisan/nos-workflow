@@ -1,6 +1,6 @@
 # NOS OFS Unified Workflow Package
 
-Unified Python package for NOAA's Operational Ocean Forecast Systems, supporting both IT-STOFS and nosofs/COMF frameworks with YAML-driven configuration.
+Unified Python package for NOAA's Operational Ocean Forecast Systems, supporting both STOFS and nosofs/COMF frameworks with YAML-driven configuration.
 
 ## Architecture
 
@@ -15,12 +15,12 @@ nos_ofs/
 │   ├── nosofs/                   # COMF execution scripts
 │   │   ├── exnos_ofs_prep.sh
 │   │   └── exnos_ofs_prep_unified.sh  # YAML-enabled
-│   └── stofs_3d_atl/             # IT-STOFS execution scripts
+│   └── stofs_3d_atl/             # STOFS execution scripts
 │       ├── exstofs_3d_atl_prep_processing.sh
 │       └── exstofs_3d_atl_prep_processing_unified.sh  # YAML-enabled
 ├── ush/                          # Utility scripts
 │   ├── nosofs/                   # COMF shell utilities
-│   ├── stofs_3d_atl/             # IT-STOFS shell utilities
+│   ├── stofs_3d_atl/             # STOFS shell utilities
 │   └── python/                   # Python package
 │       └── nos_ofs/
 │           ├── cli.py            # Command-line interface
@@ -59,7 +59,7 @@ python3 -m nos_ofs.cli list
 ### 3. Export YAML Config to Shell Environment
 
 ```bash
-# For IT-STOFS systems (LONMIN/LONMAX style)
+# For STOFS systems (LONMIN/LONMAX style)
 eval $(python3 -m nos_ofs.cli export-env --config parm/systems/stofs_3d_atl.yaml --framework stofs)
 
 # For nosofs/COMF systems (MINLON/MAXLON style)
@@ -118,8 +118,8 @@ runner.create_hrrr_forcing(work_dir)
 
 | System | Model | Framework | Config |
 |--------|-------|-----------|--------|
-| stofs_3d_atl | SCHISM | IT-STOFS | stofs_3d_atl.yaml |
-| stofs_3d_pac | SCHISM | IT-STOFS | stofs_3d_pac.yaml |
+| stofs_3d_atl | SCHISM | STOFS | stofs_3d_atl.yaml |
+| stofs_3d_pac | SCHISM | STOFS | stofs_3d_pac.yaml |
 | secofs | SCHISM | COMF | secofs.yaml |
 | creofs | SCHISM | COMF | creofs.yaml |
 | cbofs | ROMS | COMF | cbofs.yaml |

@@ -173,7 +173,7 @@ class TidalProcessor(ForcingProcessor):
         """
         Call existing FORTRAN tide_fac executable.
 
-        This is the production method used in IT-STOFS shell scripts.
+        This is the production method used in STOFS shell scripts.
         The executable reads a template file and applies accurate nodal
         corrections for the specified start time.
 

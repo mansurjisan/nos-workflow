@@ -2,7 +2,7 @@
 # Storm Surge and Tide Operational Forecast System - 3D Pacific
 #
 # Inherits from base SCHISM configuration and overrides specific values.
-# This config maps to IT-STOFS shell script environment variables.
+# This config maps to STOFS shell script environment variables.
 # NOTE: This is a placeholder config - Pacific STOFS may have different parameters
 
 _base: schism

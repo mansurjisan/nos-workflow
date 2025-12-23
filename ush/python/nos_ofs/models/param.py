@@ -9,7 +9,7 @@ This is a critical file that controls all model settings including:
 - Boundary condition settings
 - Restart/hotstart configuration
 
-The generator supports both IT-STOFS and COMF naming conventions
+The generator supports both STOFS and COMF naming conventions
 and can read template files for site-specific customization.
 """
 
@@ -468,7 +468,7 @@ class ParamNmlGenerator:
 
         # STOFS uses 24hr nowcast from NCAST_BEGIN
         # Total run = 24hr nowcast + 96hr forecast = 120hr = 5 days
-        total_hours = 24 + forecast_hours  # IT-STOFS standard
+        total_hours = 24 + forecast_hours  # STOFS standard
         self.params.rnday = total_hours / 24.0
 
         # Calculate output steps
