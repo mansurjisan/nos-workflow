@@ -74,7 +74,7 @@ forcing:
     # nosofs river control files (from secofs.ctl)
     files:
       ctl_file: secofs.river.ctl          # -> RIVER_CTL_FILE
-      clim_file: nos.river.clim.usgs.nc   # -> RIVER_CLIM_FILE (from .ctl)
+      clim_file: nosofs.river.clim.usgs.nc   # -> RIVER_CLIM_FILE (from .ctl)
       nwm_reach: secofs.nwm.reach.dat     # -> NWM_REACHID_FILE
 
   ocean:
@@ -87,7 +87,7 @@ forcing:
       # Control files (from secofs.ctl)
       files:
         obc_ctl: secofs.obc.ctl           # -> OBC_CTL_FILE
-        obc_clim: nos.clim.WOA05.nc       # -> OBC_CLIM_FILE (from .ctl)
+        obc_clim: nosofs.clim.WOA05.nc       # -> OBC_CLIM_FILE (from .ctl)
     nudging:
       enabled: true
       timescale_seconds: 10800.0  # -> STEP_NU_VALUE (from .ctl)
