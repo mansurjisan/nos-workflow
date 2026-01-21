@@ -105,8 +105,8 @@ def compute_derived_values(data: Dict, runtime_env: Dict) -> Dict[str, Any]:
 
     if pdy and cyc:
         try:
-            # Parse cycle time
-            cycle_time = datetime.strptime(f'{pdy}{cyc:02d}', '%Y%m%d%H')
+            # Parse cycle time (cyc is string like "00", "06", "12", "18")
+            cycle_time = datetime.strptime(f'{pdy}{cyc}', '%Y%m%d%H')
 
             # Nowcast begin (hindcast back from cycle)
             ncast_begin = cycle_time - timedelta(days=hindcast_days)
@@ -147,12 +147,8 @@ def get_runtime_from_env() -> Dict[str, Any]:
     for var in env_vars:
         if var in os.environ:
             value = os.environ[var]
-            # Convert cyc to int
-            if var == 'cyc':
-                try:
-                    value = int(value)
-                except ValueError:
-                    pass
+            # Keep cyc as string to preserve leading zero (e.g., "00" not "0")
+            # Shell scripts expect 2-digit format for time calculations
             runtime[var] = value
 
     return runtime
