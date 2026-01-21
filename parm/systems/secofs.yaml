@@ -295,3 +295,35 @@ shell_mappings:
 
     # Resources
     TOTAL_TASKS: resources.nprocs
+
+# Legacy mode configuration for running original nosofs shell scripts
+# Enable this to use the production COMF/nosofs shell scripts instead of
+# native Python processors. Paths are auto-detected from environment
+# variables (HOMEnos, FIXofs, USHnos) if not explicitly set.
+legacy:
+  enabled: false                    # Set to true to use legacy shell scripts
+  # Path to nosofs USH directory (auto-detected from USHnos or HOMEnos/ush)
+  ush_dir: ""
+  # Path to FIX files (auto-detected from FIXofs or HOMEnos/fix/secofs)
+  fix_dir: ""
+  # Path to executables (auto-detected from EXECnos or HOMEnos/exec)
+  exec_dir: ""
+  # Individual script toggles (override global enabled flag)
+  scripts:
+    # Atmospheric forcing
+    gfs: true                       # nos_ofs_create_forcing_met.sh (GFS)
+    hrrr: false                     # nos_ofs_create_forcing_met.sh (HRRR) - optional
+    nam: false                      # nos_ofs_create_forcing_met.sh (NAM) - fallback
+    # River forcing
+    river: true                     # nos_ofs_create_forcing_river.sh
+    # Ocean boundary conditions
+    obc: true                       # nos_ofs_create_forcing_obc.sh
+    # Tidal forcing
+    tides: true                     # nos_ofs_create_forcing_obc_tides.sh
+  # Timeout in seconds for each script type
+  timeouts:
+    gfs: 1800                       # 30 minutes
+    hrrr: 3600                      # 60 minutes
+    river: 1800                     # 30 minutes
+    obc: 3600                       # 60 minutes
+    tides: 600                      # 10 minutes
