@@ -50,13 +50,12 @@ grid:
 # Forcing configuration - maps to DBASE_* variables
 forcing:
   atmospheric:
-    # MET_NUM=1 means single met source (GFS only for CI testing)
-    # Set to 2 with HRRR for production
-    met_num: 1
+    # MET_NUM=2 means dual met source (GFS + HRRR) for production
+    met_num: 2
     primary: GFS              # -> DBASE_MET_NOW (from .ctl)
-    secondary: GFS            # -> DBASE_MET_NOW2 (disabled, same as primary)
+    secondary: HRRR           # -> DBASE_MET_NOW2 (from .ctl)
     forecast_source: GFS      # -> DBASE_MET_FOR
-    forecast_source2: GFS     # -> DBASE_MET_FOR2 (disabled, same as primary)
+    forecast_source2: HRRR    # -> DBASE_MET_FOR2 (from .ctl)
     scale_hflux: 1.0          # -> SCALE_HFLUX (from .ctl)
     variables:
       - PRMSL
@@ -113,7 +112,7 @@ forcing:
       # From secofs.ctl: HC_FILE_OBC and HC_FILE_OFS point to bctides files
       harmonic_constants_obc: secofs.bctides.in           # -> HC_FILE_OBC
       harmonic_constants_ofs: secofs.bctides.in_template  # -> HC_FILE_OFS
-      harmonic_nwlon: nos.HC_NWLON.nc                     # -> HC_FILE_NWLON
+      harmonic_nwlon: nosofs.HC_NWLON.nc                   # -> HC_FILE_NWLON (from .ctl: ${NET}.HC_NWLON.nc)
 
 # Model physics and runtime configuration (from secofs.ctl)
 model:
