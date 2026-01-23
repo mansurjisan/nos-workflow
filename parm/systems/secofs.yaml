@@ -277,6 +277,31 @@ shell_mappings:
     BASE_DATE: model.run.base_date
     TIME_START: model.run.time_start
 
+    # Physics parameters for model runtime
+    CPP_LON_VALUE: model.physics.cpp_lon
+    CPP_LAT_VALUE: model.physics.cpp_lat
+    IHORCON_VALUE: model.physics.ihorcon
+    IHDIF_VALUE: model.physics.ihdif
+    IDRAG_VALUE: model.physics.idrag
+    BFRIC_VALUE: model.physics.bfric
+    IHHAT_VALUE: model.physics.ihhat
+    INUNFL_VALUE: model.physics.inunfl
+    NRAMPWIND_VALUE: model.physics.nrampwind
+    DRAMPWIND_VALUE: model.physics.drampwind
+    IWINDOFF_VALUE: model.physics.iwindoff
+    RDRG: model.physics.rdrg
+    RDRG2: model.physics.rdrg2
+    Zob: model.physics.zob
+    VISC2: model.physics.visc2
+    VISC4: model.physics.visc4
+    AKT_BAK: model.physics.akt_bak
+    AKV_BAK: model.physics.akv_bak
+    AKK_BAK: model.physics.akk_bak
+    AKP_BAK: model.physics.akp_bak
+    DCRIT: model.physics.dcrit
+    DSTART: model.physics.dstart
+    TIDE_START: model.physics.tide_start
+
     # Run length
     LEN_NOWCAST: _computed.len_nowcast_hours
     LEN_FORECAST: _computed.len_forecast_hours
