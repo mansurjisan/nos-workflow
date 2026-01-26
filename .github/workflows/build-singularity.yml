@@ -65,6 +65,11 @@ jobs:
           echo "=== Disk space before build ==="
           df -h
 
+          echo "=== Preparing build context ==="
+          # Copy repo files to /tmp so %setup can find them with absolute path
+          sudo mkdir -p /tmp/build-context
+          sudo cp -r containers sorc src ush examples pyproject.toml /tmp/build-context/
+
           echo "=== Starting build ==="
           sudo apptainer build --notest nos-workflow.sif containers/nos-workflow.def
 
