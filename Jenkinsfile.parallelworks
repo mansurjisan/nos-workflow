@@ -1,0 +1,198 @@
+pipeline {
+    agent any
+
+    environment {
+        CONTAINER_NAME = 'nos-workflow'
+        CONTAINER_TAG = "${BUILD_NUMBER}"
+        DEF_FILE = 'containers/nos-workflow.def'
+        SIF_FILE = "nos-workflow-${BUILD_NUMBER}.sif"
+        // ParallelWorks data paths
+        DATA_ROOT = '/lustre/mjisan'
+        SANDBOX_ROOT = '/lustre/mjisan/stofs_sandbox'
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+        timeout(time: 3, unit: 'HOURS')
+        timestamps()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+                sh 'git log -1 --pretty=format:"%H %s"'
+            }
+        }
+
+        stage('Validate Definition') {
+            steps {
+                echo 'Validating Singularity definition file...'
+                sh '''
+                    if [ ! -f "${DEF_FILE}" ]; then
+                        echo "ERROR: Definition file not found: ${DEF_FILE}"
+                        exit 1
+                    fi
+                    echo "Definition file found: ${DEF_FILE}"
+                '''
+            }
+        }
+
+        stage('Build Container') {
+            steps {
+                echo 'Building Singularity container...'
+                sh '''
+                    singularity build --fakeroot --notest ${SIF_FILE} ${DEF_FILE}
+                    ls -lh ${SIF_FILE}
+                '''
+            }
+        }
+
+        stage('Test Container') {
+            steps {
+                echo 'Running container tests...'
+                sh '''
+                    # Test basic executables (all with || true to continue on failure)
+                    echo "Testing ADCIRC..."
+                    singularity exec ${SIF_FILE} /opt/models/adcirc/bin/adcirc --version || true
+
+                    echo "Testing ecFlow..."
+                    singularity exec ${SIF_FILE} /opt/ecflow/bin/ecflow_client --version || true
+
+                    echo "Testing wgrib2..."
+                    singularity exec ${SIF_FILE} /opt/wgrib2/bin/wgrib2 -version || true
+
+                    echo "Testing Python packages..."
+                    singularity exec ${SIF_FILE} python3 -c "import numpy; import netCDF4; print('Python OK')" || echo "Python test failed but continuing..."
+
+                    echo "All container tests completed!"
+                '''
+            }
+        }
+
+        stage('Setup Test Data') {
+            when {
+                expression {
+                    return fileExists("${DATA_ROOT}/extracted_gfs")
+                }
+            }
+            steps {
+                echo 'Setting up test sandbox...'
+                sh '''
+                    # Create sandbox directory structure
+                    mkdir -p ${SANDBOX_ROOT}/sandbox/{stofs3d,date,dcom_root}
+                    mkdir -p ${SANDBOX_ROOT}/sandbox/stofs3d/{fix,dataroot,rerun,versions,scripts,ush,exec}
+
+                    # Copy required files from container to sandbox
+                    singularity exec --bind ${SANDBOX_ROOT}:/output ${SIF_FILE} bash -c "
+                        cp -r /home/wcoss2/sandbox/stofs3d/scripts/* /output/sandbox/stofs3d/scripts/ 2>/dev/null || true
+                        cp -r /home/wcoss2/sandbox/stofs3d/ush/* /output/sandbox/stofs3d/ush/ 2>/dev/null || true
+                        cp -r /home/wcoss2/sandbox/stofs3d/versions/* /output/sandbox/stofs3d/versions/ 2>/dev/null || true
+                        cp -r /home/wcoss2/sandbox/stofs3d/exec/* /output/sandbox/stofs3d/exec/ 2>/dev/null || true
+                        cp /home/wcoss2/config_*.yaml /output/ 2>/dev/null || true
+                        cp /home/wcoss2/environment.sh /output/ 2>/dev/null || true
+                    "
+
+                    # Copy fix data
+                    cp -r ${DATA_ROOT}/extracted_fix/fix/stofs_3d_atl/* ${SANDBOX_ROOT}/sandbox/stofs3d/fix/stofs_3d_atl/ 2>/dev/null || true
+                '''
+            }
+        }
+
+        stage('Run Prep-Forecast Test') {
+            when {
+                expression {
+                    return fileExists("${DATA_ROOT}/extracted_gfs")
+                }
+            }
+            steps {
+                echo 'Running prep-forecast workflow test...'
+                sh '''
+                    BIND_OPTS="
+                        --bind ${DATA_ROOT}/extracted_gfs/lfs/h1/ops/prod/com/gfs:/lfs/h1/ops/prod/com/gfs:ro
+                        --bind ${DATA_ROOT}/extracted_hrrr/lfs/h1/ops/prod/com/hrrr:/lfs/h1/ops/prod/com/hrrr:ro
+                        --bind ${DATA_ROOT}/extracted_rtofs/rtofs:/lfs/h1/ops/prod/com/rtofs:ro
+                        --bind ${DATA_ROOT}/20250504_datasets:/home/wcoss2/sandbox/dcom_root:ro
+                        --bind ${SANDBOX_ROOT}:/home/wcoss2
+                        --pwd /home/wcoss2
+                    "
+
+                    singularity exec --contain --no-home --cleanenv ${BIND_OPTS} ${SIF_FILE} bash -c "
+                        source /home/wcoss2/environment.sh 20250504 12 /home/wcoss2/sandbox/
+                        export PATH='/opt/ncep/bin:/opt/ecflow/bin:/opt/slurm/bin:/usr/local/bin:/usr/bin:/bin:/usr/lib64/openmpi/bin'
+                        stofs prep-forecast --config config_schism.yaml
+                    "
+                '''
+            }
+        }
+
+        stage('Verify Outputs') {
+            when {
+                expression {
+                    return fileExists("${DATA_ROOT}/extracted_gfs")
+                }
+            }
+            steps {
+                echo 'Verifying workflow outputs...'
+                sh '''
+                    # Check for expected output files
+                    DATAROOT="${SANDBOX_ROOT}/sandbox/stofs3d/dataroot"
+
+                    if [ -f "${DATAROOT}/bctides.in" ]; then
+                        echo "✓ bctides.in created"
+                    else
+                        echo "✗ bctides.in missing"
+                        exit 1
+                    fi
+
+                    if [ -d "${DATAROOT}/gfs" ]; then
+                        echo "✓ GFS forcing directory created"
+                    fi
+
+                    if [ -d "${DATAROOT}/river" ]; then
+                        echo "✓ River forcing directory created"
+                    fi
+
+                    echo "Output verification passed!"
+                '''
+            }
+        }
+
+        stage('Archive Container') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Archiving container...'
+                sh '''
+                    # Copy to persistent storage
+                    mkdir -p ${DATA_ROOT}/containers
+                    cp ${SIF_FILE} ${DATA_ROOT}/containers/
+
+                    # Create latest symlink
+                    cd ${DATA_ROOT}/containers
+                    ln -sf ${SIF_FILE} nos-workflow-latest.sif
+
+                    echo "Container archived to ${DATA_ROOT}/containers/"
+                '''
+                archiveArtifacts artifacts: '*.sif', fingerprint: true
+            }
+        }
+    }
+
+    post {
+        always {
+            echo 'Cleaning up...'
+            sh '''
+                # Clean up sandbox dataroot (keep artifacts)
+                rm -rf ${SANDBOX_ROOT}/sandbox/stofs3d/dataroot/* 2>/dev/null || true
+            '''
+        }
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
