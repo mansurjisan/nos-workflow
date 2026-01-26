@@ -153,7 +153,9 @@ jobs:
       - name: Login to Sylabs Cloud
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
-          echo "${{ secrets.SYLABS_TOKEN }}" | apptainer remote login --tokenfile /dev/stdin SylabsCloud
+          echo "${{ secrets.SYLABS_TOKEN }}" > /tmp/sylabs-token
+          apptainer remote login --tokenfile /tmp/sylabs-token SylabsCloud
+          rm -f /tmp/sylabs-token
 
       - name: Push to Sylabs Cloud
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
