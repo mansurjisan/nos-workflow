@@ -31,11 +31,24 @@ jobs:
           echo "=== Initial disk space ==="
           df -h
 
-          # Remove unnecessary tools to free space
+          # Remove unnecessary tools to free space (need ~30GB for build)
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /usr/local/graalvm
+          sudo rm -rf /usr/local/.ghcup
+          sudo rm -rf /usr/local/share/powershell
+          sudo rm -rf /usr/local/share/chromium
+          sudo rm -rf /usr/local/lib/node_modules
+
+          # Clean apt cache
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+
+          # Remove docker images
+          docker system prune -af || true
 
           echo "=== Disk space after cleanup ==="
           df -h
@@ -49,11 +62,17 @@ jobs:
 
       - name: Build Singularity container
         run: |
+          echo "=== Disk space before build ==="
+          df -h
+
           echo "=== Starting build ==="
           sudo apptainer build --notest nos-workflow.sif containers/nos-workflow.def
 
           echo "=== Build complete ==="
           ls -lh nos-workflow.sif
+
+          echo "=== Disk space after build ==="
+          df -h
 
       - name: Test container
         run: |
