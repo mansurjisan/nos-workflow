@@ -7,8 +7,8 @@ pipeline {
         DEF_FILE = 'containers/nos-workflow.def'
         SIF_FILE = "nos-workflow-${BUILD_NUMBER}.sif"
         // Data paths - adjust for your Jenkins server
-        DATA_ROOT = '/data/STOFS_CI_DATA'
-        SANDBOX_ROOT = '/data/stofs_sandbox'
+        DATA_ROOT = '/mnt/f/STOFS_CI_DATA'
+        SANDBOX_ROOT = '/mnt/f/STOFS_CI_DATA/stofs_sandbox'
     }
 
     options {
