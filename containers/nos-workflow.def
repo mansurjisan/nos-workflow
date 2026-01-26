@@ -7,6 +7,15 @@ From: rockylinux/rockylinux:9
     Version 1.0
     Source https://github.com/mansurjisan/nos-workflow
 
+%files
+    # Copy repository files into container during build
+    containers /tmp/nos-workflow-repo/containers
+    sorc /tmp/nos-workflow-repo/sorc
+    src /tmp/nos-workflow-repo/src
+    ush /tmp/nos-workflow-repo/ush
+    examples /tmp/nos-workflow-repo/examples
+    pyproject.toml /tmp/nos-workflow-repo/pyproject.toml
+
 %post
     # ============================================================
     # ENVIRONMENT VARIABLES FOR BUILD
@@ -41,20 +50,13 @@ From: rockylinux/rockylinux:9
         environment-modules emacs sudo perl
 
     # ============================================================
-    # CLONE NOS-WORKFLOW REPOSITORY
+    # VERIFY REPOSITORY FILES (copied via %files section)
     # ============================================================
-    cd /tmp
-    rm -rf nos-workflow-repo
-    git clone --depth 1 https://github.com/mansurjisan/nos-workflow.git nos-workflow-repo
-
-    # Verify clone succeeded
-    echo "=== Verifying repository clone ==="
+    echo "=== Verifying repository files ==="
     ls -la /tmp/nos-workflow-repo/
-    echo "=== Checking sorc directory ==="
-    ls -la /tmp/nos-workflow-repo/sorc/ || echo "ERROR: sorc directory not found!"
-    echo "=== Checking containers directory ==="
-    ls -la /tmp/nos-workflow-repo/containers/ || echo "ERROR: containers directory not found!"
-    echo "=== Clone verification complete ==="
+    ls -la /tmp/nos-workflow-repo/sorc/
+    ls -la /tmp/nos-workflow-repo/containers/
+    echo "=== Repository files verified ==="
 
     # ============================================================
     # BUILD PROJ FROM SOURCE
@@ -274,16 +276,6 @@ From: rockylinux/rockylinux:9
     mkdir -p /opt/stofs/exec
     export PATH=$PATH:/usr/lib64/openmpi/bin
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
-
-    # Verify nos-workflow-repo still exists before building STOFS utilities
-    echo "=== Verifying repository before STOFS utilities build ==="
-    echo "Contents of /tmp:"
-    ls -la /tmp/
-    echo "Checking nos-workflow-repo:"
-    ls -la /tmp/nos-workflow-repo/ || { echo "ERROR: nos-workflow-repo not found!"; exit 1; }
-    echo "Checking sorc directory:"
-    ls -la /tmp/nos-workflow-repo/sorc/ || { echo "ERROR: sorc directory not found!"; exit 1; }
-    echo "=== Pre-build verification complete ==="
 
     # stofs_3d_atl_tide_fac
     cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_tide_fac.fd
