@@ -22,8 +22,8 @@ singularity exec nos-workflow.sif stofs prep-forecast --config config_schism.yam
 
 | Source | Location |
 |--------|----------|
-| Sylabs Cloud | `library://mansurjisan/nos-workflow/nos-workflow:latest` |
-| Docker Hub | `mjisan/stofsworkflow:nightly` |
+| Sylabs Cloud | [library://mansurjisan/nos-workflow/nos-workflow:latest](https://cloud.sylabs.io/library/mansurjisan/nos-workflow/nos-workflow) |
+| Docker Hub | [mjisan/stofsworkflow:nightly](https://hub.docker.com/r/mjisan/stofsworkflow) |
 | GitHub Releases | [Download .sif](https://github.com/mansurjisan/nos-workflow/releases/latest) |
 
 ## Build from Source
