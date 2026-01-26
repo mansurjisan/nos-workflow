@@ -159,9 +159,9 @@ jobs:
           # Login with token
           echo "${{ secrets.SYLABS_TOKEN }}" | apptainer remote login
           apptainer remote list
-          # Push container
-          apptainer push nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest
-          apptainer push nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }}
+          # Push unsigned container
+          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest
+          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }}
 
       - name: Summary
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
