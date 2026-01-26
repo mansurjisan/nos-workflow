@@ -10,8 +10,9 @@ From: rockylinux/rockylinux:9
 %setup
     # Copy repository files into container during build (runs on host)
     # Files are pre-copied to /tmp/build-context by the CI workflow
-    mkdir -p ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo
-    cp -r /tmp/build-context/* ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    # Use /opt instead of /tmp as /tmp may be cleared during container setup
+    mkdir -p ${APPTAINER_ROOTFS}/opt/nos-workflow-repo
+    cp -r /tmp/build-context/* ${APPTAINER_ROOTFS}/opt/nos-workflow-repo/
 
 %post
     # ============================================================
@@ -50,9 +51,9 @@ From: rockylinux/rockylinux:9
     # VERIFY REPOSITORY FILES (copied via %files section)
     # ============================================================
     echo "=== Verifying repository files ==="
-    ls -la /tmp/nos-workflow-repo/
-    ls -la /tmp/nos-workflow-repo/sorc/
-    ls -la /tmp/nos-workflow-repo/containers/
+    ls -la /opt/nos-workflow-repo/
+    ls -la /opt/nos-workflow-repo/sorc/
+    ls -la /opt/nos-workflow-repo/containers/
     echo "=== Repository files verified ==="
 
     # ============================================================
@@ -113,10 +114,10 @@ From: rockylinux/rockylinux:9
     chmod go-rw /run/munge || true
 
     # Copy SLURM config files from cloned repo
-    cp /tmp/nos-workflow-repo/containers/slurm.conf /opt/slurm/etc/slurm.conf
-    cp /tmp/nos-workflow-repo/containers/cgroup.conf /opt/slurm/etc/cgroup.conf
-    cp /tmp/nos-workflow-repo/containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
-    cp /tmp/nos-workflow-repo/containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
+    cp /opt/nos-workflow-repo/containers/slurm.conf /opt/slurm/etc/slurm.conf
+    cp /opt/nos-workflow-repo/containers/cgroup.conf /opt/slurm/etc/cgroup.conf
+    cp /opt/nos-workflow-repo/containers/slurmdbd.conf /opt/slurm/etc/slurmdbd.conf
+    cp /opt/nos-workflow-repo/containers/get_slurm_node.py /opt/slurm/etc/get_slurm_node.py
 
     # ============================================================
     # BUILD ECFLOW
@@ -275,28 +276,28 @@ From: rockylinux/rockylinux:9
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
 
     # stofs_3d_atl_tide_fac
-    cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_tide_fac.fd
+    cd /opt/nos-workflow-repo/sorc/stofs_3d_atl_tide_fac.fd
     make clean || true
     make
     cp -p stofs_3d_atl_tide_fac /opt/stofs/exec/
     make clean || true
 
     # stofs_3d_atl_netcdf2shef
-    cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_netcdf2shef.fd
+    cd /opt/nos-workflow-repo/sorc/stofs_3d_atl_netcdf2shef.fd
     make clean || true
     make
     cp -p stofs_3d_atl_netcdf2shef /opt/stofs/exec/
     make clean || true
 
     # stofs_3d_atl_gen_3Dth_from_hycom
-    cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_gen_3Dth_from_hycom.fd
+    cd /opt/nos-workflow-repo/sorc/stofs_3d_atl_gen_3Dth_from_hycom.fd
     make clean || true
     make
     cp -p stofs_3d_atl_gen_3Dth_from_hycom /opt/stofs/exec/
     make clean || true
 
     # stofs_3d_atl_gen_nudge_from_hycom
-    cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_gen_nudge_from_hycom.fd
+    cd /opt/nos-workflow-repo/sorc/stofs_3d_atl_gen_nudge_from_hycom.fd
     make clean || true
     make
     cp -p stofs_3d_atl_gen_nudge_from_hycom /opt/stofs/exec/
@@ -305,8 +306,8 @@ From: rockylinux/rockylinux:9
     # ============================================================
     # INSTALL CFP AND MPI WRAPPER
     # ============================================================
-    bash /tmp/nos-workflow-repo/containers/install-cfp.sh
-    bash /tmp/nos-workflow-repo/containers/install-mpi-wrapper.sh
+    bash /opt/nos-workflow-repo/containers/install-cfp.sh
+    bash /opt/nos-workflow-repo/containers/install-mpi-wrapper.sh
 
     # ============================================================
     # CREATE WCOSS2 USER AND DIRECTORIES
@@ -341,17 +342,17 @@ From: rockylinux/rockylinux:9
     # ============================================================
     # INSTALL STOFS WORKFLOW
     # ============================================================
-    cp -r /tmp/nos-workflow-repo/src /home/wcoss2/stofs_workflow/src
-    cp /tmp/nos-workflow-repo/pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
-    cp -r /tmp/nos-workflow-repo/examples/stofs_scripts /home/wcoss2/data/stofs_scripts
-    cp /tmp/nos-workflow-repo/examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
-    cp /tmp/nos-workflow-repo/examples/config_schism.yaml /home/wcoss2/config_schism.yaml
+    cp -r /opt/nos-workflow-repo/src /home/wcoss2/stofs_workflow/src
+    cp /opt/nos-workflow-repo/pyproject.toml /home/wcoss2/stofs_workflow/pyproject.toml
+    cp -r /opt/nos-workflow-repo/examples/stofs_scripts /home/wcoss2/data/stofs_scripts
+    cp /opt/nos-workflow-repo/examples/config_adcirc.yaml /home/wcoss2/config_adcirc.yaml
+    cp /opt/nos-workflow-repo/examples/config_schism.yaml /home/wcoss2/config_schism.yaml
     pip install /home/wcoss2/stofs_workflow
     rm -rf /home/wcoss2/stofs_workflow
     chmod -R ugo+x /home/wcoss2/data/stofs_scripts/stofs_3d_atl || true
 
     # Copy ush files
-    cp -r /tmp/nos-workflow-repo/ush/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/ || true
+    cp -r /opt/nos-workflow-repo/ush/stofs_3d_atl/* /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/ || true
     chmod -R +x /home/wcoss2/sandbox/stofs3d/ush/stofs_3d_atl/ || true
 
     # Copy scripts
@@ -363,9 +364,9 @@ From: rockylinux/rockylinux:9
     chmod -R +x /home/wcoss2/sandbox/stofs3d/exec/stofs_3d_atl/ || true
 
     # Copy environment and version files
-    cp /tmp/nos-workflow-repo/containers/environment.sh /home/wcoss2/environment.sh
-    cp /tmp/nos-workflow-repo/containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
-    cp /tmp/nos-workflow-repo/containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
+    cp /opt/nos-workflow-repo/containers/environment.sh /home/wcoss2/environment.sh
+    cp /opt/nos-workflow-repo/containers/run.ver /home/wcoss2/sandbox/stofs3d/versions/run.ver
+    cp /opt/nos-workflow-repo/containers/sample_compaths.list /lfs/h1/ops/prod/config/compaths.list
 
     # Fix permissions
     chmod -R +x /lfs/h1/ops/prod/com/nwm/v3.0/ || true
@@ -457,7 +458,7 @@ NCEP_EOF
     # CLEANUP
     # ============================================================
     dnf clean all
-    rm -rf /tmp/nos-workflow-repo
+    rm -rf /opt/nos-workflow-repo
     rm -rf /var/cache/dnf
 
 %environment
