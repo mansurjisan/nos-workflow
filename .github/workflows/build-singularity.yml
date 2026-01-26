@@ -152,6 +152,7 @@ jobs:
 
       - name: Push to Sylabs Cloud
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        continue-on-error: true
         run: |
           # Add Sylabs Cloud remote and set as default
           apptainer remote add --no-login SylabsCloud cloud.sylabs.io
@@ -160,8 +161,8 @@ jobs:
           echo "${{ secrets.SYLABS_TOKEN }}" | apptainer remote login
           apptainer remote list
           # Push unsigned container
-          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest
-          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }}
+          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest || echo "Push to latest failed"
+          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }} || echo "Push to dated tag failed"
 
       - name: Summary
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
