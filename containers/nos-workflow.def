@@ -7,14 +7,15 @@ From: rockylinux/rockylinux:9
     Version 1.0
     Source https://github.com/mansurjisan/nos-workflow
 
-%files
-    # Copy repository files into container during build
-    containers /tmp/nos-workflow-repo/containers
-    sorc /tmp/nos-workflow-repo/sorc
-    src /tmp/nos-workflow-repo/src
-    ush /tmp/nos-workflow-repo/ush
-    examples /tmp/nos-workflow-repo/examples
-    pyproject.toml /tmp/nos-workflow-repo/pyproject.toml
+%setup
+    # Copy repository files into container during build (runs on host)
+    mkdir -p ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo
+    cp -r containers ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    cp -r sorc ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    cp -r src ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    cp -r ush ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    cp -r examples ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
+    cp pyproject.toml ${APPTAINER_ROOTFS}/tmp/nos-workflow-repo/
 
 %post
     # ============================================================
