@@ -44,6 +44,7 @@ From: rockylinux/rockylinux:9
     # CLONE NOS-WORKFLOW REPOSITORY
     # ============================================================
     cd /tmp
+    rm -rf nos-workflow-repo
     git clone --depth 1 https://github.com/mansurjisan/nos-workflow.git nos-workflow-repo
 
     # ============================================================
