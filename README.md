@@ -18,16 +18,6 @@ docker pull mjisan/stofsworkflow:nightly
 singularity exec nos-workflow.sif stofs prep-forecast --config config_schism.yaml
 ```
 
-## Included Software
-
-| Software | Version |
-|----------|---------|
-| ADCIRC | v56.0.3 |
-| SCHISM | v5.11.0 |
-| ecFlow | v5.6.0 |
-| wgrib2 | v3.1.3 |
-| Python 3.9 | numpy, netCDF4, xarray |
-
 ## Container Sources
 
 | Source | Location |
@@ -56,16 +46,12 @@ docker build -t nos-workflow -f containers/Dockerfile .
 | `stofs forecast` | Run forecast model |
 | `stofs post` | Post-processing |
 
-## Documentation
+## CI/CD Pipelines
 
-- [Jenkins CI/CD Guide](docs/jenkins-guide.md)
-- [Hercules HPC Deployment](docs/hercules-deployment-guide.md)
-
-## Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Submit a Pull Request
+| Platform | Purpose | Trigger |
+|----------|---------|---------|
+| GitHub Actions | Build & publish containers | Push to main, weekly schedule |
+| Jenkins | Integration testing on HPC | Poll SCM (every 5 min) |
 
 ## License
 
