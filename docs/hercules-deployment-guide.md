@@ -21,10 +21,10 @@ mkdir -p /work/$USER/containers
 cd /work/$USER/containers
 
 # Pull latest container
-singularity pull library://mansurjisan/nos-workflow/nos-workflow:latest
+singularity pull library://mjisan/nos-workflow/nos-workflow:latest
 
 # Or pull specific version
-singularity pull library://mansurjisan/nos-workflow/nos-workflow:20260125
+singularity pull library://mjisan/nos-workflow/nos-workflow:20260125
 ```
 
 ### Option B: Download from GitHub Releases
@@ -249,7 +249,7 @@ cd /work/$USER/stofs/containers
 mv nos-workflow.sif nos-workflow.sif.backup
 
 # Pull new version
-singularity pull library://mansurjisan/nos-workflow/nos-workflow:latest
+singularity pull library://mjisan/nos-workflow/nos-workflow:latest
 
 # Verify
 singularity exec nos-workflow.sif stofs --version

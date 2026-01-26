@@ -10,7 +10,7 @@ Containerized workflow for NOAA's Surge and Tide Operational Forecast System (ST
 
 ```bash
 # Pull container
-singularity pull library://mansurjisan/nos-workflow/nos-workflow:latest
+singularity pull library://mjisan/nos-workflow/nos-workflow:latest
 # or
 docker pull mjisan/stofsworkflow:nightly
 
@@ -22,7 +22,7 @@ singularity exec nos-workflow.sif stofs prep-forecast --config config_schism.yam
 
 | Source | Location |
 |--------|----------|
-| Sylabs Cloud | [library://mansurjisan/nos-workflow/nos-workflow:latest](https://cloud.sylabs.io/library/mansurjisan/nos-workflow/nos-workflow) |
+| Sylabs Cloud | [library://mjisan/nos-workflow/nos-workflow:latest](https://cloud.sylabs.io/library/mjisan/nos-workflow/nos-workflow) |
 | Docker Hub | [mjisan/stofsworkflow:nightly](https://hub.docker.com/r/mjisan/stofsworkflow) |
 | GitHub Releases | [Download .sif](https://github.com/mansurjisan/nos-workflow/releases/latest) |
 

@@ -1,0 +1,7 @@
+# Build artifacts
+*.sif
+build.log
+test_nightly_build/logs/
+
+# Conversation logs
+2026-*.txt

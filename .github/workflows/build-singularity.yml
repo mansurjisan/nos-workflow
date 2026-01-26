@@ -161,12 +161,12 @@ jobs:
           echo "${{ secrets.SYLABS_TOKEN }}" | apptainer remote login
           apptainer remote list
           # Push unsigned container
-          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest || echo "Push to latest failed"
-          apptainer push -U nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }} || echo "Push to dated tag failed"
+          apptainer push -U nos-workflow.sif library://mjisan/nos-workflow/nos-workflow:latest || echo "Push to latest failed"
+          apptainer push -U nos-workflow.sif library://mjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }} || echo "Push to dated tag failed"
 
       - name: Summary
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         run: |
           echo "Container built and released successfully!"
           echo "GitHub Release: https://github.com/${{ github.repository }}/releases/latest"
-          echo "Sylabs Cloud: https://cloud.sylabs.io/library/mansurjisan/nos-workflow/nos-workflow"
+          echo "Sylabs Cloud: https://cloud.sylabs.io/library/mjisan/nos-workflow/nos-workflow"
