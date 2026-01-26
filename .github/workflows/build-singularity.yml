@@ -152,10 +152,14 @@ jobs:
 
       - name: Push to Sylabs Cloud
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        env:
-          SYLABS_AUTH_TOKEN: ${{ secrets.SYLABS_TOKEN }}
         run: |
+          # Add Sylabs Cloud remote and set as default
+          apptainer remote add --no-login SylabsCloud cloud.sylabs.io
+          apptainer remote use SylabsCloud
+          # Login with token
+          echo "${{ secrets.SYLABS_TOKEN }}" | apptainer remote login
           apptainer remote list
+          # Push container
           apptainer push nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:latest
           apptainer push nos-workflow.sif library://mansurjisan/nos-workflow/nos-workflow:${{ steps.version.outputs.date }}
 
