@@ -47,6 +47,15 @@ From: rockylinux/rockylinux:9
     rm -rf nos-workflow-repo
     git clone --depth 1 https://github.com/mansurjisan/nos-workflow.git nos-workflow-repo
 
+    # Verify clone succeeded
+    echo "=== Verifying repository clone ==="
+    ls -la /tmp/nos-workflow-repo/
+    echo "=== Checking sorc directory ==="
+    ls -la /tmp/nos-workflow-repo/sorc/ || echo "ERROR: sorc directory not found!"
+    echo "=== Checking containers directory ==="
+    ls -la /tmp/nos-workflow-repo/containers/ || echo "ERROR: containers directory not found!"
+    echo "=== Clone verification complete ==="
+
     # ============================================================
     # BUILD PROJ FROM SOURCE
     # ============================================================
@@ -265,6 +274,16 @@ From: rockylinux/rockylinux:9
     mkdir -p /opt/stofs/exec
     export PATH=$PATH:/usr/lib64/openmpi/bin
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
+
+    # Verify nos-workflow-repo still exists before building STOFS utilities
+    echo "=== Verifying repository before STOFS utilities build ==="
+    echo "Contents of /tmp:"
+    ls -la /tmp/
+    echo "Checking nos-workflow-repo:"
+    ls -la /tmp/nos-workflow-repo/ || { echo "ERROR: nos-workflow-repo not found!"; exit 1; }
+    echo "Checking sorc directory:"
+    ls -la /tmp/nos-workflow-repo/sorc/ || { echo "ERROR: sorc directory not found!"; exit 1; }
+    echo "=== Pre-build verification complete ==="
 
     # stofs_3d_atl_tide_fac
     cd /tmp/nos-workflow-repo/sorc/stofs_3d_atl_tide_fac.fd
