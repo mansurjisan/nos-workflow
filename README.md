@@ -103,16 +103,18 @@ nos-workflow/
 
 ## CI/CD Pipelines
 
-### GitHub Actions
+| Platform | Purpose | Status |
+|----------|---------|--------|
+| GitHub Actions | Docker builds, pushes to Docker Hub | [![Docker Build](https://github.com/mansurjisan/nos-workflow/actions/workflows/docker-build.yml/badge.svg)](https://github.com/mansurjisan/nos-workflow/actions/workflows/docker-build.yml) |
+| GitHub Actions | Singularity builds, releases, Sylabs Cloud | [![Singularity Build](https://github.com/mansurjisan/nos-workflow/actions/workflows/build-singularity.yml/badge.svg)](https://github.com/mansurjisan/nos-workflow/actions/workflows/build-singularity.yml) |
+| Jenkins | Integration testing with real STOFS data | Internal |
+| Jenkins (HPC) | Deployment testing on ParallelWorks/Hercules | Internal |
 
-- **Singularity Build**: Triggers on push to main/develop, creates GitHub releases, pushes to Sylabs Cloud
-- **Docker Build**: Daily builds, pushes to Docker Hub
+### Jenkins Setup
 
-### Jenkins
-
-- **Local/WSL**: For testing with local data
-- **ParallelWorks**: Integration testing on cloud HPC
-- **Poll SCM**: Checks for changes every 5 minutes
+Jenkins pipelines are available for local testing and HPC deployment:
+- `Jenkinsfile` - Local/WSL testing
+- `Jenkinsfile.parallelworks` - NOAA ParallelWorks
 
 See [Jenkins Guide](docs/jenkins-guide.md) for setup instructions.
 
