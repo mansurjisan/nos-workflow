@@ -113,17 +113,23 @@ From: rockylinux/rockylinux:9
     # ============================================================
     # BUILD ECFLOW
     # ============================================================
-    mkdir -p /tmp/ecflow_build && cd /tmp/ecflow_build
+    rm -rf /tmp/ecflow_build
+    mkdir -p /tmp/ecflow_build
+    cd /tmp/ecflow_build
     wget -O ecflow.tar.gz "https://confluence.ecmwf.int/download/attachments/8650755/ecFlow-${ECFLOW_VERSION}-Source.tar.gz?api=v2"
-    tar -xvf ecflow.tar.gz && rm ecflow.tar.gz
+    tar -xvf ecflow.tar.gz
+    rm ecflow.tar.gz
     mv ecFlow* ecflow
-    cd ecflow && rm -rf build && mkdir build && cd build
+    rm -rf /tmp/ecflow_build/ecflow/build
+    mkdir -p /tmp/ecflow_build/ecflow/build
+    cd /tmp/ecflow_build/ecflow/build
     cmake .. -DENABLE_UI=OFF \
         -DBoost_ROOT=/usr \
         -DENABLE_TESTS=OFF \
         -DENABLE_STATIC_BOOST_LIBS=OFF \
         -DCMAKE_INSTALL_PREFIX=/opt/ecflow
-    make -j2 && make install
+    make -j1
+    make install
     cd /tmp && rm -rf ecflow_build
 
     # Copy netcdf module for cmake
@@ -133,9 +139,10 @@ From: rockylinux/rockylinux:9
     # BUILD ADCIRC
     # ============================================================
     cd /tmp
-    rm -rf adcirc adcirc_build
+    rm -rf /tmp/adcirc /tmp/adcirc_build
     git clone --depth 1 --branch v${ADCIRC_VERSION} https://github.com/adcirc/adcirc
-    mkdir adcirc_build && cd adcirc_build
+    mkdir -p /tmp/adcirc_build
+    cd /tmp/adcirc_build
     export PATH=$PATH:/usr/lib64/openmpi/bin
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
     cmake ../adcirc -DCMAKE_INSTALL_PREFIX=/opt/models/adcirc \
@@ -154,9 +161,10 @@ From: rockylinux/rockylinux:9
     # ============================================================
     [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
     cd /tmp
-    rm -rf schism schism_build
+    rm -rf /tmp/schism /tmp/schism_build
     git clone --depth 1 --branch v${SCHISM_VERSION} https://github.com/schism-dev/schism
-    mkdir schism_build && cd schism_build
+    mkdir -p /tmp/schism_build
+    cd /tmp/schism_build
     export PATH=$PATH:/usr/lib64/openmpi/bin
     export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64
     cmake ../schism/src -DCMAKE_INSTALL_PREFIX=/opt/models/schism -DBLD_STANDALONE=ON
