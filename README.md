@@ -2,6 +2,7 @@
 
 [![Docker Build](https://github.com/mansurjisan/nos-workflow/actions/workflows/docker-build.yml/badge.svg)](https://github.com/mansurjisan/nos-workflow/actions/workflows/docker-build.yml)
 [![Singularity Build](https://github.com/mansurjisan/nos-workflow/actions/workflows/build-singularity.yml/badge.svg)](https://github.com/mansurjisan/nos-workflow/actions/workflows/build-singularity.yml)
+[![Jenkins CI](https://img.shields.io/badge/Jenkins-CI%2FCD-blue?logo=jenkins&logoColor=white)](docs/jenkins-guide.md)
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE)
 
 Containerized workflow system for NOAA's Surge and Tide Operational Forecast System (STOFS). This repository provides Docker and Singularity containers with all dependencies pre-installed for running STOFS workflows on any HPC system.
