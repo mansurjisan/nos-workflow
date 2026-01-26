@@ -244,6 +244,7 @@ From: rockylinux/rockylinux:9
     cd grib2
     export CC=gcc
     export FC=gfortran
+    export TAR_OPTIONS="--no-same-owner"
     make -j2
     mkdir -p /opt/wgrib2/bin
     cp wgrib2/wgrib2 /opt/wgrib2/bin/
