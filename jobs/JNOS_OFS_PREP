@@ -20,8 +20,9 @@ fi
 ########################################
 # Set HOME directories
 ########################################
-# Support both nosofs and stofs naming conventions
-export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_ofs.${nos_ofs_ver:?}}}
+# Support both nosofs_ver (production) and nos_ofs_ver (unified) naming
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
 ###################################
