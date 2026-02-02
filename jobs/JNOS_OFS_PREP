@@ -142,12 +142,12 @@ export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/${envir}/dcom}
 
 if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nos_ofs_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+    export COMIN=${COMIN:-$(compath.py ${NET}/${nosofs_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nosofs_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nosofs_ver})/${RUN}.${PDY}}
 else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${nos_ofs_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nos_ofs_ver}}
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${nosofs_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nosofs_ver}}
     export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 fi
 
@@ -195,12 +195,7 @@ case "${OFS_FRAMEWORK}" in
         ;;
     comf|*)
         # nosofs/COMF prep script
-        if [ -f "${SCRIPTSnos}/nosofs/exnos_ofs_prep.sh" ]; then
-            ${SCRIPTSnos}/nosofs/exnos_ofs_prep.sh $OFS
-        else
-            echo "ERROR: nosofs prep script not found" >&2
-            exit 1
-        fi
+        $SCRIPTSnos/exnos_ofs_prep.sh $OFS
         ;;
 esac
 
