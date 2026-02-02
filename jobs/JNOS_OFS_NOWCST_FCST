@@ -20,7 +20,9 @@ fi
 ########################################
 # Set HOME directories
 ########################################
-export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_ofs.${nos_ofs_ver:?}}}
+# Support both nosofs_ver (production) and nos_ofs_ver (unified) naming
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
 ###################################
@@ -109,12 +111,12 @@ export PDY=${PDY:-$(date +%Y%m%d)}
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 
 if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nos_ofs_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nos_ofs_ver})/${RUN}.${PDY}}
+    export COMIN=${COMIN:-$(compath.py ${NET}/${nosofs_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nosofs_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nosofs_ver})/${RUN}.${PDY}}
 else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${nos_ofs_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nos_ofs_ver}}
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${nosofs_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nosofs_ver}}
     export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 fi
 
@@ -143,12 +145,7 @@ case "${OFS_FRAMEWORK}" in
         ;;
     comf|*)
         # nosofs/COMF nowcast_forecast script
-        if [ -f "${SCRIPTSnos}/nosofs/exnos_ofs_nowcast_forecast.sh" ]; then
-            ${SCRIPTSnos}/nosofs/exnos_ofs_nowcast_forecast.sh $OFS
-        else
-            echo "ERROR: nosofs nowcast_forecast script not found" >&2
-            exit 1
-        fi
+        $SCRIPTSnos/exnos_ofs_nowcast_forecast.sh $OFS
         ;;
 esac
 
