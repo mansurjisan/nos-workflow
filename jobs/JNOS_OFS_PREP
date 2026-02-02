@@ -106,8 +106,8 @@ case "${OFS,,}" in
     secofs|creofs)
         export OFS_FRAMEWORK="comf"
         export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
-        if [ -f "${USHnos}/nosofs/nos_ofs_config.sh" ]; then
-            source "${USHnos}/nosofs/nos_ofs_config.sh"
+        if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+            source "${USHnos}/nos_ofs_config.sh"
             load_nosofs_config "${OFS_CONFIG}"
         fi
         ;;
@@ -115,8 +115,8 @@ case "${OFS,,}" in
         export OFS_FRAMEWORK="comf"
         export OFS_CONFIG="${OFS_CONFIG:-${FIXofs}/${OFS}.yaml}"
         # Fall back to legacy .ctl loading if no YAML
-        if [ -f "${USHnos}/nosofs/nos_ofs_config.sh" ]; then
-            source "${USHnos}/nosofs/nos_ofs_config.sh"
+        if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+            source "${USHnos}/nos_ofs_config.sh"
             load_nosofs_config "${OFS_CONFIG}" || true
         fi
         ;;
