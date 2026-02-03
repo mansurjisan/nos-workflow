@@ -28,7 +28,15 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 ###################################
 # Specify NET and RUN Name and model
 ####################################
-export NET=${NET:-nosofs}
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
 export RUN=${RUN:-$OFS}
 export PREFIXNOS=${PREFIXNOS:-$OFS}
 export CONTINUE_FORECAST=${CONTINUE_FORECAST:-NO}
@@ -84,11 +92,12 @@ export PARMnos=${PARMnos:-${HOMEnos}/parm}
 export USHnos=${USHnos:-${HOMEnos}/ush}
 export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
-# STOFS specific paths
-export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
-export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
-export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
-export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
+# STOFS specific paths (match IT-stofs directory layout)
+export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec/${RUN}}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
+export SCRIstofs3d=${SCRIstofs3d:-${HOMEstofs}/scripts/${RUN}}
+export PYstofs3d=${PYstofs3d:-${USHstofs3d}/pysh}
 
 ####################################
 # YAML Configuration Loading
@@ -141,13 +150,19 @@ export time_nowcastend=$PDY${cyc}
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/${envir}/dcom}
 
+# Use appropriate version for COM paths
+case "${OFS_FRAMEWORK}" in
+    stofs)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)      _com_ver=${nosofs_ver} ;;
+esac
+
 if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${nosofs_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nosofs_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nosofs_ver})/${RUN}.${PDY}}
+    export COMIN=${COMIN:-$(compath.py ${NET}/${_com_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${_com_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${_com_ver})/${RUN}.${PDY}}
 else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${nosofs_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nosofs_ver}}
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${_com_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${_com_ver}}
     export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 fi
 
@@ -185,13 +200,33 @@ env
 ########################################################
 case "${OFS_FRAMEWORK}" in
     stofs)
-        # STOFS prep script
-        if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_prep_processing.sh" ]; then
-            ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_prep_processing.sh
-        else
-            echo "ERROR: STOFS prep script not found" >&2
-            exit 1
+        # STOFS prep - create forcing prep subdirectories
+        export DATA_prep_nwm=${DATA}/river
+        export DATA_prep_river_st_lawrence=${DATA}/river_st_lawrence
+        export DATA_prep_gfs=${DATA}/gfs
+        export DATA_prep_hrrr=${DATA}/hrrr
+        export DATA_prep_rtofs=${DATA}/rtofs
+        export DATA_prep_restart=${DATA}/restart
+        mkdir -p $DATA_prep_nwm $DATA_prep_river_st_lawrence \
+                 $DATA_prep_gfs $DATA_prep_hrrr \
+                 $DATA_prep_rtofs $DATA_prep_restart
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        if command -v $NDATE &> /dev/null; then
+            export PDYHH_FCAST_END=$($NDATE 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$($NDATE -24 $PDYHH)
         fi
+
+        # STOFS COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMROOT}/${NET}/${stofs_ver}}
+        export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
+        export COMINadt=${COMINadt:-${DCOMROOT:-}}
+
+        # Execute STOFS prep script
+        $SCRIstofs3d/exstofs_3d_atl_prep_processing.sh
         ;;
     comf|*)
         # nosofs/COMF prep script
