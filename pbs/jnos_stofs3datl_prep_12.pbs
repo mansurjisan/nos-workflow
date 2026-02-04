@@ -9,7 +9,7 @@
 #PBS  -l walltime=01:30:00
 
 # Source STOFS version file
-. /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver
+. /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/versions/stofs_3d_atl/run.ver
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/stofs_3d_atl
@@ -65,11 +65,7 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-# STOFS home directory (IT-stofs package)
-export HOMEstofs=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/IT-stofs.v2.1.0
-export stofs_ver=v2.1.0
-
-# nosofs home (for unified J-job and YAML config)
+# Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
 export nosofs_ver=v3.7.0
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
@@ -78,23 +74,15 @@ export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 
-# Input data paths
-export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
-export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
-export COMINrtofs=/lfs/h1/ops/prod/com/rtofs/v2.4
-export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/v2.4
-export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/v2.4
-export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
-export COMIN=/lfs/h1/ops/prod/com
-
 ################################################
 # CALL executable job script here
 export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-# YAML configuration (from unified package)
-export OFS_CONFIG=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/parm/systems/stofs_3d_atl.yaml
-export PYTHONPATH=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/ush/python:$PYTHONPATH
+# YAML configuration
+export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.${nosofs_ver}/jobs/JNOS_OFS_PREP
+${HOMEnos}/jobs/JNOS_OFS_PREP
