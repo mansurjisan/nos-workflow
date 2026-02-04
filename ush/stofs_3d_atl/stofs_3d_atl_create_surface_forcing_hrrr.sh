@@ -15,6 +15,20 @@ set -x
 
 echo 'The script stofs_3d_atl_create_surface_forcing_hrrr.sh started '
 
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+# Try to load from YAML if OFS_CONFIG is set and yaml_to_env.py is available
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading HRRR config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            echo "YAML config loaded successfully"
+        fi
+    fi
+fi
+
 
 # ---------------------------> SAFETY CHECK: Validate required environment variables
 # This prevents catastrophic deletion if variables are not set
@@ -59,10 +73,12 @@ esac
 
 
 # --------------------------> Region of interest
-  LONMIN=-98.5
-  LONMAX=-49.5
-  LATMIN=5.5
-  LATMAX=50
+# Values from YAML config (forcing.atmospheric.hrrr_blend.*) or defaults
+  LONMIN=${HRRR_LONMIN:--98.5}
+  LONMAX=${HRRR_LONMAX:--49.5}
+  LATMIN=${HRRR_LATMIN:-5.5}
+  LATMAX=${HRRR_LATMAX:-50}
+  echo "HRRR Domain bounds: LONMIN=$LONMIN LONMAX=$LONMAX LATMIN=$LATMIN LATMAX=$LATMAX"
 
  #--------------------------> dates
   yyyymmdd_today=${PDYHH_FCAST_BEGIN:0:8}

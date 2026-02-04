@@ -24,6 +24,31 @@
 #  postmsg  "$msg"
   postmsg "$jlogfile" "$msg"
 
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+# Try to load from YAML if OFS_CONFIG is set and yaml_to_env.py is available
+# This exports config values to environment for use by child scripts
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading STOFS prep config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            export OFS_CONFIG_LOADED=1
+            echo "YAML config loaded successfully"
+            # Log key config values
+            echo "  LONMIN=${LONMIN:-not set}, LONMAX=${LONMAX:-not set}"
+            echo "  LATMIN=${LATMIN:-not set}, LATMAX=${LATMAX:-not set}"
+            echo "  N_list_target=${N_list_target:-not set}"
+        else
+            echo "WARNING: Failed to parse YAML config, using defaults"
+        fi
+    else
+        echo "WARNING: yaml_to_env.py not found at ${_yaml_to_env}"
+    fi
+else
+    echo "INFO: OFS_CONFIG not set or file not found, using script defaults"
+fi
 
   echo "module list in ${fn_this_script}"
   module list

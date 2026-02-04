@@ -111,6 +111,12 @@ forcing:
     nudging:
       enabled: true
       timescale_days: 1.0
+      # ROI for nudge file generation (slightly different from OBC 3D TH)
+      roi_3dz:
+        x1: 422               # -> idx_x1_3dz_nudge
+        x2: 600               # -> idx_x2_3dz_nudge
+        y1: 94                # -> idx_y1_3dz_nudge
+        y2: 835               # -> idx_y2_3dz_nudge
       files:
         sal_nudge: stofs_3d_atl.SAL_nudge.gr3
         tem_nudge: stofs_3d_atl.TEM_nudge.gr3
@@ -275,6 +281,12 @@ shell_mappings:
     idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
     idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
     SSH_OFFSET: forcing.ocean.obc.ssh_offset
+
+    # RTOFS nudge parameters (slightly different ROI from OBC)
+    idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
+    idx_x2_3dz_nudge: forcing.ocean.nudging.roi_3dz.x2
+    idx_y1_3dz_nudge: forcing.ocean.nudging.roi_3dz.y1
+    idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
 
     # Computed values (derived at runtime)
     LEN_FORECAST: _computed.len_forecast_hours

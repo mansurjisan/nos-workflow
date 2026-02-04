@@ -16,6 +16,19 @@ set -x
 
 echo 'The script stofs_3d_atl_create_river_forcing_nwm.sh started '
 
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+# Try to load from YAML if OFS_CONFIG is set and yaml_to_env.py is available
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading NWM river config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            echo "YAML config loaded successfully"
+        fi
+    fi
+fi
 
 # ---------------------------> SAFETY CHECK: Validate required environment variables
 # This prevents catastrophic deletion if variables are not set
@@ -58,8 +71,10 @@ esac
 
 
   # 96hr:: attn!
-  N_list_target=121   # 121*3600/86400=1+4.0417
-  N_list_min=97       # 97=121-24 (excluded lines 1-4 if *.th from yesterday'c cycle is used)  
+  # Values from YAML config (forcing.river.n_list_target, n_list_min) or defaults
+  N_list_target=${N_list_target:-121}   # 121*3600/86400=1+4.0417
+  N_list_min=${N_list_min:-97}          # 97=121-24 (excluded lines 1-4 if *.th from yesterday's cycle is used)
+  echo "NWM river config: N_list_target=$N_list_target N_list_min=$N_list_min"  
 
 
 # cp files to work dir

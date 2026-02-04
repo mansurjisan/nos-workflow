@@ -16,6 +16,20 @@ set -x
 
 echo 'stofs_3d_atl_create_surface_forcing_gfs.sh started '
 
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+# Try to load from YAML if OFS_CONFIG is set and yaml_to_env.py is available
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading GFS config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            echo "YAML config loaded successfully"
+        fi
+    fi
+fi
+
 
 # ---------------------------> SAFETY CHECK: Validate required environment variables
 # This prevents catastrophic deletion if variables are not set
@@ -64,11 +78,12 @@ esac
    
 
 # ---------------> Region of interest: 0.5 deg buffered of V6 grid
-#    -98.5035     -52.4867        7.347      52.5904
-    LONMIN=-98.5035
-    LONMAX=-52.4867
-    LATMIN=7.347
-    LATMAX=52.5904
+# Values from YAML config (grid.domain.*) or defaults
+    LONMIN=${LONMIN:--98.5035}
+    LONMAX=${LONMAX:--52.4867}
+    LATMIN=${LATMIN:-7.347}
+    LATMAX=${LATMAX:-52.5904}
+    echo "Domain bounds: LONMIN=$LONMIN LONMAX=$LONMAX LATMIN=$LATMIN LATMAX=$LATMAX"
 
 
 
@@ -187,7 +202,8 @@ done # for flag_route_no i
 # merge if missing
 
  # 96hr::  N_list_target=74   # minCr=74: 73,74,75: 3.5, 3.541667, 3.583333
-   N_list_target=97     # # minCr=99: {96,97,98} = {4.0000    4.0417    4.083}
+ # Value from YAML config (forcing.river.n_list_target) or default
+   N_list_target=${N_list_target:-97}     # minCr=99: {96,97,98} = {4.0000    4.0417    4.083}
 
 
  A1=($LIST_fn_final_qa_sz_1)

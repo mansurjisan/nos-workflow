@@ -18,6 +18,20 @@ set -x
 
   echo "${fn_this_script} started "
 
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+# Try to load from YAML if OFS_CONFIG is set and yaml_to_env.py is available
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading OBC nudge config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            echo "YAML config loaded successfully"
+        fi
+    fi
+fi
+
   echo "module list in ${fn_this_script}"
   module list
   echo; echo
@@ -78,8 +92,9 @@ esac
   # 96 hr:: N_list_target_2D=14
   # 96 hr:: N_list_target_3D=14
   # 96 hr:: FYI: [12:6:+12+24*5] == {12    18    24    30    36    42    48    54    60    66    72    78    84    90    96   102   108   114   120   126   132}, N=21 pnts
-  N_list_target_2D=21
-  N_list_target_3D=21
+  # Values from YAML config (forcing.ocean.obc.n_list_target_*) or defaults
+  N_list_target_2D=${N_list_target_2D:-21}
+  N_list_target_3D=${N_list_target_3D:-21}
 
 
 # ---------------------------> file names
@@ -88,7 +103,7 @@ esac
 
   fn_rtofs_obc_TEM_3Dth_ori=TEM_3D.th.nc
   fn_rtofs_obc_TEM_3Dth_std=${RUN}.${cycle}.tem3dth.nc
-  
+
   fn_rtofs_obc_SAL_3Dth_ori=SAL_3D.th.nc
   fn_rtofs_obc_SAL_3Dth_std=${RUN}.${cycle}.sal3dth.nc
 
@@ -103,20 +118,23 @@ esac
 
 
 # ---------------------------> roi: for nudging nc & 3Dth.nc
+# Values from YAML config (forcing.ocean.obc.roi_2ds.* and roi_3dz.*) or defaults
+# Note: nudge script uses slightly different 3D ROI than OBC 3D TH script
+idx_x1_2ds=${idx_x1_2ds:-2805}
+idx_x2_2ds=${idx_x2_2ds:-2923}
+idx_y1_2ds=${idx_y1_2ds:-1598}
+idx_y2_2ds=${idx_y2_2ds:-2325}
 
-idx_x1_2ds=2805
-idx_x2_2ds=2923
-idx_y1_2ds=1598
-idx_y2_2ds=2325
+idx_x1_3dz=${idx_x1_3dz_nudge:-422}
+idx_x2_3dz=${idx_x2_3dz_nudge:-600}
+idx_y1_3dz=${idx_y1_3dz_nudge:-94}
+idx_y2_3dz=${idx_y2_3dz_nudge:-835}
 
-idx_x1_3dz=422
-idx_x2_3dz=600
-idx_y1_3dz=94
-idx_y2_3dz=835
-
+echo "RTOFS ROI 2D: x1=$idx_x1_2ds x2=$idx_x2_2ds y1=$idx_y1_2ds y2=$idx_y2_2ds"
+echo "RTOFS ROI 3D (nudge): x1=$idx_x1_3dz x2=$idx_x2_3dz y1=$idx_y1_3dz y2=$idx_y2_3dz"
 
 # v6 RTOFS-2D, nudge dmn: 2805  2923  1598  2325
-# v6 RTOFS-3D, nudge dmn: [482  600   94  821]
+# v6 RTOFS-3D, nudge dmn: [422  600   94  835]
 
 
 # --------------------------> dates
