@@ -72,27 +72,23 @@ export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
 ####################################
 # YAML Configuration Loading
 ####################################
+# Determine OFS framework type
 case "${OFS,,}" in
     stofs_3d_atl|stofs_3d_pac)
         export OFS_FRAMEWORK="stofs"
-        export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
-        if [ -f "${USHstofs3d}/stofs_3d_atl_config.sh" ]; then
-            source "${USHstofs3d}/stofs_3d_atl_config.sh"
-            load_stofs_config "${OFS_CONFIG}"
-        fi
-        ;;
-    secofs|creofs)
-        export OFS_FRAMEWORK="comf"
-        export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
-        if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
-            source "${USHnos}/nos_ofs_config.sh"
-            load_nosofs_config "${OFS_CONFIG}"
-        fi
         ;;
     *)
         export OFS_FRAMEWORK="comf"
         ;;
 esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+# Source unified config loader and load YAML config
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
 
 echo "OFS Framework: ${OFS_FRAMEWORK}"
 
