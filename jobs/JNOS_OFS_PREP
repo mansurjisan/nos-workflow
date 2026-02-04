@@ -166,7 +166,7 @@ if command -v compath.py &> /dev/null; then
     export COMINrap=${COMINrap:-$(compath.py prod/rap/${rap_ver:-v5.1})}
     export COMINrtma=${COMINrtma:-$(compath.py prod/rtma/${rtma_ver:-v2.8})}
     export COMINgfs=${COMINgfs:-$(compath.py prod/gfs/${gfs_ver:-v16.3})}
-    export COMINrtofs=${COMINrtofs:-$(compath.py prod/rtofs/${rtofs_ver:-v2.5})}
+    export COMINrtofs=$(compath.py prod/rtofs/${rtofs_ver:-v2.5})
     export COMINrtofs_2d=${COMINrtofs_2d:-${COMINrtofs}}
     export COMINrtofs_3d=${COMINrtofs_3d:-${COMINrtofs}}
     export COMINnwm=${COMINnwm:-$(compath.py prod/nwm/${nwm_ver:-v3.0})}
