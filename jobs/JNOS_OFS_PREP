@@ -11,11 +11,11 @@ date
 
 ########################################
 # Load shared library if available
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+# STOFS uses Python scripts (numpy/netCDF4) that segfault when the
+# Fortran library is force-loaded into the process.
 ########################################
 export LD_PRELOAD=${LD_PRELOAD:-}
-if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-    export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
-fi
 
 ########################################
 # Set HOME directories
@@ -239,6 +239,10 @@ case "${OFS_FRAMEWORK}" in
         $SCRIstofs3d/exstofs_3d_atl_prep_processing.sh
         ;;
     comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
         # nosofs/COMF prep script
         $SCRIPTSnos/exnos_ofs_prep.sh $OFS
         ;;
