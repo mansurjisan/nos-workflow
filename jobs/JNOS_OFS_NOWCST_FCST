@@ -72,11 +72,12 @@ export USHnos=${USHnos:-${HOMEnos}/ush}
 export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
 # STOFS specific paths (match IT-stofs directory layout)
-export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec/${RUN}}
-export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
-export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
-export SCRIstofs3d=${SCRIstofs3d:-${HOMEstofs}/scripts/${RUN}}
-export PYstofs3d=${PYstofs3d:-${USHstofs3d}/pysh}
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
 
 ####################################
 # YAML Configuration Loading
