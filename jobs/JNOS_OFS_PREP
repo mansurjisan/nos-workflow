@@ -107,8 +107,9 @@ case "${OFS,,}" in
     stofs_3d_atl|stofs_3d_pac)
         export OFS_FRAMEWORK="stofs"
         export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
-        if [ -f "${USHstofs3d}/stofs_3d_atl_config.sh" ]; then
-            source "${USHstofs3d}/stofs_3d_atl_config.sh"
+        # Config loader is in the nosofs package (HOMEnos), not IT-stofs (HOMEstofs)
+        if [ -f "${USHnos}/${OFS}/stofs_3d_atl_config.sh" ]; then
+            source "${USHnos}/${OFS}/stofs_3d_atl_config.sh"
             load_stofs_config "${OFS_CONFIG}"
         fi
         ;;

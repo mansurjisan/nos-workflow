@@ -37,6 +37,7 @@ STOFS_USH_DIR="${USHstofs3d:-${HOMEstofs:-/lfs/h1/nos/nosofs/noscrub/STOFS-Oper}
 # Find yaml_to_env.py
 yaml_to_env_script=""
 for search_path in \
+    "${HOMEnos:-}/ush/python/nos_ofs/utils/yaml_to_env.py" \
     "${HOMEstofs:-}/nos_ofs/ush/python/nos_ofs/utils/yaml_to_env.py" \
     "${USHstofs3d:-}/python/nos_ofs/utils/yaml_to_env.py" \
     "${STOFS_USH_DIR}/../python/nos_ofs/utils/yaml_to_env.py" \
