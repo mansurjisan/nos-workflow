@@ -11,11 +11,11 @@ date
 
 ########################################
 # Load shared library if available
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+# STOFS uses Python scripts (numpy/netCDF4) that segfault when the
+# Fortran library is force-loaded into the process.
 ########################################
 export LD_PRELOAD=${LD_PRELOAD:-}
-if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-    export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
-fi
 
 ########################################
 # Set HOME directories
@@ -26,9 +26,17 @@ export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
 ###################################
-# Specify NET and RUN Name
+# Specify NET and RUN Name and model
 ####################################
-export NET=${NET:-nosofs}
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
 export RUN=${RUN:-$OFS}
 export PREFIXNOS=${PREFIXNOS:-$OFS}
 export SENDDBN=${SENDDBN:-NO}
@@ -63,11 +71,12 @@ export PARMnos=${PARMnos:-${HOMEnos}/parm}
 export USHnos=${USHnos:-${HOMEnos}/ush}
 export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
-# STOFS specific paths
-export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
-export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
-export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
-export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
+# STOFS specific paths (match IT-stofs directory layout)
+export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec/${RUN}}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
+export SCRIstofs3d=${SCRIstofs3d:-${HOMEstofs}/scripts/${RUN}}
+export PYstofs3d=${PYstofs3d:-${USHstofs3d}/pysh}
 
 ####################################
 # YAML Configuration Loading
@@ -102,21 +111,30 @@ fi
 export PDY=${PDY:-$(date +%Y%m%d)}
 
 ##############################################
-# COM directories
+# Define COM directories
 ##############################################
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 
+# Use appropriate version for COM paths
+case "${OFS_FRAMEWORK}" in
+    stofs)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)      _com_ver=${nosofs_ver} ;;
+esac
+
 if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${nosofs_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${nosofs_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${nosofs_ver})/${RUN}.${PDY}}
+    export COMIN=${COMIN:-$(compath.py ${NET}/${_com_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${_com_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${_com_ver})/${RUN}.${PDY}}
 else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${nosofs_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${nosofs_ver}}
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${_com_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${_com_ver}}
     export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 fi
 
 mkdir -m 775 -p $COMOUT
+
+# STOFS COMOUTrerun (where prep job places forcing files)
+export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
 
 ##################################################################
 # Log Files
@@ -127,19 +145,39 @@ export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
 env
 
 ########################################################
-# Execute appropriate script
+# Execute the appropriate script based on framework
 ########################################################
 case "${OFS_FRAMEWORK}" in
     stofs)
-        # STOFS now_forecast script (combined nowcast+forecast)
-        if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_now_forecast.sh" ]; then
-            ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_now_forecast.sh
-        else
-            echo "ERROR: STOFS now_forecast script not found" >&2
-            exit 1
+        # STOFS additional directory paths
+        export PARMstofs3d=${PARMstofs3d:-${HOMEstofs}/parm/${RUN}}
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        if command -v ${NDATE} &> /dev/null; then
+            export PDYHH_FCAST_END=$(${NDATE} 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
         fi
+        export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
+
+        # STOFS COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMROOT}/${NET}/${stofs_ver}}
+        export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
+
+        # Prevent user site-packages from interfering with STOFS Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute STOFS now_forecast script (combined nowcast+forecast)
+        $SCRIstofs3d/exstofs_3d_atl_now_forecast.sh
         ;;
     comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
         # nosofs/COMF nowcast_forecast script
         $SCRIPTSnos/exnos_ofs_nowcast_forecast.sh $OFS
         ;;
