@@ -97,140 +97,84 @@ if [ -n "$LSB_DJOB_NUMPROC" ] && [ -n "$TOTAL_TASKS" ] && [ $TOTAL_TASKS -ne $LS
     err_exit "Number of tasks/CPUs ($LSB_DJOB_NUMPROC) does not meet job requirements (TOTAL_TASKS=$TOTAL_TASKS)."
 fi
 
-echo "run the launch script to set the NOS configuration"
-. $USHnos/nos_ofs_launch.sh $OFS nowcast
-export pgm="$USHnos/nos_ofs_launch.sh $OFS nowcast"
+##############################################################################
+# Source shared model run library
+##############################################################################
+source ${USHnos}/nos_ofs_model_run.sh
+
+##############################################################################
+# NOWCAST PHASE
+##############################################################################
+
+# Stage files and configure model (calls nos_ofs_launch.sh internally)
+stage_model_files "nowcast"
 export err=$?
-if [ $err -ne 0 ]
-then
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
-   msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-   err_chk
-else
-   echo "Execution of $pgm completed normally" >> $cormslogfile
-   echo "Execution of $pgm completed normally"
-   msg=" Execution of $pgm completed normally"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
+if [ $err -ne 0 ]; then
+    msg="FATAL: stage_model_files nowcast failed"
+    echo "$msg"; echo "$msg" >> $cormslogfile
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
 fi
 
-#####     Run nowcast simulation
-runtype='nowcast'
-echo "     " >> $jlogfile 
-echo "     " >> $nosjlogfile 
-echo " Start $runtype " >> $jlogfile
-echo " Start $runtype " >> $nosjlogfile
-echo "Making $runtype at : `date`" >> $jlogfile
-echo "Making $runtype at : `date`" >> $nosjlogfile
-echo "Making $runtype at : `date`"
-export pgm="$USHnos/nos_ofs_nowcast_forecast.sh $runtype"
-$USHnos/nos_ofs_nowcast_forecast.sh $runtype 
+# Run nowcast simulation
+execute_model "nowcast"
 export err=$?
-if [ $err -ne 0 ]
-then
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
-   msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-   err_chk
-else
-   echo "Execution of $pgm completed normally" >> $cormslogfile
-   echo "Execution of $pgm completed normally"
-   msg=" Execution of $pgm completed normally"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
+if [ $err -ne 0 ]; then
+    msg="FATAL: execute_model nowcast failed"
+    echo "$msg"; echo "$msg" >> $cormslogfile
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
 fi
 
-###  archive nowcast outputs
-export pgm="$USHnos/nos_ofs_archive.sh $runtype"
-$USHnos/nos_ofs_archive.sh $runtype
+# Archive nowcast outputs
+archive_outputs "nowcast"
 export err=$?
-if [ $err -ne 0 ]
-then
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
-   msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-   err_chk
-else
-   echo "Execution of $pgm completed normally" >> $cormslogfile
-   echo "Execution of $pgm completed normally"
-   msg=" Execution of $pgm completed normally"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
+if [ $err -ne 0 ]; then
+    msg="FATAL: archive_outputs nowcast failed"
+    echo "$msg"; echo "$msg" >> $cormslogfile
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
 fi
 
-# if [ $envir = "dev" ]; then
-#   $USHnos/nos_ofs_sftp.sh $runtype
-# fi
- echo "end of $runtype"
+echo "end of nowcast"
 
-if [ $LEN_FORECAST -gt 0 ] 
-then
-#####    Run forecast simulation
-runtype='forecast'
+##############################################################################
+# FORECAST PHASE
+##############################################################################
 
-echo "     " >> $jlogfile 
-echo "     " >> $nosjlogfile 
-echo " Start nos_ofs_nowcast_forecast.sh $runtype at : `date`" >> $jlogfile
-echo " Start nos_ofs_nowcast_forecast.sh $runtype at : `date`" >> $nosjlogfile
-echo "Running nos_ofs_nowcast_forecast.sh $runtype at : `date`" >> $jlogfile
-echo "Running nos_ofs_nowcast_forecast.sh $runtype at : `date`" >> $nosjlogfile
-echo " Start nos_ofs_nowcast_forecast.sh $runtype at : `date`" 
-export pgm="$USHnos/nos_ofs_nowcast_forecast.sh $runtype"
-$USHnos/nos_ofs_nowcast_forecast.sh $runtype 
+if [ ${LEN_FORECAST:-0} -gt 0 ]; then
+
+# Run forecast simulation
+execute_model "forecast"
 export err=$?
-if [ $err -ne 0 ]
-then
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
-   msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-   err_chk
-else
-   echo "Execution of $pgm completed normally" >> $cormslogfile
-   echo "Execution of $pgm completed normally"
-   msg=" Execution of $pgm completed normally"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-fi
-echo "end of nos_ofs_nowcast_forecast.sh $runtype"
-
-##  archive forecast outputs 
-export pgm="$USHnos/nos_ofs_archive.sh $runtype"
-$USHnos/nos_ofs_archive.sh $runtype 
-export err=$?
-if [ $err -ne 0 ]
-then
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-   echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
-   msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
-   err_chk
-else
-   echo "Execution of $pgm completed normally" >> $cormslogfile
-   echo "Execution of $pgm completed normally"
-   msg=" Execution of $pgm completed normally"
-   postmsg "$jlogfile" "$msg"
-   postmsg "$nosjlogfile" "$msg"
+if [ $err -ne 0 ]; then
+    msg="FATAL: execute_model forecast failed"
+    echo "$msg"; echo "$msg" >> $cormslogfile
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
 fi
 
-# if [ $envir = "dev" ]; then
-#  # for development copy outputs to CO-OPS via sftp push 
-#   $USHnos/nos_ofs_sftp.sh $runtype
-# fi
+# Archive forecast outputs
+archive_outputs "forecast"
+export err=$?
+if [ $err -ne 0 ]; then
+    msg="FATAL: archive_outputs forecast failed"
+    echo "$msg"; echo "$msg" >> $cormslogfile
+    postmsg "$jlogfile" "$msg"
+    postmsg "$nosjlogfile" "$msg"
+    err_chk
+fi
+
 if [ $SENDDBN = YES ]; then
   $DBNROOT/bin/dbn_alert MODEL $DBN_ALERT_TYPE_TEXT $job $nosjlogfile
 fi
 fi
-          echo "                                    "
-          echo "END OF NOWCAST/FORECAST SUCCESSFULLY"
-          echo "                                    "
+
+echo "                                    "
+echo "END OF NOWCAST/FORECAST SUCCESSFULLY"
+echo "                                    "
 ###############################################################
