@@ -153,11 +153,12 @@ model:
     nws: 2                    # Atmospheric forcing format
     wtiminc: 3600             # Wind time increment (seconds)
   run:
-    # STOFS: continuous run spanning nowcast + forecast
-    hindcast_days: 0.25       # 6-hour hindcast (nowcast back from cyc)
-    forecast_days: 5.25       # 5.25-day total forecast
-    # Total run period for STOFS
-    # N_DAYS_MODEL_RUN_PERIOD = hindcast_days + forecast_days = 5.5
+    # STOFS: split nowcast + forecast (two separate SCHISM runs)
+    hindcast_days: 1.0        # 24-hour nowcast (lookback from cycle time)
+    forecast_days: 4.5        # 4.5-day forecast (108 hours)
+    nowcast_hours: 24
+    forecast_hours: 108
+    # Total simulation coverage = 24h + 108h = 5.5 days (unchanged)
 
 # Output configuration
 output:
@@ -197,8 +198,9 @@ resources:
 
 # STOFS workflow stages (different from nosofs)
 stages:
-  - prep_nowcast
-  - now_forecast             # Combined nowcast+forecast run
+  - prep
+  - nowcast                  # Separate nowcast run
+  - forecast                 # Separate forecast run
   - post_1                   # 2D field extraction
   - post_2                   # Final products (ADCIRC format, GeoPackage)
   - temp_salt_restart        # T/S restart for next cycle
@@ -289,5 +291,8 @@ shell_mappings:
     idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
 
     # Computed values (derived at runtime)
+    LEN_NOWCAST: _computed.len_nowcast_hours
     LEN_FORECAST: _computed.len_forecast_hours
     N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast

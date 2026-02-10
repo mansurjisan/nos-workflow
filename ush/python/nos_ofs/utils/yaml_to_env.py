@@ -99,6 +99,10 @@ def compute_derived_values(data: Dict, runtime_env: Dict) -> Dict[str, Any]:
     computed['len_forecast_hours'] = int(forecast_days * 24)
     computed['total_run_days'] = hindcast_days + forecast_days
 
+    # Per-phase rnday for split nowcast/forecast SCHISM runs
+    computed['rnday_nowcast'] = hindcast_days
+    computed['rnday_forecast'] = forecast_days
+
     # Compute time boundaries if PDY and cyc are available
     pdy = runtime_env.get('PDY')
     cyc = runtime_env.get('cyc')
@@ -416,6 +420,7 @@ def filter_by_section(exports: Dict[str, Any], section: str) -> Dict[str, Any]:
                    'nvrt', 'KBm', 'np_global', 'ne_global', 'ns_global', 'GRIDFILE'],
         'model': ['OCEAN_MODEL', 'DELT_MODEL', 'NPROCS', 'NSCRIBES'],
         'run': ['LEN_NOWCAST', 'LEN_FORECAST', 'N_DAYS_MODEL_RUN_PERIOD',
+                'RNDAY_NOWCAST', 'RNDAY_FORECAST',
                 'PDYHH_NCAST_BEGIN', 'PDYHH_FCAST_BEGIN', 'time_nowcastend', 'time_forecastend'],
         'forcing': ['DBASE_MET_NOW', 'DBASE_MET_FOR', 'DBASE_WL_NOW', 'DBASE_WL_FOR',
                     'DBASE_TS_NOW', 'DBASE_TS_FOR', 'CREATE_TIDEFORCING'],

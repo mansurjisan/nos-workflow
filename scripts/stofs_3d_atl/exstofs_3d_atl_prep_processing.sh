@@ -88,28 +88,29 @@ ln -sf $FIXstofs3d/${RUN}_albedo.gr3  albedo.gr3
 ln -sf $FIXstofs3d/${RUN}_partition.prop  partition.prop
 
 
-# ---------------------------------------> create param.nml
-# ---------------------------------------> create param.nm
+# ---------------------------------------> create param.nml (nowcast + forecast)
+# ---------------------------------------> create param.nml (nowcast + forecast)
 file_log=log_create_param_nml.${cycle}.log
 
-export pgm="${USHstofs3d}/stofs_3d_atl_create_param_nml.sh"
-${USHstofs3d}/stofs_3d_atl_create_param_nml.sh  >> ${file_log} 2>&1
+# Generate separate param.nml for nowcast and forecast phases
+for _phase in nowcast forecast; do
+  export pgm="${USHstofs3d}/stofs_3d_atl_create_param_nml.sh ${_phase}"
+  ${USHstofs3d}/stofs_3d_atl_create_param_nml.sh ${_phase} >> ${file_log} 2>&1
 
-export err=$?
-if [ $err -ne 0 ]
-then
-   msg=" Execution of $pgm did not complete normally - WARNING"
-   postmsg  "$msg"
-   cat ${file_log}
-   # #err_chk
-else
-   msg=" Execution of $pgm completed normally"
-   postmsg  "$msg"
-   cat ${file_log}
-fi
+  export err=$?
+  if [ $err -ne 0 ]; then
+     msg=" Execution of $pgm (${_phase}) did not complete normally - WARNING"
+     postmsg  "$msg"
+     cat ${file_log}
+  else
+     msg=" Execution of $pgm (${_phase}) completed normally"
+     postmsg  "$msg"
+     cat ${file_log}
+  fi
+  echo $msg
+done
 
-echo $msg
-echo 
+echo
 
 # ---------------------------------------> create bctides.in
 # ---------------------------------------> create bctides.in
