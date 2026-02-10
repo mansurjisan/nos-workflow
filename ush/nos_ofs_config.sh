@@ -23,7 +23,8 @@
 #
 ################################################################################
 
-set -u
+# Note: Do NOT use 'set -u' here - this script is sourced into other scripts
+# and would cause unbound variable errors throughout the calling environment
 
 export OFS_CONFIG_LOADED=${OFS_CONFIG_LOADED:-0}
 
@@ -91,9 +92,11 @@ load_ofs_config() {
     # Load configuration from YAML
     echo "Loading OFS config from: $config_file (framework: $framework)"
     local exports
-    exports=$(python3 "$_ofs_yaml_to_env" "$config_file" --framework "$framework" 2>/dev/null)
+    local _yaml_err
+    _yaml_err=$(python3 "$_ofs_yaml_to_env" "$config_file" --framework "$framework" 2>&1 1>/dev/null) || true
+    exports=$(python3 "$_ofs_yaml_to_env" "$config_file" --framework "$framework" 2>/dev/null) || true
 
-    if [ $? -eq 0 ] && [ -n "$exports" ]; then
+    if [ -n "$exports" ]; then
         eval "$exports"
         export OFS_CONFIG_LOADED=1
         export OFS_CONFIG_SOURCE="yaml"
@@ -105,6 +108,9 @@ load_ofs_config() {
         return 0
     else
         echo "WARNING: Failed to parse YAML config, using ${framework} defaults" >&2
+        if [ -n "${_yaml_err:-}" ]; then
+            echo "YAML parse error: ${_yaml_err}" >&2
+        fi
         _load_defaults "$framework"
         return 0
     fi
