@@ -132,7 +132,8 @@ if command -v setpdy.sh &> /dev/null; then
     . PDY
 fi
 export PDY=${PDY:-$(date +%Y%m%d)}
-export time_nowcastend=$PDY${cyc}
+export cyc=$(printf '%02d' "${cyc}")
+export time_nowcastend=${PDY}${cyc}
 
 ##############################################
 # Define COM directories
