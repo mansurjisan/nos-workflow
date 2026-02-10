@@ -1,6 +1,6 @@
 #!/bin/bash
 #PBS  -N secofs_prep_00
-#PBS  -A NOSOFS-DEV
+#PBS  -A ESTOFS-DEV
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_prep_00.out
 #PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_prep_00.err
