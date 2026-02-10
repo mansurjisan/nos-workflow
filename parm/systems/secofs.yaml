@@ -256,6 +256,7 @@ shell_mappings:
     # Control files
     RIVER_CTL_FILE: forcing.river.files.ctl_file
     RIVER_CLIM_FILE: forcing.river.files.clim_file
+    NWM_REACHID_FILE: forcing.river.files.nwm_reach
     OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
     OBC_CLIM_FILE: forcing.ocean.obc.files.obc_clim
     HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc

@@ -35,7 +35,7 @@ if [ -n "$OFS_CONFIG" ] && [ -f "$OFS_CONFIG" ]; then
     echo "Loading configuration from YAML: $OFS_CONFIG"
     if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
         . ${USHnos}/nos_ofs_config.sh
-        if [ "${NOSOFS_CONFIG_LOADED:-0}" -eq 1 ]; then
+        if [ "${OFS_CONFIG_LOADED:-0}" -eq 1 ]; then
             CONFIG_SOURCE="yaml"
             echo "Successfully loaded YAML config from $OFS_CONFIG" >> $cormslogfile
         fi
@@ -48,7 +48,7 @@ if [ "$CONFIG_SOURCE" = "none" ] && [ -f "${FIXofs}/${PREFIXNOS}.yaml" ]; then
     export OFS_CONFIG="${FIXofs}/${PREFIXNOS}.yaml"
     if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
         . ${USHnos}/nos_ofs_config.sh
-        if [ "${NOSOFS_CONFIG_LOADED:-0}" -eq 1 ]; then
+        if [ "${OFS_CONFIG_LOADED:-0}" -eq 1 ]; then
             CONFIG_SOURCE="yaml"
             echo "Successfully loaded YAML config from ${FIXofs}/${PREFIXNOS}.yaml" >> $cormslogfile
         fi
