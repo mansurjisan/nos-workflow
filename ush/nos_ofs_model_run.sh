@@ -261,42 +261,50 @@ _stofs_prepare_restart() {
         return 0
     fi
 
-    # Nowcast: find hotstart from previous cycle or use coldstart
-    echo "Searching for previous cycle hotstart..."
+    # Nowcast: find hotstart/restart and copy to $DATA/hotstart.nc
+    echo "Searching for restart/hotstart file..."
 
     local fn_restart_rerun="${COMOUTrerun}/${RUN}.${cycle}.restart.nc"
-    local days=(0 1 2 3 4)
     local found=0
 
-    for k in "${days[@]}"; do
-        local date_k=$(date -d "${PDYHH_NCAST_BEGIN:0:8} ${k} days ago" +%Y%m%d)
-        local fn_hotstart="${COMINstofs}/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc"
+    # Priority 1: Check if prep already placed restart.nc in COMOUTrerun
+    if [ -s "$fn_restart_rerun" ]; then
+        echo "Found restart from prep: $fn_restart_rerun"
+        cp -p "$fn_restart_rerun" "$DATA/hotstart.nc"
+        found=1
+    fi
 
-        if [ -s "$fn_hotstart" ]; then
-            if [[ $(find "$fn_hotstart" -type f -size +20G 2>/dev/null) ]]; then
-                echo "Found valid hotstart: $fn_hotstart"
-                cp -p "$fn_hotstart" "$fn_restart_rerun"
+    # Priority 2: Search previous cycle hotstart in COMINstofs (0-4 days back)
+    if [ $found -eq 0 ]; then
+        local days=(0 1 2 3 4)
+        for k in "${days[@]}"; do
+            local date_k=$(date -d "${PDYHH_NCAST_BEGIN:0:8} ${k} days ago" +%Y%m%d)
+            local fn_hotstart="${COMINstofs}/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc"
+
+            if [ -s "$fn_hotstart" ]; then
+                echo "Found hotstart: $fn_hotstart"
+                cp -p "$fn_hotstart" "$DATA/hotstart.nc"
                 found=1
                 break
             else
-                echo "WARNING: $fn_hotstart exists but too small (<20GB)"
+                echo "Not found: $fn_hotstart"
             fi
-        else
-            echo "Not found: $fn_hotstart"
-        fi
-    done
+        done
+    fi
 
+    # Priority 3: Coldstart file from fix/
     if [ $found -eq 0 ]; then
-        # Try coldstart file
         local fn_coldstart="${FIXstofs3d}/stofs_3d_atl_restart_coldstart.nc"
         if [ -s "$fn_coldstart" ]; then
             echo "Using coldstart file: $fn_coldstart"
-            cp -p "$fn_coldstart" "$fn_restart_rerun"
+            cp -p "$fn_coldstart" "$DATA/hotstart.nc"
         else
             echo "WARNING: No valid hotstart or coldstart file found"
             return 1
         fi
     fi
+
+    echo "hotstart.nc staged in $DATA ($(ls -lh $DATA/hotstart.nc 2>/dev/null | awk '{print $5}'))"
 }
 
 

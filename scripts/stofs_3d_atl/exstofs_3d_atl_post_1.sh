@@ -21,6 +21,8 @@
 
   fn_this_sh="exstofs_3d_atl_post_1"
 
+# Fallback if postmsg not provided by prod_util module
+  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
 
   echo "module list::"
   module list

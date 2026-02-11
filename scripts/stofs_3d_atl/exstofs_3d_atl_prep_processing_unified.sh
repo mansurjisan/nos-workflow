@@ -24,6 +24,9 @@ set $setoff
 
 fn_this_script="exstofs_3d_atl_prep_processing_unified.sh"
 
+# Fallback if postmsg not provided by prod_util module
+command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+
 msg="Starting script: STOFS3D prepare model control & forcing files (Unified)"
 echo "$msg"
 postmsg "$jlogfile" "$msg"

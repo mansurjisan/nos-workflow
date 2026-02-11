@@ -27,6 +27,9 @@
 
   fn_this_script="exstofs_3d_atl_now_forecast.sh"
 
+# Fallback if postmsg not provided by prod_util module
+  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+
   msg="${fn_this_script} started (unified 2-phase nowcast/forecast)"
   echo "$msg"
   postmsg  "$msg"

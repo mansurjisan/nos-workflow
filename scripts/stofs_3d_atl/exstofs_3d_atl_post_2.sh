@@ -18,6 +18,9 @@
 # ----------------------->
   fn_this_script=exstofs_3d_atl_post_2
 
+# Fallback if postmsg not provided by prod_util module
+  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+
   msg="${fn_this_script}.sh  started "
   echo "$msg"
   postmsg  "$msg"

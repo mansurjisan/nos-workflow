@@ -21,9 +21,13 @@
   file_log=log_create_restart.${cycle}.log
 
   fn_this_script=exstofs_3d_atl_post_3
+
+# Fallback if postmsg not provided by prod_util module
+  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+
   msg="${fn_this_script}.sh  started"
   echo "$msg"
-  #postmsg  "$msg"
+  postmsg  "$msg"
 
   pgmout=${fn_this_script}.$$
 
