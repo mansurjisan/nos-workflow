@@ -1,0 +1,207 @@
+#!/bin/bash
+set -x
+
+########################################
+# NOS_OFS_FORECAST - Forecast-Only Job
+#
+# Split-job counterpart to JNOS_OFS_NOWCST_FCST.
+# Runs just the forecast phase after JNOS_OFS_NOWCAST completes.
+#
+# The forecast retrieves a combined hotstart file from $COMOUT
+# that was archived by the nowcast job.
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Load shared library if available
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+# STOFS uses Python scripts (numpy/netCDF4) that segfault when the
+# Fortran library is force-loaded into the process.
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+# Support both nosofs_ver (production) and nos_ofs_ver (unified) naming
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
+####################################
+# YAML Configuration Loading
+####################################
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+# Source unified config loader and load YAML config
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+# Use appropriate version for COM paths
+case "${OFS_FRAMEWORK}" in
+    stofs)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)      _com_ver=${nosofs_ver} ;;
+esac
+
+if command -v compath.py &> /dev/null; then
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+# Fall back to COMROOT-based paths if compath.py failed or unavailable
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+# STOFS COMOUTrerun (where prep job places forcing files)
+export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute the forecast script based on framework
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # STOFS additional directory paths
+        export PARMstofs3d=${PARMstofs3d:-${HOMEstofs}/parm/${RUN}}
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        if command -v ${NDATE} &> /dev/null; then
+            export PDYHH_FCAST_END=$(${NDATE} 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
+        fi
+        export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
+
+        # STOFS COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMROOT}/${NET}/${stofs_ver}}
+        export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
+
+        # Prevent user site-packages from interfering with STOFS Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute forecast-only ex-script
+        $SCRIstofs3d/exnos_ofs_forecast.sh
+        ;;
+    comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
+        # nosofs/COMF forecast-only ex-script
+        $SCRIPTSnos/exnos_ofs_forecast.sh $OFS
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

@@ -209,23 +209,45 @@ _stofs_prepare_restart() {
     local phase=$1
 
     if [ "$phase" = "forecast" ]; then
-        # Forecast: combine distributed hotstart files from nowcast output,
-        # swap to forecast param.nml, and set ihot=2 for hot restart
-        echo "Preparing forecast restart from nowcast outputs..."
+        # Forecast: obtain combined hotstart, swap to forecast param.nml,
+        # and set ihot=2 for hot restart
+        echo "Preparing forecast restart..."
 
         cd $DATA
 
-        # Call existing hot restart prep script to find and combine
-        # distributed hotstart files into a single hotstart.nc
-        if [ -f "${SCRIstofs3d}/exstofs_3d_atl_hot_restart_prep.sh" ]; then
-            ${SCRIstofs3d}/exstofs_3d_atl_hot_restart_prep.sh
-            export err=$?
-            if [ $err -ne 0 ]; then
-                echo "ERROR: Hot restart prep failed"
+        # Priority 1: Combined hotstart from COMOUT (split-job mode)
+        # The nowcast job archives a combined hotstart here via archive_outputs.
+        local fn_hotstart_com="${COMOUT}/${RUN}.${cycle}.hotstart.stofs3d.nc"
+        if [ -s "$fn_hotstart_com" ]; then
+            echo "Found combined hotstart in COMOUT: $fn_hotstart_com"
+            cp -p "$fn_hotstart_com" "$DATA/hotstart.nc"
+
+            # Set up outputs dir for ihot=2 restart (clean $DATA in split-job mode)
+            mkdir -p $DATA/outputs
+            touch $DATA/outputs/mirror.out
+            touch $DATA/outputs/flux.out
+            for i in 1 2 3 4 5 6 7 8 9; do
+                [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
+            done
+
+        # Priority 2: Local combine (combined-job mode, same $DATA)
+        elif [ -d "$DATA/outputs" ] && ls $DATA/outputs/hotstart_000000_*.nc &>/dev/null 2>&1; then
+            echo "Combining distributed hotstart locally (combined-job mode)"
+            if [ -f "${SCRIstofs3d}/exstofs_3d_atl_hot_restart_prep.sh" ]; then
+                ${SCRIstofs3d}/exstofs_3d_atl_hot_restart_prep.sh
+                export err=$?
+                if [ $err -ne 0 ]; then
+                    echo "ERROR: Hot restart prep failed"
+                    return 1
+                fi
+            else
+                echo "ERROR: exstofs_3d_atl_hot_restart_prep.sh not found"
                 return 1
             fi
         else
-            echo "ERROR: exstofs_3d_atl_hot_restart_prep.sh not found"
+            echo "ERROR: No hotstart available for forecast"
+            echo "  Checked COMOUT: $fn_hotstart_com"
+            echo "  Checked local:  $DATA/outputs/hotstart_000000_*.nc"
             return 1
         fi
 
@@ -241,7 +263,7 @@ _stofs_prepare_restart() {
             return 1
         fi
 
-        # Clean nowcast output files but keep hotstart.nc
+        # Clean nowcast output files but keep hotstart.nc (only relevant in combined mode)
         rm -f $DATA/outputs/schout_*.nc 2>/dev/null
         rm -f $DATA/outputs/mirror.out_cold_restart 2>/dev/null
         # Ensure required output files exist for SCHISM ihot=2 restart
@@ -361,11 +383,40 @@ _stofs_archive_outputs() {
     local phase=$1
 
     if [ "$phase" = "nowcast" ]; then
-        # Nowcast: outputs stay in $DATA for forecast to use
-        # Archive key files to COMOUT for monitoring
-        echo "Nowcast outputs staged for forecast phase"
+        # Archive nowcast log to COMOUT for monitoring
+        echo "Archiving nowcast outputs to ${COMOUT}"
         [ -s "$DATA/${RUN}.${cycle}.nowcast.log" ] && \
             cp -p "$DATA/${RUN}.${cycle}.nowcast.log" "$COMOUT/"
+
+        # Combine distributed hotstart files and archive to COMOUT
+        # so an independent forecast job can retrieve them (split-job mode).
+        # In combined mode this is harmless — the forecast prep will find
+        # the archived file via COMOUT priority check before trying local combine.
+        cd $DATA/outputs
+        local latest_step=""
+        for step in 576 288; do  # Common nowcast steps (rnday=1.0, dt=150)
+            if ls hotstart_000000_${step}.nc &>/dev/null; then
+                latest_step=$step
+                break
+            fi
+        done
+
+        if [ -n "$latest_step" ]; then
+            local nfiles=$(ls hotstart_0?????_${latest_step}.nc 2>/dev/null | wc -l)
+            echo "Combining ${nfiles} hotstart files at step ${latest_step}"
+            ${EXECstofs3d}/stofs_3d_atl_combine_hotstart -i ${latest_step}
+            local fn_combined="hotstart_it=${latest_step}.nc"
+            if [ -s "$fn_combined" ]; then
+                cp -p "$fn_combined" "${COMOUT}/${RUN}.${cycle}.hotstart.stofs3d.nc"
+                echo "Combined hotstart archived: ${COMOUT}/${RUN}.${cycle}.hotstart.stofs3d.nc"
+            else
+                echo "WARNING: combine_hotstart ran but output not found: $fn_combined"
+            fi
+        else
+            echo "WARNING: No distributed hotstart files found for archival"
+        fi
+        cd $DATA
+
     elif [ "$phase" = "forecast" ]; then
         # Forecast: archive final hotstart for next cycle
         echo "Archiving forecast outputs to ${COMOUT}"
@@ -411,8 +462,28 @@ _comf_stage_files() {
             postmsg "$jlogfile" "$msg"
             postmsg "$nosjlogfile" "$msg"
         fi
+    elif [ "$phase" = "forecast" ]; then
+        # In split-job mode, the forecast has its own $DATA and needs
+        # to re-run launch.sh to stage grid/forcing files and find the
+        # nowcast restart in COM (sets INI_FILE_FORECAST, etc.)
+        echo "COMF forecast staging — re-running launch.sh for independent job"
+        . $USHnos/nos_ofs_launch.sh $OFS nowcast
+        export pgm="$USHnos/nos_ofs_launch.sh $OFS nowcast (forecast staging)"
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "Execution of $pgm did not complete normally, FATAL ERROR!"
+            echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
+            msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
+            postmsg "$jlogfile" "$msg"
+            postmsg "$nosjlogfile" "$msg"
+            err_chk
+        else
+            echo "Execution of $pgm completed normally" >> $cormslogfile
+            msg=" Execution of $pgm completed normally"
+            postmsg "$jlogfile" "$msg"
+            postmsg "$nosjlogfile" "$msg"
+        fi
     fi
-    # Forecast phase uses same $DATA with nowcast output as init
 }
 
 
