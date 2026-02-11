@@ -192,7 +192,7 @@ output:
 # Computational resources for STOFS-3D-ATL
 resources:
   nprocs: 960                 # Number of MPI processes
-  nscribes: 8                 # SCHISM I/O server processes
+  nscribes: 6                 # SCHISM I/O server processes (4320 total - 6 scribes = 4314 compute = partition.prop)
   memory_gb: 2000
   walltime_hours: 3
 

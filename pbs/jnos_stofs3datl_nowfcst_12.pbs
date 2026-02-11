@@ -14,9 +14,13 @@
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/stofs_3d_atl
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/stofs_3d_atl
-if [ ! -r $WORKDIR ]; then
-  mkdir -p -m 755 $WORKDIR
-fi
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+# Archive previous run logs before PBS overwrites them
+for f in $RPTDIR/stofs3datl_nowfcst_12.out $RPTDIR/stofs3datl_nowfcst_12.err; do
+  [ -s "$f" ] && mv "$f" "${f}.$(date -r $f +%Y%m%d_%H%M%S)"
+done
+
 cd ${WORKDIR}
 
 # Module setup (matching STOFS ECF)

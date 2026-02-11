@@ -123,14 +123,14 @@ case "${OFS_FRAMEWORK}" in
 esac
 
 if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${_com_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${_com_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${_com_ver})/${RUN}.${PDY}}
-else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${_com_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${_com_ver}}
-    export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
 fi
+
+# Fall back to COMROOT-based paths if compath.py failed or unavailable
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 mkdir -m 775 -p $COMOUT
 
