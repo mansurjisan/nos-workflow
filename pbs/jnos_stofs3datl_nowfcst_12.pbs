@@ -54,6 +54,12 @@ module load nco/${nco_ver}
 
 module list
 
+# MPI tuning for large-core SCHISM runs on Cray (from IT-STOFS production)
+export MPICH_OFI_STARTUP_CONNECT=1      # Pre-establish MPI connections at startup
+export MPICH_COLL_SYNC=MPI_Bcast        # Pace Bcast messaging to prevent hangs
+export MPICH_REDUCE_NO_SMP=1            # Prevent MPI_Reduce hangs during timestepping
+export FI_OFI_RXM_SAR_LIMIT=1572864    # Increase rendezvous message buffer (from WCOFS)
+
 # EXPORT list
 set +x
 export envir=dev

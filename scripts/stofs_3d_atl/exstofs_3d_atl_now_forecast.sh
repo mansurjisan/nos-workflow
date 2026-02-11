@@ -95,8 +95,10 @@
 
 
 # =========================================================================
-#  FORECAST PHASE
+#  FORECAST PHASE (skip if LEN_FORECAST=0 or RUN_FORECAST=NO)
 # =========================================================================
+
+if [ "${RUN_FORECAST:-YES}" = "YES" ] && [ ${LEN_FORECAST:-108} -gt 0 ]; then
 
   echo "========================================="
   echo "=== FORECAST PHASE ==="
@@ -125,6 +127,14 @@
 
   # Step 3: Archive forecast outputs
   archive_outputs "forecast"
+
+else
+  echo "========================================="
+  echo "=== FORECAST PHASE SKIPPED ==="
+  echo "  RUN_FORECAST=${RUN_FORECAST:-YES}"
+  echo "  LEN_FORECAST=${LEN_FORECAST:-108}"
+  echo "========================================="
+fi
 
 
 # =========================================================================
