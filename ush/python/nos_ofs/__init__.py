@@ -58,6 +58,19 @@ except ImportError:
     # Some processors may not be available
     pass
 
+# Orchestration (Phase B)
+try:
+    from .orchestration import (
+        PrepOrchestrator,
+        ModelRunOrchestrator,
+        PrepResult,
+        ModelRunResult,
+        StepResult,
+    )
+except ImportError:
+    # Orchestration may not be available
+    pass
+
 __all__ = [
     # Version
     "__version__",
@@ -79,4 +92,10 @@ __all__ = [
     "NWMProcessor",
     "StLawrenceProcessor",
     "TidalProcessor",
+    # Orchestration
+    "PrepOrchestrator",
+    "ModelRunOrchestrator",
+    "PrepResult",
+    "ModelRunResult",
+    "StepResult",
 ]
