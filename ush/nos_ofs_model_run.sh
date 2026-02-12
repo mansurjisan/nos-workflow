@@ -222,13 +222,24 @@ _stofs_prepare_restart() {
             echo "Found combined hotstart in COMOUT: $fn_hotstart_com"
             cp -p "$fn_hotstart_com" "$DATA/hotstart.nc"
 
-            # Set up outputs dir for ihot=2 restart (clean $DATA in split-job mode)
+            # Restore SCHISM output state files from nowcast archive.
+            # SCHISM reads these on ihot=2 restart — empty files cause EOF errors.
             mkdir -p $DATA/outputs
-            touch $DATA/outputs/mirror.out
-            touch $DATA/outputs/flux.out
-            for i in 1 2 3 4 5 6 7 8 9; do
-                [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
-            done
+            local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+            if [ -d "$restart_dir" ]; then
+                echo "Restoring SCHISM output state files from $restart_dir"
+                for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                         staout_5 staout_6 staout_7 staout_8 staout_9; do
+                    [ -f "$restart_dir/$f" ] && cp -p "$restart_dir/$f" "$DATA/outputs/"
+                done
+            else
+                echo "WARNING: restart_outputs dir not found: $restart_dir, creating empty files"
+                touch $DATA/outputs/mirror.out
+                touch $DATA/outputs/flux.out
+                for i in 1 2 3 4 5 6 7 8 9; do
+                    [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
+                done
+            fi
 
         # Priority 2: Local combine (combined-job mode, same $DATA)
         elif [ -d "$DATA/outputs" ] && ls $DATA/outputs/hotstart_000000_*.nc &>/dev/null 2>&1; then
@@ -415,6 +426,18 @@ _stofs_archive_outputs() {
         else
             echo "WARNING: No distributed hotstart files found for archival"
         fi
+
+        # Archive SCHISM output state files needed for ihot=2 restart.
+        # In split-job mode the forecast has a fresh $DATA and SCHISM
+        # reads these files on restart — empty files cause EOF errors.
+        local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+        mkdir -p "$restart_dir"
+        for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                 staout_5 staout_6 staout_7 staout_8 staout_9; do
+            [ -f "$DATA/outputs/$f" ] && cp -p "$DATA/outputs/$f" "$restart_dir/"
+        done
+        echo "Archived SCHISM restart output files to $restart_dir"
+
         cd $DATA
 
     elif [ "$phase" = "forecast" ]; then
