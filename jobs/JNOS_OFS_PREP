@@ -227,8 +227,8 @@ case "${OFS_FRAMEWORK}" in
         # Prevent user site-packages from interfering with STOFS Python scripts
         export PYTHONNOUSERSITE=1
 
-        # Execute STOFS prep script
-        $SCRIstofs3d/exstofs_3d_atl_prep_processing.sh
+        # Execute unified prep script (STOFS path)
+        $SCRIstofs3d/exnos_ofs_prep.sh
         ;;
     comf|*)
         # COMF Fortran executables need NetCDF Fortran library preloaded

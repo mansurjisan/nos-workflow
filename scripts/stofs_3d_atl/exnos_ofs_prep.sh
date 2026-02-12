@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ##############################################################################
-#  Name: exnos_ofs_prep_unified.sh
+#  Name: exnos_ofs_prep.sh
 #  Purpose: Unified prep ex-script for both STOFS and COMF frameworks.
 #
 #  Sources the shared prep library (nos_ofs_prep_run.sh) and calls
@@ -10,14 +10,14 @@
 #
 #  Usage:
 #    Called by JNOS_OFS_PREP (STOFS): $SCRIstofs3d/exnos_ofs_prep.sh
-#    Called by JNOS_OFS_PREP (COMF):  $SCRIPTSnos/exnos_ofs_prep_unified.sh $OFS
+#    Called by JNOS_OFS_PREP (COMF):  $SCRIPTSnos/exnos_ofs_prep.sh $OFS
 ##############################################################################
 
   seton='-xa'
   setoff='+xa'
   set $seton
 
-  fn_this_script="exnos_ofs_prep_unified.sh"
+  fn_this_script="exnos_ofs_prep.sh"
 
 # Fallback if postmsg not provided by prod_util module
   command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
