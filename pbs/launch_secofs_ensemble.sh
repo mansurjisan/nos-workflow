@@ -15,10 +15,13 @@
 # run in parallel alongside the ensemble.
 #
 # Usage:
-#   ./launch_secofs_ensemble.sh                  # Default: cyc=00, 5 members
-#   ./launch_secofs_ensemble.sh 12               # Cycle 12
-#   ./launch_secofs_ensemble.sh 00 3             # Cycle 00, 3 members
-#   ./launch_secofs_ensemble.sh 00 5 --with-det  # Also submit deterministic
+#   ./launch_secofs_ensemble.sh                          # Default: cyc=00, 5 members, PDY=today
+#   ./launch_secofs_ensemble.sh 12                       # Cycle 12
+#   ./launch_secofs_ensemble.sh 00 3                     # Cycle 00, 3 members
+#   ./launch_secofs_ensemble.sh 00 5 --with-det          # Also submit deterministic
+#   PDY=20260212 ./launch_secofs_ensemble.sh 00 3        # Explicit PDY
+#   ./launch_secofs_ensemble.sh 00 3 --pdy 20260212      # Explicit PDY (alt)
+#   ./launch_secofs_ensemble.sh 00 3 --skip-prep         # Skip prep, submit members only
 #
 # Requirements:
 #   - Run from the pbs/ directory (or set PBS_DIR)
@@ -31,22 +34,39 @@ set -e
 CYC=${1:-00}
 N_MEMBERS=${2:-5}
 WITH_DET=false
+SKIP_PREP=false
 
-# Check for --with-det flag
+# Check for flags
+shift 2 2>/dev/null || true
 for arg in "$@"; do
-    if [ "$arg" = "--with-det" ]; then
-        WITH_DET=true
-    fi
+    case "$arg" in
+        --with-det)  WITH_DET=true ;;
+        --skip-prep) SKIP_PREP=true ;;
+        --pdy)       _NEXT_IS_PDY=true ;;
+        *)
+            if [ "${_NEXT_IS_PDY:-}" = true ]; then
+                PDY="$arg"
+                _NEXT_IS_PDY=false
+            fi
+            ;;
+    esac
 done
+unset _NEXT_IS_PDY
+
+# PDY: use env var, --pdy flag, or default to today
+PDY=${PDY:-$(date +%Y%m%d)}
+export PDY
 
 PBS_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "=============================================="
 echo " SECOFS Ensemble Launcher"
 echo "=============================================="
+echo " PDY:      ${PDY}"
 echo " Cycle:    ${CYC}"
 echo " Members:  ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
 echo " Det run:  ${WITH_DET}"
+echo " Skip prep: ${SKIP_PREP}"
 echo " PBS dir:  ${PBS_DIR}"
 echo "=============================================="
 
@@ -62,12 +82,18 @@ for script in "${PREP_PBS}" "${MEMBER_PBS}" "${POST_PBS}"; do
     fi
 done
 
-# ---- Step 1: Submit prep job -----------------------------------------
-echo ""
-echo ">>> Submitting prep job..."
-PREP_JOBID=$(qsub "${PREP_PBS}")
-PREP_JOBID_SHORT=${PREP_JOBID%%.*}
-echo "    Prep job: ${PREP_JOBID}"
+# ---- Step 1: Submit prep job (unless --skip-prep) --------------------
+if [ "${SKIP_PREP}" = true ]; then
+    echo ""
+    echo ">>> Skipping prep (--skip-prep). Members will run without dependency."
+    PREP_JOBID_SHORT=""
+else
+    echo ""
+    echo ">>> Submitting prep job..."
+    PREP_JOBID=$(qsub -v "PDY=${PDY}" "${PREP_PBS}")
+    PREP_JOBID_SHORT=${PREP_JOBID%%.*}
+    echo "    Prep job: ${PREP_JOBID}"
+fi
 
 # ---- Step 2: Submit ensemble members (depend on prep) ----------------
 echo ""
@@ -76,11 +102,12 @@ MEMBER_JOBIDS=()
 
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
-    MJOB=$(qsub \
-        -v "MEMBER_ID=${MID},CYC=${CYC}" \
-        -N "secofs_ens${MID}_${CYC}" \
-        -W depend=afterok:${PREP_JOBID_SHORT} \
-        "${MEMBER_PBS}")
+    QSUB_ARGS=(-v "MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY}" \
+               -N "secofs_ens${MID}_${CYC}")
+    if [ -n "${PREP_JOBID_SHORT}" ]; then
+        QSUB_ARGS+=(-W "depend=afterok:${PREP_JOBID_SHORT}")
+    fi
+    MJOB=$(qsub "${QSUB_ARGS[@]}" "${MEMBER_PBS}")
     MEMBER_JOBIDS+=("${MJOB}")
     MJOB_SHORT=${MJOB%%.*}
     if [ "${MID}" = "000" ]; then
@@ -101,7 +128,7 @@ for mjob in "${MEMBER_JOBIDS[@]}"; do
 done
 
 ENSPOST_JOBID=$(qsub \
-    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC}" \
+    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY}" \
     -N "secofs_enspost_${CYC}" \
     -W depend=${DEP_STR} \
     "${POST_PBS}")
