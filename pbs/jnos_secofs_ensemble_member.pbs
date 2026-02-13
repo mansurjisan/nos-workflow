@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS  -N secofs_ens${MEMBER_ID}_${CYC}
+#PBS  -N secofs_ens_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_ens${MEMBER_ID}_${CYC}.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_ens${MEMBER_ID}_${CYC}.err
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_ens_00.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_ens_00.err
 #PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
 #PBS  -l walltime=05:30:00
 
@@ -12,9 +12,14 @@
 #
 # Runs a single ensemble member. Submit via launch_secofs_ensemble.sh
 # or manually with:
-#   qsub -v MEMBER_ID=001,CYC=00 jnos_secofs_ensemble_member.pbs
+#   qsub -v MEMBER_ID=000,CYC=00,PDY=20260213 \
+#        -N secofs_ens000_00 \
+#        -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0/secofs_ens000_00.out \
+#        -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0/secofs_ens000_00.err \
+#        jnos_secofs_ensemble_member.pbs
 #
-# Requires MEMBER_ID and CYC to be passed via qsub -v.
+# The launcher script overrides -N, -o, -e per member via qsub flags.
+# The #PBS defaults above are fallbacks for direct submission.
 # ------------------------------------------------------------------
 
 # Validate required variables
@@ -27,45 +32,40 @@ CYC=${CYC:-00}
 # PDY: accept from qsub -v, fall back to today
 export PDY=${PDY:-$(date +%Y%m%d)}
 
-# Source version file
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+. /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/versions/run.ver
 
 # Working directory
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs/ensemble
-mkdir -p -m 755 $RPTDIR $WORKDIR
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS:-secofs}
+if [ ! -r $WORKDIR ]; then
+  mkdir -p -m 755 $WORKDIR
+fi
 cd ${WORKDIR}
 
-# Module setup
 module purge
-module load envvar/${envvar_ver:-1.0}
-module load intel/${intel_ver:-19.1.3.304}
-module load PrgEnv-intel/${PrgEnv_intel_ver:-8.1.0}
-module load craype/${craype_ver:-2.7.8}
-module load cray-mpich/${cray_mpich_ver:-8.1.7}
-module load cray-pals/${cray_pals_ver:-1.0.12}
-module load hdf5/${hdf5_ver:-1.10.6}
-module load netcdf/${netcdf_ver:-4.7.4}
-module load jasper/${jasper_ver:-2.0.25}
-module load udunits/${udunits_ver:-2.2.28}
-module load zlib/${zlib_ver:-1.2.11}
-module load bufr/${bufr_ver:-11.5.0}
-module load g2/${g2_ver:-3.4.5}
-module load w3nco/${w3nco_ver:-2.4.1}
-module load w3emc/${w3emc_ver:-2.9.2}
-module load subversion/${subversion_ver:-1.14.0}
-module load python/${python_ver:-3.8.6}
-module load prod_envir/${prod_envir_ver:-2.0.6}
-module load prod_util/${prod_util_ver:-2.0.17}
-module load cfp/${cfp_ver:-2.0.4}
-module load libjpeg/${libjpeg_ver:-9c}
-module load grib_util/${grib_util_ver:-1.2.4}
-module load gsl/${gsl_ver:-2.7}
-module load wgrib2/${wgrib2_ver:-2.0.8}
-module load nco/${nco_ver:-5.0.6}
-module load cdo/${cdo_ver:-2.0.5} 2>/dev/null || true
-module load metis/${metis_ver:-5.1.0} 2>/dev/null || true
+module load envvar/${envvars_ver}
+
+# Loading Intel Compiler Suite
+module load PrgEnv-intel/${PrgEnv_intel_ver}
+module load craype/${craype_ver}
+module load intel/${intel_ver}
+module load cray-mpich/${cray_mpich_ver}
+module load cray-pals/${cray_pals_ver}
+#Set other library variables
+module load netcdf/${netcdf_ver}
+module load hdf5/${hdf5_ver}
+module load libjpeg/${libjpeg_ver}
+module load subversion/${subversion_ver}
+module load python/${python_ver}
+module load prod_envir/${prod_envir_ver}
+module load prod_util/${prod_util_ver}
+module load grib_util/${grib_util_ver}
+module load cfp/${cfp_ver}
+module load gsl/${gsl_ver}
+module load udunits/${udunits_ver}
+module load nco/${nco_ver}
+module load cdo/${cdo_ver}
+module load metis/${metis_ver}
 
 module list
 
@@ -91,15 +91,11 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-export nosofs_ver=v3.7.0
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-
-# Data and COM paths
+export COMPATH=/lfs/h1/ops/prod/com/nos
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
-export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}/ensemble
-
-# Input data paths (production WCOSS2)
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 export COMINnam=/lfs/h1/ops/prod/com/nam/${nam_ver}
 export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
 export COMINrap=/lfs/h1/ops/prod/com/rap/${rap_ver}
@@ -109,6 +105,7 @@ export COMINetss=/lfs/h1/ops/prod/com/petss/${petss_ver}
 export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+export COMIN=/lfs/h1/ops/prod/com
 
 ################################################
 # CALL executable job script here
@@ -116,9 +113,7 @@ export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-# YAML configuration
-export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
-export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
-export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+export OFS_CONFIG=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/parm/systems/${OFS}.yaml
+export PYTHONPATH=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/ush/python:${PYTHONPATH:-}
 
-${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_MEMBER
+/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.${nosofs_ver}/jobs/JNOS_OFS_ENSEMBLE_MEMBER
