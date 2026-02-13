@@ -205,6 +205,42 @@ stages:
   - post_2                   # Final products (ADCIRC format, GeoPackage)
   - temp_salt_restart        # T/S restart for next cycle
 
+# Ensemble configuration for uncertainty quantification
+# Method: parameter_perturbation - perturb model physics parameters
+# Member 000 is always the control run (unperturbed defaults)
+ensemble:
+  enabled: true
+  n_members: 5
+  method: parameter_perturbation
+  seed: 42                          # Reproducible sampling
+  parameters:
+    rdrg2:
+      min: 0.001
+      max: 0.01
+      default: 0.005
+      distribution: uniform         # Uniform sampling in linear space
+      description: "Bottom drag coefficient"
+    zob:
+      min: 0.0001
+      max: 0.001
+      default: 0.0005
+      distribution: log_uniform     # Uniform sampling in log space
+      description: "Bottom roughness length (m)"
+    akt_bak:
+      min: 1.0e-6
+      max: 1.0e-5
+      default: 5.0e-6
+      distribution: log_uniform
+      description: "Background tracer diffusivity (m2/s)"
+  # Ensemble-specific resources (per member)
+  resources:
+    select: "select=20:ncpus=128:mpiprocs=120"
+    walltime: "06:00:00"
+  # Ensemble post-processing resources
+  post_resources:
+    select: "select=1:ncpus=8:mpiprocs=8"
+    walltime: "01:00:00"
+
 # Legacy shell script execution configuration
 # When enabled, Python workflow calls the original STOFS shell scripts
 # instead of native Python implementations

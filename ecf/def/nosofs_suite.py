@@ -65,6 +65,13 @@ OFS_SYSTEMS = [
             "post_1":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
             "post_2":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
         },
+        # Ensemble configuration: parameter perturbation with 5 members
+        # Member 000 = control (default params), 001-004 = perturbed
+        "ensemble": {
+            "n_members": 5,
+            "member_resources": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "post_resources":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+        },
     },
     {
         "name": "stofs_3d_pac",
@@ -106,6 +113,13 @@ OFS_SYSTEMS = [
             "nowcast":  ("select=10:ncpus=128:mpiprocs=120",   "01:30:00"),
             "forecast": ("select=10:ncpus=128:mpiprocs=120",   "05:30:00"),
             "post":     ("select=1:ncpus=8:mpiprocs=8",        "01:00:00"),
+        },
+        # Ensemble configuration: parameter perturbation with 5 members
+        # Member 000 = control (default params), 001-004 = perturbed
+        "ensemble": {
+            "n_members": 5,
+            "member_resources": ("select=10:ncpus=128:mpiprocs=120", "05:30:00"),
+            "post_resources":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
         },
     },
     {
@@ -235,6 +249,9 @@ def _add_tasks(fam, ofs):
 
     STOFS systems get two-phase post (post_1, post_2).
     COMF/ADCIRC systems get a single post task.
+    Systems with ensemble config get an ensemble family after prep:
+      prep -> ensemble/{member_000..N} -> post_ensemble
+    The deterministic forecast/post tasks still run in parallel.
     """
     res = ofs["resources"]
 
@@ -283,6 +300,52 @@ def _add_tasks(fam, ofs):
         t.add_variable("WALLTIME", res["post"][1])
         t.add_trigger("forecast == complete")
         t.add_inlimit("max_jobs")
+
+    # Ensemble family (if configured for this OFS)
+    if "ensemble" in ofs:
+        _add_ensemble_tasks(fam, ofs)
+
+
+def _add_ensemble_tasks(fam, ofs):
+    """Add ensemble member tasks and post-processing.
+
+    Creates:
+      family ensemble
+        task member_000  (control, triggers on prep == complete)
+        task member_001  (perturbed, triggers on prep == complete)
+        ...
+      task post_ensemble (triggers on ensemble == complete)
+
+    All members run in parallel after prep completes.
+    """
+    ens = ofs["ensemble"]
+    n_members = ens["n_members"]
+    m_res = ens["member_resources"]
+    p_res = ens["post_resources"]
+
+    ens_fam = fam.add_family("ensemble")
+    ens_fam.add_variable("N_MEMBERS", str(n_members))
+
+    for i in range(n_members):
+        mid = "{:03d}".format(i)
+        t = ens_fam.add_task("member_{}".format(mid))
+        t.add_variable("ECF_JOB_CMD",
+                        "%ECF_FILES%/jnos_ofs_ensemble_member.ecf")
+        t.add_variable("MEMBER_ID", mid)
+        t.add_variable("RESOURCES", m_res[0])
+        t.add_variable("WALLTIME", m_res[1])
+        t.add_trigger("../../prep == complete")
+        t.add_inlimit("max_jobs")
+
+    # Ensemble post-processing: runs after all members complete
+    t = fam.add_task("post_ensemble")
+    t.add_variable("ECF_JOB_CMD",
+                    "%ECF_FILES%/jnos_ofs_ensemble_post.ecf")
+    t.add_variable("N_MEMBERS", str(n_members))
+    t.add_variable("RESOURCES", p_res[0])
+    t.add_variable("WALLTIME", p_res[1])
+    t.add_trigger("ensemble == complete")
+    t.add_inlimit("max_jobs")
 
 
 # ---------------------------------------------------------------------------
@@ -371,6 +434,42 @@ def create_suite_text():
                 lines.append("{}  edit RESOURCES '{}'".format(pfx, r["post"][0]))
                 lines.append("{}  edit WALLTIME '{}'".format(pfx, r["post"][1]))
                 lines.append("{}  trigger forecast == complete".format(pfx))
+                lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
+
+            # Ensemble family (if configured)
+            if "ensemble" in ofs:
+                ens = ofs["ensemble"]
+                n_members = ens["n_members"]
+                m_res = ens["member_resources"]
+                p_res = ens["post_resources"]
+
+                lines.append("")
+                lines.append("{}# Ensemble: {} members (parameter perturbation)".format(
+                    pfx, n_members))
+                lines.append("{}family ensemble".format(pfx))
+                lines.append("{}  edit N_MEMBERS '{}'".format(pfx, n_members))
+
+                epfx = _indent(4)
+                for i in range(n_members):
+                    mid = "{:03d}".format(i)
+                    lines.append("")
+                    lines.append("{}task member_{}".format(epfx, mid))
+                    lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'".format(epfx))
+                    lines.append("{}  edit MEMBER_ID '{}'".format(epfx, mid))
+                    lines.append("{}  edit RESOURCES '{}'".format(epfx, m_res[0]))
+                    lines.append("{}  edit WALLTIME '{}'".format(epfx, m_res[1]))
+                    lines.append("{}  trigger ../../prep == complete".format(epfx))
+                    lines.append("{}  inlimit /nosofs:max_jobs".format(epfx))
+
+                lines.append("{}endfamily".format(pfx))
+
+                lines.append("")
+                lines.append("{}task post_ensemble".format(pfx))
+                lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'".format(pfx))
+                lines.append("{}  edit N_MEMBERS '{}'".format(pfx, n_members))
+                lines.append("{}  edit RESOURCES '{}'".format(pfx, p_res[0]))
+                lines.append("{}  edit WALLTIME '{}'".format(pfx, p_res[1]))
+                lines.append("{}  trigger ensemble == complete".format(pfx))
                 lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
 
             lines.append("    endfamily")

@@ -1,0 +1,157 @@
+#!/bin/bash
+set -x
+
+########################################
+# JNOS_OFS_ENSEMBLE_POST - Ensemble Post-Processing
+#
+# Reads outputs from all ensemble members and computes statistics:
+#   - Ensemble mean, spread (std dev)
+#   - Min/max envelope
+#   - Percentiles (10, 25, 50, 75, 90)
+#
+# Required environment variables:
+#   OFS         - OFS system name (e.g., secofs)
+#   N_MEMBERS   - Number of ensemble members
+#   cyc         - Cycle hour (00, 06, 12, 18)
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Validate variables
+########################################
+export N_MEMBERS=${N_MEMBERS:?N_MEMBERS is required}
+echo "Ensemble post-processing for ${N_MEMBERS} members"
+
+########################################
+# Set HOME directories
+########################################
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+
+###################################
+# Specify NET and RUN Name
+####################################
+export NET=${NET:-nosofs}
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+
+####################################
+# YAML Configuration Loading
+####################################
+export OFS_FRAMEWORK="comf"
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+_com_ver=${nosofs_ver}
+if command -v compath.py &> /dev/null; then
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+##############################################
+# Build member directory list
+##############################################
+MEMBER_DIRS=""
+for i in $(seq 0 $((N_MEMBERS - 1))); do
+    MID=$(printf '%03d' $i)
+    MDIR="${COMOUT}/ensemble/member_${MID}"
+    if [ -d "${MDIR}" ]; then
+        MEMBER_DIRS="${MEMBER_DIRS} ${MDIR}"
+    else
+        echo "WARNING: Member directory not found: ${MDIR}" >&2
+    fi
+done
+
+if [ -z "${MEMBER_DIRS}" ]; then
+    echo "ERROR: No ensemble member directories found" >&2
+    exit 1
+fi
+
+echo "Found member directories:"
+echo "${MEMBER_DIRS}" | tr ' ' '\n'
+
+########################################################
+# Run ensemble post-processing
+########################################################
+echo "=== Computing ensemble statistics ==="
+
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+STATS_DIR="${COMOUT}/ensemble/stats"
+
+python3 -m nos_ofs.ensemble.ensemble_post \
+    --member-dirs ${MEMBER_DIRS} \
+    --output-dir ${STATS_DIR}
+export err=$?
+
+if [ $err -ne 0 ]; then
+    echo "ERROR: Ensemble post-processing failed (exit code: ${err})" >&2
+    exit $err
+fi
+
+echo "Ensemble statistics written to ${STATS_DIR}"
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

@@ -62,6 +62,59 @@ suite nosofs
         edit POST_STAGE '2'
         trigger post_1 == complete
         inlimit /nosofs:max_jobs
+
+      # Ensemble: 5 members (parameter perturbation)
+      family ensemble
+        edit N_MEMBERS '5'
+
+        task member_000
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '000'
+          edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+          edit WALLTIME '06:00:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_001
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '001'
+          edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+          edit WALLTIME '06:00:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_002
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '002'
+          edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+          edit WALLTIME '06:00:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_003
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '003'
+          edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+          edit WALLTIME '06:00:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_004
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '004'
+          edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+          edit WALLTIME '06:00:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+      endfamily
+
+      task post_ensemble
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'
+        edit N_MEMBERS '5'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger ensemble == complete
+        inlimit /nosofs:max_jobs
     endfamily
   endfamily
 
@@ -290,6 +343,59 @@ suite nosofs
         edit WALLTIME '01:00:00'
         trigger forecast == complete
         inlimit /nosofs:max_jobs
+
+      # Ensemble: 5 members (parameter perturbation)
+      family ensemble
+        edit N_MEMBERS '5'
+
+        task member_000
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '000'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_001
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '001'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_002
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '002'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_003
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '003'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_004
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '004'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+      endfamily
+
+      task post_ensemble
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'
+        edit N_MEMBERS '5'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger ensemble == complete
+        inlimit /nosofs:max_jobs
     endfamily
 
     family cyc06
@@ -321,6 +427,59 @@ suite nosofs
         edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
         edit WALLTIME '01:00:00'
         trigger forecast == complete
+        inlimit /nosofs:max_jobs
+
+      # Ensemble: 5 members (parameter perturbation)
+      family ensemble
+        edit N_MEMBERS '5'
+
+        task member_000
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '000'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_001
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '001'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_002
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '002'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_003
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '003'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_004
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '004'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+      endfamily
+
+      task post_ensemble
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'
+        edit N_MEMBERS '5'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger ensemble == complete
         inlimit /nosofs:max_jobs
     endfamily
 
@@ -354,6 +513,59 @@ suite nosofs
         edit WALLTIME '01:00:00'
         trigger forecast == complete
         inlimit /nosofs:max_jobs
+
+      # Ensemble: 5 members (parameter perturbation)
+      family ensemble
+        edit N_MEMBERS '5'
+
+        task member_000
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '000'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_001
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '001'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_002
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '002'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_003
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '003'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_004
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '004'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+      endfamily
+
+      task post_ensemble
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'
+        edit N_MEMBERS '5'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger ensemble == complete
+        inlimit /nosofs:max_jobs
     endfamily
 
     family cyc18
@@ -385,6 +597,59 @@ suite nosofs
         edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
         edit WALLTIME '01:00:00'
         trigger forecast == complete
+        inlimit /nosofs:max_jobs
+
+      # Ensemble: 5 members (parameter perturbation)
+      family ensemble
+        edit N_MEMBERS '5'
+
+        task member_000
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '000'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_001
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '001'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_002
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '002'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_003
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '003'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+
+        task member_004
+          edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_member.ecf'
+          edit MEMBER_ID '004'
+          edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+          edit WALLTIME '05:30:00'
+          trigger ../../prep == complete
+          inlimit /nosofs:max_jobs
+      endfamily
+
+      task post_ensemble
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_ensemble_post.ecf'
+        edit N_MEMBERS '5'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger ensemble == complete
         inlimit /nosofs:max_jobs
     endfamily
   endfamily

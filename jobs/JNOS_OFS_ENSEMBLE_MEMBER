@@ -1,0 +1,417 @@
+#!/bin/bash
+set -x
+
+########################################
+# JNOS_OFS_ENSEMBLE_MEMBER - Single Ensemble Member Run
+#
+# Runs one ensemble member for the forecast phase. Each member:
+#   1. Creates $DATA/member_${MEMBER_ID}/ working directory
+#   2. Links shared forcing from prep output ($COMOUT/rerun)
+#   3. Applies parameter perturbations to param.nml
+#   4. Runs the SCHISM model
+#   5. Archives output to $COMOUT/ensemble/member_${MEMBER_ID}/
+#
+# Required environment variables:
+#   OFS         - OFS system name (e.g., secofs)
+#   MEMBER_ID   - Ensemble member ID (e.g., 000, 001, 002)
+#   cyc         - Cycle hour (00, 06, 12, 18)
+#
+# Member 000 is the control run (unperturbed defaults).
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Validate ensemble-specific variables
+########################################
+export MEMBER_ID=${MEMBER_ID:?MEMBER_ID is required}
+echo "Ensemble member: ${MEMBER_ID}"
+
+########################################
+# Load shared library
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory - each member gets its own workspace
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+# Member-specific working directory
+export MEMBER_DATA=${DATA}/member_${MEMBER_ID}
+mkdir -p ${MEMBER_DATA}
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
+####################################
+# YAML Configuration Loading
+####################################
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+echo "Ensemble Member: ${MEMBER_ID}"
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+_com_ver=${nosofs_ver}
+if command -v compath.py &> /dev/null; then
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+# Ensemble output directory for this member
+export ENSEMBLE_COMOUT=${COMOUT}/ensemble/member_${MEMBER_ID}
+mkdir -m 775 -p ${ENSEMBLE_COMOUT}
+
+# Shared forcing directory from prep job
+export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${ENSEMBLE_COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.member_${MEMBER_ID}.jlogfile.log
+export cormslogfile=${ENSEMBLE_COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.member_${MEMBER_ID}.corms.log
+
+env
+
+########################################################
+# Generate parameter perturbations
+########################################################
+echo "=== Generating ensemble parameter perturbations ==="
+
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Generate parameter overrides for this member
+python3 -m nos_ofs.ensemble.param_generator \
+    "${OFS_CONFIG}" \
+    --seed ${ENSEMBLE_SEED:-42} \
+    --output-dir ${DATA}/ensemble_params \
+    --json > ${DATA}/ensemble_params/all_members.json
+
+PARAM_FILE=${DATA}/ensemble_params/member_${MEMBER_ID}/params.json
+
+if [ ! -f "${PARAM_FILE}" ]; then
+    echo "ERROR: Parameter file not found: ${PARAM_FILE}" >&2
+    exit 1
+fi
+
+echo "Parameter overrides for member ${MEMBER_ID}:"
+cat ${PARAM_FILE}
+
+########################################################
+# Set up member working directory
+########################################################
+echo "=== Setting up member ${MEMBER_ID} working directory ==="
+cd ${MEMBER_DATA}
+
+# Link shared forcing files from prep output
+if [ -d "${COMOUTrerun}" ]; then
+    echo "Linking shared forcing from ${COMOUTrerun}"
+    for f in ${COMOUTrerun}/*; do
+        [ -e "$f" ] && ln -sf "$f" ${MEMBER_DATA}/$(basename "$f")
+    done
+else
+    echo "WARNING: COMOUTrerun not found: ${COMOUTrerun}"
+fi
+
+# Link fix files
+if [ -d "${FIXofs}" ]; then
+    for f in ${FIXofs}/*; do
+        bname=$(basename "$f")
+        # Don't overwrite existing links from COMOUTrerun
+        [ ! -e "${MEMBER_DATA}/${bname}" ] && ln -sf "$f" ${MEMBER_DATA}/${bname}
+    done
+fi
+
+# Link STOFS fix files if framework is stofs and directory differs from FIXofs
+if [ "${OFS_FRAMEWORK}" = "stofs" ] && [ -d "${FIXstofs3d}" ] && [ "${FIXstofs3d}" != "${FIXofs}" ]; then
+    for f in ${FIXstofs3d}/*; do
+        bname=$(basename "$f")
+        [ ! -e "${MEMBER_DATA}/${bname}" ] && ln -sf "$f" ${MEMBER_DATA}/${bname}
+    done
+fi
+
+# Copy param.nml (needs to be a real file since we modify it)
+PARAM_NML_SRC="${FIXofs}/${PREFIXNOS}.param.nml"
+if [ ! -f "${PARAM_NML_SRC}" ]; then
+    PARAM_NML_SRC="${FIXofs}/${OFS}.param.nml"
+fi
+if [ -f "${PARAM_NML_SRC}" ]; then
+    cp "${PARAM_NML_SRC}" ${MEMBER_DATA}/param.nml
+else
+    echo "WARNING: param.nml source not found at ${PARAM_NML_SRC}"
+fi
+
+########################################################
+# Apply parameter perturbations to param.nml
+########################################################
+echo "=== Applying parameter perturbations ==="
+
+# Use Python to read params.json and modify param.nml
+python3 << 'APPLY_PARAMS'
+import json
+import os
+import re
+import sys
+
+param_file = os.environ["PARAM_FILE"]
+member_data = os.environ["MEMBER_DATA"]
+nml_path = os.path.join(member_data, "param.nml")
+
+with open(param_file, "r") as f:
+    member = json.load(f)
+
+if member.get("is_control", False):
+    print("Control member - no perturbations applied")
+    sys.exit(0)
+
+params = member.get("parameters", {})
+if not params:
+    print("No parameter perturbations to apply")
+    sys.exit(0)
+
+if not os.path.isfile(nml_path):
+    print(f"WARNING: param.nml not found at {nml_path}, skipping perturbation")
+    sys.exit(0)
+
+with open(nml_path, "r") as f:
+    content = f.read()
+
+# Map parameter names to their namelist variable names
+# These are direct matches to SCHISM param.nml variable names
+param_nml_map = {
+    "rdrg2": "rdrg2",
+    "zob": "Zo",
+    "akt_bak": "akt_bak",
+    "akv_bak": "akv_bak",
+    "akk_bak": "akk_bak",
+    "akp_bak": "akp_bak",
+    "scale_hflux": "scale_hflux",
+}
+
+for param_name, value in params.items():
+    nml_name = param_nml_map.get(param_name, param_name)
+    # Match the variable assignment in namelist format
+    # Handles: varname = value  or  varname=value
+    pattern = rf"(\b{re.escape(nml_name)}\s*=\s*)([^\s,!/]+)"
+    new_content = re.sub(pattern, rf"\g<1>{value:.6e}", content)
+    if new_content != content:
+        print(f"  {nml_name} = {value:.6e}")
+        content = new_content
+    else:
+        print(f"  WARNING: Could not find '{nml_name}' in param.nml")
+
+with open(nml_path, "w") as f:
+    f.write(content)
+
+print("Parameter perturbations applied successfully")
+APPLY_PARAMS
+
+########################################################
+# Retrieve hotstart file from nowcast
+########################################################
+echo "=== Retrieving hotstart file ==="
+
+# Look for hotstart file in COMOUT (archived by nowcast job)
+HOTSTART_FILE=""
+for candidate in \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.hotstart.nc" \
+    "${COMOUT}/${RUN}.${cycle}.hotstart.nc" \
+    "${COMOUT}/hotstart.nc"; do
+    if [ -f "${candidate}" ]; then
+        HOTSTART_FILE="${candidate}"
+        break
+    fi
+done
+
+if [ -n "${HOTSTART_FILE}" ]; then
+    echo "Linking hotstart: ${HOTSTART_FILE}"
+    ln -sf "${HOTSTART_FILE}" ${MEMBER_DATA}/hotstart.nc
+else
+    echo "WARNING: No hotstart file found in ${COMOUT}"
+fi
+
+# Restore staout/mirror/flux files if available (SCHISM ihot=2 requirement)
+RESTART_OUTPUTS_DIR="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+if [ -d "${RESTART_OUTPUTS_DIR}" ]; then
+    echo "Restoring restart output files from ${RESTART_OUTPUTS_DIR}"
+    mkdir -p ${MEMBER_DATA}/outputs
+    for f in ${RESTART_OUTPUTS_DIR}/*; do
+        [ -f "$f" ] && cp "$f" ${MEMBER_DATA}/outputs/$(basename "$f")
+    done
+fi
+
+########################################################
+# Run SCHISM model for this member
+########################################################
+echo "=== Running SCHISM for member ${MEMBER_ID} ==="
+
+cd ${MEMBER_DATA}
+
+# Create outputs directory
+mkdir -p ${MEMBER_DATA}/outputs
+
+# Find SCHISM executable based on framework
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        SCHISM_EXEC=${EXECstofs3d}/pschism_TVD-VL
+        if [ ! -x "${SCHISM_EXEC}" ]; then
+            SCHISM_EXEC=${EXECstofs3d}/schism_${OFS}
+        fi
+        # STOFS Python scripts can segfault with LD_PRELOAD
+        export PYTHONNOUSERSITE=1
+        ;;
+    comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
+        SCHISM_EXEC=${EXECnos}/${PREFIXNOS}
+        if [ ! -x "${SCHISM_EXEC}" ]; then
+            SCHISM_EXEC=${EXECnos}/schism_${OFS}
+        fi
+        ;;
+esac
+if [ ! -x "${SCHISM_EXEC}" ]; then
+    echo "ERROR: SCHISM executable not found" >&2
+    exit 1
+fi
+
+echo "Executable: ${SCHISM_EXEC}"
+echo "Working dir: ${MEMBER_DATA}"
+echo "Member ID: ${MEMBER_ID}"
+
+# Run with MPI
+mpiexec ${SCHISM_EXEC}
+export err=$?
+
+if [ $err -ne 0 ]; then
+    echo "ERROR: SCHISM failed for member ${MEMBER_ID} (exit code: ${err})" >&2
+    exit $err
+fi
+
+########################################################
+# Archive member output to COMOUT
+########################################################
+echo "=== Archiving member ${MEMBER_ID} output ==="
+
+# Copy outputs to ensemble COMOUT
+if [ -d "${MEMBER_DATA}/outputs" ]; then
+    mkdir -p ${ENSEMBLE_COMOUT}/outputs
+    cp ${MEMBER_DATA}/outputs/schout_*.nc ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
+    cp ${MEMBER_DATA}/outputs/staout_* ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
+fi
+
+# Save parameter overrides for provenance
+cp ${PARAM_FILE} ${ENSEMBLE_COMOUT}/params.json
+
+echo "Member ${MEMBER_ID} output archived to ${ENSEMBLE_COMOUT}"
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 member ${MEMBER_ID} completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf ${MEMBER_DATA}
+fi
+
+date

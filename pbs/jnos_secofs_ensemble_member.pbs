@@ -1,0 +1,121 @@
+#!/bin/bash
+#PBS  -N secofs_ens${MEMBER_ID}_${CYC}
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_ens${MEMBER_ID}_${CYC}.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_ens${MEMBER_ID}_${CYC}.err
+#PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
+#PBS  -l walltime=05:30:00
+
+# ------------------------------------------------------------------
+# SECOFS Ensemble Member PBS Job
+#
+# Runs a single ensemble member. Submit via launch_secofs_ensemble.sh
+# or manually with:
+#   qsub -v MEMBER_ID=001,CYC=00 jnos_secofs_ensemble_member.pbs
+#
+# Requires MEMBER_ID and CYC to be passed via qsub -v.
+# ------------------------------------------------------------------
+
+# Validate required variables
+if [ -z "${MEMBER_ID:-}" ]; then
+    echo "ERROR: MEMBER_ID not set. Use: qsub -v MEMBER_ID=001,CYC=00 $0" >&2
+    exit 1
+fi
+CYC=${CYC:-00}
+
+# Source version file
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+
+# Working directory
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs/ensemble
+mkdir -p -m 755 $RPTDIR $WORKDIR
+cd ${WORKDIR}
+
+# Module setup
+module purge
+module load envvar/${envvar_ver:-1.0}
+module load intel/${intel_ver:-19.1.3.304}
+module load PrgEnv-intel/${PrgEnv_intel_ver:-8.1.0}
+module load craype/${craype_ver:-2.7.8}
+module load cray-mpich/${cray_mpich_ver:-8.1.7}
+module load cray-pals/${cray_pals_ver:-1.0.12}
+module load hdf5/${hdf5_ver:-1.10.6}
+module load netcdf/${netcdf_ver:-4.7.4}
+module load jasper/${jasper_ver:-2.0.25}
+module load udunits/${udunits_ver:-2.2.28}
+module load zlib/${zlib_ver:-1.2.11}
+module load bufr/${bufr_ver:-11.5.0}
+module load g2/${g2_ver:-3.4.5}
+module load w3nco/${w3nco_ver:-2.4.1}
+module load w3emc/${w3emc_ver:-2.9.2}
+module load subversion/${subversion_ver:-1.14.0}
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module load cfp/${cfp_ver:-2.0.4}
+module load libjpeg/${libjpeg_ver:-9c}
+module load grib_util/${grib_util_ver:-1.2.4}
+module load gsl/${gsl_ver:-2.7}
+module load wgrib2/${wgrib2_ver:-2.0.8}
+module load nco/${nco_ver:-5.0.6}
+module load cdo/${cdo_ver:-2.0.5} 2>/dev/null || true
+module load metis/${metis_ver:-5.1.0} 2>/dev/null || true
+
+module list
+
+# MPI tuning for large-core SCHISM runs on Cray
+export MPICH_OFI_STARTUP_CONNECT=1
+export MPICH_COLL_SYNC=MPI_Bcast
+export MPICH_REDUCE_NO_SMP=1
+export FI_OFI_RXM_SAR_LIMIT=1572864
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=secofs
+export cyc=${CYC}
+export NET=nosofs
+export model=nosofs
+export MEMBER_ID=${MEMBER_ID}
+export job=secofs_ens${MEMBER_ID}_${CYC}_$envir
+export platform=ptmp
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+export nosofs_ver=v3.7.0
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}/ensemble
+
+# Input data paths (production WCOSS2)
+export COMINnam=/lfs/h1/ops/prod/com/nam/${nam_ver}
+export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
+export COMINrap=/lfs/h1/ops/prod/com/rap/${rap_ver}
+export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
+export COMINrtma=/lfs/h1/ops/prod/com/rtma/${rtma_ver}
+export COMINetss=/lfs/h1/ops/prod/com/petss/${petss_ver}
+export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration
+export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_MEMBER
