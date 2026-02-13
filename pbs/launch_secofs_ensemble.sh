@@ -100,10 +100,15 @@ echo ""
 echo ">>> Submitting ${N_MEMBERS} ensemble members..."
 MEMBER_JOBIDS=()
 
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
+mkdir -p ${RPTDIR} 2>/dev/null || true
+
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
     QSUB_ARGS=(-v "MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY}" \
-               -N "secofs_ens${MID}_${CYC}")
+               -N "secofs_ens${MID}_${CYC}" \
+               -o "${RPTDIR}/secofs_ens${MID}_${CYC}.out" \
+               -e "${RPTDIR}/secofs_ens${MID}_${CYC}.err")
     if [ -n "${PREP_JOBID_SHORT}" ]; then
         QSUB_ARGS+=(-W "depend=afterok:${PREP_JOBID_SHORT}")
     fi
