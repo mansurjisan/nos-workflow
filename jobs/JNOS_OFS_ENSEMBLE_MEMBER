@@ -178,17 +178,29 @@ echo "=== Generating ensemble parameter perturbations ==="
 
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-# Generate parameter overrides for this member
+# Create output directory before running generator
+# (shell redirect needs the directory to exist)
+mkdir -p ${DATA}/ensemble_params
+
+# Generate parameter overrides for all members
 python3 -m nos_ofs.ensemble.param_generator \
     "${OFS_CONFIG}" \
     --seed ${ENSEMBLE_SEED:-42} \
     --output-dir ${DATA}/ensemble_params \
     --json > ${DATA}/ensemble_params/all_members.json
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "ERROR: param_generator failed (exit code $rc)" >&2
+    cat ${DATA}/ensemble_params/all_members.json 2>/dev/null || true
+    exit $rc
+fi
 
 PARAM_FILE=${DATA}/ensemble_params/member_${MEMBER_ID}/params.json
 
 if [ ! -f "${PARAM_FILE}" ]; then
     echo "ERROR: Parameter file not found: ${PARAM_FILE}" >&2
+    echo "Contents of ensemble_params/:" >&2
+    ls -lR ${DATA}/ensemble_params/ >&2 2>/dev/null || true
     exit 1
 fi
 
