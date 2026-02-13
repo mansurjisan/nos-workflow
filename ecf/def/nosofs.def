@@ -1,0 +1,1063 @@
+suite nosofs
+  # -----------------------------------------------------------
+  # Suite-level variables (inherited by all families and tasks)
+  # -----------------------------------------------------------
+  edit ENVIR 'prod'
+  edit PACKAGEROOT '/lfs/h1/nos/nosofs/noscrub/packages'
+  edit NOSOFS_VER 'v3.7.0'
+  edit COMROOT '/lfs/h1/ops/prod/com'
+  edit DCOMROOT '/lfs/h1/ops/prod/dcom'
+  edit KEEPDATA 'NO'
+  edit SENDCOM 'YES'
+  edit SENDDBN 'YES'
+  edit ECF_FILES '%PACKAGEROOT%/nosofs.%NOSOFS_VER%/ecf'
+  edit ECF_INCLUDE '%PACKAGEROOT%/nosofs.%NOSOFS_VER%/ecf/include'
+  edit ECF_TRIES '2'
+  limit max_jobs 20
+
+  # ==========================================================
+  # STOFS_3D_ATL (STOFS framework)
+  # ==========================================================
+  family stofs_3d_atl
+    edit OFS 'stofs_3d_atl'
+    edit NET 'stofs'
+    edit VER_FILE 'stofs_3d_atl/run.ver'
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:30:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcst_fcst
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcst_fcst.ecf'
+        edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+        edit WALLTIME '06:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task post_1
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        edit POST_STAGE '1'
+        trigger nowcst_fcst == complete
+        inlimit /nosofs:max_jobs
+
+      task post_2
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        edit POST_STAGE '2'
+        trigger post_1 == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # STOFS_3D_PAC (STOFS framework)
+  # ==========================================================
+  family stofs_3d_pac
+    edit OFS 'stofs_3d_pac'
+    edit NET 'stofs'
+    edit VER_FILE 'stofs_3d_pac/run.ver'
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:30:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcst_fcst
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcst_fcst.ecf'
+        edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+        edit WALLTIME '06:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task post_1
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        edit POST_STAGE '1'
+        trigger nowcst_fcst == complete
+        inlimit /nosofs:max_jobs
+
+      task post_2
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        edit POST_STAGE '2'
+        trigger post_1 == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # STOFS_2D_GLO (ADCIRC framework)
+  # ==========================================================
+  family stofs_2d_glo
+    edit OFS 'stofs_2d_glo'
+    edit NET 'stofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=8:ncpus=128:mpiprocs=120'
+        edit WALLTIME '03:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # SECOFS (COMF framework)
+  # ==========================================================
+  family secofs
+    edit OFS 'secofs'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # CREOFS (COMF framework)
+  # ==========================================================
+  family creofs
+    edit OFS 'creofs'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc03
+      edit CYC '03'
+      cron 3:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc09
+      edit CYC '09'
+      cron 9:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc15
+      edit CYC '15'
+      cron 15:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc21
+      edit CYC '21'
+      cron 21:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:30:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=10:ncpus=128:mpiprocs=120'
+        edit WALLTIME '05:30:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # CBOFS (COMF framework)
+  # ==========================================================
+  family cbofs
+    edit OFS 'cbofs'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # DBOFS (COMF framework)
+  # ==========================================================
+  family dbofs
+    edit OFS 'dbofs'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # LEOFS (COMF framework)
+  # ==========================================================
+  family leofs
+    edit OFS 'leofs'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+  # ==========================================================
+  # NGOFS2 (COMF framework)
+  # ==========================================================
+  family ngofs2
+    edit OFS 'ngofs2'
+    edit NET 'nosofs'
+    edit VER_FILE 'run.ver'
+
+    family cyc00
+      edit CYC '00'
+      cron 0:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc06
+      edit CYC '06'
+      cron 6:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc12
+      edit CYC '12'
+      cron 12:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+
+    family cyc18
+      edit CYC '18'
+      cron 18:00
+
+      task prep
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_prep.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '02:00:00'
+        inlimit /nosofs:max_jobs
+
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=3:ncpus=128:mpiprocs=120'
+        edit WALLTIME '01:00:00'
+        trigger nowcast == complete
+        inlimit /nosofs:max_jobs
+
+      task post
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'
+        edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
+        edit WALLTIME '01:00:00'
+        trigger forecast == complete
+        inlimit /nosofs:max_jobs
+    endfamily
+  endfamily
+
+endsuite
