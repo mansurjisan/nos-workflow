@@ -63,12 +63,43 @@ try:
     from .orchestration import (
         PrepOrchestrator,
         ModelRunOrchestrator,
+        PostOrchestrator,
         PrepResult,
         ModelRunResult,
+        PostOrchestratorResult,
         StepResult,
     )
 except ImportError:
     # Orchestration may not be available
+    pass
+
+# Post-processing
+try:
+    from .postprocessing import (
+        BasePostProcessor,
+        SCHISMPostProcessor,
+        ROMSPostProcessor,
+        FVCOMPostProcessor,
+    )
+    from .postprocessing import PostResult as PostProcessorResult
+except ImportError:
+    # Post-processing may not be available (requires xarray, netCDF4)
+    pass
+
+# Ensemble forecasting (Phase C)
+try:
+    from .ensemble import (
+        EnsembleConfig,
+        EnsembleRunner,
+        EnsembleResult,
+        EnsembleMember,
+        MemberManager,
+        EnsembleStatistics,
+        EnsembleStatsResult,
+        EnsemblePlotter,
+    )
+except ImportError:
+    # Ensemble module may not be available (requires numpy)
     pass
 
 __all__ = [
@@ -95,7 +126,24 @@ __all__ = [
     # Orchestration
     "PrepOrchestrator",
     "ModelRunOrchestrator",
+    "PostOrchestrator",
     "PrepResult",
     "ModelRunResult",
+    "PostOrchestratorResult",
     "StepResult",
+    # Post-processing
+    "BasePostProcessor",
+    "SCHISMPostProcessor",
+    "ROMSPostProcessor",
+    "FVCOMPostProcessor",
+    "PostProcessorResult",
+    # Ensemble forecasting
+    "EnsembleConfig",
+    "EnsembleRunner",
+    "EnsembleResult",
+    "EnsembleMember",
+    "MemberManager",
+    "EnsembleStatistics",
+    "EnsembleStatsResult",
+    "EnsemblePlotter",
 ]

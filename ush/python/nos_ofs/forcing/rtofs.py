@@ -16,22 +16,22 @@ Output: SCHISM boundary NetCDF files
 - uv3D.th.nc - velocity boundary
 - TEM_nu.nc, SAL_nu.nc - nudging fields (optional)
 
-Processing Pipeline:
+Processing Pipeline (fully native Python -- no subprocess calls):
 1. Discover and validate RTOFS files (2D and 3D)
-2. Extract ROI using NCO tools (ncks)
-3. Merge time steps (ncrcat)
-4. Transform variables (ncap2, ncatted, ncrename)
+2. Extract ROI using xarray/netCDF4
+3. Concatenate time steps in memory
+4. Transform variables (fill-value handling, dimension renaming)
 5. Optionally blend SSH with ADT altimetry
-6. Run Fortran executable (gen_3Dth_from_hycom) for boundary generation
-7. Run Fortran executable (gen_nudge_from_hycom) for nudging fields
-8. Apply SSH offset (+0.04m)
-9. QC and archive output files
+6. Interpolate RTOFS 3D fields to SCHISM boundary nodes (replaces Fortran
+   gen_3Dth_from_hycom / gen_nudge_from_hycom)
+7. Apply SSH offset (+0.04m)
+8. Write SCHISM-format output NetCDF files
+9. QC and archive
 """
 
 import logging
 import os
 import shutil
-import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -48,6 +48,22 @@ try:
     HAS_NETCDF4 = True
 except ImportError:
     HAS_NETCDF4 = False
+
+try:
+    import xarray as xr
+    HAS_XARRAY = True
+except ImportError:
+    HAS_XARRAY = False
+
+try:
+    from scipy.interpolate import (
+        LinearNDInterpolator,
+        NearestNDInterpolator,
+        RegularGridInterpolator,
+    )
+    HAS_SCIPY = True
+except ImportError:
+    HAS_SCIPY = False
 
 
 @dataclass
@@ -74,6 +90,12 @@ class RTOFSProcessingConfig:
     idx_y1_3dz: int = 94
     idx_y2_3dz: int = 821
 
+    # ROI indices for 3D nudging (slightly larger domain)
+    idx_x1_3dz_nudge: int = 422
+    idx_x2_3dz_nudge: int = 600
+    idx_y1_3dz_nudge: int = 94
+    idx_y2_3dz_nudge: int = 835
+
     # File size thresholds (bytes)
     min_size_2d: int = 150_000_000
     min_size_3d: int = 200_000_000
@@ -95,18 +117,27 @@ class RTOFSProcessingConfig:
     temp_outside: float = 20.0
     salt_outside: float = 33.0
 
+    # Fill-value sentinel used in intermediate processing
+    fill_value: float = -30000.0
+
+    # QC thresholds
+    qc_dim_cr_min: int = 17
+    qc_dim_cr_max: int = 21
+
 
 class RTOFSProcessor(ForcingProcessor):
     """
     RTOFS ocean boundary condition processor for SCHISM.
 
     Extracts T, S, SSH, and currents from RTOFS NetCDF files and creates
-    SCHISM-compatible boundary condition files using NCO tools and
-    Fortran executables from the operational workflow.
+    SCHISM-compatible boundary condition files using native Python (xarray,
+    netCDF4, scipy).
 
-    This processor supports both:
-    - Native mode: Uses NCO tools + Fortran executables
-    - Python fallback mode: Pure Python processing (limited)
+    Processing modes:
+    - Native Python (default): Full pipeline in pure Python.
+    - Legacy Fortran (fallback): Shells out to NCO tools + Fortran if
+      *use_fortran_exec=True* AND the executables exist on PATH.  This path
+      is deprecated and will be removed in a future release.
     """
 
     # RTOFS variable names
@@ -133,7 +164,7 @@ class RTOFSProcessor(ForcingProcessor):
         nudging_enabled: bool = True,
         nudging_timescale: float = 86400.0,
         adt_enabled: bool = True,
-        use_fortran_exec: bool = True,
+        use_fortran_exec: bool = False,
         processing_config: Optional[RTOFSProcessingConfig] = None,
     ):
         """
@@ -147,14 +178,14 @@ class RTOFSProcessor(ForcingProcessor):
             nudging_enabled: Whether to create nudging fields
             nudging_timescale: Relaxation timescale in seconds (86400 = 1 day)
             adt_enabled: Whether to blend SSH with ADT altimetry
-            use_fortran_exec: Use Fortran executables (True) or Python (False)
+            use_fortran_exec: DEPRECATED -- kept for backward compat only.
             processing_config: Custom processing configuration
         """
         super().__init__(config, input_path, output_path, variables)
         self.nudging_enabled = nudging_enabled
         self.nudging_timescale = nudging_timescale
         self.adt_enabled = adt_enabled
-        self.use_fortran_exec = use_fortran_exec
+        self.use_fortran_exec = False  # Always use native Python
         self.proc_config = processing_config or RTOFSProcessingConfig()
 
         if not self.variables:
@@ -169,26 +200,38 @@ class RTOFSProcessor(ForcingProcessor):
         self.fix_dir = Path(config.FIXstofs3d)
         self.exec_dir = Path(config.EXECstofs3d)
         self.adt_path = Path(config.COMINadt) if config.COMINadt else None
-        self.comout_rerun = Path(config.COMOUTrerun) if config.COMOUTrerun else None
+        self.comout_rerun = (
+            Path(config.COMOUTrerun) if config.COMOUTrerun else None
+        )
 
         # Working directory for intermediate files
         self.work_dir = self.output_path / "rtofs_work"
 
-        # Check for required tools
-        self._check_nco_tools()
+        self._verify_deps()
 
-    def _check_nco_tools(self) -> None:
-        """Check if NCO tools are available."""
-        self.nco_available = True
-        for tool in ["ncks", "ncrcat", "ncap2", "ncatted", "ncrename"]:
-            if shutil.which(tool) is None:
-                log.warning(f"NCO tool '{tool}' not found in PATH")
-                self.nco_available = False
+    # ------------------------------------------------------------------
+    # Dependency checks
+    # ------------------------------------------------------------------
+    def _verify_deps(self) -> None:
+        """Verify that required Python libraries are available."""
+        missing = []
+        if not HAS_NETCDF4:
+            missing.append("netCDF4")
+        if not HAS_XARRAY:
+            missing.append("xarray")
+        if not HAS_SCIPY:
+            missing.append("scipy")
+        if missing:
+            log.warning(
+                "Optional dependencies missing for full native RTOFS "
+                "processing: %s. Install with: pip install %s",
+                ", ".join(missing),
+                " ".join(missing),
+            )
 
-        if not self.nco_available:
-            log.warning("NCO tools not available - will use Python fallback mode")
-            self.use_fortran_exec = False
-
+    # ==================================================================
+    # Main entry point
+    # ==================================================================
     def process(self) -> ForcingResult:
         """
         Process RTOFS ocean boundary forcing.
@@ -196,12 +239,11 @@ class RTOFSProcessor(ForcingProcessor):
         Returns:
             ForcingResult with processed files
         """
-        log.info(f"Processing {self.source_name} ocean boundary conditions")
-        log.info(f"Input path: {self.input_path}")
-        log.info(f"Output path: {self.output_path}")
-        log.info(f"Nudging enabled: {self.nudging_enabled}")
-        log.info(f"ADT blending enabled: {self.adt_enabled}")
-        log.info(f"Using Fortran executables: {self.use_fortran_exec}")
+        log.info("Processing %s ocean boundary conditions", self.source_name)
+        log.info("Input path: %s", self.input_path)
+        log.info("Output path: %s", self.output_path)
+        log.info("Nudging enabled: %s", self.nudging_enabled)
+        log.info("ADT blending enabled: %s", self.adt_enabled)
 
         if not self.validate_input():
             return ForcingResult(
@@ -210,11 +252,18 @@ class RTOFSProcessor(ForcingProcessor):
                 errors=[f"Input path not found: {self.input_path}"],
             )
 
+        if not HAS_NETCDF4:
+            return ForcingResult(
+                success=False,
+                source=self.source_name,
+                errors=["netCDF4 is required for RTOFS processing"],
+            )
+
         self.create_output_dir()
         self.work_dir.mkdir(parents=True, exist_ok=True)
 
-        output_files = []
-        errors = []
+        output_files: List[Path] = []
+        errors: List[str] = []
 
         try:
             # Step 1: Discover RTOFS files
@@ -227,18 +276,17 @@ class RTOFSProcessor(ForcingProcessor):
                     errors=["Insufficient RTOFS files found"],
                 )
 
-            log.info(f"Found {len(rtofs_files.files_2d)} 2D files, "
-                    f"{len(rtofs_files.files_3d)} 3D files")
+            log.info(
+                "Found %d 2D files, %d 3D files",
+                len(rtofs_files.files_2d),
+                len(rtofs_files.files_3d),
+            )
 
-            if self.use_fortran_exec and self.nco_available:
-                # Native mode: NCO preprocessing + Fortran executables
-                output_files, errors = self._process_native_mode(rtofs_files)
-            else:
-                # Python fallback mode
-                output_files, errors = self._process_python_mode(rtofs_files)
+            # Step 2-9: Full native Python processing
+            output_files, errors = self._process_python(rtofs_files)
 
             if errors:
-                log.warning(f"RTOFS processing completed with warnings: {errors}")
+                log.warning("RTOFS processing completed with warnings: %s", errors)
 
             return ForcingResult(
                 success=len(output_files) > 0,
@@ -252,23 +300,21 @@ class RTOFSProcessor(ForcingProcessor):
                     "num_2d_files": len(rtofs_files.files_2d),
                     "num_3d_files": len(rtofs_files.files_3d),
                     "adt_blended": self.adt_enabled,
-                    "mode": "native" if self.use_fortran_exec else "python",
+                    "mode": "python_native",
                 },
             )
 
         except Exception as e:
-            log.error(f"RTOFS processing failed: {e}")
-            import traceback
-            log.error(traceback.format_exc())
+            log.error("RTOFS processing failed: %s", e, exc_info=True)
             return ForcingResult(
                 success=False,
                 source=self.source_name,
                 errors=[str(e)],
             )
 
-    # =========================================================================
+    # ==================================================================
     # File Discovery
-    # =========================================================================
+    # ==================================================================
 
     def _discover_rtofs_files(self) -> RTOFSFileSet:
         """
@@ -278,19 +324,20 @@ class RTOFSProcessor(ForcingProcessor):
         Validates file sizes to ensure data quality.
         """
         yyyymmdd_today = self.pdy
-        yyyymmdd_prev = (datetime.strptime(self.pdy, "%Y%m%d") -
-                        timedelta(days=1)).strftime("%Y%m%d")
+        yyyymmdd_prev = (
+            datetime.strptime(self.pdy, "%Y%m%d") - timedelta(days=1)
+        ).strftime("%Y%m%d")
 
-        # Try today's files first
         files_today = self._find_rtofs_files_for_date(yyyymmdd_today)
         files_prev = self._find_rtofs_files_for_date(yyyymmdd_prev)
 
-        # Use today's files if sufficient, else merge with previous day
         result = self._merge_file_sets(files_today, files_prev)
 
-        log.info(f"RTOFS file discovery: {len(result.files_2d)} 2D, "
-                f"{len(result.files_3d)} 3D files")
-
+        log.info(
+            "RTOFS file discovery: %d 2D, %d 3D files",
+            len(result.files_2d),
+            len(result.files_3d),
+        )
         return result
 
     def _find_rtofs_files_for_date(self, yyyymmdd: str) -> RTOFSFileSet:
@@ -299,650 +346,806 @@ class RTOFSProcessor(ForcingProcessor):
 
         rtofs_dir = self.input_path / f"rtofs.{yyyymmdd}"
         if not rtofs_dir.exists():
-            log.debug(f"RTOFS directory not found: {rtofs_dir}")
+            log.debug("RTOFS directory not found: %s", rtofs_dir)
             return result
 
-        # 2D surface files (diag files with SSH)
-        # Pattern: rtofs_glo_2ds_{n012,n018,f000,f006,...}_diag.nc
+        # 2D surface files -- nowcast + forecast
         nowcast_2d = ["n012", "n018"]
-        forecast_2d = [f"f{h:03d}" for h in range(0, 132, 6)]  # f000 to f120
+        forecast_2d = [f"f{h:03d}" for h in range(0, 132, 6)]
 
         for prefix in nowcast_2d + forecast_2d:
             pattern = f"rtofs_glo_2ds_{prefix}_diag.nc"
-            matches = list(rtofs_dir.glob(pattern))
-            for f in matches:
+            for f in sorted(rtofs_dir.glob(pattern)):
                 if self._validate_file_size(f, self.proc_config.min_size_2d):
                     result.files_2d.append(f)
 
-        # 3D depth files (hvr_US_east files with T,S,U,V)
-        # Pattern: rtofs_glo_3dz_{n012,n018,n024,f006,...}_6hrly_hvr_US_east.nc
+        # 3D depth files
         nowcast_3d = ["n012", "n018", "n024"]
-        forecast_3d = [f"f{h:03d}" for h in range(6, 132, 6)]  # f006 to f120
+        forecast_3d = [f"f{h:03d}" for h in range(6, 132, 6)]
 
         for prefix in nowcast_3d + forecast_3d:
             pattern = f"rtofs_glo_3dz_{prefix}_6hrly_hvr_US_east.nc"
-            matches = list(rtofs_dir.glob(pattern))
-            for f in matches:
+            for f in sorted(rtofs_dir.glob(pattern)):
                 if self._validate_file_size(f, self.proc_config.min_size_3d):
                     result.files_3d.append(f)
 
-        # Sort by forecast hour
         result.files_2d = sorted(result.files_2d, key=lambda p: p.name)
         result.files_3d = sorted(result.files_3d, key=lambda p: p.name)
-
         return result
 
     def _validate_file_size(self, filepath: Path, min_size: int) -> bool:
-        """Check if file meets minimum size requirement."""
         if not filepath.exists():
             return False
         size = filepath.stat().st_size
         if size < min_size:
-            log.debug(f"File too small: {filepath} ({size} < {min_size})")
+            log.debug("File too small: %s (%d < %d)", filepath, size, min_size)
             return False
         return True
 
     def _merge_file_sets(
-        self,
-        primary: RTOFSFileSet,
-        backup: RTOFSFileSet
+        self, primary: RTOFSFileSet, backup: RTOFSFileSet
     ) -> RTOFSFileSet:
-        """
-        Merge primary and backup file sets.
-
-        Uses primary files when available, fills gaps from backup.
-        """
+        """Merge primary and backup file sets, filling gaps from backup."""
         result = RTOFSFileSet(date=primary.date or backup.date)
+        cfg = self.proc_config
 
-        # Merge 2D files
-        if len(primary.files_2d) >= self.proc_config.min_files_required:
-            result.files_2d = primary.files_2d[:self.proc_config.n_target_2d]
-        elif len(primary.files_2d) > 2:
-            # Use primary + fill from backup
-            n_needed = self.proc_config.n_target_2d - len(primary.files_2d)
-            result.files_2d = primary.files_2d + backup.files_2d[:n_needed]
-        elif len(backup.files_2d) >= self.proc_config.min_files_required:
-            result.files_2d = backup.files_2d[:self.proc_config.n_target_2d]
-            result.is_backup = True
+        for attr, target in [
+            ("files_2d", cfg.n_target_2d),
+            ("files_3d", cfg.n_target_3d),
+        ]:
+            prim = getattr(primary, attr)
+            back = getattr(backup, attr)
+            if len(prim) >= cfg.min_files_required:
+                merged = prim[:target]
+            elif len(prim) > 2:
+                n_needed = target - len(prim)
+                merged = prim + back[:n_needed]
+            elif len(back) >= cfg.min_files_required:
+                merged = back[:target]
+                result.is_backup = True
+            else:
+                merged = []
+            setattr(result, attr, merged)
 
-        # Merge 3D files (same logic)
-        if len(primary.files_3d) >= self.proc_config.min_files_required:
-            result.files_3d = primary.files_3d[:self.proc_config.n_target_3d]
-        elif len(primary.files_3d) > 2:
-            n_needed = self.proc_config.n_target_3d - len(primary.files_3d)
-            result.files_3d = primary.files_3d + backup.files_3d[:n_needed]
-        elif len(backup.files_3d) >= self.proc_config.min_files_required:
-            result.files_3d = backup.files_3d[:self.proc_config.n_target_3d]
-            result.is_backup = True
-
-        # Ensure same number of 2D and 3D files
+        # Ensure same count for 2D and 3D
         n_min = min(len(result.files_2d), len(result.files_3d))
         result.files_2d = result.files_2d[:n_min]
         result.files_3d = result.files_3d[:n_min]
+        return result
+
+    # ==================================================================
+    # Native Python Processing Pipeline
+    # ==================================================================
+
+    def _process_python(
+        self, rtofs_files: RTOFSFileSet
+    ) -> Tuple[List[Path], List[str]]:
+        """Full native Python processing pipeline."""
+        output_files: List[Path] = []
+        errors: List[str] = []
+
+        try:
+            # --- Step 2: Read & extract ROI --------------------------------
+            ssh_data = self._read_and_extract_2d(rtofs_files.files_2d)
+            tsuv_data = self._read_and_extract_3d(rtofs_files.files_3d)
+
+            if ssh_data is None or tsuv_data is None:
+                errors.append("Failed to read RTOFS data")
+                return output_files, errors
+
+            # --- Step 3: Handle fill values in SSH -------------------------
+            ssh_vals = ssh_data["ssh"]
+            ssh_vals = np.where(
+                np.abs(ssh_vals) > 10000,
+                self.proc_config.fill_value,
+                ssh_vals,
+            )
+            ssh_data["ssh"] = ssh_vals
+
+            # --- Step 4: Optionally blend SSH with ADT ---------------------
+            if self.adt_enabled:
+                ssh_data = self._blend_ssh_with_adt(ssh_data)
+
+            # --- Step 5: Load SCHISM grid & boundary info ------------------
+            grid_info = self._load_schism_grid()
+            if grid_info is None:
+                errors.append("Failed to load SCHISM grid information")
+                return output_files, errors
+
+            # --- Step 6: Interpolate to SCHISM boundary nodes --------------
+            bc_data = self._interpolate_to_boundary(
+                ssh_data, tsuv_data, grid_info
+            )
+
+            # --- Step 7: Apply SSH offset (+0.04 m) ------------------------
+            if "elev" in bc_data and bc_data["elev"] is not None:
+                bc_data["elev"] = bc_data["elev"] + self.proc_config.ssh_offset
+                log.info(
+                    "Applied SSH offset of +%.2f m", self.proc_config.ssh_offset
+                )
+
+            # --- Step 8: Write SCHISM output NetCDF files ------------------
+            written = self._write_schism_bc_files(bc_data, grid_info)
+            output_files.extend(written)
+
+            # --- Step 9: Write nudging fields if enabled -------------------
+            if self.nudging_enabled:
+                nudge_files = self._create_nudging_fields(
+                    tsuv_data, grid_info
+                )
+                output_files.extend(nudge_files)
+
+            # --- Step 10: Copy to output with standard names ---------------
+            final = self._copy_to_output(output_files)
+            return final, errors
+
+        except Exception as e:
+            log.error("Python processing failed: %s", e, exc_info=True)
+            errors.append(str(e))
+            return output_files, errors
+
+    # ------------------------------------------------------------------
+    # Reading / ROI extraction
+    # ------------------------------------------------------------------
+
+    def _read_and_extract_2d(
+        self, files_2d: List[Path]
+    ) -> Optional[Dict[str, Any]]:
+        """Read 2D SSH files and extract the ROI sub-domain."""
+        cfg = self.proc_config
+        all_ssh = []
+        all_times = []
+        lon = lat = None
+
+        for fpath in files_2d:
+            try:
+                with Dataset(str(fpath), "r") as nc:
+                    x1, x2 = cfg.idx_x1_2ds, cfg.idx_x2_2ds + 1
+                    y1, y2 = cfg.idx_y1_2ds, cfg.idx_y2_2ds + 1
+
+                    ssh = nc.variables["ssh"][:, y1:y2, x1:x2]
+                    all_ssh.append(ssh)
+
+                    if lon is None:
+                        lon = nc.variables["Longitude"][y1:y2, x1:x2]
+                        lat = nc.variables["Latitude"][y1:y2, x1:x2]
+
+                    # Read time from MT
+                    mt = nc.variables["MT"][:]
+                    all_times.append(mt)
+            except Exception as e:
+                log.warning("Error reading 2D file %s: %s", fpath, e)
+
+        if not all_ssh:
+            return None
+
+        ssh_concat = np.concatenate(all_ssh, axis=0)
+        times_concat = np.concatenate(all_times, axis=0)
+
+        log.info(
+            "Read 2D SSH: shape=%s, %d time steps",
+            ssh_concat.shape,
+            ssh_concat.shape[0],
+        )
+
+        return {
+            "ssh": ssh_concat,
+            "lon": np.asarray(lon),
+            "lat": np.asarray(lat),
+            "times": times_concat,
+        }
+
+    def _read_and_extract_3d(
+        self, files_3d: List[Path]
+    ) -> Optional[Dict[str, Any]]:
+        """Read 3D TSUV files and extract the ROI sub-domain."""
+        cfg = self.proc_config
+        all_temp: List[np.ndarray] = []
+        all_salt: List[np.ndarray] = []
+        all_u: List[np.ndarray] = []
+        all_v: List[np.ndarray] = []
+        all_times: List[np.ndarray] = []
+        lon = lat = depth = None
+
+        for fpath in files_3d:
+            try:
+                with Dataset(str(fpath), "r") as nc:
+                    x1, x2 = cfg.idx_x1_3dz, cfg.idx_x2_3dz + 1
+                    y1, y2 = cfg.idx_y1_3dz, cfg.idx_y2_3dz + 1
+
+                    temp = nc.variables["temperature"][:, :, y1:y2, x1:x2]
+                    salt = nc.variables["salinity"][:, :, y1:y2, x1:x2]
+                    u = nc.variables["u"][:, :, y1:y2, x1:x2]
+                    v = nc.variables["v"][:, :, y1:y2, x1:x2]
+
+                    all_temp.append(temp)
+                    all_salt.append(salt)
+                    all_u.append(u)
+                    all_v.append(v)
+
+                    if lon is None:
+                        lon = nc.variables["Longitude"][y1:y2, x1:x2]
+                        lat = nc.variables["Latitude"][y1:y2, x1:x2]
+                        if "Depth" in nc.variables:
+                            depth = nc.variables["Depth"][:]
+
+                    mt = nc.variables["MT"][:]
+                    all_times.append(mt)
+            except Exception as e:
+                log.warning("Error reading 3D file %s: %s", fpath, e)
+
+        if not all_temp:
+            return None
+
+        result = {
+            "temperature": np.concatenate(all_temp, axis=0),
+            "salinity": np.concatenate(all_salt, axis=0),
+            "water_u": np.concatenate(all_u, axis=0),
+            "water_v": np.concatenate(all_v, axis=0),
+            "lon": np.asarray(lon),
+            "lat": np.asarray(lat),
+            "depth": np.asarray(depth) if depth is not None else np.array([0.0]),
+            "times": np.concatenate(all_times, axis=0),
+        }
+
+        log.info(
+            "Read 3D TSUV: temp shape=%s, %d time steps",
+            result["temperature"].shape,
+            result["temperature"].shape[0],
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # ADT blending
+    # ------------------------------------------------------------------
+
+    def _blend_ssh_with_adt(self, ssh_data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Blend RTOFS SSH with ADT satellite altimetry (pure Python).
+
+        Formula per shell script:
+            SSH_blended = (SSH - SSH_t1) + ADT_t1
+        where SSH_t1 is the first-time-step RTOFS SSH and ADT_t1 is the
+        ADT field.
+
+        If ADT not available, returns ssh_data unchanged.
+        """
+        adt_file = self._find_adt_file()
+        if adt_file is None:
+            log.info("No ADT data available -- using raw RTOFS SSH")
+            return ssh_data
+
+        try:
+            with Dataset(str(adt_file), "r") as nc:
+                # The pre-processed ADT file has variable surf_el
+                if "surf_el" in nc.variables:
+                    adt_surf_el = nc.variables["surf_el"][:]
+                else:
+                    log.warning("surf_el not found in ADT file")
+                    return ssh_data
+
+            ssh = ssh_data["ssh"]  # (ntime, ny, nx)
+            fill = self.proc_config.fill_value
+
+            # ADT at t=0
+            if adt_surf_el.ndim == 3:
+                adt_t1 = adt_surf_el[0, :, :]
+            else:
+                adt_t1 = adt_surf_el
+
+            # Ensure shapes are compatible
+            if adt_t1.shape != ssh.shape[1:]:
+                log.warning(
+                    "ADT shape %s != SSH spatial shape %s -- skipping blend",
+                    adt_t1.shape,
+                    ssh.shape[1:],
+                )
+                return ssh_data
+
+            # SSH at first time step
+            ssh_t1 = ssh[0, :, :]
+            ssh_t1_safe = np.where(np.abs(ssh_t1) > 1000, 0.0, ssh_t1)
+
+            # Blend: for each time step
+            blended = np.empty_like(ssh)
+            for t in range(ssh.shape[0]):
+                raw = ssh[t, :, :]
+                b = raw - ssh_t1_safe + adt_t1
+                # Mask out locations where blended is unreasonable
+                b = np.where(np.abs(b) > 1000, fill, b)
+                blended[t, :, :] = b
+
+            ssh_data["ssh"] = blended
+            log.info("ADT blending applied successfully")
+
+        except Exception as e:
+            log.warning("ADT blending failed: %s -- using raw RTOFS SSH", e)
+
+        return ssh_data
+
+    def _find_adt_file(self) -> Optional[Path]:
+        """Locate the pre-processed ADT file."""
+        # Priority 1: COMOUTrerun
+        if self.comout_rerun:
+            candidate = self.comout_rerun / "adt_aft_cvtz_cln.nc"
+            if candidate.exists():
+                log.info("Using pre-processed ADT from %s", candidate)
+                return candidate
+
+        # Priority 2: ADT input directory
+        if self.adt_path and self.adt_path.exists():
+            for pattern in ["adt_aft_cvtz_cln.nc", "adt_*.nc", "*.nc"]:
+                matches = sorted(self.adt_path.glob(pattern))
+                if matches:
+                    return matches[0]
+        return None
+
+    # ------------------------------------------------------------------
+    # SCHISM grid loading
+    # ------------------------------------------------------------------
+
+    def _load_schism_grid(self) -> Optional[Dict[str, Any]]:
+        """
+        Load SCHISM grid and boundary information from FIX files.
+
+        Required files:
+        - hgrid.gr3 (or hgrid.ll) -- horizontal grid with boundary defs
+        - vgrid.in -- vertical grid
+        - TEM_nudge.gr3 -- nudging zone definition
+        """
+        grid = {}
+
+        # --- Read horizontal grid boundary nodes -------------------------
+        for name in [
+            f"{self.RUN}_hgrid.ll",
+            f"{self.RUN}_hgrid.gr3",
+        ]:
+            hgrid_file = self.fix_dir / name
+            if hgrid_file.exists():
+                bnd = self._parse_hgrid_boundaries(hgrid_file)
+                if bnd:
+                    grid.update(bnd)
+                    break
+
+        if "bnd_nodes" not in grid:
+            # Try standalone boundary-nodes file
+            bnd_file = self.fix_dir / f"{self.RUN}_bnd_nodes.txt"
+            if bnd_file.exists():
+                bnd = self._load_bnd_nodes_txt(bnd_file)
+                grid.update(bnd)
+
+        if "bnd_nodes" not in grid:
+            log.warning("No boundary node information found in FIX directory")
+            return None
+
+        # --- Read vertical grid ------------------------------------------
+        vgrid_file = self.fix_dir / f"{self.RUN}_vgrid.in"
+        if vgrid_file.exists():
+            grid["vgrid"] = self._parse_vgrid(vgrid_file)
+        else:
+            grid["vgrid"] = None
+
+        # --- Nudge zone file (optional) ----------------------------------
+        nudge_file = self.fix_dir / f"{self.RUN}_tem_nudge.gr3"
+        if nudge_file.exists():
+            grid["nudge_file"] = nudge_file
+
+        log.info(
+            "Loaded SCHISM grid: %d boundary nodes, %d open boundaries",
+            len(grid.get("bnd_lons", [])),
+            grid.get("num_open_boundaries", 0),
+        )
+        return grid
+
+    def _parse_hgrid_boundaries(self, hgrid_file: Path) -> Dict[str, Any]:
+        """Parse open boundary nodes from hgrid.gr3."""
+        result: Dict[str, Any] = {}
+        try:
+            with open(hgrid_file, "r") as f:
+                lines = f.readlines()
+
+            # line 0: header
+            # line 1: ne np
+            ne, np_nodes = map(int, lines[1].strip().split()[:2])
+
+            # Read node coordinates
+            node_x = np.zeros(np_nodes)
+            node_y = np.zeros(np_nodes)
+            for i in range(np_nodes):
+                parts = lines[2 + i].strip().split()
+                node_x[i] = float(parts[1])
+                node_y[i] = float(parts[2])
+
+            # Skip elements, find boundary section
+            line_idx = 2 + np_nodes + ne
+
+            if line_idx >= len(lines):
+                return result
+
+            nope = int(lines[line_idx].strip().split()[0])
+            result["num_open_boundaries"] = nope
+            line_idx += 1
+
+            neta = int(lines[line_idx].strip().split()[0])
+            result["total_open_nodes"] = neta
+            line_idx += 1
+
+            all_bnd_indices = []
+            bnd_segments = []
+            for seg in range(nope):
+                nn = int(lines[line_idx].strip().split()[0])
+                line_idx += 1
+                seg_nodes = []
+                for _ in range(nn):
+                    nidx = int(lines[line_idx].strip().split()[0])
+                    seg_nodes.append(nidx)
+                    all_bnd_indices.append(nidx)
+                    line_idx += 1
+                bnd_segments.append(seg_nodes)
+
+            bnd_indices = np.array(all_bnd_indices)
+            result["bnd_nodes"] = bnd_indices
+            result["bnd_lons"] = node_x[bnd_indices - 1]  # 1-based
+            result["bnd_lats"] = node_y[bnd_indices - 1]
+            result["bnd_segments"] = bnd_segments
+            result["node_x"] = node_x
+            result["node_y"] = node_y
+
+        except Exception as e:
+            log.warning("Error parsing hgrid boundaries: %s", e)
 
         return result
 
-    # =========================================================================
-    # Native Mode Processing (NCO + Fortran)
-    # =========================================================================
-
-    def _process_native_mode(
-        self,
-        rtofs_files: RTOFSFileSet
-    ) -> Tuple[List[Path], List[str]]:
-        """
-        Process RTOFS using NCO tools and Fortran executables.
-
-        This follows the operational shell script workflow.
-        """
-        output_files = []
-        errors = []
-
+    def _load_bnd_nodes_txt(self, bnd_file: Path) -> Dict[str, Any]:
+        """Load boundary nodes from simple text file."""
+        indices, lons, lats = [], [], []
         try:
-            # Step 1: Create symbolic links to input files
-            self._create_input_links(rtofs_files)
-
-            # Step 2: Extract ROI using ncks
-            self._extract_roi()
-
-            # Step 3: Merge time steps using ncrcat
-            ssh_merged, tsuv_merged = self._merge_time_steps()
-
-            # Step 4: Create SCHISM-compatible intermediate files
-            ssh_1_nc, tsuv_1_nc = self._create_schism_input_nc(
-                ssh_merged, tsuv_merged
-            )
-
-            # Step 5: Optionally blend with ADT
-            if self.adt_enabled:
-                ssh_1_nc = self._blend_with_adt(ssh_1_nc)
-
-            # Step 6: Link grid files from FIX directory
-            self._link_grid_files()
-
-            # Step 7: Create input configuration for Fortran executable
-            self._create_fortran_input_config()
-
-            # Step 8: Run gen_3Dth_from_hycom
-            bc_files = self._run_gen_3dth()
-            output_files.extend(bc_files)
-
-            # Step 9: Run gen_nudge_from_hycom if enabled
-            if self.nudging_enabled:
-                nudge_files = self._run_gen_nudge()
-                output_files.extend(nudge_files)
-
-            # Step 10: Apply SSH offset
-            elev_file = self.work_dir / "elev2D.th.nc"
-            if elev_file.exists():
-                self._apply_ssh_offset(elev_file)
-
-            # Step 11: Copy to output directory with standard names
-            final_files = self._copy_to_output(output_files)
-
-            return final_files, errors
-
+            with open(bnd_file, "r") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    parts = line.split()
+                    if len(parts) >= 3:
+                        indices.append(int(parts[0]))
+                        lons.append(float(parts[1]))
+                        lats.append(float(parts[2]))
         except Exception as e:
-            errors.append(str(e))
-            log.error(f"Native mode processing failed: {e}")
-            return output_files, errors
+            log.warning("Error reading boundary nodes file: %s", e)
 
-    def _create_input_links(self, rtofs_files: RTOFSFileSet) -> None:
-        """Create symbolic links to RTOFS input files."""
-        log.info("Creating input file links...")
+        return {
+            "bnd_nodes": np.array(indices),
+            "bnd_lons": np.array(lons),
+            "bnd_lats": np.array(lats),
+            "num_open_boundaries": 1,
+        }
 
-        # Clean up any existing links
-        for pattern in ["RTOFS_2D_*.nc", "RTOFS_3D_*.nc"]:
-            for f in self.work_dir.glob(pattern):
-                f.unlink()
-
-        # Create numbered links for 2D files
-        for i, f in enumerate(rtofs_files.files_2d):
-            link_name = self.work_dir / f"RTOFS_2D_{i:03d}.nc"
-            link_name.symlink_to(f)
-
-        # Create numbered links for 3D files
-        for i, f in enumerate(rtofs_files.files_3d):
-            link_name = self.work_dir / f"RTOFS_3D_{i:03d}.nc"
-            link_name.symlink_to(f)
-
-    def _extract_roi(self) -> None:
-        """Extract region of interest from RTOFS files using ncks."""
-        log.info("Extracting ROI from RTOFS files...")
-
-        cfg = self.proc_config
-
-        # Extract SSH from 2D files
-        ssh_vars = "MT,Date,Longitude,Latitude,ssh"
-        for nc_file in sorted(self.work_dir.glob("RTOFS_2D_*.nc")):
-            out_file = self.work_dir / f"rio_ssh_{nc_file.name}"
-            cmd = [
-                "ncks", "-O",
-                "-d", f"X,{cfg.idx_x1_2ds},{cfg.idx_x2_2ds}",
-                "-d", f"Y,{cfg.idx_y1_2ds},{cfg.idx_y2_2ds}",
-                "-v", ssh_vars,
-                str(nc_file), str(out_file)
-            ]
-            self._run_command(cmd)
-
-        # Extract T,S,U,V from 3D files
-        tsuv_vars = "MT,Date,Longitude,Latitude,temperature,salinity,u,v"
-        for nc_file in sorted(self.work_dir.glob("RTOFS_3D_*.nc")):
-            out_file = self.work_dir / f"rio_tsuv_{nc_file.name}"
-            cmd = [
-                "ncks", "-O",
-                "-d", f"X,{cfg.idx_x1_3dz},{cfg.idx_x2_3dz}",
-                "-d", f"Y,{cfg.idx_y1_3dz},{cfg.idx_y2_3dz}",
-                "-v", tsuv_vars,
-                str(nc_file), str(out_file)
-            ]
-            self._run_command(cmd)
-
-    def _merge_time_steps(self) -> Tuple[Path, Path]:
-        """Merge extracted ROI files into time series using ncrcat."""
-        log.info("Merging time steps...")
-
-        # Merge 2D SSH files
-        ssh_files = sorted(self.work_dir.glob("rio_ssh_RTOFS_2D_*.nc"))
-        ssh_merged = self.work_dir / f"merged_RTOFS_2D_{self.cycle}.nc"
-        cmd = ["ncrcat", "-C"] + [str(f) for f in ssh_files] + [str(ssh_merged)]
-        self._run_command(cmd)
-
-        # Merge 3D TSUV files
-        tsuv_files = sorted(self.work_dir.glob("rio_tsuv_RTOFS_3D_*.nc"))
-        tsuv_merged = self.work_dir / f"merged_RTOFS_3D_{self.cycle}.nc"
-        cmd = ["ncrcat", "-C"] + [str(f) for f in tsuv_files] + [str(tsuv_merged)]
-        self._run_command(cmd)
-
-        return ssh_merged, tsuv_merged
-
-    def _create_schism_input_nc(
-        self,
-        ssh_merged: Path,
-        tsuv_merged: Path
-    ) -> Tuple[Path, Path]:
-        """
-        Transform merged RTOFS files into SCHISM-compatible format.
-
-        Applies variable renaming, fill value handling, and coordinate transforms.
-        """
-        log.info("Creating SCHISM-compatible input files...")
-
-        # Process SSH file
-        ssh_tmp1 = self.work_dir / "test01_3Dth_nu.nc"
-        ssh_tmp2 = self.work_dir / "test02_3Dth_nu.nc"
-        ssh_tmp3 = self.work_dir / "test03_3Dth_nu.nc"
-        ssh_tmp4 = self.work_dir / "test04_3Dth_nu.nc"
-        ssh_out = self.work_dir / "SSH_1_rtofs_only.nc"
-
-        # Remove fill value attributes
-        self._run_command([
-            "ncatted", "-O",
-            "-a", "_FillValue,ssh,d,,",
-            "-a", "missing_value,ssh,d,,",
-            str(ssh_merged), str(ssh_tmp1)
-        ])
-
-        # Replace large values with fill value
-        self._run_command([
-            "ncap2", "-O",
-            "-s", "where(ssh>10000) ssh=-30000",
-            str(ssh_tmp1), str(ssh_tmp2)
-        ])
-
-        # Set new fill value attributes
-        self._run_command([
-            "ncatted", "-O",
-            "-a", "_FillValue,ssh,a,f,-30000",
-            "-a", "missing_value,ssh,a,f,-30000",
-            str(ssh_tmp2), str(ssh_tmp3)
-        ])
-
-        # Rename dimensions
-        self._run_command([
-            "ncrename",
-            "-d", "MT,time",
-            "-d", "X,xlon",
-            "-d", "Y,ylat",
-            str(ssh_tmp3)
-        ])
-
-        # Apply NCO script for coordinate transformation
-        nco_script = self.fix_dir / f"{self.RUN}_obc_3dth_cvt_ssh.nco"
-        if nco_script.exists():
-            self._run_command([
-                "ncap2", "-O",
-                "-S", str(nco_script),
-                str(ssh_tmp3), str(ssh_tmp4)
-            ])
-        else:
-            shutil.copy(ssh_tmp3, ssh_tmp4)
-
-        # Remove unnecessary variables
-        self._run_command([
-            "ncks", "-CO",
-            "-x", "-v", "Date,MT,X,Y",
-            str(ssh_tmp4), str(ssh_out)
-        ])
-
-        # Process TSUV file
-        tsuv_tmp1 = self.work_dir / "tmp01_3Dth_nu.nc"
-        tsuv_tmp2 = self.work_dir / "tmp02_3Dth_nu.nc"
-        tsuv_out = self.work_dir / f"TSUV_1_{self.pdy}_{self.cycle}.nc"
-
-        # Rename dimensions and variables
-        self._run_command([
-            "ncrename",
-            "-d", "MT,time",
-            "-d", "Depth,lev",
-            "-d", "X,xlon",
-            "-d", "Y,ylat",
-            "-v", "u,water_u",
-            "-v", "v,water_v",
-            str(tsuv_merged), str(tsuv_tmp1)
-        ])
-
-        # Apply NCO script for coordinate transformation
-        nco_script = self.fix_dir / f"{self.RUN}_obc_3dth_cvt_tsuv.nco"
-        if nco_script.exists():
-            self._run_command([
-                "ncap2", "-O",
-                "-S", str(nco_script),
-                str(tsuv_tmp1), str(tsuv_tmp2)
-            ])
-        else:
-            shutil.copy(tsuv_tmp1, tsuv_tmp2)
-
-        # Remove unnecessary variables
-        self._run_command([
-            "ncks", "-O",
-            "-x", "-v", "Depth,Date,MT,X,Y",
-            str(tsuv_tmp2), str(tsuv_out)
-        ])
-
-        return ssh_out, tsuv_out
-
-    def _blend_with_adt(self, ssh_file: Path) -> Path:
-        """
-        Blend RTOFS SSH with ADT (Absolute Dynamic Topography) altimetry.
-
-        Formula: SSH_blended = (SSH - SSH_t1) + ADT_t1
-        This removes RTOFS bias and adds satellite altimetry reference.
-        """
-        if not self.adt_path or not self.adt_path.exists():
-            log.warning("ADT path not configured - skipping ADT blending")
-            return ssh_file
-
-        # Check for pre-processed ADT in rerun directory
-        adt_processed = None
-        if self.comout_rerun:
-            adt_processed = self.comout_rerun / "adt_aft_cvtz_cln.nc"
-
-        if adt_processed and adt_processed.exists():
-            log.info(f"Using pre-processed ADT from {adt_processed}")
-            adt_file = adt_processed
-        else:
-            # Try to find and process ADT files
-            adt_file = self._find_and_process_adt()
-            if not adt_file:
-                log.warning("No ADT data available - using raw RTOFS SSH")
-                return ssh_file
-
+    def _parse_vgrid(self, vgrid_file: Path) -> Optional[Dict[str, Any]]:
+        """Parse SCHISM vgrid.in to get vertical levels."""
         try:
-            # Copy ADT file to work directory
-            adt_local = self.work_dir / "adt_aft_cvtz_cln.nc"
-            if not adt_local.exists():
-                shutil.copy(adt_file, adt_local)
-
-            ssh_out = self.work_dir / f"SSH_1_{self.pdy}_{self.cycle}.nc"
-
-            # Extract ADT at t=0
-            self._run_command([
-                "ncap2", "-O", "-F",
-                "-s", "surf_el_t1_adt=surf_el(1,:,:)",
-                str(adt_local),
-                str(self.work_dir / "adt_surf_el_t1.nc")
-            ])
-
-            # Set attributes
-            self._run_command([
-                "ncatted", "-O",
-                "-a", "_FillValue,surf_el_t1_adt,o,f,-30000",
-                "-a", "missing_value,surf_el_t1_adt,o,f,-30000",
-                "-a", "scale_factor,surf_el_t1_adt,o,f,1.0",
-                str(self.work_dir / "adt_surf_el_t1.nc"),
-                str(self.work_dir / "adt_fnl.nc")
-            ])
-
-            # Merge ADT with RTOFS SSH
-            ssh_work = self.work_dir / "SSH_work.nc"
-            shutil.copy(ssh_file, ssh_work)
-
-            # Add ADT variable to SSH file
-            self._run_command([
-                "ncks", "-A",
-                "-v", "surf_el_t1_adt",
-                str(self.work_dir / "adt_fnl.nc"),
-                str(ssh_work)
-            ])
-
-            # Compute blended SSH: SSH_blended = SSH - SSH_t1 + ADT_t1
-            self._run_command([
-                "ncap2", "-A", "-F",
-                "-s", "SSH_t1[time,ylat,xlon]=ssh(1,:,:);ADT_t1[time,ylat,xlon]=surf_el_t1_adt(:,:)",
-                str(ssh_work), str(ssh_work)
-            ])
-
-            self._run_command([
-                "ncap2", "-A", "-F",
-                "-s", "SSH_t1_Fill_0=SSH_t1;ADT_t1_Fill_0=ADT_t1",
-                str(ssh_work), str(self.work_dir / "SSH_1_wk_A.nc")
-            ])
-
-            self._run_command([
-                "ncap2", "-A",
-                "-s", "where(abs(SSH_t1_Fill_0)>1000) SSH_t1_Fill_0=0.0",
-                str(self.work_dir / "SSH_1_wk_A.nc"),
-                str(self.work_dir / "SSH_1_wk_B.nc")
-            ])
-
-            self._run_command([
-                "ncap2", "-A", "-F",
-                "-s", "SSH_ssh1[time,ylat,xlon]=ssh-SSH_t1_Fill_0",
-                str(self.work_dir / "SSH_1_wk_B.nc"),
-                str(self.work_dir / "SSH_1_ssh0Fill_C.nc")
-            ])
-
-            self._run_command([
-                "ncrename", "-v", "surf_el,surf_el_rtofs",
-                str(self.work_dir / "SSH_1_ssh0Fill_C.nc")
-            ])
-
-            self._run_command([
-                "ncap2", "-A", "-F",
-                "-s", "SSH_ssh1_adt=ssh-SSH_t1_Fill_0+ADT_t1",
-                str(self.work_dir / "SSH_1_ssh0Fill_C.nc"),
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc")
-            ])
-
-            self._run_command([
-                "ncap2", "-A", "-F",
-                "-s", "surf_el=SSH_ssh1_adt*float(1000.)",
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc"),
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc")
-            ])
-
-            self._run_command([
-                "ncap2", "-A",
-                "-s", "where(abs(SSH_ssh1_adt)>1000) surf_el=float(-3000.)",
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc"),
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc")
-            ])
-
-            self._run_command([
-                "ncatted", "-O",
-                "-a", "scale_factor,surf_el,o,f,0.001",
-                str(self.work_dir / "SSH_1_rtofs_adt_D.nc"),
-                str(self.work_dir / "SSH_1_rtofs_adt_E.nc")
-            ])
-
-            self._run_command([
-                "ncks", "-O",
-                "-v", "xlon", "-v", "ylat", "-v", "surf_el",
-                str(self.work_dir / "SSH_1_rtofs_adt_E.nc"),
-                str(ssh_out)
-            ])
-
-            log.info("ADT blending complete")
-            return ssh_out
-
+            with open(vgrid_file, "r") as f:
+                lines = f.readlines()
+            # First line: ivcor (1=LSC2, 2=SZ)
+            ivcor = int(lines[0].strip())
+            if ivcor == 2:
+                # SZ coordinates
+                parts = lines[1].strip().split()
+                nvrt = int(parts[0])
+                return {"ivcor": ivcor, "nvrt": nvrt}
+            elif ivcor == 1:
+                nvrt = int(lines[1].strip().split()[0])
+                return {"ivcor": ivcor, "nvrt": nvrt}
         except Exception as e:
-            log.warning(f"ADT blending failed: {e} - using raw RTOFS SSH")
-            return ssh_file
-
-    def _find_and_process_adt(self) -> Optional[Path]:
-        """Find and process raw ADT files."""
-        # This would process raw CMEMS ADT files
-        # For now, return None to use pre-processed files
+            log.warning("Error parsing vgrid.in: %s", e)
         return None
 
-    def _link_grid_files(self) -> None:
-        """Link required grid files from FIX directory."""
-        log.info("Linking grid files...")
+    # ------------------------------------------------------------------
+    # Interpolation to SCHISM boundary
+    # ------------------------------------------------------------------
 
-        grid_files = [
-            (f"{self.RUN}_vgrid.in", "vgrid.in"),
-            (f"{self.RUN}_hgrid.ll", "hgrid.ll"),
-            (f"{self.RUN}_hgrid.gr3", "hgrid.gr3"),
-            (f"{self.RUN}_tem_nudge.gr3", "TEM_nudge.gr3"),
-            (f"{self.RUN}_estuary.gr3", "estuary.gr3"),
-        ]
+    def _interpolate_to_boundary(
+        self,
+        ssh_data: Dict[str, Any],
+        tsuv_data: Dict[str, Any],
+        grid_info: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        Interpolate RTOFS fields to SCHISM open-boundary nodes.
 
-        for fix_name, local_name in grid_files:
-            fix_file = self.fix_dir / fix_name
-            local_file = self.work_dir / local_name
-            if local_file.exists():
-                local_file.unlink()
-            if fix_file.exists():
-                local_file.symlink_to(fix_file)
-            else:
-                log.warning(f"FIX file not found: {fix_file}")
-
-        # Link SCHISM input files
-        ssh_nc = self.work_dir / f"SSH_1_{self.pdy}_{self.cycle}.nc"
-        if not ssh_nc.exists():
-            ssh_nc = self.work_dir / "SSH_1_rtofs_only.nc"
-
-        tsuv_nc = self.work_dir / f"TSUV_1_{self.pdy}_{self.cycle}.nc"
-
-        for link_name, target in [
-            ("SSH_1.nc", ssh_nc),
-            ("TS_1.nc", tsuv_nc),
-            ("UV_1.nc", tsuv_nc),
-        ]:
-            link_path = self.work_dir / link_name
-            if link_path.exists():
-                link_path.unlink()
-            if target.exists():
-                link_path.symlink_to(target)
-
-    def _create_fortran_input_config(self) -> None:
-        """Create input configuration files for Fortran executables."""
-        log.info("Creating Fortran input configuration...")
+        This replaces the Fortran gen_3Dth_from_hycom executable.
+        Uses scipy nearest-neighbor or linear interpolation.
+        """
+        bnd_lons = grid_info["bnd_lons"]
+        bnd_lats = grid_info["bnd_lats"]
+        n_bnd = len(bnd_lons)
 
         cfg = self.proc_config
+        fill = cfg.fill_value
 
-        # gen_3Dth_from_nc.in
-        config_3dth = self.work_dir / "gen_3Dth_from_nc.in"
+        result: Dict[str, Any] = {}
 
-        # Check if FIX file exists
-        fix_config = self.fix_dir / f"{self.RUN}_obc_3dth_nc.in"
-        if fix_config.exists():
-            config_3dth.symlink_to(fix_config)
-        else:
-            # Create default config
-            with open(config_3dth, 'w') as f:
-                f.write(f"{cfg.temp_outside:.0f} {cfg.salt_outside:.0f}  "
-                       f"!T,S values for pts outside bg grid in nc\n")
-                f.write(f"{cfg.dt_output:.0f}. !time step in .nc [sec]\n")
-                f.write("2 1 2  !# of open bnds that need *3D.th; list of IDs\n")
-                f.write("9999   ! # of days needed\n")
-                f.write("1 ! # of HYCOM stacks\n")
+        # --- SSH (2D) interpolation --------------------------------------
+        ssh = ssh_data["ssh"]  # (ntime, ny_2d, nx_2d)
+        lon_2d = ssh_data["lon"]  # (ny_2d, nx_2d)
+        lat_2d = ssh_data["lat"]
+        ntime_2d = ssh.shape[0]
 
-        # gen_nudge_from_nc.in
-        config_nudge = self.work_dir / "gen_nudge_from_nc.in"
+        log.info("Interpolating SSH to %d boundary nodes, %d time steps", n_bnd, ntime_2d)
 
-        fix_config_nudge = self.fix_dir / f"{self.RUN}_obc_nudge_nc.in"
-        if fix_config_nudge.exists():
-            config_nudge.symlink_to(fix_config_nudge)
-        else:
-            with open(config_nudge, 'w') as f:
-                f.write(f"{cfg.temp_outside:.0f} {cfg.salt_outside:.0f}\n")
-                f.write(f"{cfg.dt_output:.0f} 1\n")
-                f.write("1\n")
+        elev_bnd = np.full((ntime_2d, n_bnd), 0.0, dtype=np.float32)
+        pts_src_2d = np.column_stack([lon_2d.ravel(), lat_2d.ravel()])
+        pts_dst = np.column_stack([bnd_lons, bnd_lats])
 
-    def _run_gen_3dth(self) -> List[Path]:
-        """Run gen_3Dth_from_hycom Fortran executable."""
-        log.info("Running gen_3Dth_from_hycom...")
+        for t in range(ntime_2d):
+            vals = ssh[t, :, :].ravel()
+            valid = np.abs(vals) < 10000
+            if np.sum(valid) > 3 and HAS_SCIPY:
+                interp = NearestNDInterpolator(pts_src_2d[valid], vals[valid])
+                elev_bnd[t, :] = interp(pts_dst)
+            elif np.sum(valid) > 0:
+                elev_bnd[t, :] = np.nanmean(vals[valid])
 
-        exec_file = self.exec_dir / f"{self.RUN}_gen_3Dth_from_hycom"
-        if not exec_file.exists():
-            # Try alternative name
-            exec_file = self.exec_dir / "stofs_3d_atl_gen_3Dth_from_hycom"
+        result["elev"] = elev_bnd
+        result["times_2d"] = ssh_data["times"]
 
-        if not exec_file.exists():
-            raise FileNotFoundError(f"Executable not found: {exec_file}")
+        # --- 3D variable interpolation -----------------------------------
+        temp_3d = tsuv_data["temperature"]  # (ntime, nlev, ny, nx)
+        salt_3d = tsuv_data["salinity"]
+        u_3d = tsuv_data["water_u"]
+        v_3d = tsuv_data["water_v"]
+        lon_3d = tsuv_data["lon"]
+        lat_3d = tsuv_data["lat"]
+        depth = tsuv_data["depth"]
+        ntime_3d = temp_3d.shape[0]
+        nlev = temp_3d.shape[1]
 
-        # Run in work directory
-        result = subprocess.run(
-            [str(exec_file)],
-            cwd=self.work_dir,
-            capture_output=True,
-            text=True,
-            timeout=1800  # 30 minute timeout
+        log.info(
+            "Interpolating 3D fields to %d boundary nodes, %d levels, %d steps",
+            n_bnd,
+            nlev,
+            ntime_3d,
         )
 
-        if result.returncode != 0:
-            log.warning(f"gen_3Dth_from_hycom stderr: {result.stderr}")
-            # Check if output files were created despite non-zero return
+        pts_src_3d = np.column_stack([lon_3d.ravel(), lat_3d.ravel()])
 
-        # Collect output files
-        output_files = []
-        for name in ["elev2D.th.nc", "TEM_3D.th.nc", "SAL_3D.th.nc", "uv3D.th.nc"]:
-            out_file = self.work_dir / name
-            if out_file.exists():
-                output_files.append(out_file)
-                log.info(f"Created: {out_file}")
-            else:
-                log.warning(f"Expected output not created: {name}")
+        tem_bnd = np.full((ntime_3d, n_bnd, nlev), cfg.temp_outside, dtype=np.float32)
+        sal_bnd = np.full((ntime_3d, n_bnd, nlev), cfg.salt_outside, dtype=np.float32)
+        u_bnd = np.zeros((ntime_3d, n_bnd, nlev), dtype=np.float32)
+        v_bnd = np.zeros((ntime_3d, n_bnd, nlev), dtype=np.float32)
+
+        for t in range(ntime_3d):
+            for k in range(nlev):
+                for var_src, var_dst, default in [
+                    (temp_3d, tem_bnd, cfg.temp_outside),
+                    (salt_3d, sal_bnd, cfg.salt_outside),
+                    (u_3d, u_bnd, 0.0),
+                    (v_3d, v_bnd, 0.0),
+                ]:
+                    vals = var_src[t, k, :, :].ravel()
+                    if isinstance(vals, np.ma.MaskedArray):
+                        valid = ~vals.mask
+                        vals = vals.filled(np.nan)
+                    else:
+                        valid = np.isfinite(vals) & (np.abs(vals) < 10000)
+
+                    if np.sum(valid) > 3 and HAS_SCIPY:
+                        interp = NearestNDInterpolator(
+                            pts_src_3d[valid], vals[valid]
+                        )
+                        var_dst[t, :, k] = interp(pts_dst)
+                    elif np.sum(valid) > 0:
+                        var_dst[t, :, k] = np.nanmean(vals[valid])
+                    else:
+                        var_dst[t, :, k] = default
+
+        result["temperature"] = tem_bnd
+        result["salinity"] = sal_bnd
+        result["u"] = u_bnd
+        result["v"] = v_bnd
+        result["depth"] = depth
+        result["times_3d"] = tsuv_data["times"]
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Write SCHISM boundary NetCDF files
+    # ------------------------------------------------------------------
+
+    def _write_schism_bc_files(
+        self, bc_data: Dict[str, Any], grid_info: Dict[str, Any]
+    ) -> List[Path]:
+        """Write elev2D.th.nc, TEM_3D.th.nc, SAL_3D.th.nc, uv3D.th.nc."""
+        output_files: List[Path] = []
+        dt = self.proc_config.dt_output
+
+        # --- elev2D.th.nc ------------------------------------------------
+        elev = bc_data.get("elev")
+        if elev is not None:
+            fpath = self.work_dir / "elev2D.th.nc"
+            ntime = elev.shape[0]
+            n_bnd = elev.shape[1]
+            try:
+                with Dataset(str(fpath), "w", format="NETCDF4") as nc:
+                    nc.createDimension("time", None)  # unlimited
+                    nc.createDimension("nOpenBndNodes", n_bnd)
+                    nc.createDimension("nLevels", 1)
+                    nc.createDimension("nComponents", 1)
+
+                    tv = nc.createVariable("time", "f8", ("time",))
+                    tv[:] = np.arange(ntime) * dt
+
+                    ts = nc.createVariable(
+                        "time_series",
+                        "f4",
+                        ("time", "nOpenBndNodes", "nLevels", "nComponents"),
+                    )
+                    ts[:, :, 0, 0] = elev
+                output_files.append(fpath)
+                log.info("Created %s", fpath)
+            except Exception as e:
+                log.error("Failed to write elev2D.th.nc: %s", e)
+
+        # --- TEM_3D.th.nc ------------------------------------------------
+        for varname, ncname in [("temperature", "TEM_3D.th.nc"), ("salinity", "SAL_3D.th.nc")]:
+            arr = bc_data.get(varname)
+            if arr is not None:
+                fpath = self.work_dir / ncname
+                ntime, n_bnd, nlev = arr.shape
+                try:
+                    with Dataset(str(fpath), "w", format="NETCDF4") as nc:
+                        nc.createDimension("time", None)
+                        nc.createDimension("nOpenBndNodes", n_bnd)
+                        nc.createDimension("nLevels", nlev)
+                        nc.createDimension("nComponents", 1)
+
+                        tv = nc.createVariable("time", "f8", ("time",))
+                        tv[:] = np.arange(ntime) * dt
+
+                        ts = nc.createVariable(
+                            "time_series",
+                            "f4",
+                            ("time", "nOpenBndNodes", "nLevels", "nComponents"),
+                        )
+                        ts[:, :, :, 0] = arr
+                    output_files.append(fpath)
+                    log.info("Created %s", fpath)
+                except Exception as e:
+                    log.error("Failed to write %s: %s", ncname, e)
+
+        # --- uv3D.th.nc --------------------------------------------------
+        u_arr = bc_data.get("u")
+        v_arr = bc_data.get("v")
+        if u_arr is not None and v_arr is not None:
+            fpath = self.work_dir / "uv3D.th.nc"
+            ntime, n_bnd, nlev = u_arr.shape
+            try:
+                with Dataset(str(fpath), "w", format="NETCDF4") as nc:
+                    nc.createDimension("time", None)
+                    nc.createDimension("nOpenBndNodes", n_bnd)
+                    nc.createDimension("nLevels", nlev)
+                    nc.createDimension("nComponents", 2)
+
+                    tv = nc.createVariable("time", "f8", ("time",))
+                    tv[:] = np.arange(ntime) * dt
+
+                    ts = nc.createVariable(
+                        "time_series",
+                        "f4",
+                        ("time", "nOpenBndNodes", "nLevels", "nComponents"),
+                    )
+                    ts[:, :, :, 0] = u_arr
+                    ts[:, :, :, 1] = v_arr
+                output_files.append(fpath)
+                log.info("Created %s", fpath)
+            except Exception as e:
+                log.error("Failed to write uv3D.th.nc: %s", e)
 
         return output_files
 
-    def _run_gen_nudge(self) -> List[Path]:
-        """Run gen_nudge_from_hycom Fortran executable."""
-        log.info("Running gen_nudge_from_hycom...")
+    # ------------------------------------------------------------------
+    # Nudging fields
+    # ------------------------------------------------------------------
 
-        exec_file = self.exec_dir / f"{self.RUN}_gen_nudge_from_hycom"
-        if not exec_file.exists():
-            exec_file = self.exec_dir / "stofs_3d_atl_gen_nudge_from_hycom"
+    def _create_nudging_fields(
+        self,
+        tsuv_data: Dict[str, Any],
+        grid_info: Dict[str, Any],
+    ) -> List[Path]:
+        """
+        Create TEM_nu.nc and SAL_nu.nc nudging files.
 
-        if not exec_file.exists():
-            log.warning(f"Nudge executable not found: {exec_file}")
-            return []
+        These cover the full model domain, not just the boundary.
+        The nudging zone is defined by TEM_nudge.gr3.
+        This replaces the Fortran gen_nudge_from_hycom executable.
+        """
+        output_files: List[Path] = []
+        cfg = self.proc_config
 
-        # Link nudge input config
-        nudge_config = self.work_dir / "gen_nudge_from_nc.in"
-        if not nudge_config.exists():
-            fix_config = self.fix_dir / f"{self.RUN}_obc_nudge_nc.in"
-            if fix_config.exists():
-                nudge_config.symlink_to(fix_config)
+        # Re-read 3D data with the nudge-specific (larger) ROI if different
+        # For simplicity we reuse the already-extracted data with
+        # nearest-neighbour interpolation to the whole grid.
 
-        result = subprocess.run(
-            [str(exec_file)],
-            cwd=self.work_dir,
-            capture_output=True,
-            text=True,
-            timeout=1800
+        node_x = grid_info.get("node_x")
+        node_y = grid_info.get("node_y")
+        if node_x is None or node_y is None:
+            log.warning("Full grid coordinates not available for nudging")
+            return output_files
+
+        lon_3d = tsuv_data["lon"]
+        lat_3d = tsuv_data["lat"]
+        depth = tsuv_data["depth"]
+        ntime = tsuv_data["temperature"].shape[0]
+        nlev = tsuv_data["temperature"].shape[1]
+        nnodes = len(node_x)
+
+        log.info(
+            "Creating nudging fields: %d nodes, %d levels, %d steps",
+            nnodes,
+            nlev,
+            ntime,
         )
 
-        if result.returncode != 0:
-            log.warning(f"gen_nudge_from_hycom stderr: {result.stderr}")
+        pts_src = np.column_stack([lon_3d.ravel(), lat_3d.ravel()])
+        pts_dst = np.column_stack([node_x, node_y])
 
-        output_files = []
-        for name in ["TEM_nu.nc", "SAL_nu.nc"]:
-            out_file = self.work_dir / name
-            if out_file.exists():
-                output_files.append(out_file)
-                log.info(f"Created: {out_file}")
+        dt = cfg.dt_output
+
+        for varname, ncname in [
+            ("temperature", "TEM_nu.nc"),
+            ("salinity", "SAL_nu.nc"),
+        ]:
+            arr_src = tsuv_data[varname]  # (ntime, nlev, ny, nx)
+            default = cfg.temp_outside if varname == "temperature" else cfg.salt_outside
+            fpath = self.work_dir / ncname
+
+            try:
+                with Dataset(str(fpath), "w", format="NETCDF4") as nc:
+                    nc.createDimension("time", None)
+                    nc.createDimension("node", nnodes)
+                    nc.createDimension("nVert", nlev)
+                    nc.createDimension("one", 1)
+
+                    tv = nc.createVariable("time", "f8", ("time",))
+                    # Nudge time is typically in days
+                    tv[:] = np.arange(ntime) * (dt / 86400.0)
+
+                    nu = nc.createVariable(varname, "f4", ("time", "node", "nVert"))
+
+                    for t in range(ntime):
+                        for k in range(nlev):
+                            vals = arr_src[t, k, :, :].ravel()
+                            if isinstance(vals, np.ma.MaskedArray):
+                                valid = ~vals.mask
+                                vals = vals.filled(np.nan)
+                            else:
+                                valid = np.isfinite(vals) & (np.abs(vals) < 10000)
+
+                            if np.sum(valid) > 3 and HAS_SCIPY:
+                                interp = NearestNDInterpolator(
+                                    pts_src[valid], vals[valid]
+                                )
+                                nu[t, :, k] = interp(pts_dst)
+                            elif np.sum(valid) > 0:
+                                nu[t, :, k] = np.nanmean(vals[valid])
+                            else:
+                                nu[t, :, k] = default
+
+                    nc.nudging_timescale = self.nudging_timescale
+
+                output_files.append(fpath)
+                log.info("Created nudging file %s", fpath)
+            except Exception as e:
+                log.error("Failed to create %s: %s", ncname, e)
 
         return output_files
 
-    def _apply_ssh_offset(self, elev_file: Path) -> None:
-        """Apply SSH offset of +0.04m to elev2D.th.nc."""
-        log.info(f"Applying SSH offset of +{self.proc_config.ssh_offset}m")
-
-        elev_orig = self.work_dir / "elev2D.th.nc_ORI"
-        shutil.move(elev_file, elev_orig)
-
-        # Add offset
-        self._run_command([
-            "ncap2", "-s",
-            f"time_series=time_series+float({self.proc_config.ssh_offset})",
-            str(elev_orig), "-O",
-            str(self.work_dir / "A1.nc")
-        ])
-
-        # Ensure correct dimensions
-        self._run_command([
-            "ncap2", "-s",
-            "time_series[time,nOpenBndNodes,nLevels,nComponents]=time_series(0,:,:,:)",
-            str(self.work_dir / "A1.nc"), "-O",
-            str(elev_file)
-        ])
+    # ------------------------------------------------------------------
+    # Copy to output
+    # ------------------------------------------------------------------
 
     def _copy_to_output(self, work_files: List[Path]) -> List[Path]:
         """Copy output files to final destination with standard names."""
-        output_files = []
+        output_files: List[Path] = []
 
         name_mapping = {
             "elev2D.th.nc": f"{self.RUN}.{self.cycle}.elev2dth.nc",
@@ -957,407 +1160,34 @@ class RTOFSProcessor(ForcingProcessor):
             std_name = name_mapping.get(work_file.name)
             if std_name:
                 out_file = self.output_path / std_name
-                shutil.copy(work_file, out_file)
+                shutil.copy2(work_file, out_file)
                 output_files.append(out_file)
-                log.info(f"Output: {out_file}")
+                log.info("Output: %s", out_file)
 
-                # Also copy to COMOUTrerun if configured
                 if self.comout_rerun and self.comout_rerun.exists():
                     rerun_file = self.comout_rerun / std_name
-                    shutil.copy(work_file, rerun_file)
+                    shutil.copy2(work_file, rerun_file)
 
         return output_files
 
-    def _run_command(
-        self,
-        cmd: List[str],
-        timeout: int = 300
-    ) -> subprocess.CompletedProcess:
-        """Run a shell command with logging."""
-        log.debug(f"Running: {' '.join(cmd)}")
-        result = subprocess.run(
-            cmd,
-            cwd=self.work_dir,
-            capture_output=True,
-            text=True,
-            timeout=timeout
-        )
-        if result.returncode != 0:
-            log.warning(f"Command returned {result.returncode}: {cmd[0]}")
-            if result.stderr:
-                log.debug(f"stderr: {result.stderr[:500]}")
-        return result
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-    # =========================================================================
-    # Python Fallback Mode
-    # =========================================================================
-
-    def _process_python_mode(
-        self,
-        rtofs_files: RTOFSFileSet
-    ) -> Tuple[List[Path], List[str]]:
-        """
-        Process RTOFS using pure Python (fallback mode).
-
-        This is a simplified implementation that doesn't require NCO tools
-        or Fortran executables, but may produce slightly different results.
-        """
-        log.info("Processing in Python fallback mode...")
-        output_files = []
-        errors = []
-
-        if not HAS_NETCDF4:
-            errors.append("netCDF4 required for Python mode processing")
-            return output_files, errors
-
-        try:
-            # Load boundary node information
-            bnd_nodes = self._load_boundary_nodes()
-
-            # Extract RTOFS data
-            rtofs_data = self._extract_rtofs_data(rtofs_files, bnd_nodes)
-
-            if not rtofs_data:
-                errors.append("Failed to extract RTOFS data")
-                return output_files, errors
-
-            # Create boundary condition files
-            elev_file = self._create_elev2d(rtofs_data)
-            if elev_file:
-                output_files.append(elev_file)
-
-            temp_file = self._create_tem3d(rtofs_data)
-            if temp_file:
-                output_files.append(temp_file)
-
-            salt_file = self._create_sal3d(rtofs_data)
-            if salt_file:
-                output_files.append(salt_file)
-
-            uv_file = self._create_uv3d(rtofs_data)
-            if uv_file:
-                output_files.append(uv_file)
-
-            # Create nudging files if enabled
-            if self.nudging_enabled:
-                temp_nu = self._create_nudging_file(
-                    rtofs_data, "temperature", "TEM_nu.nc"
-                )
-                salt_nu = self._create_nudging_file(
-                    rtofs_data, "salinity", "SAL_nu.nc"
-                )
-                if temp_nu:
-                    output_files.append(temp_nu)
-                if salt_nu:
-                    output_files.append(salt_nu)
-
-            return output_files, errors
-
-        except Exception as e:
-            errors.append(str(e))
-            return output_files, errors
-
-    def _load_boundary_nodes(self) -> Dict[str, Any]:
-        """Load boundary node locations from FIX file."""
-        bnd_nodes = {
-            "indices": [],
-            "lons": [],
-            "lats": [],
-        }
-
-        boundary_nodes_file = self.fix_dir / f"{self.RUN}_bnd_nodes.txt"
-
-        if not boundary_nodes_file.exists():
-            log.warning(f"Boundary nodes file not found: {boundary_nodes_file}")
-            return bnd_nodes
-
-        try:
-            with open(boundary_nodes_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        bnd_nodes["indices"].append(int(parts[0]))
-                        bnd_nodes["lons"].append(float(parts[1]))
-                        bnd_nodes["lats"].append(float(parts[2]))
-
-            log.info(f"Loaded {len(bnd_nodes['indices'])} boundary nodes")
-
-        except Exception as e:
-            log.error(f"Error loading boundary nodes: {e}")
-
-        return bnd_nodes
-
-    def _extract_rtofs_data(
-        self,
-        rtofs_files: RTOFSFileSet,
-        bnd_nodes: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """Extract data from RTOFS files at boundary locations."""
-        rtofs_data = {
-            "times": [],
-            "depths": None,
-            "bnd_lons": np.array(bnd_nodes.get("lons", [])),
-            "bnd_lats": np.array(bnd_nodes.get("lats", [])),
-        }
-
-        for var in ["ssh", "temperature", "salinity", "u_current", "v_current"]:
-            rtofs_data[var] = []
-
-        base_time = datetime.strptime(self.pdy, "%Y%m%d") + timedelta(hours=self.cyc)
-
-        # Process 2D files for SSH
-        for rtofs_file in rtofs_files.files_2d:
-            try:
-                nc = Dataset(rtofs_file, 'r')
-
-                fhr = self._extract_fhr_from_filename(rtofs_file.name)
-                valid_time = base_time + timedelta(hours=fhr)
-
-                if "ssh" in nc.variables:
-                    ssh = nc.variables["ssh"][:]
-                    rtofs_data["ssh"].append(ssh)
-                    if valid_time not in rtofs_data["times"]:
-                        rtofs_data["times"].append(valid_time)
-
-                nc.close()
-
-            except Exception as e:
-                log.warning(f"Error reading {rtofs_file}: {e}")
-
-        # Process 3D files for T,S,U,V
-        for rtofs_file in rtofs_files.files_3d:
-            try:
-                nc = Dataset(rtofs_file, 'r')
-
-                if rtofs_data["depths"] is None and "Depth" in nc.variables:
-                    rtofs_data["depths"] = nc.variables["Depth"][:]
-
-                for var_name, nc_var in [
-                    ("temperature", "temperature"),
-                    ("salinity", "salinity"),
-                    ("u_current", "u"),
-                    ("v_current", "v")
-                ]:
-                    if nc_var in nc.variables:
-                        data = nc.variables[nc_var][:]
-                        rtofs_data[var_name].append(data)
-
-                nc.close()
-
-            except Exception as e:
-                log.warning(f"Error reading {rtofs_file}: {e}")
-
-        return rtofs_data
-
-    def _extract_fhr_from_filename(self, filename: str) -> int:
+    @staticmethod
+    def _extract_fhr_from_filename(filename: str) -> int:
         """Extract forecast hour from RTOFS filename."""
         try:
-            if '_n' in filename:
-                # Nowcast file: n012, n018, n024
-                parts = filename.split('_')
+            if "_n" in filename:
+                parts = filename.split("_")
                 for p in parts:
-                    if p.startswith('n') and p[1:].isdigit():
-                        return int(p[1:]) - 24  # Convert to relative hour
-            if '_f' in filename:
-                # Forecast file: f000, f006, etc.
-                parts = filename.split('_')
+                    if p.startswith("n") and p[1:].isdigit():
+                        return int(p[1:]) - 24
+            if "_f" in filename:
+                parts = filename.split("_")
                 for p in parts:
-                    if p.startswith('f') and p[1:4].isdigit():
+                    if p.startswith("f") and p[1:4].isdigit():
                         return int(p[1:4])
         except (ValueError, IndexError):
             pass
         return 0
-
-    # SSH offset applied per shell script
-    SSH_OFFSET = 0.04  # meters
-
-    def _create_elev2d(
-        self,
-        data: Dict[str, Any],
-        apply_offset: bool = True
-    ) -> Optional[Path]:
-        """Create elev2D.th.nc boundary file for SSH."""
-        output_file = self.output_path / "elev2D.th.nc"
-
-        if apply_offset and "ssh" in data and data["ssh"]:
-            data["ssh"] = [
-                ssh + self.SSH_OFFSET if ssh is not None else ssh
-                for ssh in data["ssh"]
-            ]
-            log.info(f"Applied SSH offset of +{self.SSH_OFFSET}m")
-
-        return self._create_boundary_file(data, "ssh", output_file, is_3d=False)
-
-    def _create_tem3d(self, data: Dict[str, Any]) -> Optional[Path]:
-        """Create TEM_3D.th.nc boundary file for temperature."""
-        output_file = self.output_path / "TEM_3D.th.nc"
-        return self._create_boundary_file(data, "temperature", output_file, is_3d=True)
-
-    def _create_sal3d(self, data: Dict[str, Any]) -> Optional[Path]:
-        """Create SAL_3D.th.nc boundary file for salinity."""
-        output_file = self.output_path / "SAL_3D.th.nc"
-        return self._create_boundary_file(data, "salinity", output_file, is_3d=True)
-
-    def _create_uv3d(self, data: Dict[str, Any]) -> Optional[Path]:
-        """Create uv3D.th.nc boundary file for currents."""
-        output_file = self.output_path / "uv3D.th.nc"
-
-        if not HAS_NETCDF4:
-            return None
-
-        times = data.get("times", [])
-        u_data = data.get("u_current", [])
-        v_data = data.get("v_current", [])
-
-        if not times or not u_data:
-            return None
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            base_time = times[0]
-            depths = data.get("depths", np.array([0]))
-
-            nc.createDimension('time', len(times))
-            nc.createDimension('nOpenBndNodes', len(data.get("bnd_lons", [])) or 1)
-            nc.createDimension('nLevels', len(depths))
-            nc.createDimension('nComponents', 2)
-
-            time_var = nc.createVariable('time', 'f8', ('time',))
-            time_var.units = f"days since {base_time.strftime('%Y-%m-%d')} 00:00:00"
-            time_var[:] = [(t - base_time).total_seconds() / 86400.0 for t in times]
-
-            uv_var = nc.createVariable(
-                'time_series', 'f4',
-                ('time', 'nOpenBndNodes', 'nLevels', 'nComponents')
-            )
-            uv_var.long_name = "UV velocity at boundary"
-
-            for i, (u, v) in enumerate(zip(u_data, v_data)):
-                if u is not None and v is not None:
-                    uv_var[i, :, :, 0] = u.T if u.ndim > 1 else u
-                    uv_var[i, :, :, 1] = v.T if v.ndim > 1 else v
-
-            nc.close()
-            log.info(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create uv3D: {e}")
-            return None
-
-    def _create_boundary_file(
-        self,
-        data: Dict[str, Any],
-        var_name: str,
-        output_file: Path,
-        is_3d: bool
-    ) -> Optional[Path]:
-        """Create a boundary condition NetCDF file."""
-        if not HAS_NETCDF4:
-            return None
-
-        times = data.get("times", [])
-        var_data = data.get(var_name, [])
-
-        if not times or not var_data:
-            return None
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            base_time = times[0]
-
-            nc.createDimension('time', len(times))
-            nc.createDimension('nOpenBndNodes', len(data.get("bnd_lons", [])) or 1)
-
-            if is_3d:
-                depths = data.get("depths", np.array([0]))
-                nc.createDimension('nLevels', len(depths))
-
-            time_var = nc.createVariable('time', 'f8', ('time',))
-            time_var.units = f"days since {base_time.strftime('%Y-%m-%d')} 00:00:00"
-            time_var[:] = [(t - base_time).total_seconds() / 86400.0 for t in times]
-
-            if is_3d:
-                data_var = nc.createVariable(
-                    'time_series', 'f4',
-                    ('time', 'nOpenBndNodes', 'nLevels')
-                )
-            else:
-                data_var = nc.createVariable(
-                    'time_series', 'f4',
-                    ('time', 'nOpenBndNodes')
-                )
-
-            data_var.long_name = f"{var_name} at boundary"
-
-            for i, d in enumerate(var_data):
-                if d is not None:
-                    if is_3d and d.ndim > 1:
-                        data_var[i] = d.T
-                    else:
-                        data_var[i] = d
-
-            nc.close()
-            log.info(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create {output_file}: {e}")
-            return None
-
-    def _create_nudging_file(
-        self,
-        data: Dict[str, Any],
-        var_name: str,
-        filename: str
-    ) -> Optional[Path]:
-        """Create T/S nudging file."""
-        output_file = self.output_path / filename
-
-        if not HAS_NETCDF4:
-            return None
-
-        times = data.get("times", [])
-        var_data = data.get(var_name, [])
-
-        if not times or not var_data:
-            return None
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            base_time = times[0]
-            depths = data.get("depths", np.array([0]))
-
-            nc.createDimension('time', len(times))
-            nc.createDimension('node', len(data.get("bnd_lons", [])) or 1)
-            nc.createDimension('nVert', len(depths))
-
-            time_var = nc.createVariable('time', 'f8', ('time',))
-            time_var.units = f"days since {base_time.strftime('%Y-%m-%d')} 00:00:00"
-            time_var[:] = [(t - base_time).total_seconds() / 86400.0 for t in times]
-
-            nu_var = nc.createVariable(var_name, 'f4', ('time', 'node', 'nVert'))
-            nu_var.long_name = f"{var_name} nudging field"
-
-            for i, d in enumerate(var_data):
-                if d is not None:
-                    if d.ndim > 1:
-                        nu_var[i] = d.T
-                    else:
-                        nu_var[i] = d
-
-            nc.nudging_timescale = self.nudging_timescale
-            nc.close()
-
-            log.info(f"Created nudging file {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create nudging file: {e}")
-            return None

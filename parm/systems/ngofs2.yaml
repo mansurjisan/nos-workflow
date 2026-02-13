@@ -2,6 +2,9 @@
 # Northern Gulf of Mexico Operational Forecast System (version 2)
 #
 # Inherits from base FVCOM configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/ngofs2.ctl
+#
+# Coastal/ocean FVCOM system: has ocean BC, tides, GFS primary atmos
 
 _base: fvcom
 
@@ -12,6 +15,7 @@ system:
   framework: comf
   version: "3.7.0"
   prefix: ngofs2
+  casename: ngofs2
 
 # Grid configuration - FVCOM unstructured grid
 grid:
@@ -24,6 +28,10 @@ grid:
     horizontal: ngofs2_grd.dat
     depth: ngofs2_dep.dat
     obc: ngofs2_obc.dat
+    sigma: ngofs2_sigma.dat
+    coriolis: ngofs2_cor.dat
+    sponge: ngofs2_spg.dat
+    station: ngofs2_station.dat
   # Northern Gulf of Mexico domain bounds
   domain:
     lon_min: -98.0
@@ -34,43 +42,55 @@ grid:
 # Forcing configuration
 forcing:
   atmospheric:
-    primary: gfs
-    fallback: nam
-    # Gulf region benefits from NAM
+    primary: gfs                # GFS for Gulf coverage
+    fallback: nam               # NAM as backup
     blend_enabled: false
     variables:
-      - PRMSL
-      - TMP
-      - SPFH
-      - UGRD
-      - VGRD
-      - PRATE
-      - DSWRF
-      - DLWRF
+      - PRMSL                   # Pressure at MSL
+      - TMP                     # Temperature at 2m
+      - SPFH                    # Specific humidity at 2m
+      - UGRD                    # U-wind at 10m
+      - VGRD                    # V-wind at 10m
+      - PRATE                   # Precipitation rate
+      - DSWRF                   # Downward shortwave radiation
+      - DLWRF                   # Downward longwave radiation
 
   river:
     enabled: true
     primary: nwm
-    # Major Gulf rivers
+    # Major Gulf of Mexico rivers
     sources:
       - name: mississippi_river
         usgs_id: "07374000"
+        description: "Mississippi River at Baton Rouge, LA"
       - name: atchafalaya_river
         usgs_id: "07381490"
+        description: "Atchafalaya River at Simmesport, LA"
       - name: mobile_river
         usgs_id: "02428400"
+        description: "Mobile River at Bucks, AL"
       - name: sabine_river
         usgs_id: "08030500"
+        description: "Sabine River near Ruliff, TX"
+      - name: pearl_river
+        usgs_id: "02489500"
+        description: "Pearl River near Bogalusa, LA"
+      - name: calcasieu_river
+        usgs_id: "08015500"
+        description: "Calcasieu River near Kinder, LA"
+      - name: apalachicola_river
+        usgs_id: "02358000"
+        description: "Apalachicola River at Chattahoochee, FL"
 
   ocean:
     enabled: true
-    primary: rtofs
+    primary: rtofs              # RTOFS for open ocean boundary
     obc:
-      wl_source: RTOFS
-      ts_source: RTOFS
+      wl_source: RTOFS          # DBASE_WL_NOW=RTOFS
+      ts_source: RTOFS          # DBASE_TS_NOW=RTOFS
 
   tidal:
-    enabled: true
+    enabled: true               # Gulf of Mexico has tides
     database: tpxo9
     constituents:
       - M2
@@ -87,14 +107,37 @@ model:
   executable: fvcom_ngofs2
   ocean_model: FVCOM
   physics:
-    dt: 0.5                   # External time step (seconds)
-    dti: 10.0                 # Internal time step (seconds)
+    dt: 0.5                     # External time step (seconds)
+    dti: 10.0                   # Internal time step (seconds)
+    isplit: 20                  # External/internal ratio
     bottom_roughness: 0.001
     horizontal_mixing: smagorinsky
     vertical_mixing: mellor_yamada25
+  vertical:
+    kb: 41                      # Number of sigma levels (more for deeper ocean)
+    ksl: 1
+    p_sigma: 1.0
   run:
-    hindcast_days: 0.25       # 6-hour nowcast
-    forecast_days: 3.0        # 3-day forecast (longer for Gulf)
+    hindcast_days: 0.25         # 6-hour nowcast
+    forecast_days: 3.0          # 3-day forecast
+
+# Static input files
+static_files:
+  grid: ngofs2_grd.dat
+  depth: ngofs2_dep.dat
+  obc: ngofs2_obc.dat
+  sigma: ngofs2_sigma.dat
+  coriolis: ngofs2_cor.dat
+  sponge: ngofs2_spg.dat
+  river_nml: ngofs2_riv.nml
+  river_ctl: ngofs2.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  obc_ctl: ngofs2.obc.ctl
+  obc_clim: nos.clim.WOA05.nc
+  station_in: ngofs2.station.in
+  runtime_ctl: ngofs2_run.nml
+  hc_file_obc: ngofs2.HC.nc
+  hc_file_ofs: ngofs2.HC.nc
 
 # Output configuration
 output:
@@ -102,17 +145,19 @@ output:
   prefix: ngofs2
   stations:
     enabled: true
-    interval: 360             # 6 minutes
+    interval: 360               # 6 minutes
   fields:
-    interval: 3600            # 1 hour
+    interval: 3600              # 1 hour
     variables:
-      - zeta                  # Water level
-      - ua                    # Depth-averaged velocity
+      - zeta                    # Water level
+      - ua                      # Depth-averaged velocity
       - va
-      - temp                  # Temperature
+      - temp                    # Temperature
       - salinity
+      - u                       # 3D velocity
+      - v
   restart:
-    interval: 21600           # 6 hours
+    interval: 21600             # 6 hours
 
 # Computational resources
 resources:
@@ -135,13 +180,19 @@ shell_mappings:
     RUN: system.name
     PREFIXNOS: system.prefix
     OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
     MINLON: grid.domain.lon_min
     MAXLON: grid.domain.lon_max
     MINLAT: grid.domain.lat_min
     MAXLAT: grid.domain.lat_max
     DBASE_MET_NOW: forcing.atmospheric.primary
     DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
     DBASE_TS_NOW: forcing.ocean.obc.ts_source
     DBASE_TS_FOR: forcing.ocean.obc.ts_source
-    DELT_MODEL: model.physics.dt
     TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 1
+    LEN_FORECAST: 72
+    IGRD_MET: 0
+    IGRD_OBC: 1

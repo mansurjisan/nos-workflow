@@ -2,20 +2,28 @@
 St. Lawrence River Forcing Processor
 
 Processes St. Lawrence River discharge data for STOFS 3D Atlantic.
-The St. Lawrence River enters the Atlantic domain through the Gulf of St. Lawrence
-and requires special handling separate from NWM (which doesn't cover Canada).
+The St. Lawrence River enters the Atlantic domain through the Gulf of
+St. Lawrence and requires special handling separate from NWM (which doesn't
+cover Canada).
 
 Data sources:
-- DCOM: Canadian hydrological data
-- Climatology: Historical average flows
+- DCOM: Canadian hydrological data (QC_02OA016_hourly_hydrometric.csv)
+- Climatology: Historical monthly average flows
 
-Output: Additional river source entries for vsource.th
+Fully native Python -- reads CSV/text directly, no subprocess/shell calls.
+
+Output:
+- vsource_stl.th  -- volume source time history for St. Lawrence
+- msource_stl.th  -- T/S mass source for St. Lawrence
+- flux.th         -- flux time history (for gen_fluxth compatibility)
+- TEM_1.th        -- temperature time history
 """
 
+import csv
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -29,37 +37,27 @@ class StLawrenceProcessor(ForcingProcessor):
     St. Lawrence River discharge processor.
 
     The St. Lawrence River is the largest river on the US/Canada Atlantic
-    coast by volume (average ~10,000 mÂ³/s) and has significant impact on
-    the circulation and salinity in the Gulf of St. Lawrence.
+    coast by volume (average ~10,000 m3/s) with significant impact on
+    circulation and salinity in the Gulf of St. Lawrence.
 
     Sources:
-    - Real-time: Canadian Water Survey data via DCOM
-    - Backup: Climatological discharge values
+    - Real-time: Canadian Water Survey data via DCOM (CSV)
+    - Backup: previous cycle's archived data
+    - Fallback: climatological monthly averages
 
     Output is merged with NWM river forcing in vsource.th.
     """
 
-    # St. Lawrence River configuration
-    # Average discharge ~ 10,000 mÂ³/s, varies seasonally 7,000-14,000 mÂ³/s
+    # Monthly climatological discharge (m3/s)
     CLIMATOLOGY = {
-        1: 8500.0,   # January
-        2: 8000.0,   # February
-        3: 8500.0,   # March
-        4: 11000.0,  # April (spring melt)
-        5: 13000.0,  # May (peak)
-        6: 12000.0,  # June
-        7: 10500.0,  # July
-        8: 9500.0,   # August
-        9: 9000.0,   # September
-        10: 9000.0,  # October
-        11: 9000.0,  # November
-        12: 8500.0,  # December
+        1: 8500.0, 2: 8000.0, 3: 8500.0, 4: 11000.0,
+        5: 13000.0, 6: 12000.0, 7: 10500.0, 8: 9500.0,
+        9: 9000.0, 10: 9000.0, 11: 9000.0, 12: 8500.0,
     }
 
-    # Default location (SCHISM node) for St. Lawrence discharge
-    DEFAULT_NODE_INDEX = 1  # Placeholder - set from FIX file
+    DEFAULT_NODE_INDEX = 1
 
-    # Water temperature climatology (Â°C)
+    # Water temperature climatology (deg-C)
     TEMP_CLIMATOLOGY = {
         1: 1.0, 2: 0.5, 3: 1.0, 4: 4.0, 5: 8.0, 6: 14.0,
         7: 18.0, 8: 19.0, 9: 16.0, 10: 11.0, 11: 6.0, 12: 2.0,
@@ -95,69 +93,63 @@ class StLawrenceProcessor(ForcingProcessor):
         self.cyc = config.cyc
         self.pdy = config.PDY
 
-        # Load St. Lawrence configuration from FIX
         self.stl_config = self._load_stl_config()
 
-    def _load_stl_config(self) -> Dict:
-        """
-        Load St. Lawrence River configuration from FIX directory.
-
-        Returns:
-            Dictionary with node locations and mapping info
-        """
-        config = {
+    def _load_stl_config(self) -> Dict[str, Any]:
+        """Load St. Lawrence River configuration from FIX directory."""
+        config: Dict[str, Any] = {
             "node_indices": [],
             "lons": [],
             "lats": [],
             "names": [],
         }
 
-        # Try to load St. Lawrence config file
         stl_file = self.config.get_fix_file(f"{self.config.RUN}_st_lawrence.txt")
 
         if stl_file.exists():
             try:
-                with open(stl_file, 'r') as f:
+                with open(stl_file, "r") as f:
                     for line in f:
                         line = line.strip()
-                        if not line or line.startswith('#'):
+                        if not line or line.startswith("#"):
                             continue
                         parts = line.split()
                         if len(parts) >= 3:
                             config["node_indices"].append(int(parts[0]))
                             config["lons"].append(float(parts[1]))
                             config["lats"].append(float(parts[2]))
-                            config["names"].append(parts[3] if len(parts) > 3 else "StLawrence")
-
-                log.info(f"Loaded St. Lawrence config: {len(config['node_indices'])} outlets")
+                            config["names"].append(
+                                parts[3] if len(parts) > 3 else "StLawrence"
+                            )
+                log.info(
+                    "Loaded St. Lawrence config: %d outlets",
+                    len(config["node_indices"]),
+                )
             except Exception as e:
-                log.warning(f"Error loading St. Lawrence config: {e}")
+                log.warning("Error loading St. Lawrence config: %s", e)
         else:
-            log.info("St. Lawrence config not found - using defaults")
-            # Default single outlet
+            log.info("St. Lawrence config not found -- using defaults")
             config["node_indices"] = [self.DEFAULT_NODE_INDEX]
-            config["lons"] = [-69.5]  # Approximate longitude
-            config["lats"] = [47.5]   # Approximate latitude
+            config["lons"] = [-69.5]
+            config["lats"] = [47.5]
             config["names"] = ["StLawrence_main"]
 
         return config
 
-    def process(self) -> ForcingResult:
-        """
-        Process St. Lawrence River forcing data.
+    # ==================================================================
+    # Main entry
+    # ==================================================================
 
-        Returns:
-            ForcingResult with processed files
-        """
-        log.info(f"Processing {self.source_name} river forcing")
-        log.info(f"Input path: {self.input_path}")
-        log.info(f"Use climatology: {self.use_climatology}")
+    def process(self) -> ForcingResult:
+        """Process St. Lawrence River forcing data."""
+        log.info("Processing %s river forcing", self.source_name)
+        log.info("Input path: %s", self.input_path)
 
         self.create_output_dir()
-        output_files = []
+        output_files: List[Path] = []
 
         try:
-            # Try to read real-time data from DCOM
+            # Try real-time data from DCOM
             realtime_data = self._read_dcom_data()
 
             if realtime_data:
@@ -167,14 +159,13 @@ class StLawrenceProcessor(ForcingProcessor):
                 log.info("Using climatological St. Lawrence data")
                 river_data = self._generate_climatology()
             else:
-                log.warning("No St. Lawrence data available and climatology disabled")
+                log.warning("No St. Lawrence data available")
                 return ForcingResult(
                     success=True,
                     source=self.source_name,
                     warnings=["No St. Lawrence data available"],
                 )
 
-            # Create output files
             vsource_file = self._create_vsource_stl(river_data)
             if vsource_file:
                 output_files.append(vsource_file)
@@ -183,7 +174,18 @@ class StLawrenceProcessor(ForcingProcessor):
             if msource_file:
                 output_files.append(msource_file)
 
-            log.info(f"St. Lawrence processing complete: {len(output_files)} files")
+            # Also write flux.th and TEM_1.th for shell-script compatibility
+            flux_file = self._create_flux_th(river_data)
+            if flux_file:
+                output_files.append(flux_file)
+
+            tem_file = self._create_tem_1_th(river_data)
+            if tem_file:
+                output_files.append(tem_file)
+
+            log.info(
+                "St. Lawrence processing complete: %d files", len(output_files)
+            )
 
             return ForcingResult(
                 success=True,
@@ -197,222 +199,285 @@ class StLawrenceProcessor(ForcingProcessor):
             )
 
         except Exception as e:
-            log.error(f"St. Lawrence processing failed: {e}")
-            import traceback
-            log.error(traceback.format_exc())
+            log.error("St. Lawrence processing failed: %s", e, exc_info=True)
             return ForcingResult(
                 success=True,  # Non-fatal
                 source=self.source_name,
                 warnings=[f"St. Lawrence processing failed: {e}"],
             )
 
-    def _read_dcom_data(self) -> Optional[Dict]:
+    # ==================================================================
+    # DCOM data reading (native Python CSV parser)
+    # ==================================================================
+
+    def _read_dcom_data(self) -> Optional[Dict[str, Any]]:
         """
         Read real-time St. Lawrence data from DCOM.
 
-        DCOM files contain Canadian Water Survey data for major rivers.
-        File format varies by data source.
-
-        Returns:
-            Dictionary with times and discharge data, or None if unavailable
+        DCOM file: QC_02OA016_hourly_hydrometric.csv
+        This is the Canadian Water Survey gauge at Cornwall, ON.
         """
         if not self.input_path.exists():
-            log.debug(f"DCOM path not found: {self.input_path}")
+            log.debug("DCOM path not found: %s", self.input_path)
             return None
 
-        # Look for St. Lawrence data files
-        # Pattern varies: check common naming conventions
-        patterns = [
-            f"st_lawrence*.txt",
-            f"stlawrence*.csv",
-            f"*STLAWRENCE*.dat",
-            f"{self.pdy}/st_lawrence.txt",
-        ]
+        yyyymmdd_today = self.pdy
+        yyyymmdd_prev = (
+            datetime.strptime(self.pdy, "%Y%m%d") - timedelta(days=1)
+        ).strftime("%Y%m%d")
 
-        data_file = None
-        for pattern in patterns:
-            matches = list(self.input_path.glob(pattern))
-            if matches:
-                data_file = matches[0]
-                break
+        # Try today then yesterday
+        for datestr in [yyyymmdd_today, yyyymmdd_prev]:
+            candidates = [
+                self.input_path / datestr / "canadian_water" / "QC_02OA016_hourly_hydrometric.csv",
+                self.input_path / "canadian_water" / "QC_02OA016_hourly_hydrometric.csv",
+            ]
 
-        if not data_file:
-            log.debug("No St. Lawrence data file found in DCOM")
-            return None
+            # Also try generic patterns
+            patterns = [
+                "st_lawrence*.txt",
+                "stlawrence*.csv",
+                "*STLAWRENCE*.dat",
+                f"{datestr}/st_lawrence.txt",
+                "*QC_02OA016*.csv",
+            ]
+            for pattern in patterns:
+                candidates.extend(self.input_path.glob(pattern))
 
-        try:
-            log.info(f"Reading St. Lawrence data: {data_file}")
+            for data_file in candidates:
+                if isinstance(data_file, Path) and data_file.exists():
+                    parsed = self._parse_dcom_csv(data_file)
+                    if parsed:
+                        return parsed
 
-            river_data = {
-                "times": [],
-                "discharge": [],
-                "temperature": [],
-            }
-
-            # Parse data file (assuming simple text format)
-            # Format: YYYY-MM-DD HH:MM discharge [temperature]
-            with open(data_file, 'r') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line or line.startswith('#'):
-                        continue
-
-                    parts = line.split()
-                    if len(parts) >= 3:
-                        try:
-                            # Parse time
-                            if '-' in parts[0]:
-                                time_str = f"{parts[0]} {parts[1]}"
-                                time_val = datetime.strptime(time_str, "%Y-%m-%d %H:%M")
-                            else:
-                                # YYYYMMDDHH format
-                                time_val = datetime.strptime(parts[0], "%Y%m%d%H")
-
-                            river_data["times"].append(time_val)
-                            river_data["discharge"].append(float(parts[-1]))
-
-                            # Optional temperature
-                            if len(parts) > 3:
-                                river_data["temperature"].append(float(parts[-2]))
-
-                        except (ValueError, IndexError) as e:
-                            log.debug(f"Skipping line: {line} ({e})")
-
-            if river_data["times"]:
-                log.info(f"Read {len(river_data['times'])} St. Lawrence records")
-                return river_data
-
-        except Exception as e:
-            log.warning(f"Error reading DCOM data: {e}")
-
+        log.debug("No St. Lawrence data file found in DCOM")
         return None
 
-    def _generate_climatology(self) -> Dict:
-        """
-        Generate climatological St. Lawrence discharge time series.
-
-        Uses monthly average values interpolated to hourly.
-
-        Returns:
-            Dictionary with times and discharge data
-        """
-        river_data = {
+    def _parse_dcom_csv(self, data_file: Path) -> Optional[Dict[str, Any]]:
+        """Parse Canadian Water Survey CSV file."""
+        river_data: Dict[str, Any] = {
             "times": [],
             "discharge": [],
             "temperature": [],
         }
 
-        # Generate 5-day time series (matching SCHISM run)
-        base_time = datetime.strptime(self.pdy, "%Y%m%d") + timedelta(hours=self.cyc)
-        start_time = base_time - timedelta(hours=24)  # Start at nowcast begin
+        try:
+            log.info("Reading St. Lawrence data: %s", data_file)
 
-        # 5 days at hourly intervals
+            with open(data_file, "r", encoding="utf-8", errors="replace") as f:
+                # Try CSV reader first
+                reader = csv.reader(f)
+                header = None
+                for row in reader:
+                    if not row:
+                        continue
+                    # Skip comment lines
+                    if row[0].strip().startswith("#"):
+                        continue
+                    # Detect header
+                    if header is None and any(
+                        h in row[0].lower() for h in ["date", "time", "discharge"]
+                    ):
+                        header = row
+                        continue
+
+                    try:
+                        # Try YYYY-MM-DD HH:MM format
+                        if len(row) >= 3 and "-" in row[0]:
+                            time_str = f"{row[0]} {row[1]}"
+                            time_val = datetime.strptime(
+                                time_str.strip(), "%Y-%m-%d %H:%M"
+                            )
+                            discharge = float(row[2])
+                        elif len(row) >= 2:
+                            time_val = datetime.strptime(
+                                row[0].strip(), "%Y%m%d%H"
+                            )
+                            discharge = float(row[1])
+                        else:
+                            continue
+
+                        river_data["times"].append(time_val)
+                        river_data["discharge"].append(discharge)
+                    except (ValueError, IndexError):
+                        # Try space-delimited fallback
+                        try:
+                            parts = row[0].split()
+                            if len(parts) >= 2:
+                                time_val = datetime.strptime(
+                                    parts[0], "%Y%m%d%H"
+                                )
+                                river_data["times"].append(time_val)
+                                river_data["discharge"].append(float(parts[-1]))
+                        except (ValueError, IndexError):
+                            pass
+
+            if river_data["times"] and len(river_data["times"]) >= 6:
+                log.info(
+                    "Read %d St. Lawrence records", len(river_data["times"])
+                )
+                return river_data
+
+        except Exception as e:
+            log.warning("Error reading DCOM data: %s", e)
+
+        return None
+
+    # ==================================================================
+    # Climatology
+    # ==================================================================
+
+    def _generate_climatology(self) -> Dict[str, Any]:
+        """Generate climatological St. Lawrence discharge time series."""
+        river_data: Dict[str, Any] = {
+            "times": [],
+            "discharge": [],
+            "temperature": [],
+        }
+
+        base_time = (
+            datetime.strptime(self.pdy, "%Y%m%d") + timedelta(hours=self.cyc)
+        )
+        start_time = base_time - timedelta(hours=24)
+
         for hour in range(5 * 24 + 1):
             current_time = start_time + timedelta(hours=hour)
             month = current_time.month
 
-            # Get climatological values
-            discharge = self.CLIMATOLOGY.get(month, 10000.0)
-            temperature = self.TEMP_CLIMATOLOGY.get(month, 10.0)
-
             river_data["times"].append(current_time)
-            river_data["discharge"].append(discharge)
-            river_data["temperature"].append(temperature)
+            river_data["discharge"].append(self.CLIMATOLOGY.get(month, 10000.0))
+            river_data["temperature"].append(self.TEMP_CLIMATOLOGY.get(month, 10.0))
 
-        log.info(f"Generated climatological data: {len(river_data['times'])} time steps")
-
+        log.info(
+            "Generated climatological data: %d time steps",
+            len(river_data["times"]),
+        )
         return river_data
 
-    def _create_vsource_stl(self, river_data: Dict) -> Optional[Path]:
-        """
-        Create vsource_stl.th (St. Lawrence volume source time history).
+    # ==================================================================
+    # Output writing
+    # ==================================================================
 
-        This file is appended to the main vsource.th or used separately.
-
-        Format:
-        time_seconds  flow1  flow2  ...
-        """
+    def _create_vsource_stl(self, river_data: Dict[str, Any]) -> Optional[Path]:
+        """Create vsource_stl.th (volume source time history)."""
         output_file = self.output_path / "vsource_stl.th"
-
         times = river_data.get("times", [])
         discharge = river_data.get("discharge", [])
         num_outlets = len(self.stl_config["node_indices"])
 
         if not times or not discharge:
-            log.warning("No data for vsource_stl.th")
             return None
 
         try:
             base_time = times[0]
-
-            with open(output_file, 'w') as f:
+            with open(output_file, "w") as f:
                 f.write(f"! St. Lawrence River discharge\n")
                 f.write(f"! Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
                 f.write(f"! Outlets: {num_outlets}\n")
 
                 for i, t in enumerate(times):
                     time_sec = (t - base_time).total_seconds()
-
-                    # Total discharge divided among outlets (if multiple)
-                    flow = discharge[i] / num_outlets if i < len(discharge) else 10000.0 / num_outlets
-
-                    # Write flow for each outlet
+                    flow = (
+                        discharge[i] / num_outlets
+                        if i < len(discharge)
+                        else 10000.0 / num_outlets
+                    )
                     flow_str = " ".join(f"{flow:.2f}" for _ in range(num_outlets))
                     f.write(f"{time_sec:.1f} {flow_str}\n")
 
-            log.info(f"Created {output_file}")
+            log.info("Created %s", output_file)
             return output_file
-
         except Exception as e:
-            log.error(f"Failed to create vsource_stl.th: {e}")
+            log.error("Failed to create vsource_stl.th: %s", e)
             return None
 
-    def _create_msource_stl(self, river_data: Dict) -> Optional[Path]:
-        """
-        Create msource_stl.th (St. Lawrence mass source - T/S).
-
-        Format:
-        time_seconds  temp1 salt1  temp2 salt2  ...
-        """
+    def _create_msource_stl(self, river_data: Dict[str, Any]) -> Optional[Path]:
+        """Create msource_stl.th (T/S mass source)."""
         output_file = self.output_path / "msource_stl.th"
-
         times = river_data.get("times", [])
         temperature = river_data.get("temperature", [])
         num_outlets = len(self.stl_config["node_indices"])
 
         if not times:
-            log.warning("No data for msource_stl.th")
             return None
 
         try:
             base_time = times[0]
-            salinity = 0.0  # Fresh water
+            salinity = 0.0
 
-            with open(output_file, 'w') as f:
+            with open(output_file, "w") as f:
                 f.write(f"! St. Lawrence River T/S\n")
                 f.write(f"! Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
                 for i, t in enumerate(times):
                     time_sec = (t - base_time).total_seconds()
-
-                    # Temperature
                     if i < len(temperature):
                         temp = temperature[i]
                     else:
-                        # Use climatology based on month
-                        month = t.month
-                        temp = self.TEMP_CLIMATOLOGY.get(month, 10.0)
+                        temp = self.TEMP_CLIMATOLOGY.get(t.month, 10.0)
 
-                    # Write T/S for each outlet
-                    ts_str = " ".join(f"{temp:.2f} {salinity:.2f}" for _ in range(num_outlets))
+                    ts_str = " ".join(
+                        f"{temp:.2f} {salinity:.2f}" for _ in range(num_outlets)
+                    )
                     f.write(f"{time_sec:.1f} {ts_str}\n")
 
-            log.info(f"Created {output_file}")
+            log.info("Created %s", output_file)
             return output_file
-
         except Exception as e:
-            log.error(f"Failed to create msource_stl.th: {e}")
+            log.error("Failed to create msource_stl.th: %s", e)
             return None
+
+    def _create_flux_th(self, river_data: Dict[str, Any]) -> Optional[Path]:
+        """Create flux.th for backward compatibility with shell scripts."""
+        output_file = self.output_path / "flux.th"
+        times = river_data.get("times", [])
+        discharge = river_data.get("discharge", [])
+
+        if not times or not discharge:
+            return None
+
+        try:
+            base_time = times[0]
+            with open(output_file, "w") as f:
+                for i, t in enumerate(times):
+                    time_sec = (t - base_time).total_seconds()
+                    flow = discharge[i] if i < len(discharge) else 10000.0
+                    f.write(f"{time_sec:.1f} {flow:.2f}\n")
+            log.info("Created %s", output_file)
+            return output_file
+        except Exception as e:
+            log.error("Failed to create flux.th: %s", e)
+            return None
+
+    def _create_tem_1_th(self, river_data: Dict[str, Any]) -> Optional[Path]:
+        """Create TEM_1.th for backward compatibility with shell scripts."""
+        output_file = self.output_path / "TEM_1.th"
+        times = river_data.get("times", [])
+        temperature = river_data.get("temperature", [])
+
+        if not times:
+            return None
+
+        try:
+            base_time = times[0]
+            with open(output_file, "w") as f:
+                for i, t in enumerate(times):
+                    time_sec = (t - base_time).total_seconds()
+                    temp = (
+                        temperature[i]
+                        if i < len(temperature)
+                        else self.TEMP_CLIMATOLOGY.get(t.month, 10.0)
+                    )
+                    f.write(f"{time_sec:.1f} {temp:.2f}\n")
+            log.info("Created %s", output_file)
+            return output_file
+        except Exception as e:
+            log.error("Failed to create TEM_1.th: %s", e)
+            return None
+
+    # ==================================================================
+    # Merge helper
+    # ==================================================================
 
     def merge_with_nwm(
         self,
@@ -424,64 +489,38 @@ class StLawrenceProcessor(ForcingProcessor):
         """
         Merge St. Lawrence sources with NWM river sources.
 
-        The St. Lawrence River nodes are appended to the NWM sources
-        to create combined vsource.th and msource.th files.
-
-        Args:
-            nwm_vsource: Path to NWM vsource.th
-            nwm_msource: Path to NWM msource.th
-            output_vsource: Path for merged vsource.th
-            output_msource: Path for merged msource.th
-
-        Returns:
-            Tuple of (merged_vsource_path, merged_msource_path)
+        Appends St. Lawrence columns to the NWM .th files.
         """
         log.info("Merging St. Lawrence with NWM river forcing")
 
         stl_vsource = self.output_path / "vsource_stl.th"
         stl_msource = self.output_path / "msource_stl.th"
+        import shutil
 
         merged_vs = None
         merged_ms = None
 
-        # Merge vsource files
-        if nwm_vsource.exists() and stl_vsource.exists():
-            try:
-                # Read NWM data
-                nwm_data = np.loadtxt(nwm_vsource, comments='!')
-                stl_data = np.loadtxt(stl_vsource, comments='!')
-
-                # Combine columns (append St. Lawrence columns to NWM)
-                merged_data = np.column_stack([nwm_data, stl_data[:, 1:]])
-
-                # Write merged file
-                np.savetxt(output_vsource, merged_data, fmt='%.4f')
-                merged_vs = output_vsource
-                log.info(f"Created merged vsource.th: {merged_vs}")
-
-            except Exception as e:
-                log.error(f"Error merging vsource: {e}")
-                # Fall back to just copying NWM
-                import shutil
-                shutil.copy2(nwm_vsource, output_vsource)
-                merged_vs = output_vsource
-
-        # Merge msource files
-        if nwm_msource.exists() and stl_msource.exists():
-            try:
-                nwm_data = np.loadtxt(nwm_msource, comments='!')
-                stl_data = np.loadtxt(stl_msource, comments='!')
-
-                merged_data = np.column_stack([nwm_data, stl_data[:, 1:]])
-
-                np.savetxt(output_msource, merged_data, fmt='%.4f')
-                merged_ms = output_msource
-                log.info(f"Created merged msource.th: {merged_ms}")
-
-            except Exception as e:
-                log.error(f"Error merging msource: {e}")
-                import shutil
-                shutil.copy2(nwm_msource, output_msource)
-                merged_ms = output_msource
+        for nwm_src, stl_src, out in [
+            (nwm_vsource, stl_vsource, output_vsource),
+            (nwm_msource, stl_msource, output_msource),
+        ]:
+            if nwm_src.exists() and stl_src.exists():
+                try:
+                    nwm_data = np.loadtxt(nwm_src, comments="!")
+                    stl_data = np.loadtxt(stl_src, comments="!")
+                    merged = np.column_stack([nwm_data, stl_data[:, 1:]])
+                    np.savetxt(out, merged, fmt="%.4f")
+                    if "vsource" in out.name:
+                        merged_vs = out
+                    else:
+                        merged_ms = out
+                    log.info("Created merged %s", out)
+                except Exception as e:
+                    log.error("Error merging %s: %s", out.name, e)
+                    shutil.copy2(nwm_src, out)
+                    if "vsource" in out.name:
+                        merged_vs = out
+                    else:
+                        merged_ms = out
 
         return merged_vs, merged_ms

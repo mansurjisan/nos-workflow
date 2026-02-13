@@ -1,8 +1,9 @@
 """
 STOFS Framework Handlers
 
-Implements prep and model run orchestration for STOFS-3D Atlantic/Pacific
-systems by calling existing STOFS shell scripts via subprocess.
+Implements prep, model run, and post-processing orchestration for
+STOFS-3D Atlantic/Pacific systems by calling existing STOFS shell
+scripts via subprocess.
 """
 
 import logging
@@ -10,7 +11,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import BasePrepHandler, BaseModelRunHandler, StepResult
+from .base import BasePrepHandler, BaseModelRunHandler, BasePostHandler, StepResult
 
 log = logging.getLogger(__name__)
 
@@ -486,3 +487,263 @@ class STOFSModelRunHandler(BaseModelRunHandler):
         )
 
         return result
+
+
+class STOFSPostHandler(BasePostHandler):
+    """
+    STOFS-specific post-processing handler.
+
+    Orchestrates STOFS two-phase post-processing by calling existing
+    shell scripts:
+
+    Phase 1 (post_1):
+        - stofs_3d_atl_add_attr_2d_3d_nc.sh (add variable attributes)
+        - stofs_3d_atl_create_awips_shef.sh (AWIPS/SHEF station timeseries)
+        - stofs_3d_atl_create_AWS_autoval_nc.sh (auto-validation NetCDFs)
+        - stofs_3d_atl_create_station_profile_nc.sh (station profiles)
+        - stofs_3d_atl_create_adcirc_nc.sh (ADCIRC-format water levels)
+        - stofs_3d_atl_create_awips_grib2.sh (AWIPS GRIB2)
+
+    Phase 2 (post_2):
+        - stofs_3d_atl_combine_hotstart (merge hotstart files)
+        - stofs_3d_atl_create_2d_field_nc.sh (2D field NetCDFs)
+        - stofs_3d_atl_create_geopackage.sh (GeoPackage for nowCOAST)
+    """
+
+    def __init__(self, config: Any):
+        """
+        Initialize STOFS post-processing handler.
+
+        Args:
+            config: OFSConfig instance with STOFS configuration
+        """
+        super().__init__(config)
+        self.ush_dir = Path(
+            os.environ.get(
+                "USHstofs3d",
+                os.environ.get(
+                    "USHnos",
+                    getattr(getattr(config, "runtime", config), "ush_ofs", "/tmp"),
+                ),
+            )
+        )
+        self.exec_dir = Path(
+            os.environ.get(
+                "EXECstofs3d",
+                os.environ.get(
+                    "EXECnos",
+                    getattr(getattr(config, "runtime", config), "exec_ofs", "/tmp"),
+                ),
+            )
+        )
+        self.scripts_dir = Path(
+            os.environ.get(
+                "SCRIPTSnos",
+                os.environ.get(
+                    "HOMEnos", getattr(config, "HOMEnos", "/tmp")
+                ),
+            )
+        )
+        self.data_dir = Path(
+            os.environ.get("DATA", getattr(config, "DATA", "/tmp"))
+        )
+
+    def extract_fields(self) -> StepResult:
+        """Extract fields by adding variable attributes to 2D/3D NetCDFs."""
+        self.logger.info("STOFS: Adding variable attributes to 2D/3D NetCDFs")
+
+        script = self.ush_dir / "stofs_3d_atl_add_attr_2d_3d_nc.sh"
+        if not script.exists():
+            return StepResult(
+                success=True,
+                step_name="extract_fields",
+                message="Attribute script not found; skipping",
+                warnings=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="extract_fields",
+            timeout=1800,
+        )
+
+    def extract_stations(self) -> StepResult:
+        """Extract station timeseries (AWIPS/SHEF + station profiles)."""
+        self.logger.info("STOFS: Creating station timeseries")
+
+        import time as _time
+
+        start = _time.time()
+        warnings = []
+
+        # AWIPS/SHEF
+        script = self.ush_dir / "stofs_3d_atl_create_awips_shef.sh"
+        if script.exists():
+            result = self._run_subprocess(
+                str(script),
+                step_name="create_awips_shef",
+                timeout=1800,
+            )
+            if not result.success:
+                warnings.append(f"AWIPS/SHEF failed: {result.message}")
+        else:
+            warnings.append(f"AWIPS/SHEF script not found: {script}")
+
+        # Station profiles
+        script = self.ush_dir / "stofs_3d_atl_create_station_profile_nc.sh"
+        if script.exists():
+            result = self._run_subprocess(
+                str(script),
+                step_name="create_station_profile",
+                timeout=1800,
+            )
+            if not result.success:
+                warnings.append(f"Station profile failed: {result.message}")
+        else:
+            warnings.append(f"Station profile script not found: {script}")
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name="extract_stations",
+            message=f"Station extraction completed in {duration:.1f}s",
+            duration_seconds=duration,
+            warnings=warnings,
+        )
+
+    def create_standard_netcdf(self) -> StepResult:
+        """Create standard NetCDF output (ADCIRC format for STOFS)."""
+        self.logger.info("STOFS: Creating ADCIRC-format NetCDF")
+
+        script = self.ush_dir / "stofs_3d_atl_create_adcirc_nc.sh"
+        if not script.exists():
+            return StepResult(
+                success=True,
+                step_name="create_standard_netcdf",
+                message="ADCIRC script not found; skipping",
+                warnings=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="create_standard_netcdf",
+            timeout=1800,
+        )
+
+    def create_grib2(self) -> StepResult:
+        """Create AWIPS GRIB2 files."""
+        self.logger.info("STOFS: Creating AWIPS GRIB2 files")
+
+        script = self.ush_dir / "stofs_3d_atl_create_awips_grib2.sh"
+        if not script.exists():
+            return StepResult(
+                success=True,
+                step_name="create_grib2",
+                message="GRIB2 script not found; skipping",
+                warnings=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="create_grib2",
+            timeout=1800,
+        )
+
+    def create_awips(self) -> StepResult:
+        """Create AWS/EC2 auto-validation NetCDFs."""
+        self.logger.info("STOFS: Creating AWS auto-validation NetCDFs")
+
+        script = self.ush_dir / "stofs_3d_atl_create_AWS_autoval_nc.sh"
+        if not script.exists():
+            return StepResult(
+                success=True,
+                step_name="create_awips",
+                message="Autoval script not found; skipping",
+                warnings=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="create_awips",
+            timeout=1800,
+        )
+
+    def archive_outputs(self) -> StepResult:
+        """Archive STOFS outputs (handled by individual scripts)."""
+        self.logger.info("STOFS: Archive handled by individual post scripts")
+        return StepResult(
+            success=True,
+            step_name="archive_outputs",
+            message="STOFS archive handled within post scripts",
+        )
+
+    def run_phase(self, phase: str) -> StepResult:
+        """
+        Run a specific STOFS post-processing phase.
+
+        Args:
+            phase: "post_1" or "post_2"
+
+        Returns:
+            StepResult with execution status
+        """
+        if phase == "post_1":
+            return self._run_post_1()
+        elif phase == "post_2":
+            return self._run_post_2()
+        else:
+            return StepResult(
+                success=False,
+                step_name=f"run_phase_{phase}",
+                message=f"Unknown STOFS post phase: {phase}",
+                errors=[f"Valid phases are 'post_1' and 'post_2', got '{phase}'"],
+            )
+
+    def _run_post_1(self) -> StepResult:
+        """Run STOFS post-processing phase 1 via ex-script."""
+        self.logger.info("Running STOFS post-processing phase 1")
+
+        script = self.scripts_dir / "stofs_3d_atl" / "exstofs_3d_atl_post_1.sh"
+        if not script.exists():
+            # Try alternate location
+            script = Path(
+                os.environ.get("SCRIPTSnos", "/tmp")
+            ) / "stofs_3d_atl" / "exstofs_3d_atl_post_1.sh"
+
+        if not script.exists():
+            return StepResult(
+                success=False,
+                step_name="post_1",
+                message=f"STOFS post_1 script not found: {script}",
+                errors=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="post_1",
+            timeout=7200,
+        )
+
+    def _run_post_2(self) -> StepResult:
+        """Run STOFS post-processing phase 2 via ex-script."""
+        self.logger.info("Running STOFS post-processing phase 2")
+
+        script = self.scripts_dir / "stofs_3d_atl" / "exstofs_3d_atl_post_2.sh"
+        if not script.exists():
+            script = Path(
+                os.environ.get("SCRIPTSnos", "/tmp")
+            ) / "stofs_3d_atl" / "exstofs_3d_atl_post_2.sh"
+
+        if not script.exists():
+            return StepResult(
+                success=False,
+                step_name="post_2",
+                message=f"STOFS post_2 script not found: {script}",
+                errors=[f"Script not found: {script}"],
+            )
+
+        return self._run_subprocess(
+            str(script),
+            step_name="post_2",
+            timeout=7200,
+        )

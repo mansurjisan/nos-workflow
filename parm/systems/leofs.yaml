@@ -2,6 +2,9 @@
 # Lake Erie Operational Forecast System
 #
 # Inherits from base FVCOM configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/leofs.ctl
+#
+# Great Lakes system: no ocean BC, no tides, HRRR primary atmos
 
 _base: fvcom
 
@@ -11,48 +14,131 @@ system:
   region: great_lakes
   framework: comf
   version: "3.7.0"
+  prefix: leofs
+  casename: leofs
 
+# Grid configuration - FVCOM unstructured grid
 grid:
   type: unstructured
+  # LEOFS grid dimensions
+  n_nodes: 9940
+  n_elements: 17580
+  n_levels: 21
   files:
     horizontal: leofs_grd.dat
     depth: leofs_dep.dat
     obc: leofs_obc.dat
+    sigma: leofs_sigma.dat
+    coriolis: leofs_cor.dat
+    sponge: leofs_spg.dat
+    station: leofs_station.dat
+  # Lake Erie domain bounds
   domain:
     lon_min: -83.5
     lon_max: -78.8
     lat_min: 41.3
     lat_max: 42.9
 
-# Override forcing for Great Lakes
+# Forcing configuration - Great Lakes specific
 forcing:
   atmospheric:
-    primary: hrrr             # High-resolution for Great Lakes
-    fallback: gfs
-    blend_enabled: true
+    primary: hrrr               # High-Resolution Rapid Refresh (3km)
+    fallback: gfs               # Global fallback
+    blend_enabled: true         # Blend HRRR + GFS at boundary
+    # MET_NUM=2 for dual met sources
+    met_num: 2
+    # DBASE_MET_NOW=HRRR, DBASE_MET_NOW2=GFS
+    secondary: gfs
+    variables:
+      - PRMSL                   # Pressure at MSL
+      - TMP                     # Temperature
+      - SPFH                    # Specific humidity
+      - UGRD                    # U-wind component
+      - VGRD                    # V-wind component
+      - PRATE                   # Precipitation rate
+      - DSWRF                   # Downward shortwave radiation
+      - DLWRF                   # Downward longwave radiation
 
   river:
     enabled: true
-    primary: nwm
+    primary: nwm                # National Water Model
     sources:
       - name: detroit_river
+        description: "Detroit River inflow"
       - name: maumee_river
+        usgs_id: "04193500"
+        description: "Maumee River at Waterville, OH"
       - name: cuyahoga_river
+        usgs_id: "04208000"
+        description: "Cuyahoga River at Independence, OH"
+      - name: sandusky_river
+        usgs_id: "04198000"
+        description: "Sandusky River near Fremont, OH"
+      - name: grand_river_oh
+        usgs_id: "04212100"
+        description: "Grand River near Painesville, OH"
+      - name: huron_river
+        usgs_id: "04199000"
+        description: "Huron River at Milan, OH"
 
   ocean:
-    enabled: false            # Lake - no ocean BC
+    enabled: false              # Lake - no open ocean boundary
 
   tidal:
-    enabled: false            # Lake - no ocean tides
+    enabled: false              # Lake - no ocean tides
 
-# Override model settings
+# Model physics - FVCOM specific
 model:
+  executable: fvcom_leofs
+  ocean_model: FVCOM
   physics:
-    dt: 0.5
-    dti: 5.0
+    dt: 0.5                     # External time step (seconds)
+    dti: 5.0                    # Internal time step (seconds)
+    isplit: 10                  # External/internal time step ratio
+    bottom_roughness: 0.001     # Bottom friction coefficient
+    horizontal_mixing: smagorinsky
+    vertical_mixing: mellor_yamada25
+  vertical:
+    kb: 21                      # Number of sigma levels
+    ksl: 1                      # Sigma level type
+    p_sigma: 1.0                # Sigma distribution power
   run:
-    hindcast_days: 0.0        # Cold start for lakes
-    forecast_days: 5.0
+    hindcast_days: 0.25         # 6-hour nowcast
+    forecast_days: 5.0          # 5-day forecast
+
+# Static input files
+static_files:
+  grid: leofs_grd.dat
+  depth: leofs_dep.dat
+  obc: leofs_obc.dat
+  sigma: leofs_sigma.dat
+  coriolis: leofs_cor.dat
+  sponge: leofs_spg.dat
+  river_nml: leofs_riv.nml
+  river_ctl: leofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  station_in: leofs.station.in
+  runtime_ctl: leofs_run.nml
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: leofs
+  stations:
+    enabled: true
+    interval: 360               # 6 minutes
+  fields:
+    interval: 3600              # 1 hour
+    variables:
+      - zeta                    # Water level
+      - ua                      # Depth-averaged u velocity
+      - va                      # Depth-averaged v velocity
+      - temp                    # Temperature
+      - salinity                # Salinity
+      - u                       # 3D u velocity
+      - v                       # 3D v velocity
+  restart:
+    interval: 21600             # 6 hours
 
 # Computational resources
 resources:
@@ -66,3 +152,27 @@ stages:
   - nowcast
   - forecast
   - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_MET_FOR2: forcing.atmospheric.secondary
+    MET_NUM: forcing.atmospheric.met_num
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 0
+    LEN_FORECAST: 120
+    IGRD_MET: 0
+    IGRD_OBC: 0

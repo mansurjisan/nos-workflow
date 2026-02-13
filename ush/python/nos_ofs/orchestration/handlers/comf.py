@@ -1,8 +1,9 @@
 """
 COMF Framework Handlers
 
-Implements prep and model run orchestration for COMF/nosofs systems
-by calling existing nosofs shell scripts via subprocess.
+Implements prep, model run, and post-processing orchestration for
+COMF/nosofs systems by calling existing nosofs shell scripts via
+subprocess and providing Python-native post-processing.
 """
 
 import logging
@@ -11,7 +12,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from .base import BasePrepHandler, BaseModelRunHandler, StepResult
+from .base import BasePrepHandler, BaseModelRunHandler, BasePostHandler, StepResult
 
 log = logging.getLogger(__name__)
 
@@ -729,3 +730,318 @@ class COMFModelRunHandler(BaseModelRunHandler):
         )
 
         return result
+
+
+class COMFPostHandler(BasePostHandler):
+    """
+    COMF-specific post-processing handler.
+
+    Provides a Python-native post-processing pipeline for COMF/nosofs
+    systems (ROMS, FVCOM, SCHISM). Dispatches to the appropriate
+    model-specific post-processor from the nos_ofs.postprocessing package.
+
+    This handler implements the "not yet implemented" COMF post-processing
+    placeholder in JNOS_OFS_POST.
+    """
+
+    def __init__(self, config: Any):
+        """
+        Initialize COMF post-processing handler.
+
+        Args:
+            config: OFSConfig instance with COMF configuration
+        """
+        super().__init__(config)
+        self.ush_dir = Path(
+            os.environ.get(
+                "USHnos",
+                os.environ.get(
+                    "USHofs",
+                    getattr(getattr(config, "runtime", config), "ush_ofs", "/tmp"),
+                ),
+            )
+        )
+        self.data_dir = Path(
+            os.environ.get("DATA", getattr(config, "DATA", "/tmp"))
+        )
+        self.comout = Path(
+            os.environ.get("COMOUT", getattr(config, "COMOUT", "/tmp"))
+        )
+        self.ofs = os.environ.get("OFS", os.environ.get("RUN", "cbofs"))
+        self.ocean_model = os.environ.get(
+            "OCEAN_MODEL",
+            getattr(config, "OCEAN_MODEL", "ROMS"),
+        ).upper()
+
+        # Create model-specific post-processor
+        self._processor = self._create_processor()
+
+    def _create_processor(self):
+        """Create model-specific post-processor based on OCEAN_MODEL."""
+        try:
+            from nos_ofs.postprocessing import (
+                SCHISMPostProcessor,
+                ROMSPostProcessor,
+                FVCOMPostProcessor,
+            )
+
+            if self.ocean_model in ("SCHISM", "SELFE"):
+                return SCHISMPostProcessor(self.config, framework="comf")
+            elif self.ocean_model == "ROMS":
+                return ROMSPostProcessor(self.config)
+            elif self.ocean_model == "FVCOM":
+                return FVCOMPostProcessor(self.config)
+            else:
+                self.logger.warning(
+                    f"Unknown OCEAN_MODEL '{self.ocean_model}'; "
+                    f"defaulting to ROMS post-processor"
+                )
+                return ROMSPostProcessor(self.config)
+
+        except ImportError as e:
+            self.logger.warning(
+                f"Post-processing package not available: {e}. "
+                f"Post-processing will use shell script fallback."
+            )
+            return None
+
+    def extract_fields(self) -> StepResult:
+        """Extract 2D/3D fields from COMF model output."""
+        self.logger.info(f"COMF: Extracting fields for {self.ocean_model}")
+
+        import time as _time
+
+        start = _time.time()
+
+        if self._processor is not None:
+            try:
+                result = self._processor.extract_fields()
+                duration = _time.time() - start
+                return StepResult(
+                    success=result.success,
+                    step_name="extract_fields",
+                    message=f"Extracted fields in {duration:.1f}s",
+                    duration_seconds=duration,
+                    output_files=result.output_files,
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            except Exception as e:
+                duration = _time.time() - start
+                self.logger.error(f"Field extraction failed: {e}")
+                return StepResult(
+                    success=False,
+                    step_name="extract_fields",
+                    message=str(e),
+                    duration_seconds=duration,
+                    errors=[str(e)],
+                )
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name="extract_fields",
+            message="No post-processor available; skipping",
+            duration_seconds=duration,
+            warnings=["Post-processor not initialized"],
+        )
+
+    def extract_stations(self) -> StepResult:
+        """Extract station timeseries from COMF model output."""
+        self.logger.info(f"COMF: Extracting station timeseries for {self.ocean_model}")
+
+        import time as _time
+
+        start = _time.time()
+
+        if self._processor is not None:
+            try:
+                result = self._processor.extract_stations()
+                duration = _time.time() - start
+                return StepResult(
+                    success=result.success,
+                    step_name="extract_stations",
+                    message=f"Extracted stations in {duration:.1f}s",
+                    duration_seconds=duration,
+                    output_files=result.output_files,
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            except Exception as e:
+                duration = _time.time() - start
+                self.logger.error(f"Station extraction failed: {e}")
+                return StepResult(
+                    success=False,
+                    step_name="extract_stations",
+                    message=str(e),
+                    duration_seconds=duration,
+                    errors=[str(e)],
+                )
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name="extract_stations",
+            message="No post-processor available; skipping",
+            duration_seconds=duration,
+            warnings=["Post-processor not initialized"],
+        )
+
+    def create_standard_netcdf(self) -> StepResult:
+        """Convert to CO-OPS standard NetCDF."""
+        self.logger.info(f"COMF: Creating standard NetCDF for {self.ocean_model}")
+
+        import time as _time
+
+        start = _time.time()
+
+        if self._processor is not None:
+            try:
+                result = self._processor.create_standard_netcdf()
+                duration = _time.time() - start
+                return StepResult(
+                    success=result.success,
+                    step_name="create_standard_netcdf",
+                    message=f"Standard NetCDF created in {duration:.1f}s",
+                    duration_seconds=duration,
+                    output_files=result.output_files,
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            except Exception as e:
+                duration = _time.time() - start
+                self.logger.error(f"Standard NetCDF creation failed: {e}")
+                return StepResult(
+                    success=False,
+                    step_name="create_standard_netcdf",
+                    message=str(e),
+                    duration_seconds=duration,
+                    errors=[str(e)],
+                )
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name="create_standard_netcdf",
+            message="No post-processor available; skipping",
+            duration_seconds=duration,
+            warnings=["Post-processor not initialized"],
+        )
+
+    def create_grib2(self) -> StepResult:
+        """Create GRIB2 output (not typically used for COMF systems)."""
+        self.logger.info("COMF: GRIB2 not typically required for COMF systems")
+        return StepResult(
+            success=True,
+            step_name="create_grib2",
+            message="GRIB2 not required for COMF systems",
+        )
+
+    def create_awips(self) -> StepResult:
+        """Create AWIPS output (not typically used for COMF systems)."""
+        self.logger.info("COMF: AWIPS/SHEF not typically required for COMF systems")
+        return StepResult(
+            success=True,
+            step_name="create_awips",
+            message="AWIPS/SHEF not required for COMF systems",
+        )
+
+    def archive_outputs(self) -> StepResult:
+        """Archive post-processed COMF outputs to COMOUT."""
+        self.logger.info(f"COMF: Archiving outputs for {self.ocean_model}")
+
+        import time as _time
+
+        start = _time.time()
+
+        if self._processor is not None:
+            try:
+                result = self._processor.archive_outputs()
+                duration = _time.time() - start
+                return StepResult(
+                    success=result.success,
+                    step_name="archive_outputs",
+                    message=f"Archived outputs in {duration:.1f}s",
+                    duration_seconds=duration,
+                    output_files=list(result.archived_files),
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            except Exception as e:
+                duration = _time.time() - start
+                self.logger.error(f"Output archival failed: {e}")
+                return StepResult(
+                    success=False,
+                    step_name="archive_outputs",
+                    message=str(e),
+                    duration_seconds=duration,
+                    errors=[str(e)],
+                )
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name="archive_outputs",
+            message="No post-processor available; skipping",
+            duration_seconds=duration,
+            warnings=["Post-processor not initialized"],
+        )
+
+    def run_phase(self, phase: str) -> StepResult:
+        """
+        Run COMF post-processing phase.
+
+        For COMF, there is a single "post" phase that runs all steps.
+
+        Args:
+            phase: Should be "post" for COMF
+
+        Returns:
+            StepResult with execution status
+        """
+        if phase not in ("post", "post_1", "post_2"):
+            return StepResult(
+                success=False,
+                step_name=f"run_phase_{phase}",
+                message=f"Unknown COMF post phase: {phase}",
+                errors=[f"Valid phase is 'post', got '{phase}'"],
+            )
+
+        self.logger.info(f"Running COMF post-processing phase: {phase}")
+
+        import time as _time
+
+        start = _time.time()
+
+        if self._processor is not None:
+            try:
+                result = self._processor.run_all()
+                duration = _time.time() - start
+                return StepResult(
+                    success=result.success,
+                    step_name=phase,
+                    message=f"COMF post-processing completed in {duration:.1f}s",
+                    duration_seconds=duration,
+                    output_files=result.output_files,
+                    errors=result.errors,
+                    warnings=result.warnings,
+                )
+            except Exception as e:
+                duration = _time.time() - start
+                self.logger.error(f"COMF post-processing failed: {e}")
+                return StepResult(
+                    success=False,
+                    step_name=phase,
+                    message=str(e),
+                    duration_seconds=duration,
+                    errors=[str(e)],
+                )
+
+        duration = _time.time() - start
+        return StepResult(
+            success=True,
+            step_name=phase,
+            message="No post-processor available; post-processing skipped",
+            duration_seconds=duration,
+            warnings=["Post-processor not initialized; install xarray and netCDF4"],
+        )

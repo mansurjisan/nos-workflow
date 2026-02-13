@@ -1,0 +1,174 @@
+# LMHOFS Configuration
+# Lake Michigan-Huron Operational Forecast System
+#
+# Inherits from base FVCOM configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/lmhofs.ctl
+#
+# Great Lakes system: no ocean BC, no tides, HRRR primary atmos.
+# LMHOFS covers both Lake Michigan and Lake Huron as a single connected domain.
+
+_base: fvcom
+
+system:
+  name: lmhofs
+  description: "Lake Michigan-Huron Operational Forecast System"
+  region: great_lakes
+  framework: comf
+  version: "3.7.0"
+  prefix: lmhofs
+  casename: lmhofs
+
+# Grid configuration - FVCOM unstructured grid
+grid:
+  type: unstructured
+  n_nodes: 30000
+  n_elements: 55000
+  n_levels: 21
+  files:
+    horizontal: lmhofs_grd.dat
+    depth: lmhofs_dep.dat
+    obc: lmhofs_obc.dat
+    sigma: lmhofs_sigma.dat
+    coriolis: lmhofs_cor.dat
+    sponge: lmhofs_spg.dat
+    station: lmhofs_station.dat
+  # Lake Michigan-Huron domain bounds
+  domain:
+    lon_min: -88.0
+    lon_max: -79.5
+    lat_min: 41.5
+    lat_max: 46.5
+
+# Forcing configuration - Great Lakes specific
+forcing:
+  atmospheric:
+    primary: hrrr
+    fallback: gfs
+    blend_enabled: true
+    met_num: 2
+    secondary: gfs
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: st_joseph_river
+        usgs_id: "04101500"
+        description: "St. Joseph River at Niles, MI"
+      - name: grand_river_mi
+        usgs_id: "04119000"
+        description: "Grand River at Grand Rapids, MI"
+      - name: kalamazoo_river
+        usgs_id: "04108660"
+        description: "Kalamazoo River at New Richmond, MI"
+      - name: muskegon_river
+        usgs_id: "04122030"
+        description: "Muskegon River near Hersey, MI"
+      - name: fox_river
+        usgs_id: "04084445"
+        description: "Fox River at Appleton, WI"
+      - name: menominee_river
+        usgs_id: "04067500"
+        description: "Menominee River near McAllister, WI"
+
+  ocean:
+    enabled: false              # Lake - no ocean BC
+
+  tidal:
+    enabled: false              # Lake - no tides
+
+# Model physics
+model:
+  executable: fvcom_lmhofs
+  ocean_model: FVCOM
+  physics:
+    dt: 0.5
+    dti: 10.0
+    isplit: 20
+    bottom_roughness: 0.001
+    horizontal_mixing: smagorinsky
+    vertical_mixing: mellor_yamada25
+  vertical:
+    kb: 21
+    ksl: 1
+    p_sigma: 1.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 5.0
+
+# Static input files
+static_files:
+  grid: lmhofs_grd.dat
+  depth: lmhofs_dep.dat
+  sigma: lmhofs_sigma.dat
+  coriolis: lmhofs_cor.dat
+  sponge: lmhofs_spg.dat
+  river_nml: lmhofs_riv.nml
+  river_ctl: lmhofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  station_in: lmhofs.station.in
+  runtime_ctl: lmhofs_run.nml
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: lmhofs
+  stations:
+    enabled: true
+    interval: 360
+  fields:
+    interval: 3600
+    variables:
+      - zeta
+      - ua
+      - va
+      - temp
+      - salinity
+  restart:
+    interval: 21600
+
+# Computational resources
+resources:
+  nprocs: 480                   # Large domain needs many cores
+  memory_gb: 600
+  walltime_hours: 3
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_MET_FOR2: forcing.atmospheric.secondary
+    MET_NUM: forcing.atmospheric.met_num
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 0
+    LEN_FORECAST: 120
+    IGRD_MET: 0
+    IGRD_OBC: 0

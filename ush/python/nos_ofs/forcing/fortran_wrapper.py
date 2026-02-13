@@ -1,11 +1,24 @@
 """
-Fortran Executable Wrappers for NOS-OFS
+Fortran Executable Wrappers for NOS-OFS  (LEGACY / DEPRECATED)
 
-This module provides Python wrappers around the production Fortran executables
-used in nosofs.v3.7.0. This approach:
-- Maintains compatibility with validated production code
-- Allows gradual migration to pure Python implementations
-- Enables side-by-side comparison of outputs
+.. deprecated:: 1.0
+    This module is retained **only** as a legacy fallback for environments
+    where the native Python forcing processors cannot be used (e.g., a
+    missing scipy or netCDF4 installation on a production HPC node).
+
+    **All new code should use the native Python processors instead:**
+
+    - ``RTOFSProcessor``   (``forcing/rtofs.py``)  -- replaces
+      gen_3Dth_from_hycom, gen_nudge_from_hycom, and all NCO calls
+    - ``TidalProcessor``   (``forcing/tidal.py``)  -- replaces
+      stofs_3d_atl_tide_fac
+    - ``NWMProcessor``     (``forcing/nwm.py``)    -- replaces
+      gen_sourcesink.py subprocess call
+    - ``ADTProcessor``     (``forcing/adt.py``)    -- replaces NCO-based
+      ADT blending
+
+    If you find yourself needing this module, please open a GitHub issue
+    so the native Python path can be extended to cover your use case.
 
 Wrapped executables:
 - nos_ofs_met_file_search: Search for available met files in time window
@@ -19,12 +32,22 @@ Wrapped executables:
 import logging
 import os
 import subprocess
+import warnings
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
 log = logging.getLogger(__name__)
+
+# Issue a deprecation warning at import time so users are aware.
+warnings.warn(
+    "nos_ofs.forcing.fortran_wrapper is DEPRECATED.  "
+    "Use the native Python forcing processors (rtofs, tidal, nwm, adt) "
+    "instead.  This module will be removed in a future release.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 @dataclass
@@ -48,6 +71,9 @@ class FortranWrapper:
     """
     Base wrapper class for NOS-OFS Fortran executables.
 
+    .. deprecated:: 1.0
+        Use the native Python forcing processors instead.
+
     Provides common functionality for:
     - Finding executables in EXECnos directory
     - Creating control files
@@ -61,15 +87,11 @@ class FortranWrapper:
         work_dir: Optional[Path] = None,
         env: Optional[Dict[str, str]] = None,
     ):
-        """
-        Initialize Fortran wrapper.
-
-        Args:
-            exec_dir: Path to executables directory (EXECnos)
-            work_dir: Working directory for control files and output
-            env: Additional environment variables
-        """
-        # Find executable directory
+        warnings.warn(
+            "FortranWrapper is deprecated.  Use native Python processors.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.exec_dir = self._find_exec_dir(exec_dir)
         self.work_dir = Path(work_dir) if work_dir else Path.cwd()
         self.env = os.environ.copy()
@@ -77,30 +99,22 @@ class FortranWrapper:
             self.env.update(env)
 
     def _find_exec_dir(self, exec_dir: Optional[Path]) -> Path:
-        """Find the EXECnos directory."""
         if exec_dir and Path(exec_dir).exists():
             return Path(exec_dir)
-
-        # Try environment variable
-        if os.environ.get('EXECnos'):
-            return Path(os.environ['EXECnos'])
-
-        # Try common locations
+        if os.environ.get("EXECnos"):
+            return Path(os.environ["EXECnos"])
         search_paths = [
-            Path(os.environ.get('HOMEnos', '')) / 'exec',
-            Path('/lfs/h1/nos/nosofs/noscrub/packages/nosofs.v3.7.0/exec'),
-            Path.cwd() / 'exec',
+            Path(os.environ.get("HOMEnos", "")) / "exec",
+            Path("/lfs/h1/nos/nosofs/noscrub/packages/nosofs.v3.7.0/exec"),
+            Path.cwd() / "exec",
         ]
-
         for path in search_paths:
             if path.exists():
                 return path
-
         log.warning("EXECnos directory not found, using current directory")
         return Path.cwd()
 
     def _check_executable(self, name: str) -> Path:
-        """Check if executable exists and is runnable."""
         exe_path = self.exec_dir / name
         if not exe_path.exists():
             raise FortranExecutableNotFoundError(
@@ -114,11 +128,10 @@ class FortranWrapper:
         return exe_path
 
     def _write_control_file(self, ctl_path: Path, lines: List[str]) -> None:
-        """Write a Fortran control file."""
-        with open(ctl_path, 'w') as f:
+        with open(ctl_path, "w") as f:
             for line in lines:
                 f.write(f"{line}\n")
-        log.debug(f"Created control file: {ctl_path}")
+        log.debug("Created control file: %s", ctl_path)
 
     def _run_executable(
         self,
@@ -127,26 +140,14 @@ class FortranWrapper:
         log_file: Optional[Path] = None,
         timeout: int = 1800,
     ) -> FortranResult:
-        """
-        Run a Fortran executable with control file input.
-
-        Args:
-            exe_name: Name of executable (without path)
-            ctl_file: Path to control file
-            log_file: Path for stdout/log output
-            timeout: Timeout in seconds (default 30 min)
-
-        Returns:
-            FortranResult with execution details
-        """
         exe_path = self._check_executable(exe_name)
 
-        log.info(f"Running {exe_name}")
-        log.debug(f"  Executable: {exe_path}")
-        log.debug(f"  Control file: {ctl_file}")
+        log.info("[LEGACY] Running %s", exe_name)
+        log.debug("  Executable: %s", exe_path)
+        log.debug("  Control file: %s", ctl_file)
 
         try:
-            with open(ctl_file, 'r') as ctl_input:
+            with open(ctl_file, "r") as ctl_input:
                 result = subprocess.run(
                     [str(exe_path)],
                     stdin=ctl_input,
@@ -157,25 +158,27 @@ class FortranWrapper:
                     env=self.env,
                 )
 
-            # Write log file if specified
             if log_file:
-                with open(log_file, 'w') as f:
+                with open(log_file, "w") as f:
                     f.write(result.stdout)
                     if result.stderr:
                         f.write("\n--- STDERR ---\n")
                         f.write(result.stderr)
 
-            # Check for success
             success = result.returncode == 0
             if "COMPLETED SUCCESSFULLY" in result.stdout:
                 success = True
 
             if success:
-                log.info(f"{exe_name} completed successfully")
+                log.info("[LEGACY] %s completed successfully", exe_name)
             else:
-                log.warning(f"{exe_name} failed with return code {result.returncode}")
+                log.warning(
+                    "[LEGACY] %s failed with return code %d",
+                    exe_name,
+                    result.returncode,
+                )
                 if result.stderr:
-                    log.warning(f"STDERR: {result.stderr[:500]}")
+                    log.warning("STDERR: %s", result.stderr[:500])
 
             return FortranResult(
                 success=success,
@@ -188,7 +191,7 @@ class FortranWrapper:
             )
 
         except subprocess.TimeoutExpired:
-            log.error(f"{exe_name} timed out after {timeout} seconds")
+            log.error("[LEGACY] %s timed out after %d seconds", exe_name, timeout)
             return FortranResult(
                 success=False,
                 return_code=-1,
@@ -198,7 +201,7 @@ class FortranWrapper:
                 control_file=ctl_file,
             )
         except Exception as e:
-            log.error(f"{exe_name} failed: {e}")
+            log.error("[LEGACY] %s failed: %s", exe_name, e)
             return FortranResult(
                 success=False,
                 return_code=-1,
@@ -211,17 +214,7 @@ class FortranWrapper:
 
 class MetFileSearchWrapper(FortranWrapper):
     """
-    Wrapper for nos_ofs_met_file_search executable.
-
-    This executable searches for available meteorological files
-    within a specified time window.
-
-    Control file format (Fortran_file_search.ctl):
-        TIME_START      # Start time (YYYYMMDDHH)
-        TIME_NOWCAST_END  # Nowcast end time
-        TIME_END        # Forecast end time
-        INPUT_FILE      # File with list of available files
-        OUTPUT_FILE     # Output file with filtered list
+    DEPRECATED -- Wrapper for nos_ofs_met_file_search executable.
     """
 
     EXECUTABLE = "nos_ofs_met_file_search"
@@ -234,41 +227,20 @@ class MetFileSearchWrapper(FortranWrapper):
         available_files: List[str],
         output_file: str = "met_files.dat",
     ) -> FortranResult:
-        """
-        Search for available met files in time window.
-
-        Args:
-            time_start: Start time (YYYYMMDDHH format)
-            time_nowcast_end: Nowcast end time (YYYYMMDDHH)
-            time_end: Forecast end time (YYYYMMDDHH)
-            available_files: List of available file paths
-            output_file: Name of output file
-
-        Returns:
-            FortranResult with filtered file list
-        """
-        # Write input file list
         input_file = self.work_dir / "met_files_available.dat"
-        with open(input_file, 'w') as f:
+        with open(input_file, "w") as f:
             for fpath in available_files:
                 f.write(f"{fpath}\n")
 
-        # Create control file
         ctl_file = self.work_dir / "Fortran_file_search.ctl"
-        ctl_lines = [
-            time_start,
-            time_nowcast_end,
-            time_end,
-            str(input_file),
-            output_file,
-        ]
-        self._write_control_file(ctl_file, ctl_lines)
+        self._write_control_file(
+            ctl_file,
+            [time_start, time_nowcast_end, time_end, str(input_file), output_file],
+        )
 
-        # Run executable
         log_file = self.work_dir / "Fortran_file_search.log"
         result = self._run_executable(self.EXECUTABLE, ctl_file, log_file)
 
-        # Check for output file
         output_path = self.work_dir / output_file
         if output_path.exists():
             result.output_files.append(output_path)
@@ -276,45 +248,26 @@ class MetFileSearchWrapper(FortranWrapper):
         return result
 
     def get_filtered_files(self, result: FortranResult) -> List[str]:
-        """Parse the output file to get filtered file list."""
         if not result.success or not result.output_files:
             return []
-
         files = []
         output_file = result.output_files[0]
         if output_file.exists():
-            with open(output_file, 'r') as f:
+            with open(output_file, "r") as f:
                 for line in f:
                     line = line.strip()
-                    if line and not line.startswith('#'):
+                    if line and not line.startswith("#"):
                         files.append(line)
         return files
 
 
 class MetForcingWrapper(FortranWrapper):
-    """
-    Wrapper for nos_ofs_create_forcing_met executable.
-
-    Creates meteorological forcing files for ocean models by:
-    - Reading GRIB2 data (via wgrib2 pre-processing)
-    - Interpolating to model grid
-    - Writing model-specific NetCDF output
-
-    Control file format (Fortran_met.ctl):
-        Multiple parameters depending on model type
-    """
+    """DEPRECATED -- Wrapper for nos_ofs_create_forcing_met executable."""
 
     EXECUTABLE = "nos_ofs_create_forcing_met"
     EXECUTABLE_FVCOM = "nos_ofs_create_forcing_met_fvcom"
 
     def __init__(self, model_type: str = "SCHISM", **kwargs):
-        """
-        Initialize met forcing wrapper.
-
-        Args:
-            model_type: Ocean model type (SCHISM, ROMS, FVCOM)
-            **kwargs: Additional arguments for FortranWrapper
-        """
         super().__init__(**kwargs)
         self.model_type = model_type.upper()
 
@@ -329,116 +282,30 @@ class MetForcingWrapper(FortranWrapper):
         output_prefix: str,
         **params,
     ) -> FortranResult:
-        """
-        Create meteorological forcing files.
-
-        Args:
-            dbase: Data source (GFS, HRRR, NAM, etc.)
-            runtype: Run type (nowcast, forecast)
-            time_start: Start time (YYYYMMDDHH)
-            time_end: End time (YYYYMMDDHH)
-            met_files: List of input met file paths
-            grid_file: Model grid file path
-            output_prefix: Prefix for output files
-            **params: Additional model-specific parameters
-
-        Returns:
-            FortranResult with created forcing files
-        """
-        # Build control file based on model type
         if self.model_type == "FVCOM":
             exe_name = self.EXECUTABLE_FVCOM
-            ctl_lines = self._build_fvcom_ctl(
-                dbase, runtype, time_start, time_end,
-                met_files, grid_file, output_prefix, **params
-            )
         else:
             exe_name = self.EXECUTABLE
-            ctl_lines = self._build_schism_ctl(
-                dbase, runtype, time_start, time_end,
-                met_files, grid_file, output_prefix, **params
-            )
 
-        # Write control file
+        lines = [dbase, runtype, time_start, time_end, grid_file, output_prefix, str(len(met_files))]
+        lines.extend(met_files)
+        for key, value in params.items():
+            lines.append(f"{key}={value}")
+
         ctl_file = self.work_dir / "Fortran_met.ctl"
-        self._write_control_file(ctl_file, ctl_lines)
+        self._write_control_file(ctl_file, lines)
 
-        # Run executable
         log_file = self.work_dir / f"{dbase}_Fortran.log"
         result = self._run_executable(exe_name, ctl_file, log_file)
 
-        # Find output files
-        output_pattern = f"{output_prefix}*.nc"
-        for f in self.work_dir.glob(output_pattern):
+        for f in self.work_dir.glob(f"{output_prefix}*.nc"):
             result.output_files.append(f)
 
         return result
 
-    def _build_schism_ctl(
-        self,
-        dbase: str,
-        runtype: str,
-        time_start: str,
-        time_end: str,
-        met_files: List[str],
-        grid_file: str,
-        output_prefix: str,
-        **params,
-    ) -> List[str]:
-        """Build control file for SCHISM/ROMS."""
-        lines = [
-            dbase,
-            runtype,
-            time_start,
-            time_end,
-            grid_file,
-            output_prefix,
-            str(len(met_files)),
-        ]
-        lines.extend(met_files)
-
-        # Add optional parameters
-        for key, value in params.items():
-            lines.append(f"{key}={value}")
-
-        return lines
-
-    def _build_fvcom_ctl(
-        self,
-        dbase: str,
-        runtype: str,
-        time_start: str,
-        time_end: str,
-        met_files: List[str],
-        grid_file: str,
-        output_prefix: str,
-        **params,
-    ) -> List[str]:
-        """Build control file for FVCOM."""
-        # FVCOM has different control file format
-        lines = [
-            dbase,
-            runtype,
-            time_start,
-            time_end,
-            grid_file,
-            output_prefix,
-            str(len(met_files)),
-        ]
-        lines.extend(met_files)
-
-        return lines
-
 
 class RiverForcingWrapper(FortranWrapper):
-    """
-    Wrapper for nos_ofs_create_forcing_river executable.
-
-    Creates river forcing files from:
-    - National Water Model (NWM) data
-    - USGS gauge data (fallback)
-    - Climatology (fallback)
-    """
+    """DEPRECATED -- Wrapper for nos_ofs_create_forcing_river executable."""
 
     EXECUTABLE = "nos_ofs_create_forcing_river"
 
@@ -450,46 +317,18 @@ class RiverForcingWrapper(FortranWrapper):
         river_source: str = "NWM",
         **params,
     ) -> FortranResult:
-        """
-        Create river forcing files.
-
-        Args:
-            river_ctl_file: River control file path
-            time_start: Start time (YYYYMMDDHH)
-            time_end: End time (YYYYMMDDHH)
-            river_source: Data source (NWM, USGS, CLIM)
-            **params: Additional parameters
-
-        Returns:
-            FortranResult with river forcing files
-        """
         ctl_file = self.work_dir / "Fortran_river.ctl"
-        ctl_lines = [
-            river_ctl_file,
-            time_start,
-            time_end,
-            river_source,
-        ]
+        ctl_lines = [river_ctl_file, time_start, time_end, river_source]
         for key, value in params.items():
             ctl_lines.append(f"{value}")
-
         self._write_control_file(ctl_file, ctl_lines)
 
         log_file = self.work_dir / "river_Fortran.log"
-        result = self._run_executable(self.EXECUTABLE, ctl_file, log_file)
-
-        return result
+        return self._run_executable(self.EXECUTABLE, ctl_file, log_file)
 
 
 class OBCForcingWrapper(FortranWrapper):
-    """
-    Wrapper for nos_ofs_create_forcing_obc executables.
-
-    Creates ocean boundary condition files from:
-    - RTOFS (Real-Time Ocean Forecast System)
-    - HYCOM
-    - Climatology
-    """
+    """DEPRECATED -- Wrapper for nos_ofs_create_forcing_obc executables."""
 
     EXECUTABLES = {
         "SCHISM": "nos_ofs_create_forcing_obc_schism",
@@ -510,46 +349,23 @@ class OBCForcingWrapper(FortranWrapper):
         obc_source: str = "RTOFS",
         **params,
     ) -> FortranResult:
-        """
-        Create ocean boundary condition files.
-
-        Args:
-            obc_ctl_file: OBC control file path
-            time_start: Start time (YYYYMMDDHH)
-            time_end: End time (YYYYMMDDHH)
-            obc_source: Data source (RTOFS, HYCOM, CLIM)
-            **params: Additional parameters
-
-        Returns:
-            FortranResult with OBC files
-        """
         exe_name = self.EXECUTABLES.get(self.model_type, self.EXECUTABLES["SCHISM"])
-
         ctl_file = self.work_dir / "Fortran_obc.ctl"
-        ctl_lines = [
-            obc_ctl_file,
-            time_start,
-            time_end,
-            obc_source,
-        ]
+        ctl_lines = [obc_ctl_file, time_start, time_end, obc_source]
         for key, value in params.items():
             ctl_lines.append(f"{value}")
-
         self._write_control_file(ctl_file, ctl_lines)
 
         log_file = self.work_dir / "obc_Fortran.log"
-        result = self._run_executable(exe_name, ctl_file, log_file)
-
-        return result
+        return self._run_executable(exe_name, ctl_file, log_file)
 
 
 class TidalForcingWrapper(FortranWrapper):
     """
-    Wrapper for tidal forcing executables.
+    DEPRECATED -- Wrapper for tidal forcing executables.
 
-    - nos_ofs_create_forcing_obc_tides: Create tidal boundary forcing
-    - nos_ofs_create_tide_fac_schism: Calculate nodal factors
-    - nos_ofs_adjust_tides: Adjust tidal constituents
+    Use ``TidalProcessor`` (``forcing/tidal.py``) which implements native
+    Python nodal factor computation instead.
     """
 
     def create_tidal_forcing(
@@ -559,34 +375,15 @@ class TidalForcingWrapper(FortranWrapper):
         constituents: List[str],
         **params,
     ) -> FortranResult:
-        """
-        Create tidal boundary forcing files.
-
-        Args:
-            bctides_template: Template bctides.in file
-            time_ref: Reference time for nodal factors
-            constituents: List of tidal constituents
-            **params: Additional parameters
-
-        Returns:
-            FortranResult with tidal forcing files
-        """
         ctl_file = self.work_dir / "Fortran_tides.ctl"
-        ctl_lines = [
-            bctides_template,
-            time_ref,
-            str(len(constituents)),
-        ]
+        ctl_lines = [bctides_template, time_ref, str(len(constituents))]
         ctl_lines.extend(constituents)
-
         self._write_control_file(ctl_file, ctl_lines)
 
         log_file = self.work_dir / "tides_Fortran.log"
-        result = self._run_executable(
+        return self._run_executable(
             "nos_ofs_create_forcing_obc_tides", ctl_file, log_file
         )
-
-        return result
 
     def calculate_nodal_factors(
         self,
@@ -594,32 +391,13 @@ class TidalForcingWrapper(FortranWrapper):
         month: int = 1,
         day: int = 1,
     ) -> FortranResult:
-        """
-        Calculate tidal nodal factors for a given date.
-
-        Args:
-            year: Year
-            month: Month (default 1)
-            day: Day (default 1)
-
-        Returns:
-            FortranResult with nodal factor output
-        """
         ctl_file = self.work_dir / "Fortran_tide_fac.ctl"
-        ctl_lines = [
-            str(year),
-            str(month),
-            str(day),
-        ]
-
-        self._write_control_file(ctl_file, ctl_lines)
+        self._write_control_file(ctl_file, [str(year), str(month), str(day)])
 
         log_file = self.work_dir / "tide_fac_Fortran.log"
-        result = self._run_executable(
+        return self._run_executable(
             "nos_ofs_create_tide_fac_schism", ctl_file, log_file
         )
-
-        return result
 
     def adjust_tides(
         self,
@@ -628,34 +406,16 @@ class TidalForcingWrapper(FortranWrapper):
         year: int,
         apply_nodal: int = 1,
     ) -> FortranResult:
-        """
-        Adjust tidal harmonic constants with nodal factors.
-
-        Args:
-            hc_file: Input harmonic constants file
-            output_file: Output adjusted file
-            year: Year for nodal factor calculation
-            apply_nodal: Flag to apply nodal factors (1=yes, 0=no)
-
-        Returns:
-            FortranResult with adjusted tidal file
-        """
         ctl_file = self.work_dir / "Fortran_Modeltide.ctl"
-        ctl_lines = [
-            hc_file,
-            output_file,
-            str(year),
-            str(apply_nodal),
-        ]
-
-        self._write_control_file(ctl_file, ctl_lines)
+        self._write_control_file(
+            ctl_file, [hc_file, output_file, str(year), str(apply_nodal)]
+        )
 
         log_file = self.work_dir / "Fortran_Modeltide.log"
         result = self._run_executable("nos_ofs_adjust_tides", ctl_file, log_file)
 
         if Path(output_file).exists():
             result.output_files.append(Path(output_file))
-
         return result
 
 
@@ -666,17 +426,17 @@ def get_fortran_wrappers(
     work_dir: Optional[Path] = None,
 ) -> Dict[str, FortranWrapper]:
     """
-    Get all Fortran wrappers for an OFS system.
+    DEPRECATED -- Get all Fortran wrappers for an OFS system.
 
-    Args:
-        model_type: Ocean model type (SCHISM, ROMS, FVCOM)
-        exec_dir: Path to executables directory
-        work_dir: Working directory
-
-    Returns:
-        Dictionary of wrapper instances
+    Use the native Python forcing processors instead.
     """
-    kwargs = {"exec_dir": exec_dir, "work_dir": work_dir}
+    warnings.warn(
+        "get_fortran_wrappers() is deprecated.  "
+        "Use native Python processors (RTOFSProcessor, TidalProcessor, etc.)",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    kwargs: Dict[str, Any] = {"exec_dir": exec_dir, "work_dir": work_dir}
 
     return {
         "met_search": MetFileSearchWrapper(**kwargs),

@@ -1,0 +1,208 @@
+# STOFS 2D Global Configuration
+# Global Surge and Tide Operational Forecast System - 2D
+#
+# Inherits from base ADCIRC configuration and overrides specific values.
+# This config maps to STOFS-2D-Global shell script environment variables.
+
+_base: adcirc
+
+system:
+  name: stofs_2d_glo
+  description: "Global Surge and Tide Operational Forecast System (2D)"
+  region: global
+  framework: stofs
+  version: "1.1.1"
+  # Shell prefix for file naming (RUN in nosofs, used as prefix)
+  prefix: stofs_2d_glo
+
+# Grid configuration - maps to shell variables
+grid:
+  type: unstructured
+  # ADCIRC grid files
+  files:
+    mesh: fort.14             # ADCIRC mesh (node coords + element connectivity)
+    attributes: fort.13       # Nodal attributes (Manning's n, primitive weighting)
+  # Global domain bounds
+  domain:
+    lon_min: -180.0
+    lon_max: 180.0
+    lat_min: -90.0
+    lat_max: 90.0
+  # Approximate mesh dimensions for the global grid
+  n_nodes: 4820788
+  n_elements: 9414556
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs              # Global Forecast System
+    fallback: null
+    format: owi_netcdf        # OWI NetCDF (fort.221/222/225.nc)
+    gfs:
+      resolution: "0.25"     # GFS 0.25 degree global
+      levels: [10]            # Wind at 10m only (2D model)
+    variables:
+      - PRMSL                 # Pressure reduced to MSL
+      - UGRD                  # U-component of wind at 10m
+      - VGRD                  # V-component of wind at 10m
+
+  river:
+    enabled: false            # Global 2D domain, no river forcing
+
+  ocean:
+    enabled: false            # Global domain, no open ocean boundary
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      fort15_template: fort.15.template
+
+# Model physics and runtime configuration
+model:
+  executable: padcirc
+  prep_executable: adcprep
+  physics:
+    dt: 2.0                   # Timestep in seconds
+    nws: 12                   # OWI NetCDF atmospheric forcing
+    ncor: 1                   # Spatially varying Coriolis
+    ntip: 2                   # Tidal potential with self-attraction/loading
+    nramp: 1                  # Hyperbolic tangent ramp
+    dramp: 3.0                # Ramp period (days)
+    nolibf: 2                 # Hybrid nonlinear bottom friction
+    nolifa: 2                 # Finite amplitude with wetting/drying
+    tau0: -3.0                # Spatially varying GWCE weighting (from fort.13)
+    cf: 0.0025                # Bottom friction coefficient
+    hbreak: 1.0               # Hybrid friction break depth (meters)
+    ftheta: 10.0              # Hybrid friction factor theta
+    fgamma: 0.3333            # Hybrid friction factor gamma
+    eslm: -0.20               # Smagorinsky eddy viscosity
+    h0: 0.05                  # Minimum depth for wetting/drying
+    slam0: 0.0                # CPP reference longitude
+    sfea0: 0.0                # CPP reference latitude
+    ihot: 67                  # Binary hotstart format
+    nwp: 2                    # Nodal attributes from fort.13
+    nodal_attributes:
+      - mannings_n_at_sea_floor
+      - primitive_weighting_in_continuity_equation
+    wtiminc: 3600             # Met forcing time increment
+  run:
+    spinup_days: 15.0         # Tidal spinup for cold start
+    nowcast_hours: 6          # 6-hour nowcast window
+    forecast_days: 7.5        # 7.5-day forecast (180 hours)
+    forecast_hours: 180
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: stofs_2d_glo
+  stations:
+    enabled: true
+    file: fort.61.nc
+    interval: 360.0           # 6 minutes
+  fields_2d:
+    enabled: true
+    file: fort.63.nc
+    interval: 3600.0          # 1 hour
+    variables:
+      - zeta                  # Water surface elevation only
+  max_envelope:
+    enabled: true
+    file: maxele.63.nc
+
+# Post-processing configuration
+post_processing:
+  bias_correction:
+    enabled: true
+    method: selective_mpi
+    search_radius_deg: 5.0
+    idw_power: 2
+    min_stations: 3
+    max_bias_threshold: 2.0
+  anomaly:
+    enabled: true             # surge = total - tide-only
+  grib2:
+    enabled: true
+
+# Computational resources for STOFS-2D-Global
+resources:
+  nprocs: 2400                # Number of MPI processes for padcirc
+  memory_gb: 800
+  walltime_hours: 3
+
+# STOFS-2D workflow stages (19 J-jobs total)
+stages:
+  # Cold start (run once or periodically)
+  - cold_adcprep
+  - cold_spinup
+  # Tidal runs (no atmospheric forcing)
+  - tide_nowcast
+  - tide_forecast1
+  - tide_forecast2
+  # GFS forcing preparation
+  - gfs_ncst
+  - gfs_fcst1
+  - gfs_fcst2
+  # Surface runs (with atmospheric forcing)
+  - surf_nowcast
+  - surf_forecast1
+  - surf_forecast2
+  # Post-processing
+  - post_ncrcat
+  - post_ncdiff
+  - post_bias_correction
+  - post_anomaly
+  - post_grib2
+  - gempak
+
+# Legacy shell script execution configuration
+legacy:
+  enabled: true
+  ush_dir: ""
+  fix_dir: ""
+  scripts:
+    gfs: true                 # stofs_2d_glo_create_surface_forcing_gfs.sh
+    tides: true               # Uses tide_fac executable
+  script_names:
+    gfs: stofs_2d_glo_create_surface_forcing_gfs.sh
+
+# Environment variable mappings for shell scripts
+shell_mappings:
+  framework: stofs
+  env_prefix: stofs2d
+  variables:
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+
+    # Grid files
+    FORT14: grid.files.mesh
+    FORT13: grid.files.attributes
+
+    # Grid dimensions
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+
+    # Domain bounds
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+
+    # ADCIRC parameters
+    NWS: model.physics.nws
+    IHOT: model.physics.ihot
+    DT: model.physics.dt
+    RNDAY: model.run.forecast_days
+
+    # Computed values
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours

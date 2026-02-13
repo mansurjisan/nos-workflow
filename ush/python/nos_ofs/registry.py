@@ -2,7 +2,7 @@
 OFS Registry and Factory
 
 Provides a factory for creating OFS model instances based on system name.
-Automatically selects the correct model implementation (SCHISM, FVCOM, ROMS).
+Automatically selects the correct model implementation (SCHISM, FVCOM, ROMS, ADCIRC).
 """
 
 from pathlib import Path
@@ -55,6 +55,9 @@ class OFSRegistry:
         "wcofs": ModelType.ROMS,
         "wcofs_da": ModelType.ROMS,
         "wcofs_free": ModelType.ROMS,
+
+        # ADCIRC-based systems
+        "stofs_2d_glo": ModelType.ADCIRC,
     }
 
     # Cache for model classes (lazy loaded)
@@ -76,7 +79,7 @@ class OFSRegistry:
             config_file: Path to YAML config file (optional)
 
         Returns:
-            Model instance (SCHISMModel, FVCOMModel, or ROMSModel)
+            Model instance (SCHISMModel, FVCOMModel, ROMSModel, or ADCIRCModel)
 
         Raises:
             ValueError: If OFS name is unknown
@@ -112,14 +115,17 @@ class OFSRegistry:
         """Get or import the model class for a model type."""
         if model_type not in cls._model_classes:
             if model_type == ModelType.SCHISM:
-                from .models.schism import SCHISMModel
+                from .models.schism_model import SCHISMModel
                 cls._model_classes[model_type] = SCHISMModel
             elif model_type == ModelType.FVCOM:
-                from .models.fvcom import FVCOMModel
+                from .models.fvcom_model import FVCOMModel
                 cls._model_classes[model_type] = FVCOMModel
             elif model_type == ModelType.ROMS:
-                from .models.roms import ROMSModel
+                from .models.roms_model import ROMSModel
                 cls._model_classes[model_type] = ROMSModel
+            elif model_type == ModelType.ADCIRC:
+                from .models.adcirc_model import ADCIRCModel
+                cls._model_classes[model_type] = ADCIRCModel
             else:
                 raise ValueError(f"Unsupported model type: {model_type}")
 
@@ -128,11 +134,22 @@ class OFSRegistry:
     @classmethod
     def _find_ofs_config(cls, ofs_name: str) -> Optional[Path]:
         """Find the default YAML config for an OFS."""
-        # Look in ofs/ directory
+        # Look in ofs/ directory (legacy location)
         ofs_dir = Path(__file__).parent / "ofs"
         config_file = ofs_dir / f"{ofs_name}.yaml"
         if config_file.exists():
             return config_file
+
+        # Look in parm/systems/ directory (standard location)
+        # Search up from this file to find the parm directory
+        base = Path(__file__).parent
+        for search_root in [base, base.parent, base.parent.parent, base.parent.parent.parent]:
+            parm_dir = search_root / "parm" / "systems"
+            if parm_dir.exists():
+                config_file = parm_dir / f"{ofs_name}.yaml"
+                if config_file.exists():
+                    return config_file
+
         return None
 
     @classmethod

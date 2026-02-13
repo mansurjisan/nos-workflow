@@ -2,6 +2,7 @@
 # Delaware Bay Operational Forecast System
 #
 # Inherits from base ROMS configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/dbofs.ctl
 
 _base: roms
 
@@ -33,8 +34,8 @@ grid:
 # Forcing configuration
 forcing:
   atmospheric:
-    primary: nam
-    fallback: gfs
+    primary: nam                # NAM 12km
+    fallback: gfs               # GFS 0.25 degree
     variables:
       - Uwind
       - Vwind
@@ -51,10 +52,19 @@ forcing:
     sources:
       - name: delaware_river
         usgs_id: "01463500"
+        description: "Delaware River at Trenton, NJ"
       - name: schuylkill_river
         usgs_id: "01474500"
+        description: "Schuylkill River at Philadelphia, PA"
       - name: christina_river
         usgs_id: "01478000"
+        description: "Christina River at Coochs Bridge, DE"
+      - name: brandywine_creek
+        usgs_id: "01481000"
+        description: "Brandywine Creek at Chadds Ford, PA"
+      - name: rancocas_creek
+        usgs_id: "01467000"
+        description: "Rancocas Creek near Pemberton, NJ"
 
   ocean:
     enabled: true
@@ -65,6 +75,7 @@ forcing:
 
   tidal:
     enabled: true
+    database: tpxo9
     constituents:
       - M2
       - S2
@@ -80,16 +91,32 @@ model:
   executable: romsM_dbofs
   ocean_model: ROMS
   physics:
-    dt: 4.0
+    dt: 4.0                     # DELT_MODEL
     ndtfast: 20
+  vertical:
+    n: 20
     vtransform: 2
     vstretching: 4
     theta_s: 5.0
     theta_b: 2.0
     tcline: 10.0
+    hc: 10.0
   run:
-    hindcast_days: 0.25       # 6-hour nowcast
-    forecast_days: 2.0        # 2-day forecast
+    hindcast_days: 0.25         # 6-hour nowcast
+    forecast_days: 2.0          # 48-hour forecast
+
+# Static input files
+static_files:
+  grid: dbofs_grid.nc
+  grid_forcing: dbofs_forcing.nc
+  river_ctl: dbofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  obc_ctl: dbofs.obc.ctl
+  obc_clim: nos.clim.WOA05.nc
+  station_in: dbofs.station.in
+  runtime_ctl: dbofs.ocean.in
+  hc_file_obc: dbofs.HC.nc
+  hc_file_ofs: dbofs.HC.nc
 
 # Output configuration
 output:
@@ -97,11 +124,19 @@ output:
   prefix: dbofs
   stations:
     enabled: true
-    interval: 360             # 6 minutes
+    interval: 360
   fields:
-    interval: 3600            # 1 hour
+    interval: 3600
+    variables:
+      - zeta
+      - ubar
+      - vbar
+      - temp
+      - salt
+      - u
+      - v
   restart:
-    interval: 21600           # 6 hours
+    interval: 21600
 
 # Computational resources
 resources:
@@ -124,13 +159,19 @@ shell_mappings:
     RUN: system.name
     PREFIXNOS: system.prefix
     OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
     MINLON: grid.domain.lon_min
     MAXLON: grid.domain.lon_max
     MINLAT: grid.domain.lat_min
     MAXLAT: grid.domain.lat_max
     DBASE_MET_NOW: forcing.atmospheric.primary
     DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
     DBASE_TS_NOW: forcing.ocean.obc.ts_source
     DBASE_TS_FOR: forcing.ocean.obc.ts_source
-    DELT_MODEL: model.physics.dt
     TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 1
+    LEN_FORECAST: 48
+    IGRD_MET: 0
+    IGRD_OBC: 0

@@ -6,48 +6,57 @@ This package provides forcing data processors for NOS OFS models:
 - Ocean: RTOFS, ADT
 - River: NWM, St. Lawrence
 - Tidal: TPXO9, FES2014
-- Fortran Wrappers: Production executable wrappers
+- Fortran Wrappers: LEGACY / DEPRECATED -- kept for backward compatibility
 
-Each processor follows the ForcingProcessor interface and can be
-used with any SCHISM-based OFS (STOFS-3D-ATL, SECOFS, etc.).
+Each processor is **fully native Python** (xarray, netCDF4, numpy, scipy).
+No subprocess calls to NCO tools (ncks, ncrcat, ncap2, ncatted, ncrename)
+or Fortran executables (gen_3Dth_from_hycom, gen_nudge_from_hycom, tide_fac)
+are required.
 
 Usage:
     from nos_ofs.forcing import GFSProcessor, NWMProcessor, RTOFSProcessor
 
     # Create processors with config
-    gfs = GFSProcessor(config, input_path, output_path)
-    result = gfs.process()
+    rtofs = RTOFSProcessor(config, input_path, output_path)
+    result = rtofs.process()
 
     if result.success:
         print(f"Created files: {result.output_files}")
-
-    # Or use Fortran wrappers for production compatibility
-    from nos_ofs.forcing import get_fortran_wrappers
-
-    wrappers = get_fortran_wrappers(model_type="SCHISM", exec_dir="/path/to/exec")
-    result = wrappers["met_search"].search(time_start, time_end, ...)
 """
+
+import warnings as _warnings
 
 from ..base import ForcingProcessor, ForcingResult
 from .gfs import GFSProcessor
 from .hrrr import HRRRProcessor
 from .nam import NAMProcessor
-from .rtofs import RTOFSProcessor, RTOFSProcessingConfig
+from .rtofs import RTOFSProcessor, RTOFSProcessingConfig, RTOFSFileSet
 from .adt import ADTProcessor
 from .nwm import NWMProcessor
 from .st_lawrence import StLawrenceProcessor
-from .tidal import TidalProcessor
-from .fortran_wrapper import (
-    FortranWrapper,
-    FortranResult,
-    FortranExecutableNotFoundError,
-    MetFileSearchWrapper,
-    MetForcingWrapper,
-    RiverForcingWrapper,
-    OBCForcingWrapper,
-    TidalForcingWrapper,
-    get_fortran_wrappers,
-)
+from .tidal import TidalProcessor, compute_nodal_corrections
+
+# LEGACY Fortran wrappers -- imported lazily to avoid deprecation warnings
+# on every ``import nos_ofs.forcing``.  Explicitly importing them still works.
+
+
+def __getattr__(name):
+    """Lazy-load deprecated Fortran wrapper symbols."""
+    _fortran_names = {
+        "FortranWrapper",
+        "FortranResult",
+        "FortranExecutableNotFoundError",
+        "MetFileSearchWrapper",
+        "MetForcingWrapper",
+        "RiverForcingWrapper",
+        "OBCForcingWrapper",
+        "TidalForcingWrapper",
+        "get_fortran_wrappers",
+    }
+    if name in _fortran_names:
+        from . import fortran_wrapper as _fw
+        return getattr(_fw, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 # Aliases for compatibility
 BaseForcingProcessor = ForcingProcessor
@@ -64,13 +73,15 @@ __all__ = [
     # Ocean
     "RTOFSProcessor",
     "RTOFSProcessingConfig",
+    "RTOFSFileSet",
     "ADTProcessor",
     # River
     "NWMProcessor",
     "StLawrenceProcessor",
     # Tidal
     "TidalProcessor",
-    # Fortran Wrappers
+    "compute_nodal_corrections",
+    # LEGACY Fortran Wrappers (deprecated -- lazy loaded)
     "FortranWrapper",
     "FortranResult",
     "FortranExecutableNotFoundError",

@@ -1,0 +1,181 @@
+# GOMOFS Configuration
+# Gulf of Maine Operational Forecast System
+#
+# Inherits from base ROMS configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/gomofs.ctl
+#
+# GOMOFS covers the Gulf of Maine, Georges Bank, and adjacent shelf waters.
+# It is the largest-domain ROMS OFS in NOS.
+
+_base: roms
+
+system:
+  name: gomofs
+  description: "Gulf of Maine Operational Forecast System"
+  region: northeast
+  framework: comf
+  version: "3.7.0"
+  prefix: gomofs
+
+# Grid configuration - ROMS curvilinear grid
+grid:
+  type: curvilinear
+  n_xi: 280
+  n_eta: 240
+  n_levels: 30
+  files:
+    grid: gomofs_grid.nc
+    forcing: gomofs_forcing.nc
+  # Gulf of Maine domain bounds
+  domain:
+    lon_min: -72.0
+    lon_max: -63.0
+    lat_min: 39.5
+    lat_max: 46.0
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs                # GFS for larger domain
+    fallback: nam
+    variables:
+      - Uwind
+      - Vwind
+      - Pair
+      - Tair
+      - Qair
+      - rain
+      - swrad
+      - lwrad
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: penobscot_river
+        usgs_id: "01034500"
+        description: "Penobscot River at West Enfield, ME"
+      - name: kennebec_river
+        usgs_id: "01049500"
+        description: "Kennebec River at The Forks, ME"
+      - name: androscoggin_river
+        usgs_id: "01059000"
+        description: "Androscoggin River near Auburn, ME"
+      - name: merrimack_river
+        usgs_id: "01100000"
+        description: "Merrimack River at Lowell, MA"
+      - name: connecticut_river
+        usgs_id: "01184000"
+        description: "Connecticut River at Thompsonville, CT"
+      - name: st_john_river
+        usgs_id: "01014000"
+        description: "St. John River at Fort Kent, ME"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Model physics
+model:
+  executable: romsM_gomofs
+  ocean_model: ROMS
+  physics:
+    dt: 6.0                     # DELT_MODEL (larger domain = larger dt)
+    ndtfast: 30
+  vertical:
+    n: 30                       # 30 levels for deeper shelf waters
+    vtransform: 2
+    vstretching: 4
+    theta_s: 5.0
+    theta_b: 2.0
+    tcline: 20.0
+    hc: 20.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 3.0          # 72-hour forecast
+
+# Static input files
+static_files:
+  grid: gomofs_grid.nc
+  grid_forcing: gomofs_forcing.nc
+  river_ctl: gomofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  obc_ctl: gomofs.obc.ctl
+  obc_clim: nos.clim.WOA05.nc
+  station_in: gomofs.station.in
+  runtime_ctl: gomofs.ocean.in
+  hc_file_obc: gomofs.HC.nc
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: gomofs
+  stations:
+    enabled: true
+    interval: 360
+  fields:
+    interval: 3600
+    variables:
+      - zeta
+      - ubar
+      - vbar
+      - temp
+      - salt
+      - u
+      - v
+  restart:
+    interval: 21600
+
+# Computational resources
+resources:
+  nprocs: 240                   # Larger domain needs more cores
+  memory_gb: 400
+  walltime_hours: 2
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 1
+    LEN_FORECAST: 72
+    IGRD_MET: 0
+    IGRD_OBC: 0

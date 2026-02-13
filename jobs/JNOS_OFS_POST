@@ -145,9 +145,50 @@ case "${OFS_FRAMEWORK}" in
         esac
         ;;
     comf|*)
-        # nosofs/COMF single post-processing stage
-        echo "INFO: COMF post-processing not yet implemented in unified package"
-        echo "INFO: Please use legacy nosofs post-processing scripts"
+        # nosofs/COMF single post-processing stage via Python orchestration
+        echo "INFO: Running COMF post-processing via nos_ofs.postprocessing"
+
+        # Locate Python package
+        for search_path in \
+            "${HOMEnos}/ush/python" \
+            "${HOMEnos}/nos_ofs/ush/python" \
+            "$(dirname $0)/../ush/python"
+        do
+            if [ -d "$search_path/nos_ofs" ]; then
+                export PYnos_ofs="$search_path"
+                break
+            fi
+        done
+
+        if [ -n "${PYnos_ofs:-}" ]; then
+            export PYTHONPATH="${PYnos_ofs}:${PYTHONPATH:-}"
+            python3 -c "
+from nos_ofs.orchestration import PostOrchestrator
+from nos_ofs.config import OFSConfig
+import os, sys
+
+config_path = os.environ.get('OFS_CONFIG', '')
+if config_path and os.path.isfile(config_path):
+    config = OFSConfig.from_yaml(config_path)
+else:
+    # Minimal config object from environment
+    class EnvConfig:
+        pass
+    config = EnvConfig()
+
+post = PostOrchestrator(config, framework='comf')
+result = post.run_all(fail_fast=False)
+print(result.summary())
+sys.exit(0 if result.success else 1)
+"
+            export err=$?
+            if [ $err -ne 0 ]; then
+                echo "WARNING: Python post-processing returned non-zero exit code: $err"
+                echo "WARNING: Some post-processing steps may have failed (non-fatal)"
+            fi
+        else
+            echo "WARNING: nos_ofs Python package not found; COMF post-processing skipped"
+        fi
         ;;
 esac
 

@@ -1,0 +1,134 @@
+# LOOFS Configuration
+# Lake Ontario Operational Forecast System
+#
+# Great Lakes system: no ocean BC, no tides, HRRR primary atmos
+
+_base: fvcom
+
+system:
+  name: loofs
+  description: "Lake Ontario Operational Forecast System"
+  region: great_lakes
+  framework: comf
+  version: "3.7.0"
+  prefix: loofs
+  casename: loofs
+
+grid:
+  type: unstructured
+  n_nodes: 8500
+  n_elements: 15000
+  n_levels: 21
+  files:
+    horizontal: loofs_grd.dat
+    depth: loofs_dep.dat
+    obc: loofs_obc.dat
+    sigma: loofs_sigma.dat
+    coriolis: loofs_cor.dat
+    sponge: loofs_spg.dat
+    station: loofs_station.dat
+  domain:
+    lon_min: -80.0
+    lon_max: -75.5
+    lat_min: 43.0
+    lat_max: 44.4
+
+forcing:
+  atmospheric:
+    primary: hrrr
+    fallback: gfs
+    blend_enabled: true
+    met_num: 2
+    secondary: gfs
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: niagara_river
+        description: "Niagara River inflow from Lake Erie"
+      - name: oswego_river
+        usgs_id: "04249000"
+        description: "Oswego River at Lock 7, Oswego, NY"
+      - name: genesee_river
+        usgs_id: "04231600"
+        description: "Genesee River at Ford St Bridge, Rochester, NY"
+      - name: black_river
+        usgs_id: "04260500"
+        description: "Black River at Watertown, NY"
+
+  ocean:
+    enabled: false
+
+  tidal:
+    enabled: false
+
+model:
+  executable: fvcom_loofs
+  ocean_model: FVCOM
+  physics:
+    dt: 0.5
+    dti: 5.0
+    isplit: 10
+    bottom_roughness: 0.001
+    horizontal_mixing: smagorinsky
+    vertical_mixing: mellor_yamada25
+  vertical:
+    kb: 21
+    ksl: 1
+    p_sigma: 1.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 5.0
+
+output:
+  format: netcdf
+  prefix: loofs
+  stations:
+    enabled: true
+    interval: 360
+  fields:
+    interval: 3600
+  restart:
+    interval: 21600
+
+resources:
+  nprocs: 240
+  memory_gb: 400
+  walltime_hours: 2
+
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_MET_FOR2: forcing.atmospheric.secondary
+    MET_NUM: forcing.atmospheric.met_num
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 0
+    LEN_FORECAST: 120

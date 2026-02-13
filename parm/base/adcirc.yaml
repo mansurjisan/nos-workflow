@@ -1,0 +1,123 @@
+# Base configuration for all ADCIRC-based OFS systems
+# Systems inherit from this via _base: adcirc
+#
+# ADCIRC systems: STOFS-2D-Global
+
+model:
+  type: adcirc
+  version: "55"
+
+  # Shell script variable mapping
+  # OCEAN_MODEL = "ADCIRC"
+  ocean_model: ADCIRC
+
+  # ADCIRC executables
+  executable: padcirc
+  prep_executable: adcprep
+
+  # Default physics parameters
+  physics:
+    dt: 2.0                   # Timestep (seconds) - override per system
+    nws: 12                   # Meteorological forcing: 12=OWI NetCDF
+    ncor: 1                   # Coriolis: 0=constant, 1=spatially varying
+    ntip: 2                   # Tidal potential: 0=none, 1=forcing, 2=with SAL
+    nramp: 1                  # Ramp function: 0=none, 1=hyperbolic tangent
+    dramp: 3.0                # Ramp period (days)
+    nolibf: 2                 # Bottom friction: 0=linear, 1=quadratic, 2=hybrid
+    nolifa: 2                 # Finite amplitude: 0=off, 1=on, 2=wetting/drying
+    nolica: 0                 # Spatial advection
+    nolicat: 0                # Time derivative advection
+    tau0: -3.0                # GWCE weighting (-3=spatially varying via fort.13)
+    cf: 0.0025                # Bottom friction coefficient
+    eslm: -0.20               # Smagorinsky coefficient (negative=spatially varying)
+    h0: 0.05                  # Minimum water depth for wetting/drying (meters)
+    slam0: 0.0                # Reference longitude for CPP projection
+    sfea0: 0.0                # Reference latitude for CPP projection
+    ihot: 67                  # Hotstart flag: 0=cold, 67=binary, 68=NetCDF
+    nwp: 2                    # Number of nodal attributes from fort.13
+    nodal_attributes:
+      - mannings_n_at_sea_floor
+      - primitive_weighting_in_continuity_equation
+    wtiminc: 3600             # Met forcing time increment (seconds)
+
+  # 2D barotropic - no vertical discretization
+  vertical:
+    mode: 2d                  # Depth-averaged, no vertical levels
+    im: 0                     # Model type: 0=2DDI barotropic
+
+  # Default run configuration
+  run:
+    spinup_days: 15.0         # Tidal spinup period for cold start
+    nowcast_hours: 6          # Nowcast lookback period
+    forecast_days: 7.5        # Total forecast length (180 hours)
+    # Explicit hour values
+    forecast_hours: 180
+
+# Default forcing sources for ADCIRC
+forcing:
+  atmospheric:
+    primary: gfs              # Global Forecast System
+    fallback: null            # No fallback for global domain
+    format: owi_netcdf        # OWI NetCDF (fort.221/222/225.nc)
+    variables:
+      - PRMSL                 # Pressure reduced to MSL
+      - UGRD                  # U-component of wind at 10m
+      - VGRD                  # V-component of wind at 10m
+
+  river:
+    enabled: false            # Global 2D domain, no river forcing
+
+  ocean:
+    enabled: false            # Global domain, no open ocean boundary
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Default output configuration
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    file: fort.61.nc
+    interval: 360.0           # Station output every 6 minutes
+  fields_2d:
+    enabled: true
+    file: fort.63.nc
+    interval: 3600.0          # Hourly field output
+    variables:
+      - zeta                  # Water surface elevation (2D only)
+  max_envelope:
+    enabled: true
+    file: maxele.63.nc
+  intervals:
+    hotstart_days: 1.0
+
+# Post-processing configuration
+post_processing:
+  bias_correction:
+    enabled: true
+    method: selective_mpi     # MPI-parallel selective bias correction
+    search_radius_deg: 5.0
+    idw_power: 2
+    min_stations: 3
+    max_bias_threshold: 2.0
+  anomaly:
+    enabled: true             # Compute surge anomaly (total - tide)
+  grib2:
+    enabled: true
+
+# Default computational resources
+resources:
+  nprocs: 2400                # Override per system
+  memory_gb: 800
+  walltime_hours: 3

@@ -6,22 +6,29 @@ Processes GFS atmospheric data for SCHISM ocean model forcing including:
 - Sea level pressure (PRMSL)
 - Air temperature (TMP at 2m)
 - Specific humidity (SPFH at 2m)
+- Relative humidity (RH at 2m)
 - Downward shortwave radiation (DSWRF)
 - Downward longwave radiation (DLWRF)
+- Upward shortwave radiation (USWRF)
+- Upward longwave radiation (ULWRF)
+- Surface albedo (ALBDO)
 - Precipitation rate (PRATE)
 
 Output: SCHISM sflux NetCDF files
 - sflux_air_1.XXXX.nc - wind, temperature, humidity, pressure
 - sflux_rad_1.XXXX.nc - shortwave, longwave radiation
 - sflux_prc_1.XXXX.nc - precipitation
+
+Native Python implementation using cfgrib/xarray for GRIB2 reading
+and netCDF4 for output generation. No subprocess calls to wgrib2,
+ncap2, ncrcat, ncks, ncatted, ncrename, or any other shell tools.
 """
 
 import logging
 import os
-import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -29,13 +36,103 @@ from ..base import ForcingProcessor, ForcingResult
 
 log = logging.getLogger(__name__)
 
-# Try to import netCDF4, handle gracefully if not available
+# Optional dependency: netCDF4
 try:
     from netCDF4 import Dataset
+
     HAS_NETCDF4 = True
 except ImportError:
     HAS_NETCDF4 = False
     log.warning("netCDF4 not available - GFS processing will be limited")
+
+# Optional dependency: cfgrib via xarray
+try:
+    import xarray as xr
+
+    HAS_XARRAY = True
+except ImportError:
+    HAS_XARRAY = False
+    log.warning("xarray not available - GFS GRIB2 reading will be limited")
+
+try:
+    import cfgrib  # noqa: F401 - needed as xarray backend
+
+    HAS_CFGRIB = True
+except ImportError:
+    HAS_CFGRIB = False
+    log.warning(
+        "cfgrib not available - install with: pip install cfgrib. "
+        "Also requires eccodes library."
+    )
+
+
+# ---------------------------------------------------------------------------
+# GRIB2 variable filter key specifications for cfgrib
+# Each entry maps an internal variable name to the cfgrib filter_by_keys
+# dict used to open the dataset and the shortName in the resulting dataset.
+# ---------------------------------------------------------------------------
+GRIB2_FILTER_KEYS: Dict[str, dict] = {
+    "uwind": {
+        "shortName": "10u",
+        "typeOfLevel": "heightAboveGround",
+        "level": 10,
+    },
+    "vwind": {
+        "shortName": "10v",
+        "typeOfLevel": "heightAboveGround",
+        "level": 10,
+    },
+    "prmsl": {
+        "shortName": "prmsl",
+        "typeOfLevel": "meanSea",
+    },
+    "stmp": {
+        "shortName": "2t",
+        "typeOfLevel": "heightAboveGround",
+        "level": 2,
+    },
+    "spfh": {
+        "shortName": "2sh",
+        "typeOfLevel": "heightAboveGround",
+        "level": 2,
+    },
+    "rh": {
+        "shortName": "2r",
+        "typeOfLevel": "heightAboveGround",
+        "level": 2,
+    },
+    "dlwrf": {
+        "shortName": "dlwrf",
+        "typeOfLevel": "surface",
+    },
+    "dswrf": {
+        "shortName": "dswrf",
+        "typeOfLevel": "surface",
+    },
+    "ulwrf": {
+        "shortName": "ulwrf",
+        "typeOfLevel": "surface",
+    },
+    "uswrf": {
+        "shortName": "uswrf",
+        "typeOfLevel": "surface",
+    },
+    "prate": {
+        "shortName": "prate",
+        "typeOfLevel": "surface",
+    },
+    "albdo": {
+        "shortName": "al",
+        "typeOfLevel": "surface",
+    },
+}
+
+# Fallback: mapping of internal name -> GRIB2 parameterName regex for cases
+# where shortName lookup fails (GFS sometimes encodes SPFH as paramId).
+GRIB2_PARAM_FALLBACK: Dict[str, dict] = {
+    "spfh": {"paramId": 260242, "typeOfLevel": "heightAboveGround", "level": 2},
+    "prate": {"paramId": 260045, "typeOfLevel": "surface"},
+}
 
 
 class GFSProcessor(ForcingProcessor):
@@ -43,26 +140,44 @@ class GFSProcessor(ForcingProcessor):
     GFS atmospheric forcing processor for SCHISM.
 
     Processes GFS GRIB2 files and creates SCHISM-compatible sflux NetCDF files.
-    Uses wgrib2 for GRIB2 extraction and netCDF4 for output generation.
+    Uses cfgrib (via xarray) for GRIB2 reading and netCDF4 for output.
+    No external tool dependencies (wgrib2, ncap2, ncrcat, etc.).
     """
 
-    # GRIB2 variable mapping: SCHISM name -> (GFS GRIB2 name, level)
-    GRIB2_VARIABLES = {
-        "uwind": ("UGRD", "10 m above ground"),
-        "vwind": ("VGRD", "10 m above ground"),
-        "prmsl": ("PRMSL", "mean sea level"),
-        "stmp": ("TMP", "2 m above ground"),
-        "spfh": ("SPFH", "2 m above ground"),
-        "dlwrf": ("DLWRF", "surface"),
-        "dswrf": ("DSWRF", "surface"),
-        "prate": ("PRATE", "surface"),
-    }
+    # Variables extracted from shell script list_var_oi in
+    # stofs_3d_atl_create_surface_forcing_gfs.sh line 249
+    SHELL_SCRIPT_VARIABLES = [
+        "uwind",
+        "vwind",
+        "prmsl",
+        "stmp",
+        "spfh",
+        "rh",
+        "dlwrf",
+        "dswrf",
+        "ulwrf",
+        "uswrf",
+        "prate",
+        "albdo",
+    ]
 
-    DEFAULT_VARIABLES = list(GRIB2_VARIABLES.keys())
+    DEFAULT_VARIABLES = [
+        "uwind",
+        "vwind",
+        "prmsl",
+        "stmp",
+        "spfh",
+        "dlwrf",
+        "dswrf",
+        "prate",
+    ]
 
     # GFS grid resolution options
     GFS_0P25 = "0p25"  # 0.25 degree
     GFS_0P50 = "0p50"  # 0.50 degree
+
+    # Minimum file size to consider a GFS file valid (500MB from shell script)
+    MIN_FILE_SIZE = 500_000_000
 
     @property
     def source_name(self) -> str:
@@ -81,10 +196,11 @@ class GFSProcessor(ForcingProcessor):
         Initialize GFS processor.
 
         Args:
-            config: StofsConfig instance
+            config: OFSConfig instance with at minimum: cyc, PDY, lon_min,
+                    lon_max, lat_min, lat_max attributes.
             input_path: Path to GFS GRIB2 files (COMINgfs)
             output_path: Path for sflux output files (DATA/sflux)
-            variables: List of variables to process
+            variables: List of variables to process (default: DEFAULT_VARIABLES)
             forecast_hours: Number of forecast hours to process
             resolution: GFS resolution ("0p25" or "0p50")
         """
@@ -92,11 +208,26 @@ class GFSProcessor(ForcingProcessor):
         self.forecast_hours = forecast_hours
         self.resolution = resolution
         if not self.variables:
-            self.variables = self.DEFAULT_VARIABLES
+            self.variables = list(self.DEFAULT_VARIABLES)
 
         # Get cycle info from config
         self.cyc = config.cyc
         self.pdy = config.PDY
+
+        # Domain bounds from config (configurable, not hardcoded)
+        self.lon_min = getattr(config, "lon_min", -98.5035)
+        self.lon_max = getattr(config, "lon_max", -52.4867)
+        self.lat_min = getattr(config, "lat_min", 7.347)
+        self.lat_max = getattr(config, "lat_max", 52.5904)
+
+        # Rerun output path (for archiving standard-named copies)
+        self.comout_rerun = getattr(config, "COMOUTrerun", None)
+
+        # Previous COMOUT for backup fallback
+        self.comout_prev = getattr(config, "COMOUT_PREV", None)
+
+        # Minimum time steps required
+        self.n_list_target = int(getattr(config, "N_list_target", 97))
 
     def process(self) -> ForcingResult:
         """
@@ -105,10 +236,35 @@ class GFSProcessor(ForcingProcessor):
         Returns:
             ForcingResult with processed files
         """
-        log.info(f"Processing {self.source_name} forcing data")
-        log.info(f"Input path: {self.input_path}")
-        log.info(f"Output path: {self.output_path}")
-        log.info(f"Forecast hours: {self.forecast_hours}")
+        log.info("Processing %s forcing data", self.source_name)
+        log.info("Input path: %s", self.input_path)
+        log.info("Output path: %s", self.output_path)
+        log.info("Forecast hours: %d", self.forecast_hours)
+        log.info(
+            "Domain: lon[%.4f, %.4f], lat[%.4f, %.4f]",
+            self.lon_min,
+            self.lon_max,
+            self.lat_min,
+            self.lat_max,
+        )
+
+        # Validate dependencies
+        if not HAS_XARRAY or not HAS_CFGRIB:
+            return ForcingResult(
+                success=False,
+                source=self.source_name,
+                errors=[
+                    "Required dependencies not available. "
+                    "Install with: pip install xarray cfgrib netCDF4"
+                ],
+            )
+
+        if not HAS_NETCDF4:
+            return ForcingResult(
+                success=False,
+                source=self.source_name,
+                errors=["netCDF4 required for sflux output. pip install netCDF4"],
+            )
 
         if not self.validate_input():
             return ForcingResult(
@@ -118,12 +274,11 @@ class GFSProcessor(ForcingProcessor):
             )
 
         self.create_output_dir()
-        output_files = []
-        errors = []
-        warnings = []
+        output_files: List[Path] = []
+        warnings: List[str] = []
 
         try:
-            # Find GFS GRIB2 files
+            # Step 1: Build file lists (primary + backup), mimicking shell script
             gfs_files = self._find_gfs_files()
 
             if not gfs_files:
@@ -133,28 +288,36 @@ class GFSProcessor(ForcingProcessor):
                     errors=["No GFS input files found"],
                 )
 
-            log.info(f"Found {len(gfs_files)} GFS files")
+            log.info("Found %d GFS files to process", len(gfs_files))
 
-            # Extract variables from GRIB2 files
-            extracted_data = self._extract_grib2_data(gfs_files)
+            # Step 2: Read and extract all variables from all GRIB2 files
+            extracted = self._extract_all_grib2(gfs_files)
 
-            if not extracted_data:
+            if not extracted or not extracted.get("times"):
                 return ForcingResult(
                     success=False,
                     source=self.source_name,
                     errors=["Failed to extract data from GFS files"],
                 )
 
-            # Create SCHISM sflux NetCDF files
-            sflux_files = self._create_sflux_files(extracted_data)
+            n_times = len(extracted["times"])
+            log.info("Extracted %d time steps from GFS files", n_times)
+
+            # Step 3: Create merged sflux NetCDF and day-split files
+            sflux_files = self._create_sflux_files(extracted)
             output_files.extend(sflux_files)
 
-            # Create sflux_inputs.txt
+            # Step 4: Create sflux_inputs.txt
             inputs_file = self._create_sflux_inputs()
             if inputs_file:
                 output_files.append(inputs_file)
 
-            log.info(f"GFS processing complete: {len(output_files)} files created")
+            # Step 5: Archive to COMOUTrerun if configured
+            self._archive_outputs(sflux_files)
+
+            log.info(
+                "GFS processing complete: %d files created", len(output_files)
+            )
 
             return ForcingResult(
                 success=True,
@@ -165,13 +328,15 @@ class GFSProcessor(ForcingProcessor):
                     "forecast_hours": self.forecast_hours,
                     "variables": self.variables,
                     "num_input_files": len(gfs_files),
+                    "num_time_steps": n_times,
                     "resolution": self.resolution,
                 },
             )
 
         except Exception as e:
-            log.error(f"GFS processing failed: {e}")
+            log.error("GFS processing failed: %s", e)
             import traceback
+
             log.error(traceback.format_exc())
             return ForcingResult(
                 success=False,
@@ -179,388 +344,468 @@ class GFSProcessor(ForcingProcessor):
                 errors=[str(e)],
             )
 
+    # ------------------------------------------------------------------
+    # File discovery
+    # ------------------------------------------------------------------
+
     def _find_gfs_files(self) -> List[Path]:
         """
-        Find GFS GRIB2 files for the forecast period.
+        Find GFS GRIB2 files following the operational shell script logic.
 
-        Following shell script logic, this method:
-        1. Builds primary file list from multiple cycles for nowcast coverage
-        2. Uses backup file list from previous day if primary is incomplete
-        3. Merges lists to ensure complete temporal coverage
+        The shell script builds two file lists:
+          LIST_fn_all_1 (primary): yest_t06z + yest_t12z + yest_t18z +
+                                   today_t00z + today_t06z + today_t12z(f001..f099)
+          LIST_fn_all_2 (backup):  yest_t06z(f006) + yest_t12z(f001..f099)
 
-        Target: ~121 files for 5-day run (24hr nowcast + 96hr forecast)
+        Each file is size-checked (>= 500 MB).
+        If primary has fewer than N_list_target files, it merges with backup.
         """
-        # Build primary file list from multiple GFS cycles
-        primary_files = self._build_gfs_file_list()
+        primary = self._build_primary_file_list()
+        backup = self._build_backup_file_list()
 
-        # Target number of files (hourly for ~5 days)
-        n_target = 121
+        # Size-filter both lists
+        primary = self._filter_by_size(primary)
+        backup = self._filter_by_size(backup)
 
-        if len(primary_files) >= n_target:
-            log.info(f"Found {len(primary_files)} GFS files (target: {n_target})")
-            return primary_files
+        log.info(
+            "Primary list: %d files, Backup list: %d files",
+            len(primary),
+            len(backup),
+        )
 
-        # If primary list is incomplete, try backup from previous cycle
-        log.warning(f"Primary GFS list incomplete ({len(primary_files)}/{n_target}), checking backup")
-        backup_files = self._build_backup_file_list()
+        # Merge logic from shell script lines 216-243
+        if len(primary) > 1:
+            final = list(primary)
+            if (
+                len(primary) < self.n_list_target
+                and len(backup) > len(primary)
+            ):
+                n_diff = len(backup) - len(primary)
+                final.extend(backup[len(primary) : len(primary) + n_diff])
+                log.info(
+                    "Merged %d backup files into primary (total: %d)",
+                    min(n_diff, len(backup)),
+                    len(final),
+                )
+        elif len(backup) > 1:
+            log.info("Using backup list (%d files)", len(backup))
+            final = list(backup)
+        else:
+            final = list(primary)
 
-        if backup_files:
-            merged = self._merge_file_lists(primary_files, backup_files, n_target)
-            log.info(f"After merge: {len(merged)} GFS files")
-            return merged
+        return final
 
-        return primary_files
-
-    def _build_gfs_file_list(self) -> List[Path]:
+    def _build_primary_file_list(self) -> List[Path]:
         """
         Build primary GFS file list from multiple cycles.
 
-        Shell script logic (lines 69-95):
-        LIST_fn_all_1 = yest_t06z + yest_t12z + yest_t18z + today_t00z + today_t06z + today_t12z
-
-        This provides overlapping coverage for nowcast initialization.
+        Mirrors shell script lines 101-127:
+          yest t06z f006
+          yest t12z f001..f006
+          yest t18z f001..f006
+          today t00z f001..f006
+          today t06z f001..f006
+          today t12z f001..f099
         """
-        gfs_files = []
         base_date = datetime.strptime(self.pdy, "%Y%m%d")
         prev_date = base_date - timedelta(days=1)
+        prev_str = prev_date.strftime("%Y%m%d")
+        today_str = base_date.strftime("%Y%m%d")
 
-        # Build list of (date, cycle) pairs to check
-        # Yesterday t06z, t12z, t18z + Today t00z, t06z, t12z
-        cycle_list = [
-            (prev_date, 6),
-            (prev_date, 12),
-            (prev_date, 18),
-            (base_date, 0),
-            (base_date, 6),
-            (base_date, 12),
-        ]
+        files: List[Path] = []
 
-        # GFS directory structure: gfs.YYYYMMDD/HH/atmos/
-        for date, cyc in cycle_list:
-            date_str = date.strftime("%Y%m%d")
-            gfs_path = self.input_path / f"gfs.{date_str}" / f"{cyc:02d}" / "atmos"
+        # yest t06z f006
+        files.extend(
+            self._resolve_gfs_files(prev_str, "06", [6])
+        )
 
-            # Also check alternative structures
-            if not gfs_path.exists():
-                gfs_path = self.input_path / f"gfs.{date_str}" / f"{cyc:02d}"
-            if not gfs_path.exists():
-                gfs_path = self.input_path
+        # yest t12z f001..f006
+        files.extend(
+            self._resolve_gfs_files(prev_str, "12", list(range(1, 7)))
+        )
 
-            if not gfs_path.exists():
-                continue
+        # yest t18z f001..f006
+        files.extend(
+            self._resolve_gfs_files(prev_str, "18", list(range(1, 7)))
+        )
 
-            # Find forecast files for this cycle
-            pattern = f"gfs.t{cyc:02d}z.pgrb2.{self.resolution}.f*"
-            found = sorted(gfs_path.glob(pattern))
+        # today t00z f001..f006
+        files.extend(
+            self._resolve_gfs_files(today_str, "00", list(range(1, 7)))
+        )
 
-            for f in found:
-                try:
-                    fhr = int(f.name.split('.f')[-1])
-                    if fhr <= self.forecast_hours:
-                        gfs_files.append(f)
-                except (ValueError, IndexError):
-                    continue
+        # today t06z f001..f006
+        files.extend(
+            self._resolve_gfs_files(today_str, "06", list(range(1, 7)))
+        )
 
-        # Remove duplicates while preserving order
-        seen = set()
-        unique_files = []
-        for f in gfs_files:
-            if f not in seen:
-                seen.add(f)
-                unique_files.append(f)
+        # today t12z f001..f099
+        files.extend(
+            self._resolve_gfs_files(today_str, "12", list(range(1, 100)))
+        )
 
-        return unique_files
+        return files
 
     def _build_backup_file_list(self) -> List[Path]:
         """
-        Build backup file list from previous day's t12z cycle.
+        Build backup GFS file list from yesterday t06z/t12z.
 
-        Shell script logic (lines 169-210):
-        LIST_fn_all_2 = backup from yesterday's t12z cycle
+        Mirrors shell script lines 131-144:
+          yest t06z f006
+          yest t12z f001..f009
+          yest t12z f01X..f08X  (10-89)
+          yest t12z f090..f099
         """
         base_date = datetime.strptime(self.pdy, "%Y%m%d")
         prev_date = base_date - timedelta(days=1)
+        prev_str = prev_date.strftime("%Y%m%d")
 
-        # Yesterday's t12z cycle
-        date_str = prev_date.strftime("%Y%m%d")
-        backup_path = self.input_path / f"gfs.{date_str}" / "12" / "atmos"
+        files: List[Path] = []
 
-        if not backup_path.exists():
-            backup_path = self.input_path / f"gfs.{date_str}" / "12"
-        if not backup_path.exists():
-            return []
+        # yest t06z f006
+        files.extend(self._resolve_gfs_files(prev_str, "06", [6]))
 
-        backup_files = []
-        pattern = f"gfs.t12z.pgrb2.{self.resolution}.f*"
-        found = sorted(backup_path.glob(pattern))
+        # yest t12z f001..f099
+        files.extend(
+            self._resolve_gfs_files(prev_str, "12", list(range(1, 100)))
+        )
 
-        for f in found:
-            try:
-                fhr = int(f.name.split('.f')[-1])
-                if fhr <= self.forecast_hours:
-                    backup_files.append(f)
-            except (ValueError, IndexError):
-                continue
+        return files
 
-        return backup_files
-
-    def _merge_file_lists(
-        self, primary_files: List[Path], backup_files: List[Path], n_target: int
+    def _resolve_gfs_files(
+        self, date_str: str, cyc_str: str, forecast_hours: List[int]
     ) -> List[Path]:
         """
-        Merge primary and backup file lists for operational robustness.
+        Resolve GFS file paths for a given date/cycle/forecast-hour list.
 
-        If primary list is incomplete, supplement with backup files.
-        This matches shell script logic at lines 169-210.
-
-        Args:
-            primary_files: Primary file list (may be incomplete)
-            backup_files: Backup file list from previous cycle
-            n_target: Target number of files
-
-        Returns:
-            Merged file list
+        Checks directory structures:
+          {input}/gfs.{date}/{cyc}/atmos/gfs.t{cyc}z.pgrb2.{res}.f{fhr:03d}
+          {input}/gfs.{date}/{cyc}/gfs.t{cyc}z.pgrb2.{res}.f{fhr:03d}
         """
-        if len(primary_files) >= n_target:
-            return primary_files
+        found: List[Path] = []
 
-        if not backup_files:
-            return primary_files
+        # Try atmos subdir first, then direct
+        candidate_dirs = [
+            self.input_path / f"gfs.{date_str}" / cyc_str / "atmos",
+            self.input_path / f"gfs.{date_str}" / cyc_str,
+        ]
 
-        # If backup has more files, use backup for the missing portion
-        if len(backup_files) > len(primary_files):
-            n_diff = min(n_target - len(primary_files), len(backup_files) - len(primary_files))
-            merged = primary_files + backup_files[len(primary_files):len(primary_files) + n_diff]
-            log.info(f"Merged {n_diff} backup files into primary list")
-            return merged
+        gfs_dir = None
+        for d in candidate_dirs:
+            if d.exists():
+                gfs_dir = d
+                break
 
-        return primary_files
+        if gfs_dir is None:
+            return found
 
-    def _find_gfs_files_simple(self) -> List[Path]:
+        for fhr in forecast_hours:
+            fname = f"gfs.t{cyc_str}z.pgrb2.{self.resolution}.f{fhr:03d}"
+            fpath = gfs_dir / fname
+            if fpath.exists():
+                found.append(fpath)
+
+        return found
+
+    def _filter_by_size(
+        self, files: List[Path], min_size: int = 0
+    ) -> List[Path]:
         """
-        Simple file finder for current cycle only (fallback method).
+        Filter files by minimum size (default: self.MIN_FILE_SIZE).
 
-        Use this for testing or when multi-cycle files are not needed.
+        Mirrors shell script lines 167-198.
         """
-        gfs_files = []
+        if min_size <= 0:
+            min_size = self.MIN_FILE_SIZE
 
-        # GFS file pattern: gfs.t{cyc}z.pgrb2.{res}.f{fhr}
-        pattern = f"gfs.t{self.cyc:02d}z.pgrb2.{self.resolution}.f*"
-
-        # Search for files
-        found_files = sorted(self.input_path.glob(pattern))
-
-        # Filter to forecast hours we need
-        for f in found_files:
-            try:
-                # Extract forecast hour from filename
-                fhr = int(f.name.split('.f')[-1])
-                if fhr <= self.forecast_hours:
-                    gfs_files.append(f)
-            except (ValueError, IndexError):
+        valid: List[Path] = []
+        for f in files:
+            if not f.exists():
+                log.debug("GFS file does not exist: %s", f)
                 continue
+            sz = f.stat().st_size
+            if sz >= min_size:
+                valid.append(f)
+            else:
+                log.warning(
+                    "GFS file too small (%d < %d): %s", sz, min_size, f.name
+                )
+        return valid
 
-        return gfs_files
+    # ------------------------------------------------------------------
+    # GRIB2 extraction with cfgrib/xarray
+    # ------------------------------------------------------------------
 
-    def _extract_grib2_data(self, gfs_files: List[Path]) -> dict:
+    def _extract_all_grib2(self, gfs_files: List[Path]) -> dict:
         """
-        Extract variables from GFS GRIB2 files using wgrib2.
+        Read all GFS GRIB2 files and extract required variables.
 
-        Args:
-            gfs_files: List of GFS GRIB2 file paths
+        Uses xarray with cfgrib engine. For each file, opens the dataset
+        with appropriate filter_by_keys, subsets to the domain, and
+        collects 2-D arrays.
 
         Returns:
-            Dictionary of extracted data arrays
+            Dictionary with keys:
+                'times': list of datetime
+                'lons': 1-D or 2-D lon array
+                'lats': 1-D or 2-D lat array
+                '<varname>': list of 2-D numpy arrays (one per time step)
         """
-        extracted_data = {
+        result: Dict = {
             "times": [],
             "lons": None,
             "lats": None,
         }
-
         for var in self.variables:
-            extracted_data[var] = []
+            result[var] = []
 
-        # Get domain bounds from config
-        lon_min = self.config.lon_min
-        lon_max = self.config.lon_max
-        lat_min = self.config.lat_min
-        lat_max = self.config.lat_max
+        for idx, gfs_file in enumerate(gfs_files):
+            log.debug("Processing (%d/%d): %s", idx + 1, len(gfs_files), gfs_file.name)
 
-        log.info(f"Extracting data for domain: lon[{lon_min}, {lon_max}], lat[{lat_min}, {lat_max}]")
-
-        for gfs_file in gfs_files:
             try:
-                # Extract forecast hour for time calculation
-                fhr = int(gfs_file.name.split('.f')[-1])
-                base_time = datetime.strptime(self.pdy, "%Y%m%d") + timedelta(hours=self.cyc)
-                valid_time = base_time + timedelta(hours=fhr)
-                extracted_data["times"].append(valid_time)
-
-                # Extract each variable using wgrib2
-                for var in self.variables:
-                    if var in self.GRIB2_VARIABLES:
-                        grib_var, level = self.GRIB2_VARIABLES[var]
-                        data = self._wgrib2_extract(
-                            gfs_file, grib_var, level,
-                            lon_min, lon_max, lat_min, lat_max
-                        )
-                        if data is not None:
-                            extracted_data[var].append(data)
-                        else:
-                            log.warning(f"Failed to extract {var} from {gfs_file.name}")
-
+                file_data = self._read_single_grib2(gfs_file)
             except Exception as e:
-                log.warning(f"Error processing {gfs_file}: {e}")
+                log.warning("Failed to read %s: %s", gfs_file.name, e)
                 continue
 
-        # Get grid coordinates from first file
-        if gfs_files and extracted_data["lons"] is None:
-            extracted_data["lons"], extracted_data["lats"] = self._get_gfs_grid(
-                gfs_files[0], lon_min, lon_max, lat_min, lat_max
+            if file_data is None:
+                continue
+
+            # Record valid time
+            result["times"].append(file_data["valid_time"])
+
+            # Set grid coordinates from first successfully read file
+            if result["lons"] is None and file_data.get("lons") is not None:
+                result["lons"] = file_data["lons"]
+                result["lats"] = file_data["lats"]
+
+            # Collect variable data
+            for var in self.variables:
+                if var in file_data:
+                    result[var].append(file_data[var])
+                else:
+                    # Append NaN placeholder to keep alignment
+                    if result["lons"] is not None:
+                        shape = (len(result["lats"]), len(result["lons"]))
+                        result[var].append(
+                            np.full(shape, np.nan, dtype=np.float32)
+                        )
+                    else:
+                        result[var].append(None)
+
+        # Clean up None placeholders
+        for var in self.variables:
+            result[var] = [a for a in result[var] if a is not None]
+
+        return result
+
+    def _read_single_grib2(self, grib_file: Path) -> Optional[dict]:
+        """
+        Read a single GFS GRIB2 file and extract all requested variables.
+
+        Uses xarray with cfgrib engine, subsetting to the domain bounding box.
+
+        Returns:
+            Dict with 'valid_time', 'lons', 'lats', and variable arrays,
+            or None if the file cannot be read.
+        """
+        data: Dict = {}
+
+        # Determine valid time from the filename (f{fhr:03d})
+        # and from the directory structure (gfs.{date}/{cyc}/...)
+        valid_time = self._parse_valid_time(grib_file)
+        if valid_time is None:
+            log.warning("Cannot determine valid time for %s", grib_file.name)
+            return None
+
+        data["valid_time"] = valid_time
+
+        for var in self.variables:
+            fkeys = GRIB2_FILTER_KEYS.get(var)
+            if fkeys is None:
+                continue
+
+            arr, lons_1d, lats_1d = self._cfgrib_read_variable(
+                grib_file, var, fkeys
             )
 
-        return extracted_data
+            if arr is not None:
+                data[var] = arr
+                if "lons" not in data or data.get("lons") is None:
+                    data["lons"] = lons_1d
+                    data["lats"] = lats_1d
 
-    def _wgrib2_extract(
+        return data if len(data) > 1 else None  # >1 because valid_time always present
+
+    def _cfgrib_read_variable(
         self,
         grib_file: Path,
-        variable: str,
-        level: str,
-        lon_min: float,
-        lon_max: float,
-        lat_min: float,
-        lat_max: float,
-    ) -> Optional[np.ndarray]:
+        var_name: str,
+        filter_keys: dict,
+    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
         """
-        Extract a variable from GRIB2 file using wgrib2.
+        Read a single variable from a GRIB2 file using cfgrib, subset to domain.
 
         Args:
             grib_file: Path to GRIB2 file
-            variable: GRIB2 variable name
-            level: Level specification
-            lon_min, lon_max, lat_min, lat_max: Domain bounds
+            var_name: Internal variable name
+            filter_keys: cfgrib filter_by_keys dictionary
 
         Returns:
-            Numpy array of extracted data or None if failed
+            Tuple of (data_2d, lons_1d, lats_1d) or (None, None, None)
         """
         try:
-            # Create temporary output file
-            tmp_file = self.output_path / f"tmp_{variable}_{grib_file.stem}.bin"
+            ds = xr.open_dataset(
+                grib_file,
+                engine="cfgrib",
+                backend_kwargs={
+                    "filter_by_keys": filter_keys,
+                    "indexpath": "",  # don't write .idx files
+                },
+            )
+        except Exception:
+            # Try fallback paramId if available
+            fallback = GRIB2_PARAM_FALLBACK.get(var_name)
+            if fallback:
+                try:
+                    ds = xr.open_dataset(
+                        grib_file,
+                        engine="cfgrib",
+                        backend_kwargs={
+                            "filter_by_keys": fallback,
+                            "indexpath": "",
+                        },
+                    )
+                except Exception:
+                    return None, None, None
+            else:
+                return None, None, None
 
-            # Build wgrib2 command for extraction
-            # -match to select variable, -small_grib for subsetting, -bin for binary output
-            match_str = f":{variable}:{level}:"
+        try:
+            # Identify the data variable (first non-coordinate variable)
+            data_vars = list(ds.data_vars)
+            if not data_vars:
+                ds.close()
+                return None, None, None
 
-            # First, extract the matching record to a small grib
-            subset_file = self.output_path / f"tmp_{variable}_{grib_file.stem}.grb2"
+            da = ds[data_vars[0]]
 
-            cmd = [
-                "wgrib2", str(grib_file),
-                "-match", match_str,
-                "-small_grib",
-                f"{lon_min}:{lon_max}",
-                f"{lat_min}:{lat_max}",
-                str(subset_file)
-            ]
+            # Get coordinate names (cfgrib uses 'latitude'/'longitude')
+            lon_name = None
+            lat_name = None
+            for name in ds.coords:
+                if name in ("longitude", "lon", "x"):
+                    lon_name = name
+                elif name in ("latitude", "lat", "y"):
+                    lat_name = name
 
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            if lon_name is None or lat_name is None:
+                ds.close()
+                return None, None, None
 
-            if result.returncode != 0:
-                log.debug(f"wgrib2 extraction failed: {result.stderr}")
-                return None
+            lons = ds[lon_name].values
+            lats = ds[lat_name].values
 
-            # Now convert to binary for reading
-            cmd2 = [
-                "wgrib2", str(subset_file),
-                "-no_header",
-                "-bin", str(tmp_file)
-            ]
+            # Convert longitudes from 0-360 to -180..180 if needed
+            if np.any(lons > 180):
+                lons = np.where(lons > 180, lons - 360, lons)
+                # Re-sort if needed
+                sort_idx = np.argsort(lons)
+                lons = lons[sort_idx]
+                # Re-index data along longitude dimension
+                da = da.isel({lon_name: sort_idx})
 
-            result2 = subprocess.run(cmd2, capture_output=True, text=True, timeout=60)
+            # Subset to domain bounding box
+            lon_mask = (lons >= self.lon_min) & (lons <= self.lon_max)
+            lat_mask = (lats >= self.lat_min) & (lats <= self.lat_max)
 
-            if result2.returncode == 0 and tmp_file.exists():
-                # Read binary data
-                data = np.fromfile(tmp_file, dtype=np.float32)
+            lons_sub = lons[lon_mask]
+            lats_sub = lats[lat_mask]
 
-                # Get grid dimensions from wgrib2 output
-                cmd3 = ["wgrib2", str(subset_file), "-nxny"]
-                result3 = subprocess.run(cmd3, capture_output=True, text=True, timeout=30)
+            # Extract 2-D subset
+            if da.ndim == 2:
+                arr = da.values
+            elif da.ndim == 1:
+                arr = da.values
+            else:
+                # Squeeze extra dimensions (step, valid_time, etc.)
+                arr = da.squeeze().values
 
-                if result3.returncode == 0:
-                    # Parse nx ny from output
-                    parts = result3.stdout.strip().split(":")
-                    for part in parts:
-                        if "x" in part and "(" in part:
-                            dims = part.split("(")[1].split(")")[0]
-                            nx, ny = map(int, dims.split(" x "))
-                            data = data.reshape((ny, nx))
-                            break
+            if arr.ndim == 2:
+                arr_sub = arr[np.ix_(lat_mask, lon_mask)]
+            elif arr.ndim == 1:
+                # Shouldn't happen for gridded data, but handle gracefully
+                ds.close()
+                return None, None, None
+            else:
+                ds.close()
+                return None, None, None
 
-                # Cleanup temp files
-                tmp_file.unlink(missing_ok=True)
-                subset_file.unlink(missing_ok=True)
+            ds.close()
+            return arr_sub.astype(np.float32), lons_sub, lats_sub
 
-                return data
-
-        except subprocess.TimeoutExpired:
-            log.warning(f"wgrib2 timeout for {variable}")
         except Exception as e:
-            log.debug(f"wgrib2 extraction error: {e}")
+            log.debug("Error subsetting %s from %s: %s", var_name, grib_file.name, e)
+            try:
+                ds.close()
+            except Exception:
+                pass
+            return None, None, None
 
-        # Cleanup on failure
-        for f in [tmp_file, subset_file]:
-            if isinstance(f, Path):
-                f.unlink(missing_ok=True)
-
-        return None
-
-    def _get_gfs_grid(
-        self,
-        grib_file: Path,
-        lon_min: float,
-        lon_max: float,
-        lat_min: float,
-        lat_max: float,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    def _parse_valid_time(self, grib_file: Path) -> Optional[datetime]:
         """
-        Get grid coordinates for the subsetted domain.
+        Determine the valid time of a GFS GRIB2 file from its path.
+
+        Expected path patterns:
+          .../gfs.YYYYMMDD/HH/atmos/gfs.tHHz.pgrb2.0p25.fFFF
+          .../gfs.YYYYMMDD/HH/gfs.tHHz.pgrb2.0p25.fFFF
 
         Returns:
-            Tuple of (lons, lats) arrays
+            datetime of the valid time, or None if parsing fails
         """
-        # Calculate grid based on GFS resolution
-        if self.resolution == "0p25":
-            dx = dy = 0.25
-        else:
-            dx = dy = 0.50
+        try:
+            fname = grib_file.name
+            # Extract cycle hour from filename: gfs.t{HH}z.pgrb2...
+            cyc_str = fname.split(".t")[1].split("z")[0]
+            cyc_hour = int(cyc_str)
 
-        lons = np.arange(lon_min, lon_max + dx, dx)
-        lats = np.arange(lat_min, lat_max + dy, dy)
+            # Extract forecast hour: ...f{FFF}
+            fhr_str = fname.split(".f")[-1]
+            fhr = int(fhr_str)
 
-        return lons, lats
+            # Extract date from parent directory: gfs.YYYYMMDD
+            # Walk up to find the gfs.YYYYMMDD directory
+            for parent in grib_file.parents:
+                dirname = parent.name
+                if dirname.startswith("gfs.") and len(dirname) == 12:
+                    date_str = dirname[4:]
+                    base = datetime.strptime(date_str, "%Y%m%d")
+                    return base + timedelta(hours=cyc_hour + fhr)
 
-    def _create_sflux_files(self, data: dict, day_split: bool = True) -> List[Path]:
+            # Fallback: use self.pdy + cyc from filename
+            base = datetime.strptime(self.pdy, "%Y%m%d")
+            return base + timedelta(hours=cyc_hour + fhr)
+
+        except Exception as e:
+            log.debug("Cannot parse valid time from %s: %s", grib_file, e)
+            return None
+
+    # ------------------------------------------------------------------
+    # NetCDF output creation
+    # ------------------------------------------------------------------
+
+    def _create_sflux_files(self, data: dict) -> List[Path]:
         """
-        Create SCHISM sflux NetCDF files.
+        Create SCHISM sflux NetCDF files from extracted data.
 
-        SCHISM requires:
-        - sflux_air_1.XXXX.nc: uwind, vwind, prmsl, stmp, spfh
-        - sflux_rad_1.XXXX.nc: dlwrf, dswrf
-        - sflux_prc_1.XXXX.nc: prate
-
-        Args:
-            data: Dictionary of extracted data
-            day_split: If True, create separate files for each day (operational mode)
+        This creates a single merged file per type (matching the operational
+        shell script's ncrcat behavior), then also creates the day-split
+        files used by SCHISM runtime.
 
         Returns:
-            List of created file paths
+            List of created output file paths
         """
-        if not HAS_NETCDF4:
-            log.error("netCDF4 required for sflux file creation")
-            return []
-
-        output_files = []
+        output_files: List[Path] = []
         times = data["times"]
         lons = data["lons"]
         lats = data["lats"]
@@ -569,447 +814,422 @@ class GFSProcessor(ForcingProcessor):
             log.error("Grid coordinates not available")
             return []
 
-        # Calculate base date for SCHISM time reference
-        # SCHISM typically uses the nowcast begin date as base
-        base_date = datetime.strptime(self.pdy, "%Y%m%d") + timedelta(hours=self.cyc) - timedelta(hours=24)
+        # Base date: start of nowcast (typically 24h before forecast start)
+        # Shell script uses: iyr-imon-iday from yyyymmdd_prev
+        base_date = datetime.strptime(self.pdy, "%Y%m%d")
+        prev_date = base_date - timedelta(days=1)
 
-        if day_split:
-            # Create day-split files (operational mode)
-            output_files.extend(self._create_day_split_sflux(data, times, lons, lats, base_date))
-        else:
-            # Create single files (development mode)
-            air_file = self._create_sflux_air(data, times, lons, lats, base_date)
-            if air_file:
-                output_files.append(air_file)
+        # Compute time values as hours-since-00Z-of-prev_date
+        # The shell script: ihr=12, then hr_cnt_since_hr00 = ihr + cnt
+        # where cnt starts at 0. So time = (12 + cnt) in hours / 24 = days
+        # We compute directly from valid_time - prev_date_00Z
+        ref_time = datetime(prev_date.year, prev_date.month, prev_date.day, 0, 0, 0)
 
-            rad_file = self._create_sflux_rad(data, times, lons, lats, base_date)
-            if rad_file:
-                output_files.append(rad_file)
+        # Create base_date as [year, month, day, 0]
+        base_date_arr = [prev_date.year, prev_date.month, prev_date.day, 0]
 
-            prc_file = self._create_sflux_prc(data, times, lons, lats, base_date)
-            if prc_file:
-                output_files.append(prc_file)
+        # Time values in days since ref_time
+        time_values = np.array(
+            [(t - ref_time).total_seconds() / 86400.0 for t in times],
+            dtype=np.float32,
+        )
+
+        # Adjust first and last time per shell script QC logic
+        # Shell: ncap2 -s "time(0)=float(0.499999);time(-1)=float(${time_end_step})"
+        n_dim_cr_max = 121
+        n_dim_cr_min = 110
+        time_end_step = 10.0
+
+        if len(times) >= n_dim_cr_max:
+            time_values[0] = 0.499999
+            time_values[-1] = time_end_step
+        elif len(times) >= n_dim_cr_min:
+            time_values[0] = 0.499999
+            time_values[-1] = time_end_step
+
+        # Create merged sflux file (all times concatenated)
+        merged_file = self._create_merged_sflux(
+            data, time_values, lons, lats, base_date_arr
+        )
+        if merged_file:
+            output_files.append(merged_file)
+
+            # The shell script copies the same merged file as air, rad, prc:
+            # sflux_air_1.0001.nc, sflux_rad_1.0001.nc, sflux_prc_1.0001.nc
+            # These are all the same file in the STOFS workflow.
+            for sflux_type in ["air", "rad", "prc"]:
+                link_name = self.output_path / f"sflux_{sflux_type}_1.0001.nc"
+                if link_name != merged_file:
+                    try:
+                        if link_name.exists():
+                            link_name.unlink()
+                        # Copy rather than symlink for portability
+                        import shutil
+
+                        shutil.copy2(str(merged_file), str(link_name))
+                        output_files.append(link_name)
+                    except Exception as e:
+                        log.warning("Cannot create %s: %s", link_name.name, e)
+
+        # Also create proper day-split files for SCHISM
+        day_files = self._create_day_split_sflux(
+            data, times, lons, lats, ref_time, base_date_arr
+        )
+        output_files.extend(day_files)
 
         return output_files
 
+    def _create_merged_sflux(
+        self,
+        data: dict,
+        time_values: np.ndarray,
+        lons: np.ndarray,
+        lats: np.ndarray,
+        base_date: list,
+    ) -> Optional[Path]:
+        """
+        Create a single merged sflux file with all time steps.
+
+        This replicates the shell script's ncrcat + ncap2 pipeline:
+          1. For each input file, extract variables, rename, set time
+          2. ncrcat all into one merged file
+          3. Adjust first/last time values
+
+        The merged file contains ALL variables (air + rad + prc).
+        """
+        output_file = self.output_path / "gfs_merge_v1.nc"
+
+        try:
+            nx = len(lons)
+            ny = len(lats)
+            nt = len(time_values)
+
+            nc = Dataset(str(output_file), "w", format="NETCDF4_CLASSIC")
+
+            # Dimensions
+            nc.createDimension("nx_grid", nx)
+            nc.createDimension("ny_grid", ny)
+            nc.createDimension("time", None)  # UNLIMITED
+
+            # Time
+            time_var = nc.createVariable("time", "f4", ("time",))
+            time_var.units = "days since {}-{:02d}-{:02d}".format(
+                base_date[0], base_date[1], base_date[2]
+            )
+            time_var.base_date = np.array(base_date, dtype=np.int32)
+            time_var.standard_name = "time"
+            time_var.long_name = "Time"
+            time_var._FillValue = np.float32(-9999.0)
+            time_var[:] = time_values
+
+            # Coordinates
+            lon_var = nc.createVariable(
+                "lon", "f4", ("ny_grid", "nx_grid"), fill_value=-9999.0
+            )
+            lon_var.units = "degrees_east"
+            lon_var.standard_name = "longitude"
+            lon_var.long_name = "Longitude"
+
+            lat_var = nc.createVariable(
+                "lat", "f4", ("ny_grid", "nx_grid"), fill_value=-9999.0
+            )
+            lat_var.units = "degrees_north"
+            lat_var.standard_name = "latitude"
+            lat_var.long_name = "Latitude"
+
+            lon_2d, lat_2d = np.meshgrid(lons, lats)
+            lon_var[:] = lon_2d
+            lat_var[:] = lat_2d
+
+            # All forcing variables in one file (matching shell script behavior)
+            var_specs = {
+                "uwind": ("f4", "m/s", "eastward_wind", "Surface Eastward Air Velocity (10m AGL)"),
+                "vwind": ("f4", "m/s", "northward_wind", "Surface Northward Air Velocity (10m AGL)"),
+                "prmsl": ("f4", "Pa", "air_pressure_at_sea_level", "Pressure reduced to MSL"),
+                "stmp": ("f4", "K", "air_temperature", "Surface Air Temperature (2m AGL)"),
+                "spfh": ("f4", "1", "specific_humidity", "Surface Specific Humidity (2m AGL)"),
+                "dlwrf": ("f4", "W/m^2", "surface_downwelling_longwave_flux_in_air", "Downward Long Wave Radiation Flux"),
+                "dswrf": ("f4", "W/m^2", "surface_downwelling_shortwave_flux_in_air", "Downward Short Wave Radiation Flux"),
+                "ulwrf": ("f4", "W/m^2", "surface_upwelling_longwave_flux_in_air", "Upward Long Wave Radiation Flux"),
+                "uswrf": ("f4", "W/m^2", "surface_upwelling_shortwave_flux_in_air", "Upward Short Wave Radiation Flux"),
+                "prate": ("f4", "kg/m^2/s", "precipitation_flux", "Surface Precipitation Rate"),
+                "rh": ("f4", "%", "relative_humidity", "Relative Humidity (2m AGL)"),
+                "albdo": ("f4", "%", "surface_albedo", "Surface Albedo"),
+            }
+
+            for varname, (dtype, units, std_name, long_name) in var_specs.items():
+                if varname not in self.variables:
+                    continue
+                if varname not in data or not data[varname]:
+                    continue
+
+                var = nc.createVariable(
+                    varname,
+                    dtype,
+                    ("time", "ny_grid", "nx_grid"),
+                    fill_value=np.float32(-9999.0),
+                )
+                var.units = units
+                var.standard_name = std_name
+                var.long_name = long_name
+
+                try:
+                    stacked = np.stack(data[varname][: nt], axis=0)
+                    var[:] = stacked.astype(np.float32)
+                except Exception as e:
+                    log.warning("Could not write %s: %s", varname, e)
+
+            # Global attributes
+            nc.type = "SCHISM sflux forcing"
+            nc.title = "SCHISM sflux forcing from GFS"
+            nc.source = f"GFS {self.resolution}"
+            nc.history = f"Created {datetime.now().isoformat()} by nos_ofs GFSProcessor"
+            nc.Conventions = "CF-1.6"
+
+            nc.close()
+            log.info("Created merged sflux file: %s", output_file)
+            return output_file
+
+        except Exception as e:
+            log.error("Failed to create merged sflux: %s", e)
+            return None
+
     def _create_day_split_sflux(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray, base_date: datetime
+        self,
+        data: dict,
+        times: list,
+        lons: np.ndarray,
+        lats: np.ndarray,
+        ref_time: datetime,
+        base_date: list,
     ) -> List[Path]:
         """
-        Create day-split sflux files (one file per day).
+        Create day-split sflux files (one file per day) for SCHISM runtime.
 
-        This matches the operational STOFS workflow where each day of the
-        model run has separate sflux_air_1.XXXX.nc, sflux_rad_1.XXXX.nc,
-        and sflux_prc_1.XXXX.nc files.
-
-        Args:
-            data: Extracted forcing data
-            times: List of datetime objects
-            lons: Longitude array
-            lats: Latitude array
-            base_date: Base datetime for time reference
-
-        Returns:
-            List of created file paths
+        SCHISM expects files named:
+          sflux_air_1.XXXX.nc
+          sflux_rad_1.XXXX.nc
+          sflux_prc_1.XXXX.nc
+        where XXXX is day number (0001, 0002, ...).
         """
-        output_files = []
+        output_files: List[Path] = []
 
-        # Group times by day relative to base_date
-        day_groups = {}
+        # Group time indices by day number relative to ref_time
+        day_groups: Dict[int, List[int]] = {}
         for i, t in enumerate(times):
-            day_num = (t - base_date).days + 1  # Day 1, 2, 3, ...
+            day_num = (t - ref_time).days + 1
             if day_num < 1:
-                day_num = 1  # Handle times before base_date
+                day_num = 1
+            day_groups.setdefault(day_num, []).append(i)
 
-            if day_num not in day_groups:
-                day_groups[day_num] = []
-            day_groups[day_num].append(i)
-
-        log.info(f"Creating day-split sflux files for {len(day_groups)} days")
+        log.info("Creating day-split sflux files for %d days", len(day_groups))
 
         for day_num, indices in sorted(day_groups.items()):
             file_num = f"{day_num:04d}"
-
-            # Extract data for this day
             day_times = [times[i] for i in indices]
+            day_time_vals = np.array(
+                [(t - ref_time).total_seconds() / 86400.0 for t in day_times],
+                dtype=np.float32,
+            )
 
-            day_data = {}
+            # Collect variable data for this day
+            day_data: Dict[str, list] = {}
             for var in self.variables:
                 if var in data and data[var]:
-                    day_data[var] = [data[var][i] for i in indices if i < len(data[var])]
+                    day_data[var] = [
+                        data[var][i]
+                        for i in indices
+                        if i < len(data[var])
+                    ]
 
             if not day_times:
                 continue
 
-            # Create sflux_air for this day
-            air_file = self._create_sflux_air_day(
-                day_data, day_times, lons, lats, base_date, file_num
+            # Air file
+            af = self._write_sflux_nc(
+                f"sflux_air_1.{file_num}.nc",
+                day_data,
+                day_time_vals,
+                lons,
+                lats,
+                base_date,
+                {
+                    "uwind": ("f4", "m/s", "eastward_wind", "Surface Eastward Air Velocity (10m AGL)"),
+                    "vwind": ("f4", "m/s", "northward_wind", "Surface Northward Air Velocity (10m AGL)"),
+                    "prmsl": ("f4", "Pa", "air_pressure_at_sea_level", "Pressure reduced to MSL"),
+                    "stmp": ("f4", "K", "air_temperature", "Surface Air Temperature (2m AGL)"),
+                    "spfh": ("f4", "1", "specific_humidity", "Surface Specific Humidity (2m AGL)"),
+                },
+                "SCHISM sflux air forcing from GFS",
             )
-            if air_file:
-                output_files.append(air_file)
+            if af:
+                output_files.append(af)
 
-            # Create sflux_rad for this day
-            rad_file = self._create_sflux_rad_day(
-                day_data, day_times, lons, lats, base_date, file_num
+            # Rad file
+            rf = self._write_sflux_nc(
+                f"sflux_rad_1.{file_num}.nc",
+                day_data,
+                day_time_vals,
+                lons,
+                lats,
+                base_date,
+                {
+                    "dlwrf": ("f4", "W/m^2", "surface_downwelling_longwave_flux_in_air", "Downward Long Wave Radiation Flux"),
+                    "dswrf": ("f4", "W/m^2", "surface_downwelling_shortwave_flux_in_air", "Downward Short Wave Radiation Flux"),
+                },
+                "SCHISM sflux radiation forcing from GFS",
             )
-            if rad_file:
-                output_files.append(rad_file)
+            if rf:
+                output_files.append(rf)
 
-            # Create sflux_prc for this day
-            prc_file = self._create_sflux_prc_day(
-                day_data, day_times, lons, lats, base_date, file_num
+            # Prc file
+            pf = self._write_sflux_nc(
+                f"sflux_prc_1.{file_num}.nc",
+                day_data,
+                day_time_vals,
+                lons,
+                lats,
+                base_date,
+                {
+                    "prate": ("f4", "kg/m^2/s", "precipitation_flux", "Surface Precipitation Rate"),
+                },
+                "SCHISM sflux precipitation forcing from GFS",
             )
-            if prc_file:
-                output_files.append(prc_file)
+            if pf:
+                output_files.append(pf)
 
         return output_files
 
-    def _create_sflux_air_day(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray,
-        base_date: datetime, file_num: str
+    def _write_sflux_nc(
+        self,
+        filename: str,
+        data: dict,
+        time_values: np.ndarray,
+        lons: np.ndarray,
+        lats: np.ndarray,
+        base_date: list,
+        var_specs: dict,
+        title: str,
     ) -> Optional[Path]:
-        """Create sflux_air NetCDF file for a single day."""
-        output_file = self.output_path / f"sflux_air_1.{file_num}.nc"
+        """
+        Write a single SCHISM sflux NetCDF file.
 
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
+        The output format matches the Fortran subroutines:
+          nos_ofs_write_netcdf_wind_SELFE
+          nos_ofs_write_netcdf_flux_SELFE
+          nos_ofs_write_netcdf_prate_SELFE
 
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
+        Dimensions: nx_grid, ny_grid, time(UNLIMITED)
+        Coords: lon(ny_grid, nx_grid), lat(ny_grid, nx_grid)
+        Time: days since base_date, with base_date attribute
+        Variables: 3-D (time, ny_grid, nx_grid), fill_value=-9999.0
 
-            # Time variable (days since base_date)
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
-            time_var.long_name = "Time"
-            time_var[:] = [(t - base_date).total_seconds() / 86400.0 for t in times]
+        Args:
+            filename: Output filename (e.g., "sflux_air_1.0001.nc")
+            data: Dict of variable arrays
+            time_values: Time in days since base_date
+            lons: 1-D longitude array
+            lats: 1-D latitude array
+            base_date: [year, month, day, 0]
+            var_specs: Dict of varname -> (dtype, units, std_name, long_name)
+            title: NetCDF title attribute
 
-            # Coordinates
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
-            lon_var.units = "degrees_east"
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
-            lat_var.units = "degrees_north"
-            lon_2d, lat_2d = np.meshgrid(lons, lats)
-            lon_var[:] = lon_2d
-            lat_var[:] = lat_2d
+        Returns:
+            Path to created file, or None on failure
+        """
+        output_file = self.output_path / filename
 
-            # Air forcing variables
-            var_specs = {
-                'uwind': ('f4', 'm/s', 'U-wind velocity at 10m'),
-                'vwind': ('f4', 'm/s', 'V-wind velocity at 10m'),
-                'prmsl': ('f4', 'Pa', 'Pressure reduced to mean sea level'),
-                'stmp': ('f4', 'K', 'Surface air temperature at 2m'),
-                'spfh': ('f4', 'kg/kg', 'Specific humidity at 2m'),
-            }
-
-            for varname, (dtype, units, long_name) in var_specs.items():
-                if varname in data and data[varname]:
-                    var = nc.createVariable(varname, dtype, ('ntime', 'ny_grid', 'nx_grid'),
-                                          fill_value=-9999.0)
-                    var.units = units
-                    var.long_name = long_name
-                    try:
-                        var[:] = np.stack(data[varname], axis=0)
-                    except Exception as e:
-                        log.warning(f"Could not write {varname}: {e}")
-
-            nc.title = "SCHISM sflux air forcing from GFS"
-            nc.source = f"GFS {self.resolution}"
-            nc.history = f"Created {datetime.now().isoformat()}"
-            nc.conventions = "CF-1.6"
-            nc.close()
-
-            log.debug(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create sflux_air {file_num}: {e}")
+        # Check that at least one variable has data
+        has_data = any(
+            var in data and data[var]
+            for var in var_specs
+        )
+        if not has_data:
             return None
 
-    def _create_sflux_rad_day(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray,
-        base_date: datetime, file_num: str
-    ) -> Optional[Path]:
-        """Create sflux_rad NetCDF file for a single day."""
-        output_file = self.output_path / f"sflux_rad_1.{file_num}.nc"
-
         try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
+            nx = len(lons)
+            ny = len(lats)
 
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
+            nc = Dataset(str(output_file), "w", format="NETCDF4_CLASSIC")
 
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
-            time_var[:] = [(t - base_date).total_seconds() / 86400.0 for t in times]
-
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
-            lon_2d, lat_2d = np.meshgrid(lons, lats)
-            lon_var[:] = lon_2d
-            lat_var[:] = lat_2d
-
-            var_specs = {
-                'dlwrf': ('f4', 'W/m^2', 'Downward longwave radiation flux'),
-                'dswrf': ('f4', 'W/m^2', 'Downward shortwave radiation flux'),
-            }
-
-            for varname, (dtype, units, long_name) in var_specs.items():
-                if varname in data and data[varname]:
-                    var = nc.createVariable(varname, dtype, ('ntime', 'ny_grid', 'nx_grid'),
-                                          fill_value=-9999.0)
-                    var.units = units
-                    var.long_name = long_name
-                    try:
-                        var[:] = np.stack(data[varname], axis=0)
-                    except Exception as e:
-                        log.warning(f"Could not write {varname}: {e}")
-
-            nc.title = "SCHISM sflux radiation forcing from GFS"
-            nc.source = f"GFS {self.resolution}"
-            nc.close()
-
-            log.debug(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create sflux_rad {file_num}: {e}")
-            return None
-
-    def _create_sflux_prc_day(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray,
-        base_date: datetime, file_num: str
-    ) -> Optional[Path]:
-        """Create sflux_prc NetCDF file for a single day."""
-        output_file = self.output_path / f"sflux_prc_1.{file_num}.nc"
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
-
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
-            time_var[:] = [(t - base_date).total_seconds() / 86400.0 for t in times]
-
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
-            lon_2d, lat_2d = np.meshgrid(lons, lats)
-            lon_var[:] = lon_2d
-            lat_var[:] = lat_2d
-
-            if 'prate' in data and data['prate']:
-                var = nc.createVariable('prate', 'f4', ('ntime', 'ny_grid', 'nx_grid'),
-                                      fill_value=-9999.0)
-                var.units = 'kg/m^2/s'
-                var.long_name = 'Precipitation rate'
-                try:
-                    var[:] = np.stack(data['prate'], axis=0)
-                except Exception as e:
-                    log.warning(f"Could not write prate: {e}")
-
-            nc.title = "SCHISM sflux precipitation forcing from GFS"
-            nc.source = f"GFS {self.resolution}"
-            nc.close()
-
-            log.debug(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create sflux_prc {file_num}: {e}")
-            return None
-
-    def _create_sflux_air(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray, base_date: datetime
-    ) -> Optional[Path]:
-        """Create sflux_air NetCDF file with wind, temperature, humidity, pressure."""
-        output_file = self.output_path / "sflux_air_1.0001.nc"
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            # Dimensions
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
+            nc.createDimension("nx_grid", nx)
+            nc.createDimension("ny_grid", ny)
+            nc.createDimension("time", None)
 
             # Time variable
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
+            time_var = nc.createVariable("time", "f4", ("time",))
+            time_var.units = "days since {}-{:02d}-{:02d}".format(
+                base_date[0], base_date[1], base_date[2]
+            )
+            time_var.base_date = np.array(base_date, dtype=np.int32)
+            time_var.standard_name = "time"
             time_var.long_name = "Time"
+            time_var._FillValue = np.float32(-9999.0)
+            time_var[:] = time_values
 
-            # Calculate time values in days since base_date
-            time_vals = [(t - base_date).total_seconds() / 86400.0 for t in times]
-            time_var[:] = time_vals
-
-            # Coordinate variables
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
+            # Coordinates
+            lon_var = nc.createVariable(
+                "lon", "f4", ("ny_grid", "nx_grid"), fill_value=-9999.0
+            )
             lon_var.units = "degrees_east"
+            lon_var.standard_name = "longitude"
             lon_var.long_name = "Longitude"
 
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
+            lat_var = nc.createVariable(
+                "lat", "f4", ("ny_grid", "nx_grid"), fill_value=-9999.0
+            )
             lat_var.units = "degrees_north"
+            lat_var.standard_name = "latitude"
             lat_var.long_name = "Latitude"
 
-            # Create 2D coordinate arrays
             lon_2d, lat_2d = np.meshgrid(lons, lats)
             lon_var[:] = lon_2d
             lat_var[:] = lat_2d
 
             # Data variables
-            var_specs = {
-                'uwind': ('f4', 'm/s', 'U-wind velocity at 10m'),
-                'vwind': ('f4', 'm/s', 'V-wind velocity at 10m'),
-                'prmsl': ('f4', 'Pa', 'Pressure reduced to mean sea level'),
-                'stmp': ('f4', 'K', 'Surface air temperature at 2m'),
-                'spfh': ('f4', 'kg/kg', 'Specific humidity at 2m'),
-            }
-
-            for varname, (dtype, units, long_name) in var_specs.items():
-                if varname in data and data[varname]:
-                    var = nc.createVariable(varname, dtype, ('ntime', 'ny_grid', 'nx_grid'),
-                                          fill_value=-9999.0)
-                    var.units = units
-                    var.long_name = long_name
-
-                    # Stack time slices
-                    try:
-                        var_data = np.stack(data[varname], axis=0)
-                        var[:] = var_data
-                    except Exception as e:
-                        log.warning(f"Could not write {varname}: {e}")
-
-            # Global attributes
-            nc.title = "SCHISM sflux air forcing from GFS"
-            nc.source = "GFS " + self.resolution
-            nc.history = f"Created {datetime.now().isoformat()}"
-            nc.conventions = "CF-1.6"
-
-            nc.close()
-            log.info(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create sflux_air: {e}")
-            return None
-
-    def _create_sflux_rad(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray, base_date: datetime
-    ) -> Optional[Path]:
-        """Create sflux_rad NetCDF file with radiation data."""
-        output_file = self.output_path / "sflux_rad_1.0001.nc"
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            # Dimensions
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
-
-            # Time variable
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
-            time_vals = [(t - base_date).total_seconds() / 86400.0 for t in times]
-            time_var[:] = time_vals
-
-            # Coordinates
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
-            lon_2d, lat_2d = np.meshgrid(lons, lats)
-            lon_var[:] = lon_2d
-            lat_var[:] = lat_2d
-
-            # Radiation variables
-            var_specs = {
-                'dlwrf': ('f4', 'W/m^2', 'Downward longwave radiation flux'),
-                'dswrf': ('f4', 'W/m^2', 'Downward shortwave radiation flux'),
-            }
-
-            for varname, (dtype, units, long_name) in var_specs.items():
-                if varname in data and data[varname]:
-                    var = nc.createVariable(varname, dtype, ('ntime', 'ny_grid', 'nx_grid'),
-                                          fill_value=-9999.0)
-                    var.units = units
-                    var.long_name = long_name
-                    try:
-                        var[:] = np.stack(data[varname], axis=0)
-                    except Exception as e:
-                        log.warning(f"Could not write {varname}: {e}")
-
-            nc.title = "SCHISM sflux radiation forcing from GFS"
-            nc.source = "GFS " + self.resolution
-            nc.close()
-            log.info(f"Created {output_file}")
-            return output_file
-
-        except Exception as e:
-            log.error(f"Failed to create sflux_rad: {e}")
-            return None
-
-    def _create_sflux_prc(
-        self, data: dict, times: list, lons: np.ndarray, lats: np.ndarray, base_date: datetime
-    ) -> Optional[Path]:
-        """Create sflux_prc NetCDF file with precipitation data."""
-        output_file = self.output_path / "sflux_prc_1.0001.nc"
-
-        try:
-            nc = Dataset(output_file, 'w', format='NETCDF4')
-
-            # Dimensions
-            nc.createDimension('nx_grid', len(lons))
-            nc.createDimension('ny_grid', len(lats))
-            nc.createDimension('ntime', len(times))
-
-            # Time variable
-            time_var = nc.createVariable('time', 'f8', ('ntime',))
-            time_var.units = f"days since {base_date.strftime('%Y-%m-%d')} 00:00:00"
-            time_var.calendar = "standard"
-            time_vals = [(t - base_date).total_seconds() / 86400.0 for t in times]
-            time_var[:] = time_vals
-
-            # Coordinates
-            lon_var = nc.createVariable('lon', 'f4', ('ny_grid', 'nx_grid'))
-            lat_var = nc.createVariable('lat', 'f4', ('ny_grid', 'nx_grid'))
-            lon_2d, lat_2d = np.meshgrid(lons, lats)
-            lon_var[:] = lon_2d
-            lat_var[:] = lat_2d
-
-            # Precipitation variable
-            if 'prate' in data and data['prate']:
-                var = nc.createVariable('prate', 'f4', ('ntime', 'ny_grid', 'nx_grid'),
-                                      fill_value=-9999.0)
-                var.units = 'kg/m^2/s'
-                var.long_name = 'Precipitation rate'
+            for varname, (dtype, units, std_name, long_name) in var_specs.items():
+                if varname not in data or not data[varname]:
+                    continue
+                var = nc.createVariable(
+                    varname,
+                    dtype,
+                    ("time", "ny_grid", "nx_grid"),
+                    fill_value=np.float32(-9999.0),
+                )
+                var.units = units
+                var.standard_name = std_name
+                var.long_name = long_name
                 try:
-                    var[:] = np.stack(data['prate'], axis=0)
+                    stacked = np.stack(data[varname], axis=0)
+                    var[:] = stacked.astype(np.float32)
                 except Exception as e:
-                    log.warning(f"Could not write prate: {e}")
+                    log.warning("Could not write %s in %s: %s", varname, filename, e)
 
-            nc.title = "SCHISM sflux precipitation forcing from GFS"
-            nc.source = "GFS " + self.resolution
+            nc.type = "SCHISM sflux forcing"
+            nc.title = title
+            nc.source = f"GFS {self.resolution}"
+            nc.history = f"Created {datetime.now().isoformat()} by nos_ofs GFSProcessor"
+            nc.Conventions = "CF-1.6"
             nc.close()
-            log.info(f"Created {output_file}")
+
+            log.debug("Created %s", output_file)
             return output_file
 
         except Exception as e:
-            log.error(f"Failed to create sflux_prc: {e}")
+            log.error("Failed to create %s: %s", filename, e)
             return None
 
     def _create_sflux_inputs(self) -> Optional[Path]:
-        """Create sflux_inputs.txt file for SCHISM."""
+        """
+        Create sflux_inputs.txt namelist file for SCHISM.
+
+        This controls how SCHISM blends air_1 (GFS) and air_2 (HRRR).
+        """
         output_file = self.output_path / "sflux_inputs.txt"
 
         try:
-            with open(output_file, 'w') as f:
+            with open(output_file, "w") as f:
                 f.write("&sflux_inputs\n")
                 f.write("air_1_relative_weight=1.0,\n")
                 f.write("air_2_relative_weight=0.0,\n")
@@ -1022,9 +1242,46 @@ class GFSProcessor(ForcingProcessor):
                 f.write("prc_1_max_window_hours=120.0,\n")
                 f.write("/\n")
 
-            log.info(f"Created {output_file}")
+            log.info("Created %s", output_file)
             return output_file
 
         except Exception as e:
-            log.error(f"Failed to create sflux_inputs.txt: {e}")
+            log.error("Failed to create sflux_inputs.txt: %s", e)
             return None
+
+    def _archive_outputs(self, sflux_files: List[Path]) -> None:
+        """
+        Archive output files to COMOUTrerun (if configured).
+
+        Mirrors the shell script's cpreq commands that copy the merged
+        file as gfs.{air,rad,prc}.nc to COMOUTrerun.
+        """
+        if not self.comout_rerun:
+            return
+
+        import shutil
+
+        rerun_dir = Path(self.comout_rerun)
+        rerun_dir.mkdir(parents=True, exist_ok=True)
+
+        run_name = getattr(self.config, "RUN", "stofs_3d_atl")
+        cycle = getattr(self.config, "cycle", f"t{self.cyc:02d}z")
+
+        std_names = [
+            f"{run_name}.{cycle}.gfs.rad.nc",
+            f"{run_name}.{cycle}.gfs.prc.nc",
+            f"{run_name}.{cycle}.gfs.air.nc",
+        ]
+
+        # Find the merged file to copy
+        merged = self.output_path / "gfs_merge_v1.nc"
+        if not merged.exists():
+            return
+
+        for std_name in std_names:
+            dst = rerun_dir / std_name
+            try:
+                shutil.copy2(str(merged), str(dst))
+                log.info("Archived %s -> %s", merged.name, dst)
+            except Exception as e:
+                log.warning("Failed to archive %s: %s", std_name, e)

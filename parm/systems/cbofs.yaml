@@ -2,6 +2,7 @@
 # Chesapeake Bay Operational Forecast System
 #
 # Inherits from base ROMS configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/cbofs.ctl
 
 _base: roms
 
@@ -11,50 +12,78 @@ system:
   region: chesapeake
   framework: comf
   version: "3.7.0"
+  prefix: cbofs
 
+# Grid configuration - ROMS curvilinear grid
 grid:
   type: curvilinear
+  # CBOFS grid dimensions
+  n_xi: 100
+  n_eta: 160
+  n_levels: 20
   files:
     grid: cbofs_grid.nc
     forcing: cbofs_forcing.nc
+  # Chesapeake Bay domain bounds (from .ctl: MINLON, MAXLON, MINLAT, MAXLAT)
   domain:
     lon_min: -77.5
     lon_max: -75.0
     lat_min: 36.5
     lat_max: 39.7
 
-# Override forcing configuration
+# Forcing configuration
 forcing:
   atmospheric:
-    primary: nam
-    fallback: gfs
+    primary: nam                # NAM 12km for East Coast
+    fallback: gfs               # GFS 0.25 degree as fallback
+    # DBASE_MET_NOW=NAM, DBASE_MET_FOR=NAM
     variables:
-      - Uwind
-      - Vwind
-      - Pair
-      - Tair
-      - Qair
-      - rain
-      - swrad
-      - lwrad
+      - Uwind                   # U-component wind at 10m
+      - Vwind                   # V-component wind at 10m
+      - Pair                    # Surface air pressure
+      - Tair                    # Surface air temperature
+      - Qair                    # Surface specific humidity
+      - rain                    # Precipitation rate
+      - swrad                   # Shortwave radiation
+      - lwrad                   # Longwave radiation
 
   river:
     enabled: true
-    primary: nwm
+    primary: nwm                # National Water Model
+    # CBOFS has ~150 river sources
     sources:
       - name: susquehanna
         usgs_id: "01578310"
+        description: "Susquehanna River at Conowingo, MD"
       - name: potomac
         usgs_id: "01646500"
+        description: "Potomac River near Washington, DC"
       - name: james
         usgs_id: "02037500"
+        description: "James River near Richmond, VA"
+      - name: rappahannock
+        usgs_id: "01668000"
+        description: "Rappahannock River near Fredericksburg, VA"
+      - name: york
+        usgs_id: "01674500"
+        description: "Mattaponi River near Beulahville, VA"
+      - name: patuxent
+        usgs_id: "01594440"
+        description: "Patuxent River near Bowie, MD"
+      - name: choptank
+        usgs_id: "01491000"
+        description: "Choptank River near Greensboro, MD"
 
   ocean:
     enabled: true
-    primary: rtofs
+    primary: rtofs              # DBASE_WL_NOW=RTOFS, DBASE_TS_NOW=RTOFS
+    obc:
+      wl_source: RTOFS          # Sea level from RTOFS
+      ts_source: RTOFS          # Temp/Salt from RTOFS
 
   tidal:
-    enabled: true
+    enabled: true               # CREATE_TIDEFORCING=1
+    database: tpxo9
     constituents:
       - M2
       - S2
@@ -65,18 +94,61 @@ forcing:
       - P1
       - Q1
 
-# Override model settings
+# Model physics
 model:
+  executable: romsM_cbofs
+  ocean_model: ROMS
   physics:
-    dt: 4.0
-    ndtfast: 20
+    dt: 4.0                     # DELT_MODEL = 4.0 seconds
+    ndtfast: 20                 # Barotropic time steps per baroclinic step
+  vertical:
+    n: 20                       # Number of S-coordinate levels
+    vtransform: 2               # Vertical transformation type
+    vstretching: 4              # Stretching function
+    theta_s: 5.0                # Surface stretching parameter
+    theta_b: 0.4                # Bottom stretching parameter
+    tcline: 10.0                # Critical depth (m)
+    hc: 10.0                    # S-coordinate depth parameter
   run:
-    hindcast_days: 0.25
-    forecast_days: 2.0
+    hindcast_days: 0.25         # 6-hour nowcast (LEN_NOWCAST=6)
+    forecast_days: 2.0          # 48-hour forecast (LEN_FORECAST=48)
+
+# Static input files (from .ctl)
+static_files:
+  grid: cbofs_grid.nc
+  grid_forcing: cbofs_forcing.nc
+  river_ctl: cbofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  obc_ctl: cbofs.obc.ctl
+  obc_clim: nos.clim.WOA05.nc
+  station_in: cbofs.station.in
+  runtime_ctl: cbofs.ocean.in
+  hc_file_obc: cbofs.HC.nc
+  hc_file_ofs: cbofs.HC.nc
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: cbofs
+  stations:
+    enabled: true
+    interval: 360               # 6 minutes in seconds
+  fields:
+    interval: 3600              # 1 hour
+    variables:
+      - zeta                    # Sea surface height
+      - ubar                    # Barotropic u velocity
+      - vbar                    # Barotropic v velocity
+      - temp                    # Temperature
+      - salt                    # Salinity
+      - u                       # 3D u velocity
+      - v                       # 3D v velocity
+  restart:
+    interval: 21600             # 6 hours
 
 # Computational resources
 resources:
-  nprocs: 120
+  nprocs: 120                   # TOTAL_TASKS=120
   memory_gb: 200
   walltime_hours: 1
 
@@ -86,3 +158,28 @@ stages:
   - nowcast
   - forecast
   - post
+
+# Environment variable mappings for shell scripts
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 1
+    LEN_FORECAST: 48
+    IGRD_MET: 0
+    IGRD_OBC: 0

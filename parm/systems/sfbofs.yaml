@@ -1,0 +1,176 @@
+# SFBOFS Configuration
+# San Francisco Bay Operational Forecast System
+#
+# Inherits from base FVCOM configuration and overrides specific values.
+# Reference: nosofs.v3.7.0/fix/sfbofs.ctl
+#
+# Coastal FVCOM system: has ocean BC, tides
+
+_base: fvcom
+
+system:
+  name: sfbofs
+  description: "San Francisco Bay Operational Forecast System"
+  region: west_coast
+  framework: comf
+  version: "3.7.0"
+  prefix: sfbofs
+  casename: sfbofs
+
+# Grid configuration - FVCOM unstructured grid
+grid:
+  type: unstructured
+  n_nodes: 15200
+  n_elements: 28000
+  n_levels: 21
+  files:
+    horizontal: sfbofs_grd.dat
+    depth: sfbofs_dep.dat
+    obc: sfbofs_obc.dat
+    sigma: sfbofs_sigma.dat
+    coriolis: sfbofs_cor.dat
+    sponge: sfbofs_spg.dat
+    station: sfbofs_station.dat
+  # San Francisco Bay domain bounds
+  domain:
+    lon_min: -123.2
+    lon_max: -121.5
+    lat_min: 37.4
+    lat_max: 38.4
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: gfs                # GFS for West Coast
+    fallback: nam
+    blend_enabled: false
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: sacramento_river
+        usgs_id: "11447650"
+        description: "Sacramento River at Freeport, CA"
+      - name: san_joaquin_river
+        usgs_id: "11313240"
+        description: "San Joaquin River near Vernalis, CA"
+      - name: napa_river
+        usgs_id: "11458000"
+        description: "Napa River near Napa, CA"
+      - name: petaluma_river
+        description: "Petaluma River"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Model physics
+model:
+  executable: fvcom_sfbofs
+  ocean_model: FVCOM
+  physics:
+    dt: 0.5
+    dti: 10.0
+    isplit: 20
+    bottom_roughness: 0.001
+    horizontal_mixing: smagorinsky
+    vertical_mixing: mellor_yamada25
+  vertical:
+    kb: 21
+    ksl: 1
+    p_sigma: 1.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 2.0
+
+# Static input files
+static_files:
+  grid: sfbofs_grd.dat
+  depth: sfbofs_dep.dat
+  obc: sfbofs_obc.dat
+  sigma: sfbofs_sigma.dat
+  coriolis: sfbofs_cor.dat
+  sponge: sfbofs_spg.dat
+  river_nml: sfbofs_riv.nml
+  river_ctl: sfbofs.river.ctl
+  river_clim: nos.river.clim.usgs.nc
+  obc_ctl: sfbofs.obc.ctl
+  station_in: sfbofs.station.in
+  runtime_ctl: sfbofs_run.nml
+  hc_file_obc: sfbofs.HC.nc
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: sfbofs
+  stations:
+    enabled: true
+    interval: 360
+  fields:
+    interval: 3600
+  restart:
+    interval: 21600
+
+# Computational resources
+resources:
+  nprocs: 240
+  memory_gb: 400
+  walltime_hours: 1
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    TOTAL_TASKS: resources.nprocs
+    CREATE_TIDEFORCING: 1
+    LEN_FORECAST: 48
+    IGRD_MET: 0
+    IGRD_OBC: 1

@@ -1,0 +1,156 @@
+# STOFS-3D Atlantic Ensemble Configuration
+#
+# Ensemble forecasting settings for probabilistic storm surge prediction.
+# This file is loaded separately from the base system YAML and defines
+# perturbation strategies, output statistics, and execution parameters.
+#
+# Usage:
+#   from nos_ofs.ensemble import EnsembleConfig
+#   ens_config = EnsembleConfig.from_yaml("parm/ensemble/stofs_3d_atl_ensemble.yaml")
+#
+# Or embed the 'ensemble:' section directly in parm/systems/stofs_3d_atl.yaml
+# and extract it from the loaded OFSConfig.
+
+ensemble:
+  enabled: true
+  n_members: 20
+  seed: 42
+
+  # ── Output directory ──────────────────────────────────────────────
+  # Root directory for ensemble outputs.  Each member gets a subdirectory
+  # named member_NNNN underneath this path.  Statistics are written to
+  # a 'statistics' subdirectory.
+  output_dir: /lfs/h2/emc/ptmp/${USER}/stofs_3d_atl/ensemble
+
+  # ── Perturbation strategies ───────────────────────────────────────
+  perturbations:
+
+    # --- Initial condition perturbation ---
+    # Adds spatially-correlated Gaussian noise to the hotstart/restart
+    # file fields.  The correlation_length (km) controls how smooth the
+    # perturbation pattern is.
+    initial_conditions:
+      enabled: true
+      method: gaussian          # gaussian | eof | historical
+      variables:
+        temperature:
+          std_dev: 0.5          # degrees C
+          correlation_length: 50  # km
+          clamp_min: -2.0       # prevent unphysical values
+          clamp_max: 40.0
+        salinity:
+          std_dev: 0.3          # PSU
+          correlation_length: 50
+          clamp_min: 0.0
+          clamp_max: 42.0
+        ssh:
+          std_dev: 0.05         # meters
+          correlation_length: 100
+      # EOF settings (used when method=eof)
+      eof_modes: 10
+      eof_data_path: null       # path to pre-computed EOF NetCDF
+      # Historical settings (used when method=historical)
+      historical_error_path: null  # path to forecast-analysis difference archive
+
+    # --- Atmospheric forcing perturbation ---
+    # Wind perturbation is the single most important factor for storm
+    # surge uncertainty.  Spatially-correlated random fields with AR(1)
+    # temporal smoothing ensure physically realistic perturbations.
+    atmospheric:
+      enabled: true
+      wind:
+        enabled: true
+        speed_std_pct: 10       # 10% of wind speed magnitude
+        direction_std_deg: 15   # degrees rotation
+        correlation_length: 200 # km -- large-scale wind patterns
+        correlation_time_hours: 6  # AR(1) e-folding time
+      pressure:
+        enabled: true
+        std_dev: 100            # Pa (~1 hPa)
+        correlation_length: 500 # km -- synoptic-scale pressure
+        correlation_time_hours: 12
+      precipitation:
+        enabled: false          # less critical for surge
+        std_pct: 30             # 30% multiplicative (log-normal)
+        correlation_length: 100
+        correlation_time_hours: 3
+
+    # --- Open boundary condition perturbation ---
+    # Captures uncertainty propagated from the upstream RTOFS model
+    # that provides temperature, salinity, SSH, and velocity at the
+    # open ocean boundaries.
+    boundary:
+      enabled: false            # enable for full uncertainty quantification
+      variables:
+        temperature:
+          std_dev: 0.3          # degrees C
+          correlation_length: 100
+        salinity:
+          std_dev: 0.2          # PSU
+          correlation_length: 100
+          clamp_min: 0.0
+        ssh:
+          std_dev: 0.03         # meters
+          correlation_length: 200
+
+    # --- Model parameter perturbation ---
+    # Perturbs physics parameters in param.nml using multiplicative
+    # log-normal noise to keep values positive.
+    parameters:
+      enabled: true
+      bottom_friction:
+        std_pct: 20             # 20% perturbation of Zob / RDRG2
+      wind_drag:
+        std_pct: 15             # 15% perturbation of drag coefficient
+      mixing:
+        std_pct: 25             # 25% perturbation of AKT_BAK / AKV_BAK
+
+  # ── Output statistics ─────────────────────────────────────────────
+  # Statistics computed after all members complete.
+  statistics:
+    # Variables to compute statistics for.
+    # Names mapped to NetCDF variable names via VARIABLE_NAME_MAP.
+    variables:
+      - zeta                    # sea surface height (critical for surge)
+      - temp                    # temperature
+      - salt                    # salinity
+
+    # Percentile levels (0-100)
+    percentiles:
+      - 5
+      - 10
+      - 25
+      - 50
+      - 75
+      - 90
+      - 95
+
+    # Probability-of-exceedance thresholds (native units).
+    # For each variable, compute P(variable > threshold) maps.
+    probability_thresholds:
+      zeta:
+        - 0.5                   # meters above MHHW -- minor flood
+        - 1.0                   # moderate flood
+        - 1.5                   # major flood
+        - 2.0                   # extreme flood
+
+  # ── Execution settings ────────────────────────────────────────────
+  execution:
+    # 'sequential': one member at a time (safe for limited HPC resources).
+    # 'parallel':   concurrent members (requires multi-node allocation).
+    mode: sequential
+
+    # Maximum concurrent members when mode=parallel.
+    max_parallel: 4
+
+    # When true, atmospheric/river/OBC forcing is prepared once in a
+    # shared 'base' directory, then symlinked into each member.  Only
+    # perturbed fields are unique copies.  Saves significant disk I/O.
+    share_base_forcing: true
+
+    # Enable checkpoint files so individual members can be restarted
+    # independently if they fail.
+    checkpoint: true
+
+    # Number of times to retry a failed member before giving up.
+    retry_failed: 1

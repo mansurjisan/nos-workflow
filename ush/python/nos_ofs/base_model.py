@@ -19,6 +19,7 @@ class ModelType(Enum):
     SCHISM = "schism"
     FVCOM = "fvcom"
     ROMS = "roms"
+    ADCIRC = "adcirc"
 
 
 class GridType(Enum):
