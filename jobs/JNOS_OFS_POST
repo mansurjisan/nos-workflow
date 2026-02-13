@@ -66,6 +66,9 @@ case "${OFS,,}" in
     stofs_3d_atl|stofs_3d_pac)
         export OFS_FRAMEWORK="stofs"
         ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
     *)
         export OFS_FRAMEWORK="comf"
         ;;
@@ -143,6 +146,12 @@ case "${OFS_FRAMEWORK}" in
                 exit 1
                 ;;
         esac
+        ;;
+    adcirc)
+        # ADCIRC post-processing is handled inline during execute_model
+        # (outputs archived to $COMOUT in nowcast/forecast sub-phases)
+        echo "INFO: ADCIRC post-processing completed inline during model execution"
+        echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
         ;;
     comf|*)
         # nosofs/COMF single post-processing stage
