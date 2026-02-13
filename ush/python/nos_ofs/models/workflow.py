@@ -148,7 +148,6 @@ class SchismModel:
     COMF_TO_STOFS_STAGES = {
         "prep": "prep_nowcast",
         "nowcast_forecast": "now_forecast",
-        "nowcst_fcst": "now_forecast",  # Alternative COMF naming
         "post": "post_1",
         "post2": "post_2",
         "ts_restart": "temp_salt_restart",

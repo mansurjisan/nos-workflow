@@ -2,14 +2,11 @@
 set -x
 
 ########################################
-# NOS_OFS_NOWCAST - Nowcast-Only Job
+# NOS_OFS_NOWCAST - Nowcast Job
 #
-# Split-job counterpart to JNOS_OFS_NOWCST_FCST.
-# Runs just the nowcast phase; forecast runs in a separate
-# JNOS_OFS_FORECAST job submitted with a PBS dependency.
-#
-# The nowcast archives a combined hotstart file to $COMOUT
-# so the independent forecast job can retrieve it.
+# Runs the nowcast phase for all frameworks (COMF, STOFS, ADCIRC).
+# Archives hotstart file to $COMOUT so the forecast job can retrieve it.
+# Forecast runs in a separate JNOS_OFS_FORECAST job.
 ########################################
 export PS4=' $SECONDS + '
 date

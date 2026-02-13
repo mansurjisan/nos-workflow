@@ -9,7 +9,8 @@ nos_ofs/
 ├── ecf/                          # ECFLOW scripts
 ├── jobs/                         # J-jobs (NCO standard)
 │   ├── JNOS_OFS_PREP             # Unified prep job
-│   ├── JNOS_OFS_NOWCST_FCST      # Unified nowcast/forecast
+│   ├── JNOS_OFS_NOWCAST          # Nowcast (split-job mode)
+│   ├── JNOS_OFS_FORECAST         # Forecast (split-job mode)
 │   └── JNOS_OFS_POST             # Unified post-processing
 ├── scripts/                      # Ex-scripts
 │   ├── nosofs/                   # COMF execution scripts

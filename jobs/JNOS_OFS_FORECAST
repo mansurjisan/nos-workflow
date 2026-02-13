@@ -2,13 +2,10 @@
 set -x
 
 ########################################
-# NOS_OFS_FORECAST - Forecast-Only Job
+# NOS_OFS_FORECAST - Forecast Job
 #
-# Split-job counterpart to JNOS_OFS_NOWCST_FCST.
-# Runs just the forecast phase after JNOS_OFS_NOWCAST completes.
-#
-# The forecast retrieves a combined hotstart file from $COMOUT
-# that was archived by the nowcast job.
+# Runs the forecast phase for all frameworks (COMF, STOFS, ADCIRC).
+# Retrieves hotstart file from $COMOUT archived by the nowcast job.
 ########################################
 export PS4=' $SECONDS + '
 date
