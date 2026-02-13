@@ -1,0 +1,72 @@
+_base: adcirc
+
+system:
+  name: stofs_2d_glo
+  model_type: adcirc
+  framework: adcirc
+
+grid:
+  n_nodes: 4835761
+  n_elements: 9461042
+  n_levels: 1
+  domain:
+    lon_min: -180.0
+    lon_max: 180.0
+    lat_min: -90.0
+    lat_max: 90.0
+
+model:
+  dt: 2.0
+  nws: 12
+  im: 111112
+  ics: 2
+  tidal_constituents:
+    - M2
+    - S2
+    - N2
+    - K2
+    - K1
+    - O1
+    - P1
+    - Q1
+
+forcing:
+  atmospheric:
+    primary: gfs
+    resolution: 0.25
+    wind_interval: 3600
+    nowcast_hours: 6
+    forecast_hours: 180
+
+execution:
+  ncpu: 960
+  ppn: 120
+  num_writers: 6
+  tot_ncpu: 966
+
+files:
+  grid: stofs_2d_glo_grid
+  attr: stofs_2d_glo_attr
+  body: stofs_2d_glo_body
+  rotm: stofs_2d_glo_rotm
+  met: stofs_2d_glo_met
+  elev_stat: stofs_2d_glo_elev_stat
+  tide_template: stofs_2d_glo_tide.15
+  surf_template: stofs_2d_glo_surf.15
+
+output:
+  station_output: true
+  field_output: true
+  products:
+    - cwl   # combined water level
+    - htp   # harmonic tide prediction
+    - swl   # sub-tidal water level (cwl - htp)
+  grib2_domains:
+    - conus.east
+    - conus.west
+    - alaska
+    - hawaii
+    - puertori
+    - guam
+    - micronesia
+    - northpacific

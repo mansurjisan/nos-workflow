@@ -35,7 +35,7 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 ####################################
 # STOFS uses NET=stofs, nosofs uses NET=nosofs
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
         export NET=${NET:-stofs}
         ;;
     *)
@@ -92,6 +92,9 @@ case "${OFS,,}" in
     stofs_3d_atl|stofs_3d_pac)
         export OFS_FRAMEWORK="stofs"
         ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
     *)
         export OFS_FRAMEWORK="comf"
         ;;
@@ -123,8 +126,8 @@ export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 
 # Use appropriate version for COM paths
 case "${OFS_FRAMEWORK}" in
-    stofs)  _com_ver=${stofs_ver:-v2.1.0} ;;
-    *)      _com_ver=${nosofs_ver} ;;
+    stofs|adcirc)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)             _com_ver=${nosofs_ver} ;;
 esac
 
 if command -v compath.py &> /dev/null; then
@@ -177,6 +180,39 @@ case "${OFS_FRAMEWORK}" in
         export PYTHONNOUSERSITE=1
 
         # Execute nowcast-only ex-script
+        $SCRIstofs3d/exnos_ofs_nowcast.sh
+        ;;
+    adcirc)
+        # ADCIRC-specific paths (alias stofs3d paths for 2D variable names)
+        export FIXstofs2d=${FIXstofs3d}
+        export USHstofs2d=${USHstofs3d}
+        export EXECstofs2d=${EXECstofs3d}
+
+        # ADCIRC persistent GES directory (tidal factors, decomposed grids)
+        export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
+
+        # ADCIRC time variables
+        export PDYHH=${PDY}${cyc}
+        export YMDH=${PDYHH}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        export NHOUR=${NHOUR:-nhour}
+        export NCDUMP=${NCDUMP:-ncdump}
+
+        # ADCIRC COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COM=${COM:-${COMOUTroot}}
+        export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+        # ADCIRC execution resources (from YAML or defaults)
+        export NCPU=${NCPU:-960}
+        export TOT_NCPU=${TOT_NCPU:-966}
+        export PPN=${PPN:-120}
+        export NUM_WRITERS=${NUM_WRITERS:-6}
+        export COLDSTART=${COLDSTART:-NO}
+        export nback=${nback:-20}
+
+        # Execute nowcast-only ex-script (ADCIRC path)
         $SCRIstofs3d/exnos_ofs_nowcast.sh
         ;;
     comf|*)

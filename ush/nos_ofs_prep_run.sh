@@ -2,7 +2,7 @@
 ################################################################################
 #  Name: nos_ofs_prep_run.sh
 #  Purpose: Unified prep functions for all NOS OFS systems
-#           Provides a common 7-step interface for both STOFS and COMF frameworks
+#           Provides a common 7-step interface for STOFS, COMF, and ADCIRC frameworks
 #
 #  Usage:
 #     source ${USHnos}/nos_ofs_prep_run.sh
@@ -38,9 +38,10 @@ stage_static_files() {
     echo "=== stage_static_files (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_stage_static_files ;;
-        comf)  _comf_stage_static_files ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_stage_static_files ;;
+        comf)    _comf_stage_static_files ;;
+        adcirc)  _adcirc_stage_static_files ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -51,9 +52,10 @@ create_model_config() {
     echo "=== create_model_config (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_create_model_config ;;
-        comf)  _comf_create_model_config ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_create_model_config ;;
+        comf)    _comf_create_model_config ;;
+        adcirc)  _adcirc_create_model_config ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -64,9 +66,10 @@ create_forcing_atmospheric() {
     echo "=== create_forcing_atmospheric (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_create_forcing_atmospheric ;;
-        comf)  _comf_create_forcing_atmospheric ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_create_forcing_atmospheric ;;
+        comf)    _comf_create_forcing_atmospheric ;;
+        adcirc)  _adcirc_create_forcing_atmospheric ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -77,9 +80,10 @@ create_forcing_river() {
     echo "=== create_forcing_river (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_create_forcing_river ;;
-        comf)  _comf_create_forcing_river ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_create_forcing_river ;;
+        comf)    _comf_create_forcing_river ;;
+        adcirc)  _adcirc_create_forcing_river ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -90,9 +94,10 @@ create_forcing_obc() {
     echo "=== create_forcing_obc (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_create_forcing_obc ;;
-        comf)  _comf_create_forcing_obc ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_create_forcing_obc ;;
+        comf)    _comf_create_forcing_obc ;;
+        adcirc)  _adcirc_create_forcing_obc ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -103,9 +108,10 @@ create_forcing_nudging() {
     echo "=== create_forcing_nudging (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_create_forcing_nudging ;;
-        comf)  _comf_create_forcing_nudging ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_create_forcing_nudging ;;
+        comf)    _comf_create_forcing_nudging ;;
+        adcirc)  _adcirc_create_forcing_nudging ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -116,9 +122,10 @@ prepare_initial_condition() {
     echo "=== prepare_initial_condition (framework: ${OFS_FRAMEWORK}) ==="
 
     case "${OFS_FRAMEWORK}" in
-        stofs) _stofs_prepare_initial_condition ;;
-        comf)  _comf_prepare_initial_condition ;;
-        *)     echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
+        stofs)   _stofs_prepare_initial_condition ;;
+        comf)    _comf_prepare_initial_condition ;;
+        adcirc)  _adcirc_prepare_initial_condition ;;
+        *)       echo "ERROR: Unknown framework: ${OFS_FRAMEWORK}"; return 1 ;;
     esac
 }
 
@@ -940,4 +947,237 @@ _comf_prepare_initial_condition() {
     # COMF restart/initial condition is handled inside nos_ofs_launch.sh
     # which was already called by stage_static_files
     echo "COMF initial condition handled by nos_ofs_launch.sh"
+}
+
+
+################################################################################
+#
+#  ADCIRC INTERNAL FUNCTIONS (STOFS-2D-GLO)
+#  These wrap existing STOFS-2D-GLO operational scripts from ush/stofs_2d_glo/
+#
+################################################################################
+
+_adcirc_stage_static_files() {
+    echo "Linking ADCIRC static files from ${FIXstofs2d}..."
+
+    cd $DATA
+
+    # Link ADCIRC grid and attribute files
+    ln -sf $FIXstofs2d/${RUN}_attr       fort.13
+    ln -sf $FIXstofs2d/${RUN}_grid       fort.14
+    ln -sf $FIXstofs2d/${RUN}_body       fort.24
+    ln -sf $FIXstofs2d/${RUN}_rotm       fort.rotm
+    ln -sf $FIXstofs2d/${RUN}_elev_stat  elev_stat.151
+    ln -sf $FIXstofs2d/${RUN}_elev_stat  vel_stat.151
+
+    # Copy tidal nodal equilibrium file from COMGES (persistent across cycles)
+    if [ -f $COMGES/${RUN}_nod_equi ]; then
+        cpreq $COMGES/${RUN}_nod_equi .
+        echo "Copied nod_equi from $COMGES"
+    else
+        echo "WARNING: ${RUN}_nod_equi not found in $COMGES"
+        # Run tide_fac to generate it if executable exists
+        if [ -x $EXECstofs2d/${RUN}_tide_fac ]; then
+            echo "Running tide_fac to generate nod_equi..."
+            $EXECstofs2d/${RUN}_tide_fac
+            export err=$?
+            if [ $err -eq 0 ] && [ -f ${RUN}_nod_equi ]; then
+                cpfs ${RUN}_nod_equi $COMGES/.
+                echo "Generated and archived nod_equi"
+            else
+                echo "WARNING: tide_fac failed (err=$err)"
+            fi
+        fi
+    fi
+
+    # Copy/extract partmesh tar from COMGES (pre-decomposed grid)
+    export ncpu=${NCPU:-${TOTAL_TASKS:-960}}
+    if [ -f $COMGES/${RUN}_${ncpu}.tar.gz ]; then
+        cpreq $COMGES/${RUN}_${ncpu}.tar.gz .
+        tar xvzf ${RUN}_${ncpu}.tar.gz
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "WARNING: Failed to extract partmesh tar"
+        else
+            echo "Extracted pre-decomposed grid for $ncpu CPUs"
+        fi
+    else
+        echo "INFO: No pre-decomposed grid tar in COMGES (will run adcprep --prepall)"
+    fi
+
+    echo "ADCIRC static file staging complete"
+}
+
+
+_adcirc_create_model_config() {
+    cd $DATA
+
+    # Stage fort.15 templates from FIX — actual fort.15 generation is
+    # done per-phase during execute_model (tide vs surface templates)
+    for tmpl in tide.15 surf.15; do
+        if [ -f $FIXstofs2d/${RUN}_${tmpl} ]; then
+            cp -p $FIXstofs2d/${RUN}_${tmpl} $DATA/${RUN}_${tmpl}
+            echo "Staged template: ${RUN}_${tmpl}"
+        else
+            echo "WARNING: Template not found: $FIXstofs2d/${RUN}_${tmpl}"
+        fi
+    done
+
+    # Stage meteorological control file for surface runs (NWS=12)
+    if [ -f $FIXstofs2d/${RUN}_met ]; then
+        ln -sf $FIXstofs2d/${RUN}_met fort.22
+        echo "Linked meteorological control file: fort.22"
+    fi
+
+    echo "ADCIRC model config staging complete (fort.15 generated per-phase)"
+}
+
+
+_adcirc_create_forcing_atmospheric() {
+    local file_log
+
+    cd $DATA
+
+    export YMDH=${PDY}${cyc}
+    export nback=${nback:-20}
+    local lsth=${ADCIRC_LSTH:-180}
+
+    local time_now=$YMDH
+    local time_120=$(${NDATE} 120 $YMDH)
+    local time_end=$(${NDATE} $lsth $YMDH)
+
+    # Find the start time for nowcast (search backwards for restart)
+    ${USHstofs2d}/${RUN}_multistart.sh "restart" >> $pgmout 2>errfile
+    export err=$?
+    if [ $err -ne 0 ]; then
+        echo "WARNING: multistart.sh failed to find restart (err=$err)"
+        cat errfile 2>/dev/null
+    fi
+    local time_beg=$YMDH
+    if [ -f ${RUN}_multistart.out ]; then
+        time_beg=$(head ${RUN}_multistart.out | awk '{ print $1 }')
+        rm ${RUN}_multistart.out
+    fi
+
+    # Create GFS surface forcing for nowcast period
+    file_log=log_gfs_ncst.${cycle}.log
+    echo "Creating GFS OWI forcing for nowcast: $time_beg → $time_now"
+    if [ ! -f $COMOUTrerun/${RUN}_ncst.221.nc ]; then
+        mpiexec -n 1 -ppn 1 ${USHstofs2d}/${RUN}_surface_forcing.sh \
+            "surface1" "$time_beg" "$time_now" >> ${file_log} 2>&1
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "WARNING: GFS nowcast forcing failed (err=$err)"
+            cat ${file_log}
+        else
+            cpfs fort.221.nc $COMOUTrerun/${RUN}_ncst.221.nc
+            cpfs fort.222.nc $COMOUTrerun/${RUN}_ncst.222.nc
+            cpfs fort.225.nc $COMOUTrerun/${RUN}_ncst.225.nc
+            echo "GFS nowcast forcing complete"
+        fi
+        rm -f fort.221.nc fort.222.nc fort.225.nc
+    else
+        echo "GFS nowcast forcing already exists in COMOUTrerun"
+    fi
+
+    # Create GFS surface forcing for forecast period 1 (now → +120h)
+    file_log=log_gfs_fcst1.${cycle}.log
+    echo "Creating GFS OWI forcing for forecast1: $time_now → $time_120"
+    if [ ! -f $COMOUTrerun/${RUN}_fcst1.221.nc ]; then
+        mpiexec -n 1 -ppn 1 ${USHstofs2d}/${RUN}_surface_forcing.sh \
+            "surface1" "$time_now" "$time_120" >> ${file_log} 2>&1
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "WARNING: GFS forecast1 forcing failed (err=$err)"
+            cat ${file_log}
+        else
+            cpfs fort.221.nc $COMOUTrerun/${RUN}_fcst1.221.nc
+            cpfs fort.222.nc $COMOUTrerun/${RUN}_fcst1.222.nc
+            cpfs fort.225.nc $COMOUTrerun/${RUN}_fcst1.225.nc
+            echo "GFS forecast1 forcing complete"
+        fi
+        rm -f fort.221.nc fort.222.nc fort.225.nc
+    else
+        echo "GFS forecast1 forcing already exists in COMOUTrerun"
+    fi
+
+    # Create GFS surface forcing for forecast period 2 (+120h → +180h)
+    file_log=log_gfs_fcst2.${cycle}.log
+    echo "Creating GFS OWI forcing for forecast2: $time_120 → $time_end"
+    if [ ! -f $COMOUTrerun/${RUN}_fcst2.221.nc ]; then
+        mpiexec -n 1 -ppn 1 ${USHstofs2d}/${RUN}_surface_forcing.sh \
+            "surface3" "$time_120" "$time_end" >> ${file_log} 2>&1
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "WARNING: GFS forecast2 forcing failed (err=$err)"
+            cat ${file_log}
+        else
+            cpfs fort.221.nc $COMOUTrerun/${RUN}_fcst2.221.nc
+            cpfs fort.222.nc $COMOUTrerun/${RUN}_fcst2.222.nc
+            cpfs fort.225.nc $COMOUTrerun/${RUN}_fcst2.225.nc
+            echo "GFS forecast2 forcing complete"
+        fi
+        rm -f fort.221.nc fort.222.nc fort.225.nc
+    else
+        echo "GFS forecast2 forcing already exists in COMOUTrerun"
+    fi
+}
+
+
+_adcirc_create_forcing_river() {
+    # ADCIRC STOFS-2D-GLO is a barotropic model — no river forcing
+    echo "ADCIRC: No river forcing (2D barotropic global model)"
+}
+
+
+_adcirc_create_forcing_obc() {
+    # ADCIRC STOFS-2D-GLO is a global domain — no open boundary conditions
+    echo "ADCIRC: No OBC forcing (global domain)"
+}
+
+
+_adcirc_create_forcing_nudging() {
+    # ADCIRC STOFS-2D-GLO is 2D — no T/S nudging
+    echo "ADCIRC: No nudging (2D barotropic model)"
+}
+
+
+_adcirc_prepare_initial_condition() {
+    cd $DATA
+
+    export YMDH=${PDY}${cyc}
+    export nback=${nback:-20}
+
+    # Search for hotstart file from previous cycle
+    echo "Searching for ADCIRC hotstart file..."
+    ${USHstofs2d}/${RUN}_multistart.sh "hotstart" >> $pgmout 2>errfile
+    export err=$?
+    if [ $err -ne 0 ]; then
+        echo "WARNING: multistart.sh hotstart search failed (err=$err)"
+        cat errfile 2>/dev/null
+        return 1
+    fi
+
+    if [ -f ${RUN}_multistart.out ]; then
+        local ymdh=$(head ${RUN}_multistart.out | awk '{ print $1 }')
+        rm ${RUN}_multistart.out
+
+        local hdate=$(echo $ymdh | cut -c1-8)
+        local hcyc=$(echo $ymdh | cut -c9-10)
+        local hdir=$COM/${RUN}.${hdate}
+        local hfile=${RUN}.t${hcyc}z.hotstart
+
+        if [ -d $hdir ] && [ -f $hdir/$hfile ]; then
+            cpreq $hdir/$hfile $COMOUTrerun/${ymdh}.hotstart
+            echo "Found hotstart: $hdir/$hfile → $COMOUTrerun/${ymdh}.hotstart"
+        else
+            echo "WARNING: Hotstart not found at $hdir/$hfile"
+            return 1
+        fi
+    else
+        echo "WARNING: multistart.sh did not produce output"
+        return 1
+    fi
+
+    echo "ADCIRC initial condition staging complete"
 }
