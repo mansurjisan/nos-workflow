@@ -33,11 +33,18 @@ suite nosofs
         edit WALLTIME '01:30:00'
         inlimit /nosofs:max_jobs
 
-      task nowcst_fcst
-        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcst_fcst.ecf'
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
         edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
         edit WALLTIME '06:00:00'
         trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+        edit WALLTIME '06:00:00'
+        trigger nowcast == complete
         inlimit /nosofs:max_jobs
 
       task post_1
@@ -45,7 +52,7 @@ suite nosofs
         edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
         edit WALLTIME '01:00:00'
         edit POST_STAGE '1'
-        trigger nowcst_fcst == complete
+        trigger forecast == complete
         inlimit /nosofs:max_jobs
 
       task post_2
@@ -76,11 +83,18 @@ suite nosofs
         edit WALLTIME '01:30:00'
         inlimit /nosofs:max_jobs
 
-      task nowcst_fcst
-        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcst_fcst.ecf'
+      task nowcast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_nowcast.ecf'
         edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
         edit WALLTIME '06:00:00'
         trigger prep == complete
+        inlimit /nosofs:max_jobs
+
+      task forecast
+        edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_forecast.ecf'
+        edit RESOURCES 'select=20:ncpus=128:mpiprocs=120'
+        edit WALLTIME '06:00:00'
+        trigger nowcast == complete
         inlimit /nosofs:max_jobs
 
       task post_1
@@ -88,7 +102,7 @@ suite nosofs
         edit RESOURCES 'select=1:ncpus=8:mpiprocs=8'
         edit WALLTIME '01:00:00'
         edit POST_STAGE '1'
-        trigger nowcst_fcst == complete
+        trigger forecast == complete
         inlimit /nosofs:max_jobs
 
       task post_2

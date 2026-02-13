@@ -3,10 +3,10 @@
 NOS-OFS Unified ecFlow Suite Definition
 
 Generates the ecFlow suite for all NOS-OFS systems under a single nosofs suite.
-Supports three workflow patterns:
-  - STOFS:  prep -> nowcst_fcst -> post_1 -> post_2
-  - COMF:   prep -> nowcast -> forecast -> post
-  - ADCIRC: prep -> nowcast -> forecast -> post
+All frameworks use split-job mode:
+  - prep -> nowcast -> forecast -> post
+STOFS systems add a second post-processing stage:
+  - prep -> nowcast -> forecast -> post_1 -> post_2
 
 Usage:
     # Generate .def text file:
@@ -51,7 +51,7 @@ except ImportError:
 # requirements per task.  Resources are tuples of (select_stmt, walltime).
 
 OFS_SYSTEMS = [
-    # --- STOFS Framework (combined nowcst_fcst) ---
+    # --- STOFS Framework (split nowcast/forecast + two-phase post) ---
     {
         "name": "stofs_3d_atl",
         "framework": "stofs",
@@ -59,10 +59,11 @@ OFS_SYSTEMS = [
         "cycles": ["12"],
         "ver_file": "stofs_3d_atl/run.ver",
         "resources": {
-            "prep":        ("select=1:ncpus=8:mpiprocs=8",      "01:30:00"),
-            "nowcst_fcst": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
-            "post_1":      ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
-            "post_2":      ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+            "prep":     ("select=1:ncpus=8:mpiprocs=8",      "01:30:00"),
+            "nowcast":  ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "forecast": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "post_1":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+            "post_2":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
         },
     },
     {
@@ -72,10 +73,11 @@ OFS_SYSTEMS = [
         "cycles": ["12"],
         "ver_file": "stofs_3d_pac/run.ver",
         "resources": {
-            "prep":        ("select=1:ncpus=8:mpiprocs=8",      "01:30:00"),
-            "nowcst_fcst": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
-            "post_1":      ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
-            "post_2":      ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+            "prep":     ("select=1:ncpus=8:mpiprocs=8",      "01:30:00"),
+            "nowcast":  ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "forecast": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "post_1":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+            "post_2":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
         },
     },
     # --- ADCIRC Framework (split nowcast/forecast) ---
@@ -223,50 +225,17 @@ def create_suite_api():
             cron.set_time_series("{}:00".format(int(cyc)))
             cyc_fam.add_cron(cron)
 
-            if ofs["framework"] == "stofs":
-                _add_stofs_tasks(cyc_fam, ofs)
-            else:
-                _add_comf_tasks(cyc_fam, ofs)
+            _add_tasks(cyc_fam, ofs)
 
     return defs
 
 
-def _add_stofs_tasks(fam, ofs):
-    """STOFS chain: prep -> nowcst_fcst -> post_1 -> post_2"""
-    res = ofs["resources"]
+def _add_tasks(fam, ofs):
+    """Add split-job tasks: prep -> nowcast -> forecast -> post.
 
-    t = fam.add_task("prep")
-    t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_prep.ecf")
-    t.add_variable("RESOURCES", res["prep"][0])
-    t.add_variable("WALLTIME", res["prep"][1])
-    t.add_inlimit("max_jobs")
-
-    t = fam.add_task("nowcst_fcst")
-    t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_nowcst_fcst.ecf")
-    t.add_variable("RESOURCES", res["nowcst_fcst"][0])
-    t.add_variable("WALLTIME", res["nowcst_fcst"][1])
-    t.add_trigger("prep == complete")
-    t.add_inlimit("max_jobs")
-
-    t = fam.add_task("post_1")
-    t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
-    t.add_variable("RESOURCES", res["post_1"][0])
-    t.add_variable("WALLTIME", res["post_1"][1])
-    t.add_variable("POST_STAGE", "1")
-    t.add_trigger("nowcst_fcst == complete")
-    t.add_inlimit("max_jobs")
-
-    t = fam.add_task("post_2")
-    t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
-    t.add_variable("RESOURCES", res["post_2"][0])
-    t.add_variable("WALLTIME", res["post_2"][1])
-    t.add_variable("POST_STAGE", "2")
-    t.add_trigger("post_1 == complete")
-    t.add_inlimit("max_jobs")
-
-
-def _add_comf_tasks(fam, ofs):
-    """COMF/ADCIRC chain: prep -> nowcast -> forecast -> post"""
+    STOFS systems get two-phase post (post_1, post_2).
+    COMF/ADCIRC systems get a single post task.
+    """
     res = ofs["resources"]
 
     t = fam.add_task("prep")
@@ -289,12 +258,31 @@ def _add_comf_tasks(fam, ofs):
     t.add_trigger("nowcast == complete")
     t.add_inlimit("max_jobs")
 
-    t = fam.add_task("post")
-    t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
-    t.add_variable("RESOURCES", res["post"][0])
-    t.add_variable("WALLTIME", res["post"][1])
-    t.add_trigger("forecast == complete")
-    t.add_inlimit("max_jobs")
+    if ofs["framework"] == "stofs":
+        # STOFS two-phase post-processing
+        t = fam.add_task("post_1")
+        t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
+        t.add_variable("RESOURCES", res["post_1"][0])
+        t.add_variable("WALLTIME", res["post_1"][1])
+        t.add_variable("POST_STAGE", "1")
+        t.add_trigger("forecast == complete")
+        t.add_inlimit("max_jobs")
+
+        t = fam.add_task("post_2")
+        t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
+        t.add_variable("RESOURCES", res["post_2"][0])
+        t.add_variable("WALLTIME", res["post_2"][1])
+        t.add_variable("POST_STAGE", "2")
+        t.add_trigger("post_1 == complete")
+        t.add_inlimit("max_jobs")
+    else:
+        # COMF/ADCIRC single post-processing
+        t = fam.add_task("post")
+        t.add_variable("ECF_JOB_CMD", "%ECF_FILES%/jnos_ofs_post.ecf")
+        t.add_variable("RESOURCES", res["post"][0])
+        t.add_variable("WALLTIME", res["post"][1])
+        t.add_trigger("forecast == complete")
+        t.add_inlimit("max_jobs")
 
 
 # ---------------------------------------------------------------------------
@@ -345,40 +333,45 @@ def create_suite_text():
             lines.append("      cron {}:00".format(int(cyc)))
 
             pfx = _indent(3)
+            r = ofs["resources"]
+
+            # All frameworks: prep -> nowcast -> forecast
+            for task, ecf, trig in [
+                ("prep", "jnos_ofs_prep.ecf", None),
+                ("nowcast", "jnos_ofs_nowcast.ecf", "prep"),
+                ("forecast", "jnos_ofs_forecast.ecf", "nowcast"),
+            ]:
+                lines.append("")
+                lines.append("{}task {}".format(pfx, task))
+                lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/{}'".format(pfx, ecf))
+                lines.append("{}  edit RESOURCES '{}'".format(pfx, r[task][0]))
+                lines.append("{}  edit WALLTIME '{}'".format(pfx, r[task][1]))
+                if trig:
+                    lines.append("{}  trigger {} == complete".format(pfx, trig))
+                lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
+
+            # Post-processing: STOFS gets two phases, others get one
             if ofs["framework"] == "stofs":
-                r = ofs["resources"]
-                for task, ecf, trig, extra in [
-                    ("prep", "jnos_ofs_prep.ecf", None, None),
-                    ("nowcst_fcst", "jnos_ofs_nowcst_fcst.ecf", "prep", None),
-                    ("post_1", "jnos_ofs_post.ecf", "nowcst_fcst", "POST_STAGE '1'"),
-                    ("post_2", "jnos_ofs_post.ecf", "post_1", "POST_STAGE '2'"),
+                for task, extra, trig in [
+                    ("post_1", "POST_STAGE '1'", "forecast"),
+                    ("post_2", "POST_STAGE '2'", "post_1"),
                 ]:
                     lines.append("")
                     lines.append("{}task {}".format(pfx, task))
-                    lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/{}'".format(pfx, ecf))
+                    lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'".format(pfx))
                     lines.append("{}  edit RESOURCES '{}'".format(pfx, r[task][0]))
                     lines.append("{}  edit WALLTIME '{}'".format(pfx, r[task][1]))
-                    if extra:
-                        lines.append("{}  edit {}".format(pfx, extra))
-                    if trig:
-                        lines.append("{}  trigger {} == complete".format(pfx, trig))
+                    lines.append("{}  edit {}".format(pfx, extra))
+                    lines.append("{}  trigger {} == complete".format(pfx, trig))
                     lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
             else:
-                r = ofs["resources"]
-                for task, ecf, trig in [
-                    ("prep", "jnos_ofs_prep.ecf", None),
-                    ("nowcast", "jnos_ofs_nowcast.ecf", "prep"),
-                    ("forecast", "jnos_ofs_forecast.ecf", "nowcast"),
-                    ("post", "jnos_ofs_post.ecf", "forecast"),
-                ]:
-                    lines.append("")
-                    lines.append("{}task {}".format(pfx, task))
-                    lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/{}'".format(pfx, ecf))
-                    lines.append("{}  edit RESOURCES '{}'".format(pfx, r[task][0]))
-                    lines.append("{}  edit WALLTIME '{}'".format(pfx, r[task][1]))
-                    if trig:
-                        lines.append("{}  trigger {} == complete".format(pfx, trig))
-                    lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
+                lines.append("")
+                lines.append("{}task post".format(pfx))
+                lines.append("{}  edit ECF_JOB_CMD '%ECF_FILES%/jnos_ofs_post.ecf'".format(pfx))
+                lines.append("{}  edit RESOURCES '{}'".format(pfx, r["post"][0]))
+                lines.append("{}  edit WALLTIME '{}'".format(pfx, r["post"][1]))
+                lines.append("{}  trigger forecast == complete".format(pfx))
+                lines.append("{}  inlimit /nosofs:max_jobs".format(pfx))
 
             lines.append("    endfamily")
 
