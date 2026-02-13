@@ -21,9 +21,8 @@ nos_ofs/
 │
 ├── jobs/                                 # J-jobs (NCO standard entry points)
 │   ├── JNOS_OFS_PREP                    #   Unified prep dispatch (STOFS/COMF/ADCIRC)
-│   ├── JNOS_OFS_NOWCST_FCST             #   Unified model execution
-│   ├── JNOS_OFS_NOWCAST                  #   Split nowcast-only
-│   ├── JNOS_OFS_FORECAST                 #   Split forecast-only
+│   ├── JNOS_OFS_NOWCAST                  #   Nowcast model execution
+│   ├── JNOS_OFS_FORECAST                 #   Forecast model execution
 │   └── JNOS_OFS_POST                    #   Unified post-processing
 │
 ├── scripts/                              # Ex-scripts (execution layer)
@@ -106,10 +105,10 @@ nos_ofs/
 ### Workflow Pipeline
 
 ```
-                    ┌─────────────────────────────────────────────────────┐
-                    │                  J-Job Dispatch                      │
-                    │  JNOS_OFS_PREP → JNOS_OFS_NOWCST_FCST → JNOS_OFS_POST │
-                    └────────┬──────────────────┬──────────────────┬───────┘
+                ┌──────────────────────────────────────────────────────────────┐
+                │                       J-Job Dispatch                          │
+                │  JNOS_OFS_PREP → JNOS_OFS_NOWCAST → JNOS_OFS_FORECAST → POST │
+                └───────┬───────────────────┬──────────────────────┬────────────┘
                              │                  │                  │
               ┌──────────────▼──────────┐  ┌────▼─────────┐  ┌────▼─────────┐
               │   nos_ofs_prep_run.sh   │  │  model_run.sh│  │  Python Post │
