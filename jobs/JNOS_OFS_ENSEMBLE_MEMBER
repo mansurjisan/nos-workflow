@@ -43,7 +43,15 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 ###################################
 # Specify NET and RUN Name and model
 ####################################
-export NET=${NET:-nosofs}
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
 export RUN=${RUN:-$OFS}
 export PREFIXNOS=${PREFIXNOS:-$OFS}
 export SENDDBN=${SENDDBN:-NO}
@@ -82,10 +90,30 @@ export PARMnos=${PARMnos:-${HOMEnos}/parm}
 export USHnos=${USHnos:-${HOMEnos}/ush}
 export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
 ####################################
 # YAML Configuration Loading
 ####################################
-export OFS_FRAMEWORK="comf"
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
 export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
 
 if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
@@ -182,6 +210,14 @@ if [ -d "${FIXofs}" ]; then
     for f in ${FIXofs}/*; do
         bname=$(basename "$f")
         # Don't overwrite existing links from COMOUTrerun
+        [ ! -e "${MEMBER_DATA}/${bname}" ] && ln -sf "$f" ${MEMBER_DATA}/${bname}
+    done
+fi
+
+# Link STOFS fix files if framework is stofs and directory differs from FIXofs
+if [ "${OFS_FRAMEWORK}" = "stofs" ] && [ -d "${FIXstofs3d}" ] && [ "${FIXstofs3d}" != "${FIXofs}" ]; then
+    for f in ${FIXstofs3d}/*; do
+        bname=$(basename "$f")
         [ ! -e "${MEMBER_DATA}/${bname}" ] && ln -sf "$f" ${MEMBER_DATA}/${bname}
     done
 fi
@@ -306,16 +342,27 @@ cd ${MEMBER_DATA}
 # Create outputs directory
 mkdir -p ${MEMBER_DATA}/outputs
 
-# COMF Fortran executables need NetCDF Fortran library preloaded
-if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-    export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
-fi
-
-# Execute the forecast model
-SCHISM_EXEC=${EXECnos}/${PREFIXNOS}
-if [ ! -x "${SCHISM_EXEC}" ]; then
-    SCHISM_EXEC=${EXECnos}/schism_${OFS}
-fi
+# Find SCHISM executable based on framework
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        SCHISM_EXEC=${EXECstofs3d}/pschism_TVD-VL
+        if [ ! -x "${SCHISM_EXEC}" ]; then
+            SCHISM_EXEC=${EXECstofs3d}/schism_${OFS}
+        fi
+        # STOFS Python scripts can segfault with LD_PRELOAD
+        export PYTHONNOUSERSITE=1
+        ;;
+    comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
+        SCHISM_EXEC=${EXECnos}/${PREFIXNOS}
+        if [ ! -x "${SCHISM_EXEC}" ]; then
+            SCHISM_EXEC=${EXECnos}/schism_${OFS}
+        fi
+        ;;
+esac
 if [ ! -x "${SCHISM_EXEC}" ]; then
     echo "ERROR: SCHISM executable not found" >&2
     exit 1

@@ -65,6 +65,13 @@ OFS_SYSTEMS = [
             "post_1":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
             "post_2":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
         },
+        # Ensemble configuration: parameter perturbation with 5 members
+        # Member 000 = control (default params), 001-004 = perturbed
+        "ensemble": {
+            "n_members": 5,
+            "member_resources": ("select=20:ncpus=128:mpiprocs=120", "06:00:00"),
+            "post_resources":   ("select=1:ncpus=8:mpiprocs=8",      "01:00:00"),
+        },
     },
     {
         "name": "stofs_3d_pac",
