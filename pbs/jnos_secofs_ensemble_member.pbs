@@ -19,10 +19,13 @@
 
 # Validate required variables
 if [ -z "${MEMBER_ID:-}" ]; then
-    echo "ERROR: MEMBER_ID not set. Use: qsub -v MEMBER_ID=001,CYC=00 $0" >&2
+    echo "ERROR: MEMBER_ID not set. Use: qsub -v MEMBER_ID=001,CYC=00,PDY=20260213 $0" >&2
     exit 1
 fi
 CYC=${CYC:-00}
+
+# PDY: accept from qsub -v, fall back to today
+export PDY=${PDY:-$(date +%Y%m%d)}
 
 # Source version file
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages

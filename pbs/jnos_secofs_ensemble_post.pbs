@@ -19,6 +19,9 @@
 CYC=${CYC:-00}
 N_MEMBERS=${N_MEMBERS:-5}
 
+# PDY: accept from qsub -v, fall back to today
+export PDY=${PDY:-$(date +%Y%m%d)}
+
 # Source version file
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver

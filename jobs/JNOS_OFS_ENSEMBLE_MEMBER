@@ -126,12 +126,18 @@ echo "Ensemble Member: ${MEMBER_ID}"
 
 ###########################################
 # PDY variables
+# If PDY is already set (from qsub -v), use it.
+# Otherwise fall back to setpdy.sh or today's date.
 ###########################################
-if command -v setpdy.sh &> /dev/null; then
-    setpdy.sh
-    . PDY
+if [ -z "${PDY:-}" ]; then
+    if command -v setpdy.sh &> /dev/null; then
+        setpdy.sh
+        . PDY
+    fi
+    export PDY=${PDY:-$(date +%Y%m%d)}
+else
+    echo "Using PDY=${PDY} from environment"
 fi
-export PDY=${PDY:-$(date +%Y%m%d)}
 
 ##############################################
 # Define COM directories
