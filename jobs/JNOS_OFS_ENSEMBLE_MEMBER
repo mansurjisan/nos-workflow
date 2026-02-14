@@ -301,7 +301,7 @@ done
 
 # Rename schism_* river files to bare names expected by SCHISM
 # river.th.tar contains schism_flux.th, schism_temp.th, schism_salt.th
-# but SCHISM reads flux.th, temp.th, salt.th
+# but SCHISM reads flux.th, salt.th (and TEM_1.th for itetype=1 boundaries)
 for f in ${MEMBER_DATA}/schism_*.th; do
     [ ! -f "$f" ] && continue
     bare=$(basename "$f" | sed 's/^schism_//')
@@ -309,11 +309,21 @@ for f in ${MEMBER_DATA}/schism_*.th; do
     echo "  Renamed $(basename $f) -> ${bare}"
 done
 
+# Create TEM_1.th for river boundaries with itetype=1 in bctides.in.
+# The deterministic run does: cp schism_temp.th → TEM_1.th
+# SCHISM reads TEM_1.th (uppercase, with _1) for itetype=1 boundaries.
+# The rename loop above creates temp.th which SCHISM does NOT read.
+# Without TEM_1.th, SCHISM aborts on itetype=1 boundaries.
+if [ -f "${MEMBER_DATA}/temp.th" ] && [ ! -f "${MEMBER_DATA}/TEM_1.th" ]; then
+    cp "${MEMBER_DATA}/temp.th" "${MEMBER_DATA}/TEM_1.th"
+    echo "Created TEM_1.th from temp.th (for itetype=1 river boundaries)"
+fi
+
 # --- Copy bctides.in for forecast ---
 # IMPORTANT: Remove symlink first (same pattern as param.nml).
-# The COMOUT bctides.in.forecast uses NetCDF boundary types (itetype=4 → TEM_3D.th.nc),
-# while the FIX template uses text format (itetype=1 → TEM_1.th).
-# Using the wrong bctides.in causes SCHISM to look for TEM_1.th which doesn't exist.
+# The COMOUT bctides.in.forecast is position-dependent (inline data per boundary).
+# Do NOT modify it with sed — changing itetype shifts the file reader position,
+# causing SCHISM to misparse subsequent boundaries (ABORT: nudging factor wrong).
 rm -f ${MEMBER_DATA}/bctides.in
 BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
 if [ -f "${BCTIDES_SRC}" ]; then
@@ -325,20 +335,6 @@ else
     echo "  Falling back to FIX template (may use text format BCs)"
     if [ -f "${FIXofs}/${PREFIXNOS}.bctides.in" ]; then
         cp "${FIXofs}/${PREFIXNOS}.bctides.in" ${MEMBER_DATA}/bctides.in
-    fi
-fi
-
-# Fix river boundary itetype: the OBC tar only contains NetCDF files (TEM_3D.th.nc
-# for itetype=4) but bctides.in may specify itetype=1 for small river boundaries
-# (e.g., Clyo, Moultrie) which requires TEM_1.th — a text file created by the OBC
-# Fortran during prep but never archived.  Change itetype from 1 to 2 (initial
-# condition from hotstart) for these river boundaries so SCHISM doesn't need TEM_1.th.
-if [ -f "${MEMBER_DATA}/bctides.in" ] && [ ! -f "${MEMBER_DATA}/TEM_1.th" ]; then
-    # Pattern: "N 0 1 1 2" → river BC with iettype=0, ifltype=1, itetype=1, isatype=2
-    # Change itetype (4th field) from 1 to 2
-    if grep -qE '^[[:space:]]*[0-9]+[[:space:]]+0[[:space:]]+1[[:space:]]+1[[:space:]]+2' ${MEMBER_DATA}/bctides.in; then
-        echo "TEM_1.th not available — changing river boundary itetype from 1 to 2 (initial condition)"
-        sed -i -E 's/^([[:space:]]*[0-9]+[[:space:]]+0[[:space:]]+1[[:space:]]+)1([[:space:]]+2)/\12\2/g' ${MEMBER_DATA}/bctides.in
     fi
 fi
 
