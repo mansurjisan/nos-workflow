@@ -284,6 +284,16 @@ for tar_file in \
     fi
 done
 
+# Rename schism_* river files to bare names expected by SCHISM
+# river.th.tar contains schism_flux.th, schism_temp.th, schism_salt.th
+# but SCHISM reads flux.th, temp.th, salt.th
+for f in ${MEMBER_DATA}/schism_*.th; do
+    [ ! -f "$f" ] && continue
+    bare=$(basename "$f" | sed 's/^schism_//')
+    mv "$f" "${MEMBER_DATA}/${bare}"
+    echo "  Renamed $(basename $f) -> ${bare}"
+done
+
 # --- Copy bctides.in for forecast ---
 BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
 if [ -f "${BCTIDES_SRC}" ]; then
@@ -446,7 +456,7 @@ done
 ########################################################
 echo "=== Verifying input files ==="
 MISSING=0
-for required in param.nml hotstart.nc bctides.in; do
+for required in param.nml hotstart.nc bctides.in flux.th; do
     if [ ! -e "${MEMBER_DATA}/${required}" ]; then
         echo "MISSING: ${required}"
         MISSING=$((MISSING + 1))
