@@ -506,7 +506,7 @@ fi
 export TOTAL_TASKS
 
 # Number of SCHISM I/O scribes (dedicated I/O processes)
-NSCRIBES=${NSCRIBES:-7}
+NSCRIBES=${NSCRIBES:-6}
 
 # Find SCHISM executable based on framework
 case "${OFS_FRAMEWORK}" in
