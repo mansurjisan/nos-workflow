@@ -231,11 +231,14 @@ fi
 # --- Create SCHISM-required bare-name symlinks ---
 # SCHISM expects hgrid.gr3, hgrid.ll, vgrid.in etc. without the OFS prefix.
 # FIX files are stored as secofs.hgrid.gr3, secofs.vgrid.in etc.
+# EXCLUDE param.nml — it is handled explicitly below (forecast copy + perturbation).
 echo "Creating SCHISM bare-name symlinks (stripping ${PREFIXNOS}. prefix)"
 for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
     [ ! -e "$f" ] && continue
     bname=$(basename "$f")
     bare=${bname#${PREFIXNOS}.}
+    # Skip param.nml — handled separately to avoid symlink-follows-to-FIX bug
+    [ "${bare}" = "param.nml" ] && continue
     if [ ! -e "${MEMBER_DATA}/${bare}" ]; then
         ln -sf "$f" ${MEMBER_DATA}/${bare}
         echo "  ${bname} -> ${bare}"
@@ -290,6 +293,12 @@ fi
 
 # --- Copy param.nml (forecast version from COMOUT, then perturb) ---
 # Use the forecast param.nml from COMOUT (already configured by prep)
+# IMPORTANT: Remove any stale symlink first — the bare-name loop may have
+# created param.nml -> secofs.param.nml -> FIX file.  cp follows symlinks
+# and would silently overwrite the shared FIX file instead of creating a
+# real file in the member directory.
+rm -f ${MEMBER_DATA}/param.nml
+
 PARAM_NML_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.forecast.in"
 if [ -f "${PARAM_NML_SRC}" ]; then
     echo "Using forecast param.nml from COMOUT: ${PARAM_NML_SRC}"
@@ -308,6 +317,12 @@ else
         exit 1
     fi
 fi
+
+# Set ihot=2 for hot restart from nowcast output.
+# The forecast.in from COMOUT may have ihot=1; SCHISM needs ihot=2 to read
+# the hotstart.nc file we link from the nowcast.
+sed -i 's/ihot *= *1/ihot = 2/' ${MEMBER_DATA}/param.nml
+echo "Set ihot=2 in param.nml for hot restart"
 
 ########################################################
 # Apply parameter perturbations to param.nml
@@ -403,15 +418,27 @@ else
     ls ${COMOUT}/*rst* ${COMOUT}/*hotstart* 2>/dev/null || echo "No restart/hotstart files found"
 fi
 
-# Restore staout/mirror/flux files if available (SCHISM ihot=2 requirement)
+# Restore staout/mirror/flux files if available (SCHISM ihot=2 requirement).
+# SCHISM reads these on restart — empty files cause EOF errors in some versions
+# but are better than missing files.  If the nowcast archived real files, use them.
+mkdir -p ${MEMBER_DATA}/outputs
 RESTART_OUTPUTS_DIR="${COMOUT}/${RUN}.${cycle}.restart_outputs"
 if [ -d "${RESTART_OUTPUTS_DIR}" ]; then
     echo "Restoring restart output files from ${RESTART_OUTPUTS_DIR}"
-    mkdir -p ${MEMBER_DATA}/outputs
-    for f in ${RESTART_OUTPUTS_DIR}/*; do
-        [ -f "$f" ] && cp "$f" ${MEMBER_DATA}/outputs/$(basename "$f")
+    for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+             staout_5 staout_6 staout_7 staout_8 staout_9; do
+        [ -f "${RESTART_OUTPUTS_DIR}/$f" ] && cp -p "${RESTART_OUTPUTS_DIR}/$f" ${MEMBER_DATA}/outputs/
     done
+else
+    echo "WARNING: restart_outputs dir not found: ${RESTART_OUTPUTS_DIR}"
+    echo "Creating empty placeholder files for SCHISM ihot=2 restart"
 fi
+# Ensure all required output state files exist (touch creates only if missing)
+touch ${MEMBER_DATA}/outputs/mirror.out
+touch ${MEMBER_DATA}/outputs/flux.out
+for i in 1 2 3 4 5 6 7 8 9; do
+    [ ! -f "${MEMBER_DATA}/outputs/staout_${i}" ] && touch "${MEMBER_DATA}/outputs/staout_${i}"
+done
 
 ########################################################
 # Verify critical input files exist
@@ -467,8 +494,19 @@ echo "=== Running SCHISM for member ${MEMBER_ID} ==="
 
 cd ${MEMBER_DATA}
 
-# Create outputs directory
-mkdir -p ${MEMBER_DATA}/outputs
+# Determine MPI task count from PBS allocation or default
+# On WCOSS2: select=10:ncpus=128:mpiprocs=120 → 10*120 = 1200
+if [ -n "${PBS_NODEFILE:-}" ] && [ -f "${PBS_NODEFILE}" ]; then
+    TOTAL_TASKS=$(wc -l < ${PBS_NODEFILE})
+elif [ -n "${TOTAL_TASKS:-}" ]; then
+    : # already set
+else
+    TOTAL_TASKS=1200  # default for SECOFS (10 nodes x 120 mpiprocs)
+fi
+export TOTAL_TASKS
+
+# Number of SCHISM I/O scribes (dedicated I/O processes)
+NSCRIBES=${NSCRIBES:-7}
 
 # Find SCHISM executable based on framework
 case "${OFS_FRAMEWORK}" in
@@ -485,24 +523,48 @@ case "${OFS_FRAMEWORK}" in
         if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
             export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
         fi
-        SCHISM_EXEC=${EXECnos}/${PREFIXNOS}
+        # COMF naming: schism_${RUN} (e.g., schism_secofs)
+        SCHISM_EXEC=${EXECnos}/schism_${RUN}
         if [ ! -x "${SCHISM_EXEC}" ]; then
-            SCHISM_EXEC=${EXECnos}/schism_${OFS}
+            SCHISM_EXEC=${EXECnos}/${PREFIXNOS}
         fi
         ;;
 esac
 if [ ! -x "${SCHISM_EXEC}" ]; then
     echo "ERROR: SCHISM executable not found" >&2
+    echo "  Tried: ${EXECnos}/schism_${RUN}, ${EXECnos}/${PREFIXNOS}" >&2
     exit 1
 fi
 
 echo "Executable: ${SCHISM_EXEC}"
+echo "TOTAL_TASKS: ${TOTAL_TASKS}"
+echo "NSCRIBES: ${NSCRIBES}"
 echo "Working dir: ${MEMBER_DATA}"
 echo "Member ID: ${MEMBER_ID}"
 
-# Run with MPI
-mpiexec ${SCHISM_EXEC}
+# Verify param.nml content before running
+echo "=== param.nml key settings ==="
+grep -E 'rnday|ihot|start_year|start_month|start_day|start_hour|nhot_write' ${MEMBER_DATA}/param.nml 2>/dev/null || true
+echo "=== end param.nml ==="
+
+# Run SCHISM with MPI — must match deterministic invocation:
+#   mpiexec -n ${TOTAL_TASKS} $EXECnos/schism_${RUN} ${NSCRIBES}
+echo "SCHISM simulation began at: $(date)"
+mpiexec -n ${TOTAL_TASKS} ${SCHISM_EXEC} ${NSCRIBES} > ${MEMBER_DATA}/${RUN}.${cycle}.member_${MEMBER_ID}.log 2>&1
 export err=$?
+echo "SCHISM simulation ended at: $(date)"
+
+# Check for successful completion via mirror.out
+if [ -s "${MEMBER_DATA}/outputs/mirror.out" ]; then
+    if grep -q "Run completed successfully" ${MEMBER_DATA}/outputs/mirror.out 2>/dev/null; then
+        echo "SCHISM member ${MEMBER_ID} completed successfully"
+    else
+        echo "WARNING: mirror.out exists but no success message"
+        tail -5 ${MEMBER_DATA}/outputs/mirror.out
+    fi
+else
+    echo "WARNING: mirror.out not found or empty"
+fi
 
 if [ $err -ne 0 ]; then
     echo "ERROR: SCHISM failed for member ${MEMBER_ID} (exit code: ${err})" >&2
