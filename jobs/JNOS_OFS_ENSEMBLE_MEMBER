@@ -248,6 +248,15 @@ for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
     fi
 done
 
+# --- Create vgrid_nu.in for nudging ---
+# The deterministic nos_ofs_nowcast_forecast.sh copies secofs.vgrid.in → vgrid_nu.in
+# (underscore, NOT dots).  The bare-name loop above creates vgrid.nu.in (dots) from
+# secofs.vgrid.nu.in, which is a different file.  SCHISM nudging expects vgrid_nu.in.
+if [ -f "${FIXofs}/${PREFIXNOS}.vgrid.in" ]; then
+    cp -p "${FIXofs}/${PREFIXNOS}.vgrid.in" ${MEMBER_DATA}/vgrid_nu.in
+    echo "Created vgrid_nu.in from ${PREFIXNOS}.vgrid.in ($(stat -c%s "${FIXofs}/${PREFIXNOS}.vgrid.in" 2>/dev/null || echo '?') bytes)"
+fi
+
 # --- Extract forcing files from COMOUT tar archives ---
 echo "=== Extracting forcing from COMOUT tar archives ==="
 
@@ -264,10 +273,13 @@ for tar_file in \
     fi
 done
 
-# Create sflux_inputs.txt if sflux files exist
+# Copy sflux_inputs.txt (tells SCHISM which sflux files to use)
 if ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
     if [ -f "${COMOUT}/sflux_inputs.txt" ]; then
         cp "${COMOUT}/sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+    elif [ -f "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
+        echo "Copying sflux_inputs.txt from FIX"
+        cp "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
     fi
 fi
 
@@ -546,7 +558,7 @@ fi
 export TOTAL_TASKS
 
 # Number of SCHISM I/O scribes (dedicated I/O processes)
-NSCRIBES=${NSCRIBES:-6}
+NSCRIBES=${NSCRIBES:-7}
 
 # Find SCHISM executable based on framework
 case "${OFS_FRAMEWORK}" in

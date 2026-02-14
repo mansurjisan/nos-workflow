@@ -604,17 +604,17 @@ _comf_execute_model() {
     # model actually ran by looking for expected output files.
     if [ $err -ne 0 ]; then
         echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-        echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
+        echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile 2>/dev/null || true
         msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-        postmsg "$jlogfile" "$msg"
-        postmsg "$nosjlogfile" "$msg"
-        err_chk
+        postmsg "$jlogfile" "$msg" 2>/dev/null || true
+        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
+        return $err
     else
-        echo "Execution of $pgm completed normally" >> $cormslogfile
+        echo "Execution of $pgm completed normally" >> $cormslogfile 2>/dev/null || true
         echo "Execution of $pgm completed normally"
         msg=" Execution of $pgm completed normally"
-        postmsg "$jlogfile" "$msg"
-        postmsg "$nosjlogfile" "$msg"
+        postmsg "$jlogfile" "$msg" 2>/dev/null || true
+        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
     fi
 }
 
@@ -628,17 +628,17 @@ _comf_archive_outputs() {
 
     if [ $err -ne 0 ]; then
         echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-        echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile
+        echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile 2>/dev/null || true
         msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-        postmsg "$jlogfile" "$msg"
-        postmsg "$nosjlogfile" "$msg"
-        err_chk
+        postmsg "$jlogfile" "$msg" 2>/dev/null || true
+        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
+        return $err
     else
-        echo "Execution of $pgm completed normally" >> $cormslogfile
+        echo "Execution of $pgm completed normally" >> $cormslogfile 2>/dev/null || true
         echo "Execution of $pgm completed normally"
         msg=" Execution of $pgm completed normally"
-        postmsg "$jlogfile" "$msg"
-        postmsg "$nosjlogfile" "$msg"
+        postmsg "$jlogfile" "$msg" 2>/dev/null || true
+        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
     fi
 
     # Archive SCHISM output state files needed for ihot=2 restart in split-job mode.
