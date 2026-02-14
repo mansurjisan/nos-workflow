@@ -6,10 +6,11 @@ set -x
 #
 # Runs one ensemble member for the forecast phase. Each member:
 #   1. Creates $DATA/member_${MEMBER_ID}/ working directory
-#   2. Links shared forcing from prep output ($COMOUT/rerun)
-#   3. Applies parameter perturbations to param.nml
-#   4. Runs the SCHISM model
-#   5. Archives output to $COMOUT/ensemble/member_${MEMBER_ID}/
+#   2. Extracts shared forcing from COMOUT tar archives (written by prep)
+#   3. Links hotstart from nowcast output (rst.nowcast.nc)
+#   4. Applies parameter perturbations to param.nml
+#   5. Runs the SCHISM model
+#   6. Archives output to $COMOUT/ensemble/member_${MEMBER_ID}/
 #
 # Required environment variables:
 #   OFS         - OFS system name (e.g., secofs)
@@ -160,9 +161,6 @@ mkdir -m 775 -p $COMOUT
 export ENSEMBLE_COMOUT=${COMOUT}/ensemble/member_${MEMBER_ID}
 mkdir -m 775 -p ${ENSEMBLE_COMOUT}
 
-# Shared forcing directory from prep job
-export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
-
 ##################################################################
 # Log Files
 ##################################################################
@@ -195,7 +193,7 @@ if [ $rc -ne 0 ]; then
     exit $rc
 fi
 
-PARAM_FILE=${DATA}/ensemble_params/member_${MEMBER_ID}/params.json
+export PARAM_FILE=${DATA}/ensemble_params/member_${MEMBER_ID}/params.json
 
 if [ ! -f "${PARAM_FILE}" ]; then
     echo "ERROR: Parameter file not found: ${PARAM_FILE}" >&2
@@ -213,22 +211,12 @@ cat ${PARAM_FILE}
 echo "=== Setting up member ${MEMBER_ID} working directory ==="
 cd ${MEMBER_DATA}
 
-# Link shared forcing files from prep output
-if [ -d "${COMOUTrerun}" ]; then
-    echo "Linking shared forcing from ${COMOUTrerun}"
-    for f in ${COMOUTrerun}/*; do
-        [ -e "$f" ] && ln -sf "$f" ${MEMBER_DATA}/$(basename "$f")
-    done
-else
-    echo "WARNING: COMOUTrerun not found: ${COMOUTrerun}"
-fi
-
-# Link fix files
+# --- Link fix files (grid, .gr3 files, station.in, etc.) ---
 if [ -d "${FIXofs}" ]; then
+    echo "Linking fix files from ${FIXofs}"
     for f in ${FIXofs}/*; do
         bname=$(basename "$f")
-        # Don't overwrite existing links from COMOUTrerun
-        [ ! -e "${MEMBER_DATA}/${bname}" ] && ln -sf "$f" ${MEMBER_DATA}/${bname}
+        ln -sf "$f" ${MEMBER_DATA}/${bname}
     done
 fi
 
@@ -240,15 +228,71 @@ if [ "${OFS_FRAMEWORK}" = "stofs" ] && [ -d "${FIXstofs3d}" ] && [ "${FIXstofs3d
     done
 fi
 
-# Copy param.nml (needs to be a real file since we modify it)
-PARAM_NML_SRC="${FIXofs}/${PREFIXNOS}.param.nml"
-if [ ! -f "${PARAM_NML_SRC}" ]; then
-    PARAM_NML_SRC="${FIXofs}/${OFS}.param.nml"
+# --- Extract forcing files from COMOUT tar archives ---
+echo "=== Extracting forcing from COMOUT tar archives ==="
+
+# Meteorological forcing (sflux files)
+mkdir -p ${MEMBER_DATA}/sflux
+for tar_file in \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar" \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.2.tar"; do
+    if [ -f "${tar_file}" ]; then
+        echo "Extracting $(basename ${tar_file})"
+        tar xf "${tar_file}" -C ${MEMBER_DATA}/sflux/
+    else
+        echo "WARNING: Not found: ${tar_file}"
+    fi
+done
+
+# Create sflux_inputs.txt if sflux files exist
+if ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
+    if [ -f "${COMOUT}/sflux_inputs.txt" ]; then
+        cp "${COMOUT}/sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+    fi
 fi
+
+# Ocean boundary conditions (elev2D.th.nc, TEM_3D.th.nc, SAL_3D.th.nc, uv3D.th.nc)
+if [ -f "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" ]; then
+    echo "Extracting OBC files"
+    tar xf "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" -C ${MEMBER_DATA}/
+fi
+
+# River forcing (vsource.th, vsink.th, msource.th or source_sink.in)
+for tar_file in \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.river.th.tar" \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.nwm.source.sink.fore.tar"; do
+    if [ -f "${tar_file}" ]; then
+        echo "Extracting $(basename ${tar_file})"
+        tar xf "${tar_file}" -C ${MEMBER_DATA}/
+    fi
+done
+
+# --- Copy bctides.in for forecast ---
+BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
+if [ -f "${BCTIDES_SRC}" ]; then
+    echo "Copying bctides.in from ${BCTIDES_SRC}"
+    cp "${BCTIDES_SRC}" ${MEMBER_DATA}/bctides.in
+fi
+
+# --- Copy param.nml (forecast version from COMOUT, then perturb) ---
+# Use the forecast param.nml from COMOUT (already configured by prep)
+PARAM_NML_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.forecast.in"
 if [ -f "${PARAM_NML_SRC}" ]; then
+    echo "Using forecast param.nml from COMOUT: ${PARAM_NML_SRC}"
     cp "${PARAM_NML_SRC}" ${MEMBER_DATA}/param.nml
 else
-    echo "WARNING: param.nml source not found at ${PARAM_NML_SRC}"
+    # Fallback to FIX directory template
+    echo "WARNING: Forecast param.nml not found in COMOUT, using FIX template"
+    PARAM_NML_SRC="${FIXofs}/${PREFIXNOS}.param.nml"
+    if [ ! -f "${PARAM_NML_SRC}" ]; then
+        PARAM_NML_SRC="${FIXofs}/${OFS}.param.nml"
+    fi
+    if [ -f "${PARAM_NML_SRC}" ]; then
+        cp "${PARAM_NML_SRC}" ${MEMBER_DATA}/param.nml
+    else
+        echo "ERROR: No param.nml source found" >&2
+        exit 1
+    fi
 fi
 
 ########################################################
@@ -321,11 +365,14 @@ APPLY_PARAMS
 ########################################################
 echo "=== Retrieving hotstart file ==="
 
-# Look for hotstart file in COMOUT (archived by nowcast job)
+# Look for hotstart/restart file in COMOUT (archived by nowcast job)
+# COMF naming: ${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc
 HOTSTART_FILE=""
 for candidate in \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc" \
+    "${COMOUT}/${RUN}.${cycle}.${PDY}.rst.nowcast.nc" \
+    "${COMOUT}/${PREFIXNOS}.${cycle}.rst.nowcast.nc" \
     "${COMOUT}/${PREFIXNOS}.${cycle}.hotstart.nc" \
-    "${COMOUT}/${RUN}.${cycle}.hotstart.nc" \
     "${COMOUT}/hotstart.nc"; do
     if [ -f "${candidate}" ]; then
         HOTSTART_FILE="${candidate}"
@@ -338,6 +385,8 @@ if [ -n "${HOTSTART_FILE}" ]; then
     ln -sf "${HOTSTART_FILE}" ${MEMBER_DATA}/hotstart.nc
 else
     echo "WARNING: No hotstart file found in ${COMOUT}"
+    echo "Checked patterns: ${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc etc."
+    ls ${COMOUT}/*rst* ${COMOUT}/*hotstart* 2>/dev/null || echo "No restart/hotstart files found"
 fi
 
 # Restore staout/mirror/flux files if available (SCHISM ihot=2 requirement)
@@ -349,6 +398,54 @@ if [ -d "${RESTART_OUTPUTS_DIR}" ]; then
         [ -f "$f" ] && cp "$f" ${MEMBER_DATA}/outputs/$(basename "$f")
     done
 fi
+
+########################################################
+# Verify critical input files exist
+########################################################
+echo "=== Verifying input files ==="
+MISSING=0
+for required in param.nml hotstart.nc bctides.in; do
+    if [ ! -e "${MEMBER_DATA}/${required}" ]; then
+        echo "MISSING: ${required}"
+        MISSING=$((MISSING + 1))
+    else
+        echo "OK: ${required}"
+    fi
+done
+
+# Check for sflux files
+if ! ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
+    echo "MISSING: sflux/sflux_air_*.nc (meteorological forcing)"
+    MISSING=$((MISSING + 1))
+else
+    echo "OK: sflux files ($(ls ${MEMBER_DATA}/sflux/sflux_air_*.nc | wc -l) air files)"
+fi
+
+# Check for grid files
+for grid_file in hgrid.gr3 vgrid.in; do
+    # SCHISM looks for bare name OR ${PREFIXNOS}.${grid_file}
+    if [ -e "${MEMBER_DATA}/${grid_file}" ] || [ -e "${MEMBER_DATA}/${PREFIXNOS}.${grid_file}" ]; then
+        echo "OK: ${grid_file}"
+    else
+        echo "MISSING: ${grid_file}"
+        MISSING=$((MISSING + 1))
+    fi
+done
+
+if [ $MISSING -gt 0 ]; then
+    echo "ERROR: ${MISSING} required input files missing. Cannot run SCHISM." >&2
+    echo "Member working directory contents:" >&2
+    ls -la ${MEMBER_DATA}/ >&2
+    ls -la ${MEMBER_DATA}/sflux/ >&2 2>/dev/null || true
+    exit 1
+fi
+
+echo ""
+echo "Working directory listing:"
+ls -la ${MEMBER_DATA}/
+echo ""
+echo "sflux directory:"
+ls -la ${MEMBER_DATA}/sflux/ 2>/dev/null || echo "(no sflux dir)"
 
 ########################################################
 # Run SCHISM model for this member
@@ -419,7 +516,7 @@ echo "Member ${MEMBER_ID} output archived to ${ENSEMBLE_COMOUT}"
 ########################################################
 # Post-processing
 ########################################################
-cat $pgmout
+cat $pgmout 2>/dev/null || true
 
 if command -v postmsg &> /dev/null; then
     postmsg "$jlogfile" "$0 member ${MEMBER_ID} completed normally"
