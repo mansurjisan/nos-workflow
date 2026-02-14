@@ -260,21 +260,141 @@ fi
 # --- Extract forcing files from COMOUT tar archives ---
 echo "=== Extracting forcing from COMOUT tar archives ==="
 
+# Determine atmospheric source configuration for this member.
+# If atmospheric ensemble is enabled, params.json contains an
+# "atmospheric_source" key with met_source_1 and met_source_2.
+ATMOS_MET1=""
+ATMOS_MET2=""
+ATMOS_LABEL=""
+ATMOS_CONFIGURED=false
+
+# Read atmospheric_source from params.json (single Python call)
+_atmos_output=$(python3 -c "
+import json, os, sys
+pf = os.environ.get('PARAM_FILE', '')
+if not pf or not os.path.isfile(pf):
+    sys.exit(1)
+with open(pf) as f:
+    m = json.load(f)
+atm = m.get('atmospheric_source')
+if not atm:
+    sys.exit(1)
+print(atm.get('met_source_1', ''))
+print(atm.get('met_source_2') or '')
+print(atm.get('label', ''))
+" 2>/dev/null) && ATMOS_CONFIGURED=true
+
+if [ "${ATMOS_CONFIGURED}" = true ]; then
+    ATMOS_MET1=$(echo "${_atmos_output}" | sed -n '1p')
+    ATMOS_MET2=$(echo "${_atmos_output}" | sed -n '2p')
+    ATMOS_LABEL=$(echo "${_atmos_output}" | sed -n '3p')
+    echo "Atmospheric source config: met1=${ATMOS_MET1}, met2=${ATMOS_MET2} (${ATMOS_LABEL})"
+fi
+
 # Meteorological forcing (sflux files)
 mkdir -p ${MEMBER_DATA}/sflux
-for tar_file in \
-    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar" \
-    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.2.tar"; do
-    if [ -f "${tar_file}" ]; then
-        echo "Extracting $(basename ${tar_file})"
-        tar xf "${tar_file}" -C ${MEMBER_DATA}/sflux/
-    else
-        echo "WARNING: Not found: ${tar_file}"
-    fi
-done
 
-# Copy sflux_inputs.txt (tells SCHISM which sflux files to use)
-if ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
+if [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
+    # --- Atmospheric-ensemble-aware sflux extraction ---
+    # Determine which tar(s) to extract based on member's atmospheric source
+
+    # Source 1 (primary met, metnum=1 -> sflux_air_1.*.nc)
+    case "${ATMOS_MET1}" in
+        GFS)
+            # GFS is the default primary source produced by normal prep
+            MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+            ;;
+        *)
+            # Other sources (NAM, etc.) have source-specific tar from atmos_prep
+            MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${ATMOS_MET1}.tar"
+            ;;
+    esac
+
+    if [ -f "${MET1_TAR}" ]; then
+        echo "Extracting primary met (${ATMOS_MET1}): $(basename ${MET1_TAR})"
+        tar xf "${MET1_TAR}" -C ${MEMBER_DATA}/sflux/
+    else
+        echo "ERROR: Primary met tar not found: ${MET1_TAR}" >&2
+        echo "  Falling back to default GFS tar"
+        FALLBACK_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+        if [ -f "${FALLBACK_TAR}" ]; then
+            tar xf "${FALLBACK_TAR}" -C ${MEMBER_DATA}/sflux/
+        else
+            echo "ERROR: Default GFS tar also not found!" >&2
+        fi
+    fi
+
+    # Source 2 (secondary met, metnum=2 -> sflux_air_2.*.nc)
+    if [ -n "${ATMOS_MET2}" ]; then
+        case "${ATMOS_MET2}" in
+            HRRR)
+                MET2_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.2.tar"
+                ;;
+            *)
+                MET2_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${ATMOS_MET2}.tar"
+                ;;
+        esac
+
+        if [ -f "${MET2_TAR}" ]; then
+            echo "Extracting secondary met (${ATMOS_MET2}): $(basename ${MET2_TAR})"
+            tar xf "${MET2_TAR}" -C ${MEMBER_DATA}/sflux/
+        else
+            echo "WARNING: Secondary met tar not found: ${MET2_TAR}"
+        fi
+        N_MET_SOURCES=2
+    else
+        N_MET_SOURCES=1
+        echo "Single-source member: no secondary met (${ATMOS_LABEL})"
+    fi
+else
+    # --- Default behavior (no atmospheric ensemble) ---
+    # Extract both GFS (metnum=1) and HRRR (metnum=2) tars
+    for tar_file in \
+        "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar" \
+        "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.2.tar"; do
+        if [ -f "${tar_file}" ]; then
+            echo "Extracting $(basename ${tar_file})"
+            tar xf "${tar_file}" -C ${MEMBER_DATA}/sflux/
+        else
+            echo "WARNING: Not found: ${tar_file}"
+        fi
+    done
+    # Determine N_MET_SOURCES from what was extracted
+    if ls ${MEMBER_DATA}/sflux/sflux_air_2.*.nc 1>/dev/null 2>&1; then
+        N_MET_SOURCES=2
+    else
+        N_MET_SOURCES=1
+    fi
+fi
+
+# Generate per-member sflux_inputs.txt
+# For single-source members, we create a 1-source namelist.
+# For dual-source members, use the default from COMOUT or FIX.
+if [ "${N_MET_SOURCES:-2}" -eq 1 ]; then
+    echo "Generating single-source sflux_inputs.txt (nfile=1)"
+    cat > ${MEMBER_DATA}/sflux/sflux_inputs.txt << 'SFLUX_EOF'
+&sflux_inputs
+air_1_relative_weight=1.
+air_1_max_window_hours=120.
+air_1_fail_if_missing=.true.
+air_1_file='sflux_air_1'
+air_1_action='replace'
+
+prc_1_relative_weight=1.
+prc_1_max_window_hours=120.
+prc_1_fail_if_missing=.true.
+prc_1_file='sflux_prc_1'
+prc_1_action='replace'
+
+rad_1_relative_weight=1.
+rad_1_max_window_hours=120.
+rad_1_fail_if_missing=.true.
+rad_1_file='sflux_rad_1'
+rad_1_action='replace'
+/
+SFLUX_EOF
+elif ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
+    # Dual-source: copy the default sflux_inputs.txt
     if [ -f "${COMOUT}/sflux_inputs.txt" ]; then
         cp "${COMOUT}/sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
     elif [ -f "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
