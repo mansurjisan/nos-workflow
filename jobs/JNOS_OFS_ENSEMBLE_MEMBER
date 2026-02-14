@@ -318,11 +318,12 @@ else
     fi
 fi
 
-# Set ihot=2 for hot restart from nowcast output.
-# The forecast.in from COMOUT may have ihot=1; SCHISM needs ihot=2 to read
-# the hotstart.nc file we link from the nowcast.
-sed -i 's/ihot *= *1/ihot = 2/' ${MEMBER_DATA}/param.nml
-echo "Set ihot=2 in param.nml for hot restart"
+# Set ihot=1 for hot restart with fresh output.
+# ihot=1: reads hotstart.nc but starts output from scratch (no staout dependency)
+# ihot=2: reads hotstart.nc AND continues output (requires real staout/mirror/flux)
+# For ensemble members, ihot=1 is correct — each member produces independent output.
+sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
+echo "Set ihot=1 in param.nml for hot restart with fresh output"
 
 ########################################################
 # Apply parameter perturbations to param.nml
