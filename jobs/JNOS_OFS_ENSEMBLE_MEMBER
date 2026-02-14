@@ -745,10 +745,18 @@ fi
 echo "=== Archiving member ${MEMBER_ID} output ==="
 
 # Copy outputs to ensemble COMOUT
+# SCHISM writes split output: out2d_*.nc, temperature_*.nc, salinity_*.nc
+# (not combined schout_*.nc when using I/O scribes)
 if [ -d "${MEMBER_DATA}/outputs" ]; then
     mkdir -p ${ENSEMBLE_COMOUT}/outputs
-    cp ${MEMBER_DATA}/outputs/schout_*.nc ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
-    cp ${MEMBER_DATA}/outputs/staout_* ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
+    for pattern in out2d_*.nc temperature_*.nc salinity_*.nc \
+                   horizontalVelX_*.nc horizontalVelY_*.nc \
+                   schout_*.nc staout_*; do
+        cp ${MEMBER_DATA}/outputs/${pattern} ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
+    done
+    # Report what was archived
+    N_ARCHIVED=$(ls ${ENSEMBLE_COMOUT}/outputs/*.nc 2>/dev/null | wc -l)
+    echo "Archived ${N_ARCHIVED} NetCDF files to ${ENSEMBLE_COMOUT}/outputs/"
 fi
 
 # Save parameter overrides for provenance
