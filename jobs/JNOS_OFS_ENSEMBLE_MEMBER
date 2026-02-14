@@ -316,6 +316,20 @@ else
     fi
 fi
 
+# Fix river boundary itetype: the OBC tar only contains NetCDF files (TEM_3D.th.nc
+# for itetype=4) but bctides.in may specify itetype=1 for small river boundaries
+# (e.g., Clyo, Moultrie) which requires TEM_1.th — a text file created by the OBC
+# Fortran during prep but never archived.  Change itetype from 1 to 2 (initial
+# condition from hotstart) for these river boundaries so SCHISM doesn't need TEM_1.th.
+if [ -f "${MEMBER_DATA}/bctides.in" ] && [ ! -f "${MEMBER_DATA}/TEM_1.th" ]; then
+    # Pattern: "N 0 1 1 2" → river BC with iettype=0, ifltype=1, itetype=1, isatype=2
+    # Change itetype (4th field) from 1 to 2
+    if grep -qE '^[[:space:]]*[0-9]+[[:space:]]+0[[:space:]]+1[[:space:]]+1[[:space:]]+2' ${MEMBER_DATA}/bctides.in; then
+        echo "TEM_1.th not available — changing river boundary itetype from 1 to 2 (initial condition)"
+        sed -i -E 's/^([[:space:]]*[0-9]+[[:space:]]+0[[:space:]]+1[[:space:]]+)1([[:space:]]+2)/\12\2/g' ${MEMBER_DATA}/bctides.in
+    fi
+fi
+
 # --- Copy param.nml (forecast version from COMOUT, then perturb) ---
 # Use the forecast param.nml from COMOUT (already configured by prep)
 # IMPORTANT: Remove any stale symlink first — the bare-name loop may have
