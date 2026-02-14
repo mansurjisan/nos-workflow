@@ -126,9 +126,17 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 STATS_DIR="${COMOUT}/ensemble/stats"
 
+# VARIABLES env var: space-separated list (e.g., "elevation temperature")
+# If not set, defaults to elevation, temperature, salinity
+VARS_ARG=""
+if [ -n "${VARIABLES:-}" ]; then
+    VARS_ARG="--variables ${VARIABLES}"
+fi
+
 python3 -m nos_ofs.ensemble.ensemble_post \
     --member-dirs ${MEMBER_DIRS} \
-    --output-dir ${STATS_DIR}
+    --output-dir ${STATS_DIR} \
+    ${VARS_ARG}
 export err=$?
 
 if [ $err -ne 0 ]; then
