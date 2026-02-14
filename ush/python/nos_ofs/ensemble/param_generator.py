@@ -167,8 +167,17 @@ class EnsembleConfig:
                 f"n_members must be >= 2 (got {self.n_members}). "
                 "Need at least control + 1 perturbed member."
             )
-        if not self.parameters:
-            raise ValueError("No parameters defined for perturbation.")
+        if self.method == "atmospheric":
+            # Atmospheric-only mode: parameters are optional (all members
+            # use defaults), but atmospheric ensemble must be enabled.
+            if not self.atmospheric.enabled:
+                raise ValueError(
+                    "method: atmospheric requires "
+                    "atmospheric_ensemble.enabled: true"
+                )
+        else:
+            if not self.parameters:
+                raise ValueError("No parameters defined for perturbation.")
         for p in self.parameters:
             p.validate()
 
@@ -233,6 +242,22 @@ class ParamGenerator:
         members.append(control)
 
         if n_perturbed == 0:
+            return members
+
+        # Atmospheric-only mode: all members use default physics parameters,
+        # only atmospheric source differs per member.
+        if self.config.method == "atmospheric":
+            default_params = {
+                p.name: p.default for p in self.config.parameters
+            }
+            for i in range(n_perturbed):
+                member_id = f"{i + 1:03d}"
+                members.append({
+                    "member_id": member_id,
+                    "is_control": False,
+                    "parameters": dict(default_params),
+                    "atmospheric_source": self._get_atmospheric_source(member_id),
+                })
             return members
 
         # Latin Hypercube Sampling for perturbed members

@@ -331,7 +331,7 @@ shell_mappings:
 ensemble:
   enabled: true
   n_members: 5
-  method: parameter_perturbation
+  method: atmospheric
   seed: 42                          # Reproducible sampling
   parameters:
     rdrg2:
