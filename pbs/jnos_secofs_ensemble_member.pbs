@@ -93,6 +93,7 @@ export SENDSMS=NO
 
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 export COMPATH=/lfs/h1/ops/prod/com/nos
+export com_ver=v3.7
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}

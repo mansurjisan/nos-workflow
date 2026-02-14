@@ -145,7 +145,9 @@ fi
 ##############################################
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 
-_com_ver=${nosofs_ver}
+# COM directory uses major.minor version (e.g., v3.7), which may differ
+# from the package version (v3.7.0).  Allow override via com_ver.
+_com_ver=${com_ver:-${nosofs_ver}}
 if command -v compath.py &> /dev/null; then
     _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
     _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
