@@ -191,7 +191,7 @@ output:
 # Computational resources (from secofs.ctl)
 resources:
   nprocs: 1200                # -> TOTAL_TASKS (from .ctl: 1200)
-  nscribes: 4                 # SCHISM I/O server processes
+  nscribes: 6                 # SCHISM I/O server processes (must be >= number of output variables)
   memory_gb: 1500
   walltime_hours: 2
 

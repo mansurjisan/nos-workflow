@@ -640,6 +640,19 @@ _comf_archive_outputs() {
         postmsg "$jlogfile" "$msg"
         postmsg "$nosjlogfile" "$msg"
     fi
+
+    # Archive SCHISM output state files needed for ihot=2 restart in split-job mode.
+    # Without real staout/mirror/flux files the forecast (or ensemble) crashes with
+    # "end-of-file during read" on the empty placeholders.
+    if [ "$phase" = "nowcast" ] && [ -d "$DATA/outputs" ]; then
+        local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+        mkdir -p "$restart_dir"
+        for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                 staout_5 staout_6 staout_7 staout_8 staout_9; do
+            [ -f "$DATA/outputs/$f" ] && cp -p "$DATA/outputs/$f" "$restart_dir/"
+        done
+        echo "Archived SCHISM restart output files to $restart_dir"
+    fi
 }
 
 
