@@ -239,8 +239,9 @@ for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
     [ ! -e "$f" ] && continue
     bname=$(basename "$f")
     bare=${bname#${PREFIXNOS}.}
-    # Skip param.nml — handled separately to avoid symlink-follows-to-FIX bug
+    # Skip param.nml and bctides.in — handled separately to avoid symlink-follows-to-FIX bug
     [ "${bare}" = "param.nml" ] && continue
+    [ "${bare}" = "bctides.in" ] && continue
     if [ ! -e "${MEMBER_DATA}/${bare}" ]; then
         ln -sf "$f" ${MEMBER_DATA}/${bare}
         echo "  ${bname} -> ${bare}"
@@ -297,10 +298,22 @@ for f in ${MEMBER_DATA}/schism_*.th; do
 done
 
 # --- Copy bctides.in for forecast ---
+# IMPORTANT: Remove symlink first (same pattern as param.nml).
+# The COMOUT bctides.in.forecast uses NetCDF boundary types (itetype=4 → TEM_3D.th.nc),
+# while the FIX template uses text format (itetype=1 → TEM_1.th).
+# Using the wrong bctides.in causes SCHISM to look for TEM_1.th which doesn't exist.
+rm -f ${MEMBER_DATA}/bctides.in
 BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
 if [ -f "${BCTIDES_SRC}" ]; then
     echo "Copying bctides.in from ${BCTIDES_SRC}"
     cp "${BCTIDES_SRC}" ${MEMBER_DATA}/bctides.in
+else
+    echo "WARNING: bctides.in.forecast not found in COMOUT: ${BCTIDES_SRC}"
+    echo "  COMOUT=${COMOUT}"
+    echo "  Falling back to FIX template (may use text format BCs)"
+    if [ -f "${FIXofs}/${PREFIXNOS}.bctides.in" ]; then
+        cp "${FIXofs}/${PREFIXNOS}.bctides.in" ${MEMBER_DATA}/bctides.in
+    fi
 fi
 
 # --- Copy param.nml (forecast version from COMOUT, then perturb) ---
