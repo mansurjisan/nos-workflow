@@ -331,7 +331,7 @@ shell_mappings:
 ensemble:
   enabled: true
   n_members: 5
-  method: parameter_perturbation
+  method: atmospheric
   seed: 42                          # Reproducible sampling
   parameters:
     rdrg2:
@@ -356,7 +356,7 @@ ensemble:
   # Different members can use different atmospheric forcing sources to capture
   # atmospheric uncertainty alongside model parameter uncertainty.
   atmospheric_ensemble:
-    enabled: false
+    enabled: true
     # Map member_id -> atmospheric source configuration
     # Members not listed here use the default deterministic forcing (GFS+HRRR)
     members:
