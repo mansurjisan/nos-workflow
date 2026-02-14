@@ -1,0 +1,341 @@
+#!/bin/bash
+set -x
+
+########################################
+# JNOS_OFS_ENSEMBLE_ATMOS_PREP - Atmospheric Forcing for Ensemble
+#
+# Creates sflux tar archives for atmospheric sources NOT produced by
+# normal prep.  Normal prep already creates GFS (metnum=1) and HRRR
+# (metnum=2) tar files.  This job creates tars for extra sources
+# (e.g., NAM) defined in the YAML atmospheric_ensemble.extra_sources.
+#
+# For each extra source:
+#   1. Source nos_ofs_launch.sh to get env (TIME_START, TIME_END, etc.)
+#   2. Set DBASE=<source>, metnum=1 (primary sflux slot)
+#   3. Call nos_ofs_create_forcing_met.sh forecast
+#   4. Rename output tar to include source name:
+#      ${PREFIXNOS}.${cycle}.${PDY}.met.forecast.<SOURCE>.tar
+#   5. Copy to $COMOUT
+#
+# This job uses a staging directory ($DATA/atmos_ensemble/) to avoid
+# overwriting normal prep output.
+#
+# Required environment variables:
+#   OFS         - OFS system name (e.g., secofs)
+#   cyc         - Cycle hour (00, 06, 12, 18)
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Load shared library
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export CONTINUE_FORECAST=${CONTINUE_FORECAST:-NO}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+####################################
+# YAML Configuration Loading
+####################################
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+
+###########################################
+# PDY variables
+###########################################
+if [ -z "${PDY:-}" ]; then
+    if command -v setpdy.sh &> /dev/null; then
+        setpdy.sh
+        . PDY
+    fi
+    export PDY=${PDY:-$(date +%Y%m%d)}
+else
+    echo "Using PDY=${PDY} from environment"
+fi
+export cyc=$(printf '%02d' "${cyc}")
+export time_nowcastend=${PDY}${cyc}
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/${envir}/dcom}
+
+_com_ver=${com_ver:-${nosofs_ver}}
+if command -v compath.py &> /dev/null; then
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+##############################################
+# Set up input data paths
+##############################################
+if command -v compath.py &> /dev/null; then
+    export COMINnam=${COMINnam:-$(compath.py prod/nam/${nam_ver:-v4.2})}
+    export COMINhrrr=${COMINhrrr:-$(compath.py prod/hrrr/${hrrr_ver:-v4.1})}
+    export COMINrap=${COMINrap:-$(compath.py prod/rap/${rap_ver:-v5.1})}
+    export COMINrtma=${COMINrtma:-$(compath.py prod/rtma/${rtma_ver:-v2.8})}
+    export COMINgfs=${COMINgfs:-$(compath.py prod/gfs/${gfs_ver:-v16.3})}
+fi
+
+export DCOMINndfd=${DCOMROOT:-}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.atmos_ensemble.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.atmos_ensemble.corms.log
+
+env
+
+########################################################
+# Read extra_sources from YAML config
+########################################################
+echo "=== Reading atmospheric ensemble configuration ==="
+
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Extract extra_sources list from YAML
+EXTRA_SOURCES=$(python3 << 'PYEOF'
+import os, sys
+try:
+    import yaml
+except ImportError:
+    sys.exit(1)
+
+config_path = os.environ.get("OFS_CONFIG", "")
+if not config_path or not os.path.isfile(config_path):
+    sys.exit(1)
+
+with open(config_path) as f:
+    data = yaml.safe_load(f)
+
+ens = data.get("ensemble", {})
+atm = ens.get("atmospheric_ensemble", {})
+if not atm.get("enabled", False):
+    print("")
+    sys.exit(0)
+
+sources = atm.get("extra_sources", [])
+print(" ".join(sources))
+PYEOF
+)
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "ERROR: Failed to read atmospheric ensemble config from YAML" >&2
+    exit $rc
+fi
+
+if [ -z "${EXTRA_SOURCES}" ]; then
+    echo "No extra atmospheric sources configured. Nothing to do."
+    date
+    exit 0
+fi
+
+echo "Extra atmospheric sources to process: ${EXTRA_SOURCES}"
+
+########################################################
+# Source nos_ofs_launch.sh to get environment variables
+# (TIME_START, TIME_END, MET_NETCDF_1_FORECAST, etc.)
+########################################################
+echo "=== Sourcing nos_ofs_launch.sh to set up environment ==="
+
+# COMF Fortran executables need NetCDF Fortran library preloaded
+if [ "${OFS_FRAMEWORK}" = "comf" ]; then
+    if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+        export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+    fi
+fi
+
+export pgm="$USHnos/nos_ofs_launch.sh $OFS prep"
+. $USHnos/nos_ofs_launch.sh $OFS prep
+rc=$?
+if [ $rc -ne 0 ]; then
+    echo "ERROR: nos_ofs_launch.sh failed (exit code $rc)" >&2
+    exit $rc
+fi
+
+echo "time_nowcastend=${time_nowcastend}"
+echo "time_forecastend=${time_forecastend}"
+
+########################################################
+# Process each extra source
+########################################################
+# Use a staging directory to avoid overwriting normal prep output
+ATMOS_STAGE=${DATA}/atmos_ensemble
+mkdir -p ${ATMOS_STAGE}
+
+# Save the original forecast tar name (set by nos_ofs_launch.sh)
+ORIG_MET_TAR="${MET_NETCDF_1_FORECAST}"
+
+for SOURCE in ${EXTRA_SOURCES}; do
+    echo ""
+    echo "=============================================="
+    echo "Processing extra atmospheric source: ${SOURCE}"
+    echo "=============================================="
+
+    # Work in a clean staging subdirectory per source
+    SOURCE_WORKDIR=${ATMOS_STAGE}/${SOURCE}
+    mkdir -p ${SOURCE_WORKDIR}
+    cd ${SOURCE_WORKDIR}
+
+    # Set met forcing parameters for this source
+    export metnum=1
+    export DBASE=${SOURCE}
+    export MET_NUM=1
+
+    # Override the output tar name to land in staging dir
+    export MET_NETCDF_1_FORECAST="${SOURCE_WORKDIR}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+
+    TIME_START_TMP=${time_nowcastend}
+    TIME_END_TMP=${time_forecastend}
+
+    echo "DBASE=${DBASE}, metnum=${metnum}"
+    echo "TIME_START=${TIME_START_TMP}, TIME_END=${TIME_END_TMP}"
+    echo "Output tar: ${MET_NETCDF_1_FORECAST}"
+
+    # Call the same met forcing script used by normal prep
+    export pgm=nos_ofs_create_forcing_met.sh
+    $USHnos/nos_ofs_create_forcing_met.sh forecast ${DBASE} ${TIME_START_TMP} ${TIME_END_TMP}
+    rc=$?
+    if [ $rc -ne 0 ]; then
+        echo "ERROR: nos_ofs_create_forcing_met.sh failed for ${SOURCE} (exit code $rc)" >&2
+        echo "WARNING: Skipping ${SOURCE}, ensemble members needing it will use fallback"
+        continue
+    fi
+
+    echo "Met forcing generation completed for ${SOURCE}"
+
+    # Copy the tar to COMOUT with source-specific name
+    DEST_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
+
+    if [ -f "${MET_NETCDF_1_FORECAST}" ]; then
+        cp "${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+        echo "Archived: ${DEST_TAR}"
+        ls -la "${DEST_TAR}"
+    else
+        echo "WARNING: Expected tar not found: ${MET_NETCDF_1_FORECAST}"
+        # Check if the tar was created in the working directory with the default name
+        DEFAULT_TAR="${SOURCE_WORKDIR}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+        if [ -f "${DEFAULT_TAR}" ]; then
+            cp "${DEFAULT_TAR}" "${DEST_TAR}"
+            echo "Archived (from default name): ${DEST_TAR}"
+        else
+            echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
+            ls -la ${SOURCE_WORKDIR}/ 2>/dev/null || true
+        fi
+    fi
+
+    cd ${DATA}
+done
+
+# Restore original tar name
+export MET_NETCDF_1_FORECAST="${ORIG_MET_TAR}"
+
+########################################################
+# Summary
+########################################################
+echo ""
+echo "=== Atmospheric ensemble prep complete ==="
+echo "Extra source tars in COMOUT:"
+for SOURCE in ${EXTRA_SOURCES}; do
+    tar_file="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
+    if [ -f "${tar_file}" ]; then
+        echo "  OK: $(basename ${tar_file}) ($(stat -c%s "${tar_file}" 2>/dev/null || echo '?') bytes)"
+    else
+        echo "  MISSING: $(basename ${tar_file})"
+    fi
+done
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout 2>/dev/null || true
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf ${ATMOS_STAGE}
+fi
+
+date
