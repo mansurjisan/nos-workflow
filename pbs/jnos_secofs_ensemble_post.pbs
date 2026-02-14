@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS  -N secofs_enspost_${CYC}
+#PBS  -N secofs_enspost_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_enspost_${CYC}.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_enspost_${CYC}.err
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_enspost_00.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_enspost_00.err
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
 #PBS  -l walltime=01:00:00
