@@ -65,12 +65,52 @@ class ParameterDef:
 
 
 @dataclass
+class AtmosphericMemberConfig:
+    """Atmospheric forcing configuration for a single ensemble member."""
+    label: str
+    met_source_1: str                    # Primary met source (GFS, NAM, etc.)
+    met_source_2: Optional[str] = None   # Secondary met source (HRRR, etc.)
+
+
+@dataclass
+class AtmosphericEnsembleConfig:
+    """Configuration for atmospheric forcing ensemble."""
+    enabled: bool = False
+    members: Dict[str, AtmosphericMemberConfig] = field(default_factory=dict)
+    extra_sources: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "AtmosphericEnsembleConfig":
+        """Parse atmospheric_ensemble section from YAML dict."""
+        if not data or not data.get("enabled", False):
+            return cls(enabled=False)
+
+        members = {}
+        for mid, mdef in data.get("members", {}).items():
+            mid_str = str(mid).zfill(3)
+            members[mid_str] = AtmosphericMemberConfig(
+                label=mdef.get("label", ""),
+                met_source_1=mdef.get("met_source_1", "GFS"),
+                met_source_2=mdef.get("met_source_2"),
+            )
+
+        return cls(
+            enabled=True,
+            members=members,
+            extra_sources=data.get("extra_sources", []),
+        )
+
+
+@dataclass
 class EnsembleConfig:
     """Configuration for an ensemble run."""
     n_members: int
     method: str
     seed: int
     parameters: List[ParameterDef] = field(default_factory=list)
+    atmospheric: AtmosphericEnsembleConfig = field(
+        default_factory=AtmosphericEnsembleConfig
+    )
 
     @classmethod
     def from_yaml(cls, yaml_path: str) -> "EnsembleConfig":
@@ -108,11 +148,16 @@ class EnsembleConfig:
                 description=pdef.get("description", ""),
             ))
 
+        atmospheric = AtmosphericEnsembleConfig.from_dict(
+            ens.get("atmospheric_ensemble")
+        )
+
         return cls(
             n_members=int(ens.get("n_members", 5)),
             method=ens.get("method", "parameter_perturbation"),
             seed=int(ens.get("seed", 42)),
             parameters=params,
+            atmospheric=atmospheric,
         )
 
     def validate(self):
@@ -143,6 +188,21 @@ class ParamGenerator:
         self.config = config
         self.config.validate()
 
+    def _get_atmospheric_source(self, member_id: str) -> Optional[Dict[str, Any]]:
+        """Get atmospheric source config for a member, if atmospheric ensemble is enabled."""
+        atm = self.config.atmospheric
+        if not atm.enabled:
+            return None
+        member_cfg = atm.members.get(member_id)
+        if member_cfg:
+            return {
+                "met_source_1": member_cfg.met_source_1,
+                "met_source_2": member_cfg.met_source_2,
+                "label": member_cfg.label,
+            }
+        # Members not listed in atmospheric_ensemble.members use defaults
+        return None
+
     def generate(self) -> List[Dict[str, Any]]:
         """Generate parameter sets for all ensemble members.
 
@@ -151,6 +211,7 @@ class ParamGenerator:
               - member_id: str (e.g., "000", "001")
               - is_control: bool
               - parameters: dict mapping param name to value
+              - atmospheric_source: dict or null (if atmospheric ensemble enabled)
         """
         import random
 
@@ -167,6 +228,7 @@ class ParamGenerator:
             "parameters": {
                 p.name: p.default for p in self.config.parameters
             },
+            "atmospheric_source": self._get_atmospheric_source("000"),
         }
         members.append(control)
 
@@ -191,6 +253,7 @@ class ParamGenerator:
 
         # Transform unit samples to physical parameter values
         for i in range(n_perturbed):
+            member_id = f"{i + 1:03d}"
             member_params = {}
             for j, p in enumerate(self.config.parameters):
                 u = lhs_samples[j][i]
@@ -205,9 +268,10 @@ class ParamGenerator:
                 member_params[p.name] = val
 
             members.append({
-                "member_id": f"{i + 1:03d}",
+                "member_id": member_id,
                 "is_control": False,
                 "parameters": member_params,
+                "atmospheric_source": self._get_atmospheric_source(member_id),
             })
 
         return members
@@ -250,6 +314,9 @@ class ParamGenerator:
         lines.append(f"Method: {self.config.method}")
         lines.append(f"Seed: {self.config.seed}")
         lines.append(f"Parameters: {', '.join(p.name for p in self.config.parameters)}")
+        if self.config.atmospheric.enabled:
+            lines.append(f"Atmospheric ensemble: enabled "
+                          f"(extra sources: {', '.join(self.config.atmospheric.extra_sources)})")
         lines.append("")
 
         # Header
@@ -257,6 +324,8 @@ class ParamGenerator:
         header = f"{'Member':<10} {'Control':<10}"
         for name in param_names:
             header += f" {name:>12}"
+        if self.config.atmospheric.enabled:
+            header += f"  {'Atmos Source':<25}"
         lines.append(header)
         lines.append("-" * len(header))
 
@@ -265,6 +334,12 @@ class ParamGenerator:
             for name in param_names:
                 val = m["parameters"][name]
                 line += f" {val:>12.6g}"
+            if self.config.atmospheric.enabled:
+                atm = m.get("atmospheric_source")
+                if atm:
+                    line += f"  {atm['label']:<25}"
+                else:
+                    line += f"  {'default (GFS+HRRR)':<25}"
             lines.append(line)
 
         return "\n".join(lines)

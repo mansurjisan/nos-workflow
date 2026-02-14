@@ -352,6 +352,32 @@ ensemble:
       default: 5.0e-6
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
+  # Atmospheric forcing ensemble (optional, adds to parameter perturbation)
+  # Different members can use different atmospheric forcing sources to capture
+  # atmospheric uncertainty alongside model parameter uncertainty.
+  atmospheric_ensemble:
+    enabled: false
+    # Map member_id -> atmospheric source configuration
+    # Members not listed here use the default deterministic forcing (GFS+HRRR)
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GFS only"
+        met_source_1: GFS
+        met_source_2: null
+      "002":
+        label: "NAM only"
+        met_source_1: NAM
+        met_source_2: null
+    # Extra sources beyond what normal prep creates.
+    # Normal prep already creates GFS (tar) and HRRR (tar.2).
+    # Only list sources that need additional prep work.
+    extra_sources:
+      - NAM
+
   # Ensemble-specific resources (per member)
   resources:
     select: "select=10:ncpus=128:mpiprocs=120"
