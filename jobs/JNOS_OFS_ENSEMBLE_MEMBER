@@ -228,6 +228,20 @@ if [ "${OFS_FRAMEWORK}" = "stofs" ] && [ -d "${FIXstofs3d}" ] && [ "${FIXstofs3d
     done
 fi
 
+# --- Create SCHISM-required bare-name symlinks ---
+# SCHISM expects hgrid.gr3, hgrid.ll, vgrid.in etc. without the OFS prefix.
+# FIX files are stored as secofs.hgrid.gr3, secofs.vgrid.in etc.
+echo "Creating SCHISM bare-name symlinks (stripping ${PREFIXNOS}. prefix)"
+for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
+    [ ! -e "$f" ] && continue
+    bname=$(basename "$f")
+    bare=${bname#${PREFIXNOS}.}
+    if [ ! -e "${MEMBER_DATA}/${bare}" ]; then
+        ln -sf "$f" ${MEMBER_DATA}/${bare}
+        echo "  ${bname} -> ${bare}"
+    fi
+done
+
 # --- Extract forcing files from COMOUT tar archives ---
 echo "=== Extracting forcing from COMOUT tar archives ==="
 
@@ -421,13 +435,12 @@ else
     echo "OK: sflux files ($(ls ${MEMBER_DATA}/sflux/sflux_air_*.nc | wc -l) air files)"
 fi
 
-# Check for grid files
+# Check for grid files (SCHISM requires bare names)
 for grid_file in hgrid.gr3 vgrid.in; do
-    # SCHISM looks for bare name OR ${PREFIXNOS}.${grid_file}
-    if [ -e "${MEMBER_DATA}/${grid_file}" ] || [ -e "${MEMBER_DATA}/${PREFIXNOS}.${grid_file}" ]; then
+    if [ -e "${MEMBER_DATA}/${grid_file}" ]; then
         echo "OK: ${grid_file}"
     else
-        echo "MISSING: ${grid_file}"
+        echo "MISSING: ${grid_file} (SCHISM requires bare name, not ${PREFIXNOS}.${grid_file})"
         MISSING=$((MISSING + 1))
     fi
 done
