@@ -236,9 +236,10 @@ echo "time_forecastend=${time_forecastend}"
 ########################################################
 # Process each extra source
 ########################################################
-# Use a staging directory to avoid overwriting normal prep output
-ATMOS_STAGE=${DATA}/atmos_ensemble
-mkdir -p ${ATMOS_STAGE}
+# Stay in $DATA where nos_ofs_launch.sh already set up grid files,
+# control files, and other inputs the met script expects in CWD.
+# Do NOT cd to a subdirectory — the met script writes cmdfile to CWD
+# but references $DATA/cmdfile for chmod/mpiexec, so CWD must equal $DATA.
 
 # Save the original forecast tar name (set by nos_ofs_launch.sh)
 ORIG_MET_TAR="${MET_NETCDF_1_FORECAST}"
@@ -249,23 +250,21 @@ for SOURCE in ${EXTRA_SOURCES}; do
     echo "Processing extra atmospheric source: ${SOURCE}"
     echo "=============================================="
 
-    # Work in a clean staging subdirectory per source
-    SOURCE_WORKDIR=${ATMOS_STAGE}/${SOURCE}
-    mkdir -p ${SOURCE_WORKDIR}
-    cd ${SOURCE_WORKDIR}
+    cd ${DATA}
 
     # Set met forcing parameters for this source
     export metnum=1
     export DBASE=${SOURCE}
     export MET_NUM=1
+    export nfore=1
 
-    # Override the output tar name to land in staging dir
-    export MET_NETCDF_1_FORECAST="${SOURCE_WORKDIR}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+    # Override the output tar name (stays in $DATA)
+    export MET_NETCDF_1_FORECAST="${DATA}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.nc.tar"
 
     TIME_START_TMP=${time_nowcastend}
     TIME_END_TMP=${time_forecastend}
 
-    echo "DBASE=${DBASE}, metnum=${metnum}"
+    echo "DBASE=${DBASE}, metnum=${metnum}, nfore=${nfore}"
     echo "TIME_START=${TIME_START_TMP}, TIME_END=${TIME_END_TMP}"
     echo "Output tar: ${MET_NETCDF_1_FORECAST}"
 
@@ -290,18 +289,9 @@ for SOURCE in ${EXTRA_SOURCES}; do
         ls -la "${DEST_TAR}"
     else
         echo "WARNING: Expected tar not found: ${MET_NETCDF_1_FORECAST}"
-        # Check if the tar was created in the working directory with the default name
-        DEFAULT_TAR="${SOURCE_WORKDIR}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
-        if [ -f "${DEFAULT_TAR}" ]; then
-            cp "${DEFAULT_TAR}" "${DEST_TAR}"
-            echo "Archived (from default name): ${DEST_TAR}"
-        else
-            echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
-            ls -la ${SOURCE_WORKDIR}/ 2>/dev/null || true
-        fi
+        echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
+        ls -la ${DATA}/*.tar 2>/dev/null || true
     fi
-
-    cd ${DATA}
 done
 
 # Restore original tar name
@@ -335,7 +325,7 @@ fi
 # Cleanup
 ##############################
 if [ "${KEEPDATA^^}" != YES ]; then
-    rm -rf ${ATMOS_STAGE}
+    rm -rf $DATA
 fi
 
 date
