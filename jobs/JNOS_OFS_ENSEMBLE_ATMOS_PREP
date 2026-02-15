@@ -258,8 +258,9 @@ for SOURCE in ${EXTRA_SOURCES}; do
     export MET_NUM=1
     export nfore=1
 
-    # Override the output tar name (stays in $DATA)
-    export MET_NETCDF_1_FORECAST="${DATA}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.nc.tar"
+    # Override the output tar name (bare filename — the met script prepends
+    # $DATA/ for creation and $COMOUT/ for archival internally)
+    export MET_NETCDF_1_FORECAST="${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.nc.tar"
 
     TIME_START_TMP=${time_nowcastend}
     TIME_END_TMP=${time_forecastend}
@@ -280,17 +281,26 @@ for SOURCE in ${EXTRA_SOURCES}; do
 
     echo "Met forcing generation completed for ${SOURCE}"
 
-    # Copy the tar to COMOUT with source-specific name
+    # The met script already copies the tar to $COMOUT/$MET_NETCDF_1_FORECAST.
+    # Verify it arrived. Also copy to $DATA for the J-job's own reference.
+    COMOUT_TAR="${COMOUT}/${MET_NETCDF_1_FORECAST}"
     DEST_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
 
-    if [ -f "${MET_NETCDF_1_FORECAST}" ]; then
-        cp "${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+    if [ -f "${COMOUT_TAR}" ]; then
+        # Rename from .nc.tar to final name if they differ
+        if [ "${COMOUT_TAR}" != "${DEST_TAR}" ]; then
+            mv "${COMOUT_TAR}" "${DEST_TAR}"
+        fi
         echo "Archived: ${DEST_TAR}"
         ls -la "${DEST_TAR}"
+    elif [ -f "${DATA}/${MET_NETCDF_1_FORECAST}" ]; then
+        # Fallback: met script left it in $DATA instead of copying
+        cp "${DATA}/${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+        echo "Archived (from DATA): ${DEST_TAR}"
+        ls -la "${DEST_TAR}"
     else
-        echo "WARNING: Expected tar not found: ${MET_NETCDF_1_FORECAST}"
         echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
-        ls -la ${DATA}/*.tar 2>/dev/null || true
+        ls -la ${COMOUT}/*.tar ${DATA}/*.tar 2>/dev/null || true
     fi
 done
 
