@@ -374,23 +374,28 @@ if [ "${N_MET_SOURCES:-2}" -eq 1 ]; then
     echo "Generating single-source sflux_inputs.txt (nfile=1)"
     cat > ${MEMBER_DATA}/sflux/sflux_inputs.txt << 'SFLUX_EOF'
 &sflux_inputs
-air_1_relative_weight=1.
-air_1_max_window_hours=120.
-air_1_fail_if_missing=.true.
-air_1_file='sflux_air_1'
-air_1_action='replace'
+air_1_relative_weight=1.,
+air_1_max_window_hours=120.,
+air_1_fail_if_missing=.true.,
+air_1_file='sflux_air_1',
+uwind_name='uwind',
+vwind_name='vwind',
+prmsl_name='prmsl',
+stmp_name='stmp',
+spfh_name='spfh',
 
-prc_1_relative_weight=1.
-prc_1_max_window_hours=120.
-prc_1_fail_if_missing=.true.
-prc_1_file='sflux_prc_1'
-prc_1_action='replace'
+rad_1_relative_weight=1.,
+rad_1_max_window_hours=120.,
+rad_1_fail_if_missing=.true.,
+rad_1_file='sflux_rad_1',
+dlwrf_name='dlwrf',
+dswrf_name='dswrf',
 
-rad_1_relative_weight=1.
-rad_1_max_window_hours=120.
-rad_1_fail_if_missing=.true.
-rad_1_file='sflux_rad_1'
-rad_1_action='replace'
+prc_1_relative_weight=1.,
+prc_1_max_window_hours=120.,
+prc_1_fail_if_missing=.true.,
+prc_1_file='sflux_prc_1',
+prate_name='prate',
 /
 SFLUX_EOF
 elif ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
@@ -491,6 +496,61 @@ fi
 # For ensemble members, ihot=1 is correct — each member produces independent output.
 sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
 echo "Set ihot=1 in param.nml for hot restart with fresh output"
+
+# CRITICAL: With ihot=1, SCHISM starts its clock at start_year/month/day/hour
+# from param.nml, NOT from the hotstart file time.  The forecast param.nml
+# has start times from the simulation start (BASE_DATE), which can predate
+# the forecast sflux data.  We must update start times to the forecast start
+# (= nowcast end) so SCHISM's time_now falls within the sflux data window.
+echo "=== Updating param.nml start time and rnday for forecast period ==="
+
+# Read time_nowcastend and time_forecastend from COMOUT
+_time_ncend=""
+_time_fcend=""
+if [ -f "${COMOUT}/time_nowcastend.${cycle}" ]; then
+    read _time_ncend < "${COMOUT}/time_nowcastend.${cycle}"
+fi
+if [ -f "${COMOUT}/time_forecastend.${cycle}" ]; then
+    read _time_fcend < "${COMOUT}/time_forecastend.${cycle}"
+fi
+
+# Fallback: derive from PDY/cyc
+_time_ncend=${_time_ncend:-${PDY}$(printf '%02d' "${cyc}")}
+echo "Forecast start (time_nowcastend): ${_time_ncend}"
+echo "Forecast end   (time_forecastend): ${_time_fcend:-unknown}"
+
+# Parse YYYYMMDDHH -> year, month, day, hour
+_fc_year=${_time_ncend:0:4}
+_fc_month=$((10#${_time_ncend:4:2}))
+_fc_day=$((10#${_time_ncend:6:2}))
+_fc_hour=$((10#${_time_ncend:8:2}))
+
+# Update start_year/month/day/hour in param.nml
+sed -i "s/start_year *= *[0-9]*/start_year = ${_fc_year}/" ${MEMBER_DATA}/param.nml
+sed -i "s/start_month *= *[0-9]*/start_month = ${_fc_month}/" ${MEMBER_DATA}/param.nml
+sed -i "s/start_day *= *[0-9]*/start_day = ${_fc_day}/" ${MEMBER_DATA}/param.nml
+sed -i "s/start_hour *= *[0-9.]*/start_hour = ${_fc_hour}./" ${MEMBER_DATA}/param.nml
+echo "Set start_year=${_fc_year}, start_month=${_fc_month}, start_day=${_fc_day}, start_hour=${_fc_hour}"
+
+# Compute and set rnday (forecast duration in days)
+if [ -n "${_time_fcend}" ]; then
+    if [ -n "${NHOUR:-}" ] && command -v ${NHOUR} &> /dev/null; then
+        _fc_hours=$(${NHOUR} ${_time_fcend} ${_time_ncend})
+    elif command -v nhour &> /dev/null; then
+        _fc_hours=$(nhour ${_time_fcend} ${_time_ncend})
+    else
+        # Fallback: use python to compute hours between two YYYYMMDDHH strings
+        _fc_hours=$(python3 -c "
+from datetime import datetime
+t1 = datetime.strptime('${_time_ncend}', '%Y%m%d%H')
+t2 = datetime.strptime('${_time_fcend}', '%Y%m%d%H')
+print(int((t2 - t1).total_seconds() / 3600))
+")
+    fi
+    _fc_rnday=$(python3 -c "print(${_fc_hours} / 24.0)")
+    sed -i "s/rnday *= *[0-9.eE+-]*/rnday = ${_fc_rnday}/" ${MEMBER_DATA}/param.nml
+    echo "Set rnday=${_fc_rnday} (${_fc_hours} hours)"
+fi
 
 ########################################################
 # Apply parameter perturbations to param.nml
