@@ -43,14 +43,20 @@ set -e
 
 # ---- Configuration ---------------------------------------------------
 CYC=${1:-12}
-N_MEMBERS=${2:-5}
+# If $2 is a flag (starts with --), don't consume it as N_MEMBERS
+if [[ "${2:-}" == --* ]]; then
+    N_MEMBERS=5
+    shift 1 2>/dev/null || true
+else
+    N_MEMBERS=${2:-5}
+    shift 2 2>/dev/null || true
+fi
 WITH_DET=false
 SKIP_PREP=false
 ATMOS_ENSEMBLE=false
 DET_ONLY=false
 
 # Check for flags
-shift 2 2>/dev/null || true
 for arg in "$@"; do
     case "$arg" in
         --with-det)          WITH_DET=true ;;
