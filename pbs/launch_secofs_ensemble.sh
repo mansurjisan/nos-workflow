@@ -155,12 +155,14 @@ if [ "${DET_ONLY}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
+        -v "PDY=${PDY},cyc=${CYC}" \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_SHORT=${NCST_JOBID%%.*}
     echo "    Nowcast:  ${NCST_JOBID}"
 
     FCST_JOBID=$(qsub \
+        -v "PDY=${PDY},cyc=${CYC}" \
         -W depend=afterok:${NCST_SHORT} \
         "${FCST_PBS}")
     FCST_SHORT=${FCST_JOBID%%.*}
@@ -173,12 +175,12 @@ if [ "${DET_ONLY}" = true ]; then
     echo "=============================================="
     echo ""
     echo " Dependency chain:"
-    echo "   prep (${PREP_JOBID_SHORT})"
+    echo "   prep (${PREP_JOBID_SHORT:-skipped})"
     echo "     └─> nowcast (${NCST_SHORT})"
     echo "           └─> forecast (${FCST_SHORT})"
     echo ""
     echo " Monitor with:  qstat -u $LOGNAME"
-    echo " Cancel all:    qdel ${PREP_JOBID_SHORT} ${NCST_SHORT} ${FCST_SHORT}"
+    echo " Cancel all:    qdel ${PREP_JOBID_SHORT:-} ${NCST_SHORT} ${FCST_SHORT}"
     echo ""
     exit 0
 fi

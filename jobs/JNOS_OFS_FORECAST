@@ -109,9 +109,11 @@ echo "OFS Framework: ${OFS_FRAMEWORK}"
 ###########################################
 # PDY variables
 ###########################################
-if command -v setpdy.sh &> /dev/null; then
-    setpdy.sh
-    . PDY
+if [ -z "${PDY:-}" ]; then
+    if command -v setpdy.sh &> /dev/null; then
+        setpdy.sh
+        . PDY
+    fi
 fi
 export PDY=${PDY:-$(date +%Y%m%d)}
 
