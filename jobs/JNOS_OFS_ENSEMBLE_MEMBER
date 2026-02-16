@@ -294,8 +294,62 @@ fi
 # Meteorological forcing (sflux files)
 mkdir -p ${MEMBER_DATA}/sflux
 
-if [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
-    # --- Atmospheric-ensemble-aware sflux extraction ---
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    # --- STOFS: Copy individual NetCDFs from COMOUTrerun ---
+    # STOFS forcing scripts write individual files (not tars) to COMOUTrerun:
+    #   ${RUN}.${cycle}.gfs.{air,prc,rad}.nc  (GFS, sflux stack 1)
+    #   ${RUN}.${cycle}.hrrr.{air,prc,rad}.nc (HRRR, sflux stack 2)
+    #   ${RUN}.${cycle}.nam.{air,prc,rad}.nc  (NAM, sflux stack 2 for ensemble)
+    export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+    if [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
+        # Source 1 (primary, sflux stack 1)
+        SRC1=$(echo "${ATMOS_MET1}" | tr '[:upper:]' '[:lower:]')
+        for var in air prc rad; do
+            src="${COMOUTrerun}/${RUN}.${cycle}.${SRC1}.${var}.nc"
+            dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
+            if [ -s "${src}" ]; then
+                cp -p "${src}" "${dst}"
+                echo "  sflux_${var}_1 <- ${SRC1}"
+            else
+                echo "ERROR: Primary sflux not found: ${src}" >&2
+            fi
+        done
+
+        # Source 2 (secondary, sflux stack 2)
+        if [ -n "${ATMOS_MET2}" ]; then
+            SRC2=$(echo "${ATMOS_MET2}" | tr '[:upper:]' '[:lower:]')
+            for var in air prc rad; do
+                src="${COMOUTrerun}/${RUN}.${cycle}.${SRC2}.${var}.nc"
+                dst="${MEMBER_DATA}/sflux/sflux_${var}_2.0001.nc"
+                if [ -s "${src}" ]; then
+                    cp -p "${src}" "${dst}"
+                    echo "  sflux_${var}_2 <- ${SRC2}"
+                fi
+            done
+            N_MET_SOURCES=2
+        else
+            N_MET_SOURCES=1
+            echo "Single-source member: no secondary met (${ATMOS_LABEL})"
+        fi
+    else
+        # Default STOFS: GFS (stack 1) + HRRR (stack 2) — same as deterministic
+        for var in air prc rad; do
+            src="${COMOUTrerun}/${RUN}.${cycle}.gfs.${var}.nc"
+            [ -s "${src}" ] && cp -p "${src}" "${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
+        done
+        N_MET_SOURCES=1
+        for var in air prc rad; do
+            src="${COMOUTrerun}/${RUN}.${cycle}.hrrr.${var}.nc"
+            if [ -s "${src}" ]; then
+                cp -p "${src}" "${MEMBER_DATA}/sflux/sflux_${var}_2.0001.nc"
+                N_MET_SOURCES=2
+            fi
+        done
+    fi
+
+elif [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
+    # --- COMF: Atmospheric-ensemble-aware sflux extraction from tar archives ---
     # Determine which tar(s) to extract based on member's atmospheric source
 
     # Source 1 (primary met, metnum=1 -> sflux_air_1.*.nc)
@@ -347,7 +401,7 @@ if [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
         echo "Single-source member: no secondary met (${ATMOS_LABEL})"
     fi
 else
-    # --- Default behavior (no atmospheric ensemble) ---
+    # --- Default behavior (no atmospheric ensemble, COMF) ---
     # Extract both GFS (metnum=1) and HRRR (metnum=2) tars
     for tar_file in \
         "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar" \
@@ -399,30 +453,79 @@ prate_name='prate',
 /
 SFLUX_EOF
 elif ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
-    # Dual-source: copy the default sflux_inputs.txt
-    if [ -f "${COMOUT}/sflux_inputs.txt" ]; then
-        cp "${COMOUT}/sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
-    elif [ -f "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
-        echo "Copying sflux_inputs.txt from FIX"
-        cp "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+    # Dual-source: copy the default sflux_inputs.txt from FIX
+    if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+        # STOFS: sflux_inputs.txt is in FIXstofs3d with underscore naming
+        if [ -f "${FIXstofs3d}/${RUN}_sflux_inputs.txt" ]; then
+            cp "${FIXstofs3d}/${RUN}_sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+            echo "Copied dual-source sflux_inputs.txt from STOFS FIX"
+        elif [ -f "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
+            cp "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+        fi
+    else
+        if [ -f "${COMOUT}/sflux_inputs.txt" ]; then
+            cp "${COMOUT}/sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+        elif [ -f "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
+            echo "Copying sflux_inputs.txt from FIX"
+            cp "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt
+        fi
     fi
 fi
 
-# Ocean boundary conditions (elev2D.th.nc, TEM_3D.th.nc, SAL_3D.th.nc, uv3D.th.nc)
-if [ -f "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" ]; then
-    echo "Extracting OBC files"
-    tar xf "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" -C ${MEMBER_DATA}/
-fi
+# Ocean boundary conditions and river forcing
+# STOFS uses individual files in COMOUTrerun; COMF uses tar archives in COMOUT
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    # --- STOFS: Copy OBC and river files from COMOUTrerun ---
+    echo "=== Staging STOFS OBC and river forcing from COMOUTrerun ==="
 
-# River forcing (vsource.th, vsink.th, msource.th or source_sink.in)
-for tar_file in \
-    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.river.th.tar" \
-    "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.nwm.source.sink.fore.tar"; do
-    if [ -f "${tar_file}" ]; then
-        echo "Extracting $(basename ${tar_file})"
-        tar xf "${tar_file}" -C ${MEMBER_DATA}/
+    # RTOFS OBC 3D time-history files
+    for pair in "elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" \
+                "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc"; do
+        src_suffix="${pair%%:*}"
+        dst_name="${pair##*:}"
+        src="${COMOUTrerun}/${RUN}.${cycle}.${src_suffix}"
+        if [ -s "${src}" ]; then
+            cp -p "${src}" "${MEMBER_DATA}/${dst_name}"
+            echo "  ${dst_name} <- ${src_suffix}"
+        fi
+    done
+
+    # River forcing (NWM)
+    for f in msource.th vsink.th vsource.th; do
+        src="${COMOUTrerun}/${RUN}.${cycle}.$f"
+        [ -s "${src}" ] && cp -p "${src}" "${MEMBER_DATA}/$f"
+    done
+
+    # St. Lawrence River
+    [ -s "${COMOUTrerun}/${RUN}.${cycle}.riv.obs.flux.th" ] && \
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.riv.obs.flux.th" "${MEMBER_DATA}/flux.th"
+    [ -s "${COMOUTrerun}/${RUN}.${cycle}.riv.obs.tem_1.th" ] && \
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.riv.obs.tem_1.th" "${MEMBER_DATA}/TEM_1.th"
+
+    # Tidal forcing (bctides.in)
+    if [ -s "${COMOUTrerun}/${RUN}.${cycle}.bctides.in" ]; then
+        rm -f ${MEMBER_DATA}/bctides.in
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.bctides.in" "${MEMBER_DATA}/bctides.in"
+        echo "  bctides.in from COMOUTrerun"
     fi
-done
+else
+    # --- COMF: Extract OBC and river from tar archives ---
+    # Ocean boundary conditions (elev2D.th.nc, TEM_3D.th.nc, SAL_3D.th.nc, uv3D.th.nc)
+    if [ -f "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" ]; then
+        echo "Extracting OBC files"
+        tar xf "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar" -C ${MEMBER_DATA}/
+    fi
+
+    # River forcing (vsource.th, vsink.th, msource.th or source_sink.in)
+    for tar_file in \
+        "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.river.th.tar" \
+        "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.nwm.source.sink.fore.tar"; do
+        if [ -f "${tar_file}" ]; then
+            echo "Extracting $(basename ${tar_file})"
+            tar xf "${tar_file}" -C ${MEMBER_DATA}/
+        fi
+    done
+fi
 
 # Rename schism_* river files to bare names expected by SCHISM
 # river.th.tar contains schism_flux.th, schism_temp.th, schism_salt.th
@@ -445,35 +548,47 @@ if [ -f "${MEMBER_DATA}/temp.th" ] && [ ! -f "${MEMBER_DATA}/TEM_1.th" ]; then
 fi
 
 # --- Copy bctides.in for forecast ---
-# IMPORTANT: Remove symlink first (same pattern as param.nml).
-# The COMOUT bctides.in.forecast is position-dependent (inline data per boundary).
-# Do NOT modify it with sed — changing itetype shifts the file reader position,
-# causing SCHISM to misparse subsequent boundaries (ABORT: nudging factor wrong).
-rm -f ${MEMBER_DATA}/bctides.in
-BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
-if [ -f "${BCTIDES_SRC}" ]; then
-    echo "Copying bctides.in from ${BCTIDES_SRC}"
-    cp "${BCTIDES_SRC}" ${MEMBER_DATA}/bctides.in
-else
-    echo "WARNING: bctides.in.forecast not found in COMOUT: ${BCTIDES_SRC}"
-    echo "  COMOUT=${COMOUT}"
-    echo "  Falling back to FIX template (may use text format BCs)"
-    if [ -f "${FIXofs}/${PREFIXNOS}.bctides.in" ]; then
-        cp "${FIXofs}/${PREFIXNOS}.bctides.in" ${MEMBER_DATA}/bctides.in
+# STOFS already copied bctides.in from COMOUTrerun above; skip for STOFS.
+if [ "${OFS_FRAMEWORK}" != "stofs" ]; then
+    # COMF: IMPORTANT: Remove symlink first (same pattern as param.nml).
+    # The COMOUT bctides.in.forecast is position-dependent (inline data per boundary).
+    # Do NOT modify it with sed — changing itetype shifts the file reader position,
+    # causing SCHISM to misparse subsequent boundaries (ABORT: nudging factor wrong).
+    rm -f ${MEMBER_DATA}/bctides.in
+    BCTIDES_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast"
+    if [ -f "${BCTIDES_SRC}" ]; then
+        echo "Copying bctides.in from ${BCTIDES_SRC}"
+        cp "${BCTIDES_SRC}" ${MEMBER_DATA}/bctides.in
+    else
+        echo "WARNING: bctides.in.forecast not found in COMOUT: ${BCTIDES_SRC}"
+        echo "  COMOUT=${COMOUT}"
+        echo "  Falling back to FIX template (may use text format BCs)"
+        if [ -f "${FIXofs}/${PREFIXNOS}.bctides.in" ]; then
+            cp "${FIXofs}/${PREFIXNOS}.bctides.in" ${MEMBER_DATA}/bctides.in
+        fi
     fi
 fi
 
-# --- Copy param.nml (forecast version from COMOUT, then perturb) ---
-# Use the forecast param.nml from COMOUT (already configured by prep)
+# --- Copy param.nml (forecast version, then perturb) ---
 # IMPORTANT: Remove any stale symlink first — the bare-name loop may have
 # created param.nml -> secofs.param.nml -> FIX file.  cp follows symlinks
 # and would silently overwrite the shared FIX file instead of creating a
 # real file in the member directory.
 rm -f ${MEMBER_DATA}/param.nml
 
-PARAM_NML_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.forecast.in"
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    # STOFS: param.nml for forecast is in COMOUTrerun
+    PARAM_NML_SRC="${COMOUTrerun}/${RUN}.${cycle}.param.forecast.nml"
+    if [ ! -f "${PARAM_NML_SRC}" ]; then
+        PARAM_NML_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.forecast.in"
+    fi
+else
+    # COMF: param.nml for forecast is in COMOUT
+    PARAM_NML_SRC="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.forecast.in"
+fi
+
 if [ -f "${PARAM_NML_SRC}" ]; then
-    echo "Using forecast param.nml from COMOUT: ${PARAM_NML_SRC}"
+    echo "Using forecast param.nml from: ${PARAM_NML_SRC}"
     cp "${PARAM_NML_SRC}" ${MEMBER_DATA}/param.nml
 else
     # Fallback to FIX directory template

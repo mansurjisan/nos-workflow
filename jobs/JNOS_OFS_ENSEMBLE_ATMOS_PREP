@@ -210,102 +210,198 @@ fi
 echo "Extra atmospheric sources to process: ${EXTRA_SOURCES}"
 
 ########################################################
-# Source nos_ofs_launch.sh to get environment variables
-# (TIME_START, TIME_END, MET_NETCDF_1_FORECAST, etc.)
+# Framework-specific processing
 ########################################################
-echo "=== Sourcing nos_ofs_launch.sh to set up environment ==="
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    ########################################################
+    # STOFS: Call STOFS forcing scripts directly
+    # STOFS uses its own shell/wgrib2/NCO scripts, NOT the
+    # COMF nos_ofs_create_forcing_met.sh pipeline.
+    ########################################################
+    echo "=== STOFS atmospheric ensemble prep ==="
 
-# COMF Fortran executables need NetCDF Fortran library preloaded
-if [ "${OFS_FRAMEWORK}" = "comf" ]; then
+    # Set up STOFS-specific paths
+    export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
+    export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
+    export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec/${RUN}}
+
+    # COMOUTrerun: where STOFS forcing scripts write their output
+    export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+    mkdir -p ${COMOUTrerun}
+
+    # Time variables that STOFS forcing scripts expect
+    # Derive from PDY/cyc if not already set
+    _cyc_int=$((10#${cyc}))
+    _ncast_hours=${NOWCAST_HOURS:-24}
+
+    # Nowcast begins _ncast_hours before cycle time
+    if command -v ndate &> /dev/null; then
+        export PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN:-$(ndate -${_ncast_hours} ${PDY}${cyc})}
+        export PDYHH_FCAST_BEGIN=${PDYHH_FCAST_BEGIN:-${PDY}${cyc}}
+        _fcast_hours=${FORECAST_HOURS:-108}
+        export PDYHH_FCAST_END=${PDYHH_FCAST_END:-$(ndate ${_fcast_hours} ${PDY}${cyc})}
+    else
+        # Fallback: compute with python
+        _times=$(python3 -c "
+from datetime import datetime, timedelta
+base = datetime.strptime('${PDY}${cyc}', '%Y%m%d%H')
+nc_begin = base - timedelta(hours=${_ncast_hours})
+fc_end = base + timedelta(hours=${FORECAST_HOURS:-108})
+print(nc_begin.strftime('%Y%m%d%H'))
+print(base.strftime('%Y%m%d%H'))
+print(fc_end.strftime('%Y%m%d%H'))
+")
+        export PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN:-$(echo "${_times}" | sed -n '1p')}
+        export PDYHH_FCAST_BEGIN=${PDYHH_FCAST_BEGIN:-$(echo "${_times}" | sed -n '2p')}
+        export PDYHH_FCAST_END=${PDYHH_FCAST_END:-$(echo "${_times}" | sed -n '3p')}
+    fi
+
+    echo "PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN}"
+    echo "PDYHH_FCAST_BEGIN=${PDYHH_FCAST_BEGIN}"
+    echo "PDYHH_FCAST_END=${PDYHH_FCAST_END}"
+
+    # wgrib2 path
+    export WGRIB2=${WGRIB2:-$(which wgrib2 2>/dev/null || echo wgrib2)}
+
+    for SOURCE in ${EXTRA_SOURCES}; do
+        echo ""
+        echo "=============================================="
+        echo "Processing extra atmospheric source: ${SOURCE}"
+        echo "=============================================="
+
+        SOURCE_LC=$(echo "${SOURCE}" | tr '[:upper:]' '[:lower:]')
+
+        # Set up working directory for this source
+        export DATA_prep_${SOURCE_LC}=${DATA}/atmos_ensemble/${SOURCE_LC}
+        mkdir -p ${DATA}/atmos_ensemble/${SOURCE_LC}
+
+        # Find and run the STOFS script for this source
+        FORCING_SCRIPT="${USHstofs3d}/stofs_3d_atl_create_surface_forcing_${SOURCE_LC}.sh"
+
+        if [ ! -f "${FORCING_SCRIPT}" ]; then
+            echo "ERROR: STOFS forcing script not found: ${FORCING_SCRIPT}" >&2
+            echo "WARNING: Skipping ${SOURCE}"
+            continue
+        fi
+
+        echo "Running: ${FORCING_SCRIPT}"
+        bash ${FORCING_SCRIPT}
+        rc=$?
+
+        if [ $rc -ne 0 ]; then
+            echo "ERROR: ${FORCING_SCRIPT} failed (exit code $rc)" >&2
+            echo "WARNING: Skipping ${SOURCE}, ensemble members needing it will use fallback"
+            continue
+        fi
+
+        # Verify output files in COMOUTrerun
+        for var in air prc rad; do
+            _outfile="${COMOUTrerun}/${RUN}.${cycle}.${SOURCE_LC}.${var}.nc"
+            if [ -s "${_outfile}" ]; then
+                echo "  OK: $(basename ${_outfile}) ($(stat -c%s "${_outfile}" 2>/dev/null || echo '?') bytes)"
+            else
+                echo "  MISSING: $(basename ${_outfile})"
+            fi
+        done
+    done
+
+else
+    ########################################################
+    # COMF: Use nos_ofs_launch.sh + nos_ofs_create_forcing_met.sh
+    # (existing behavior for SECOFS and other COMF OFS)
+    ########################################################
+    echo "=== Sourcing nos_ofs_launch.sh to set up environment ==="
+
+    # COMF Fortran executables need NetCDF Fortran library preloaded
     if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
         export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
     fi
-fi
 
-export pgm="$USHnos/nos_ofs_launch.sh $OFS prep"
-. $USHnos/nos_ofs_launch.sh $OFS prep
-rc=$?
-if [ $rc -ne 0 ]; then
-    echo "ERROR: nos_ofs_launch.sh failed (exit code $rc)" >&2
-    exit $rc
-fi
-
-echo "time_nowcastend=${time_nowcastend}"
-echo "time_forecastend=${time_forecastend}"
-
-########################################################
-# Process each extra source
-########################################################
-# Stay in $DATA where nos_ofs_launch.sh already set up grid files,
-# control files, and other inputs the met script expects in CWD.
-# Do NOT cd to a subdirectory — the met script writes cmdfile to CWD
-# but references $DATA/cmdfile for chmod/mpiexec, so CWD must equal $DATA.
-
-# Save the original forecast tar name (set by nos_ofs_launch.sh)
-ORIG_MET_TAR="${MET_NETCDF_1_FORECAST}"
-
-for SOURCE in ${EXTRA_SOURCES}; do
-    echo ""
-    echo "=============================================="
-    echo "Processing extra atmospheric source: ${SOURCE}"
-    echo "=============================================="
-
-    cd ${DATA}
-
-    # Set met forcing parameters for this source
-    export metnum=1
-    export DBASE=${SOURCE}
-    export MET_NUM=1
-    export nfore=1
-
-    # Override the output tar name (bare filename — the met script prepends
-    # $DATA/ for creation and $COMOUT/ for archival internally)
-    export MET_NETCDF_1_FORECAST="${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.nc.tar"
-
-    TIME_START_TMP=${time_nowcastend}
-    TIME_END_TMP=${time_forecastend}
-
-    echo "DBASE=${DBASE}, metnum=${metnum}, nfore=${nfore}"
-    echo "TIME_START=${TIME_START_TMP}, TIME_END=${TIME_END_TMP}"
-    echo "Output tar: ${MET_NETCDF_1_FORECAST}"
-
-    # Call the same met forcing script used by normal prep
-    export pgm=nos_ofs_create_forcing_met.sh
-    $USHnos/nos_ofs_create_forcing_met.sh forecast ${DBASE} ${TIME_START_TMP} ${TIME_END_TMP}
+    export pgm="$USHnos/nos_ofs_launch.sh $OFS prep"
+    . $USHnos/nos_ofs_launch.sh $OFS prep
     rc=$?
     if [ $rc -ne 0 ]; then
-        echo "ERROR: nos_ofs_create_forcing_met.sh failed for ${SOURCE} (exit code $rc)" >&2
-        echo "WARNING: Skipping ${SOURCE}, ensemble members needing it will use fallback"
-        continue
+        echo "ERROR: nos_ofs_launch.sh failed (exit code $rc)" >&2
+        exit $rc
     fi
 
-    echo "Met forcing generation completed for ${SOURCE}"
+    echo "time_nowcastend=${time_nowcastend}"
+    echo "time_forecastend=${time_forecastend}"
 
-    # The met script already copies the tar to $COMOUT/$MET_NETCDF_1_FORECAST.
-    # Verify it arrived. Also copy to $DATA for the J-job's own reference.
-    COMOUT_TAR="${COMOUT}/${MET_NETCDF_1_FORECAST}"
-    DEST_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
+    ########################################################
+    # Process each extra source (COMF pipeline)
+    ########################################################
+    # Stay in $DATA where nos_ofs_launch.sh already set up grid files,
+    # control files, and other inputs the met script expects in CWD.
+    # Do NOT cd to a subdirectory — the met script writes cmdfile to CWD
+    # but references $DATA/cmdfile for chmod/mpiexec, so CWD must equal $DATA.
 
-    if [ -f "${COMOUT_TAR}" ]; then
-        # Rename from .nc.tar to final name if they differ
-        if [ "${COMOUT_TAR}" != "${DEST_TAR}" ]; then
-            mv "${COMOUT_TAR}" "${DEST_TAR}"
+    # Save the original forecast tar name (set by nos_ofs_launch.sh)
+    ORIG_MET_TAR="${MET_NETCDF_1_FORECAST}"
+
+    for SOURCE in ${EXTRA_SOURCES}; do
+        echo ""
+        echo "=============================================="
+        echo "Processing extra atmospheric source: ${SOURCE}"
+        echo "=============================================="
+
+        cd ${DATA}
+
+        # Set met forcing parameters for this source
+        export metnum=1
+        export DBASE=${SOURCE}
+        export MET_NUM=1
+        export nfore=1
+
+        # Override the output tar name (bare filename — the met script prepends
+        # $DATA/ for creation and $COMOUT/ for archival internally)
+        export MET_NETCDF_1_FORECAST="${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.nc.tar"
+
+        TIME_START_TMP=${time_nowcastend}
+        TIME_END_TMP=${time_forecastend}
+
+        echo "DBASE=${DBASE}, metnum=${metnum}, nfore=${nfore}"
+        echo "TIME_START=${TIME_START_TMP}, TIME_END=${TIME_END_TMP}"
+        echo "Output tar: ${MET_NETCDF_1_FORECAST}"
+
+        # Call the same met forcing script used by normal prep
+        export pgm=nos_ofs_create_forcing_met.sh
+        $USHnos/nos_ofs_create_forcing_met.sh forecast ${DBASE} ${TIME_START_TMP} ${TIME_END_TMP}
+        rc=$?
+        if [ $rc -ne 0 ]; then
+            echo "ERROR: nos_ofs_create_forcing_met.sh failed for ${SOURCE} (exit code $rc)" >&2
+            echo "WARNING: Skipping ${SOURCE}, ensemble members needing it will use fallback"
+            continue
         fi
-        echo "Archived: ${DEST_TAR}"
-        ls -la "${DEST_TAR}"
-    elif [ -f "${DATA}/${MET_NETCDF_1_FORECAST}" ]; then
-        # Fallback: met script left it in $DATA instead of copying
-        cp "${DATA}/${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
-        echo "Archived (from DATA): ${DEST_TAR}"
-        ls -la "${DEST_TAR}"
-    else
-        echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
-        ls -la ${COMOUT}/*.tar ${DATA}/*.tar 2>/dev/null || true
-    fi
-done
 
-# Restore original tar name
-export MET_NETCDF_1_FORECAST="${ORIG_MET_TAR}"
+        echo "Met forcing generation completed for ${SOURCE}"
+
+        # The met script already copies the tar to $COMOUT/$MET_NETCDF_1_FORECAST.
+        # Verify it arrived. Also copy to $DATA for the J-job's own reference.
+        COMOUT_TAR="${COMOUT}/${MET_NETCDF_1_FORECAST}"
+        DEST_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
+
+        if [ -f "${COMOUT_TAR}" ]; then
+            # Rename from .nc.tar to final name if they differ
+            if [ "${COMOUT_TAR}" != "${DEST_TAR}" ]; then
+                mv "${COMOUT_TAR}" "${DEST_TAR}"
+            fi
+            echo "Archived: ${DEST_TAR}"
+            ls -la "${DEST_TAR}"
+        elif [ -f "${DATA}/${MET_NETCDF_1_FORECAST}" ]; then
+            # Fallback: met script left it in $DATA instead of copying
+            cp "${DATA}/${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+            echo "Archived (from DATA): ${DEST_TAR}"
+            ls -la "${DEST_TAR}"
+        else
+            echo "ERROR: No met forecast tar found for ${SOURCE}" >&2
+            ls -la ${COMOUT}/*.tar ${DATA}/*.tar 2>/dev/null || true
+        fi
+    done
+
+    # Restore original tar name
+    export MET_NETCDF_1_FORECAST="${ORIG_MET_TAR}"
+fi
 
 ########################################################
 # Summary

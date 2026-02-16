@@ -64,6 +64,16 @@ forcing:
       lon_max: -49.5
       lat_min: 5.5
       lat_max: 50.0
+    # NAM blending for ensemble atmospheric forcing
+    # NAM domain does NOT cover full STOFS domain (lat ~14-43N vs ~7-53N)
+    # Used only as secondary source (sflux stack 2) by ensemble members
+    nam_blend:
+      enabled: false            # Only used by ensemble members
+      resolution: "12km"
+      lon_min: -89.15
+      lon_max: -58.17
+      lat_min: 14.34
+      lat_max: 42.61
 
   river:
     enabled: true
@@ -232,6 +242,28 @@ ensemble:
       default: 5.0e-6
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
+  # Atmospheric forcing ensemble
+  # Members use different atmospheric sources to quantify forcing uncertainty
+  atmospheric_ensemble:
+    enabled: true
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GFS only"
+        met_source_1: GFS
+        met_source_2: null
+      "002":
+        label: "GFS+NAM"
+        met_source_1: GFS
+        met_source_2: NAM
+    # Extra sources beyond what normal prep creates.
+    # Normal prep already creates GFS and HRRR in COMOUTrerun.
+    # Only list sources that need additional prep work.
+    extra_sources:
+      - NAM
   # Ensemble-specific resources (per member)
   resources:
     select: "select=20:ncpus=128:mpiprocs=120"
@@ -256,6 +288,7 @@ legacy:
   scripts:
     gfs: true                     # stofs_3d_atl_create_surface_forcing_gfs.sh
     hrrr: true                    # stofs_3d_atl_create_surface_forcing_hrrr.sh
+    nam: true                     # stofs_3d_atl_create_surface_forcing_nam.sh (ensemble only)
     river: true                   # stofs_3d_atl_create_river_forcing_nwm.sh
     obc: true                     # stofs_3d_atl_create_obc_3d_th.sh
     tides: true                   # stofs_3d_atl_create_bctides_in.sh
@@ -263,6 +296,7 @@ legacy:
   script_names:
     gfs: stofs_3d_atl_create_surface_forcing_gfs.sh
     hrrr: stofs_3d_atl_create_surface_forcing_hrrr.sh
+    nam: stofs_3d_atl_create_surface_forcing_nam.sh
     river: stofs_3d_atl_create_river_forcing_nwm.sh
     obc: stofs_3d_atl_create_obc_3d_th.sh
     tides: stofs_3d_atl_create_bctides_in.sh
@@ -301,6 +335,12 @@ shell_mappings:
     HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
     HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
     HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
+
+    # NAM domain bounds (for ensemble atmospheric forcing)
+    NAM_LONMIN: forcing.atmospheric.nam_blend.lon_min
+    NAM_LONMAX: forcing.atmospheric.nam_blend.lon_max
+    NAM_LATMIN: forcing.atmospheric.nam_blend.lat_min
+    NAM_LATMAX: forcing.atmospheric.nam_blend.lat_max
 
     # River forcing parameters
     N_RIVERS: forcing.river.n_rivers
