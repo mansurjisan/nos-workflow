@@ -29,6 +29,8 @@
 #   ./launch_stofs3datl_ensemble.sh 12 5 --with-det          # Also submit deterministic
 #   ./launch_stofs3datl_ensemble.sh 12 3 --atmos-ensemble    # Include atmospheric forcing ensemble
 #   ./launch_stofs3datl_ensemble.sh 12 3 --pdy 20260216      # Explicit PDY
+#   ./launch_stofs3datl_ensemble.sh 12 --det-only             # Deterministic only (prep→nowcast→forecast)
+#   ./launch_stofs3datl_ensemble.sh 12 --det-only --pdy 20260216
 #
 # Requirements:
 #   - Run from the pbs/ directory (or set PBS_DIR)
@@ -45,6 +47,7 @@ N_MEMBERS=${2:-5}
 WITH_DET=false
 SKIP_PREP=false
 ATMOS_ENSEMBLE=false
+DET_ONLY=false
 
 # Check for flags
 shift 2 2>/dev/null || true
@@ -53,6 +56,7 @@ for arg in "$@"; do
         --with-det)          WITH_DET=true ;;
         --skip-prep)         SKIP_PREP=true ;;
         --atmos-ensemble)    ATMOS_ENSEMBLE=true ;;
+        --det-only)          DET_ONLY=true ;;
         --pdy)               _NEXT_IS_PDY=true ;;
         *)
             if [ "${_NEXT_IS_PDY:-}" = true ]; then
@@ -75,9 +79,13 @@ echo " STOFS-3D-ATL Ensemble Launcher"
 echo "=============================================="
 echo " PDY:       ${PDY}"
 echo " Cycle:     ${CYC}"
+if [ "${DET_ONLY}" = true ]; then
+echo " Mode:      DETERMINISTIC ONLY (prep→nowcast→forecast)"
+else
 echo " Members:   ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
 echo " Det run:   ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
+fi
 echo " Skip prep: ${SKIP_PREP}"
 echo " PBS dir:   ${PBS_DIR}"
 echo "=============================================="
@@ -88,12 +96,20 @@ MEMBER_PBS="${PBS_DIR}/jnos_stofs3datl_ensemble_member.pbs"
 POST_PBS="${PBS_DIR}/jnos_stofs3datl_ensemble_post.pbs"
 ATMOS_PREP_PBS="${PBS_DIR}/jnos_stofs3datl_ensemble_atmos_prep.pbs"
 
-for script in "${PREP_PBS}" "${MEMBER_PBS}" "${POST_PBS}"; do
-    if [ ! -f "${script}" ]; then
-        echo "ERROR: PBS script not found: ${script}" >&2
+# For det-only mode, only prep + nowcast + forecast are needed
+if [ "${DET_ONLY}" != true ]; then
+    for script in "${PREP_PBS}" "${MEMBER_PBS}" "${POST_PBS}"; do
+        if [ ! -f "${script}" ]; then
+            echo "ERROR: PBS script not found: ${script}" >&2
+            exit 1
+        fi
+    done
+else
+    if [ ! -f "${PREP_PBS}" ]; then
+        echo "ERROR: Prep PBS script not found: ${PREP_PBS}" >&2
         exit 1
     fi
-done
+fi
 
 if [ "${ATMOS_ENSEMBLE}" = true ] && [ ! -f "${ATMOS_PREP_PBS}" ]; then
     echo "ERROR: Atmos prep PBS script not found: ${ATMOS_PREP_PBS}" >&2
@@ -115,6 +131,50 @@ else
     PREP_JOBID=$(qsub -v "PDY=${PDY}" "${PREP_PBS}")
     PREP_JOBID_SHORT=${PREP_JOBID%%.*}
     echo "    Prep job: ${PREP_JOBID}"
+fi
+
+# ---- Deterministic-only mode: just prep → nowcast → forecast ---------
+if [ "${DET_ONLY}" = true ]; then
+    echo ""
+    echo ">>> Deterministic-only mode: submitting nowcast + forecast..."
+
+    NCST_PBS="${PBS_DIR}/jnos_stofs3datl_nowcast_${CYC}.pbs"
+    FCST_PBS="${PBS_DIR}/jnos_stofs3datl_forecast_${CYC}.pbs"
+
+    if [ ! -f "${NCST_PBS}" ] || [ ! -f "${FCST_PBS}" ]; then
+        echo "ERROR: Deterministic PBS scripts not found:" >&2
+        [ ! -f "${NCST_PBS}" ] && echo "  Missing: ${NCST_PBS}" >&2
+        [ ! -f "${FCST_PBS}" ] && echo "  Missing: ${FCST_PBS}" >&2
+        exit 1
+    fi
+
+    NCST_JOBID=$(qsub \
+        ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
+        "${NCST_PBS}")
+    NCST_SHORT=${NCST_JOBID%%.*}
+    echo "    Nowcast:  ${NCST_JOBID}"
+
+    FCST_JOBID=$(qsub \
+        -W depend=afterok:${NCST_SHORT} \
+        "${FCST_PBS}")
+    FCST_SHORT=${FCST_JOBID%%.*}
+    echo "    Forecast: ${FCST_JOBID}"
+
+    # Summary
+    echo ""
+    echo "=============================================="
+    echo " Deterministic workflow submitted successfully"
+    echo "=============================================="
+    echo ""
+    echo " Dependency chain:"
+    echo "   prep (${PREP_JOBID_SHORT})"
+    echo "     └─> nowcast (${NCST_SHORT})"
+    echo "           └─> forecast (${FCST_SHORT})"
+    echo ""
+    echo " Monitor with:  qstat -u $LOGNAME"
+    echo " Cancel all:    qdel ${PREP_JOBID_SHORT} ${NCST_SHORT} ${FCST_SHORT}"
+    echo ""
+    exit 0
 fi
 
 # ---- Step 1b: Submit atmos prep job (if --atmos-ensemble) ------------
