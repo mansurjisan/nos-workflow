@@ -1,9 +1,9 @@
 #!/bin/bash
-#PBS  -N stofs3datl_enspost_${CYC}
+#PBS  -N stofs3datl_enspost
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_enspost_${CYC}.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_enspost_${CYC}.err
+#  NOTE: -N, -o, -e are overridden by launcher script (qsub -N/-o/-e)
+#  to expand CYC at submit time. PBS directives do NOT expand shell variables.
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
 #PBS  -l walltime=01:00:00
