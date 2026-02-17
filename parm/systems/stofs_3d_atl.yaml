@@ -284,8 +284,10 @@ ensemble:
       description: "Background tracer diffusivity (m2/s)"
   # Ensemble-specific resources (per member)
   resources:
-    select: "select=20:ncpus=128:mpiprocs=120"
+    select: "select=34:ncpus=128:mpiprocs=128"
     walltime: "06:00:00"
+    total_tasks: 4320   # 4314 compute + 6 scribes, must match partition.prop
+    nscribes: 6
   # Ensemble post-processing resources
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"

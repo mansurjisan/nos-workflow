@@ -122,7 +122,10 @@ export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-# SCHISM scribes — must match partition.prop (34*128 - 6 scribes = 4346 compute ranks)
+# MPI configuration for SCHISM — must match partition.prop
+# Total CPUs = 34 nodes x 128 cores = 4352
+# STOFS uses 4320 (4314 compute + 6 scribes), matching deterministic run
+export TOTAL_TASKS=4320
 export NSCRIBES=6
 
 ${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_MEMBER
