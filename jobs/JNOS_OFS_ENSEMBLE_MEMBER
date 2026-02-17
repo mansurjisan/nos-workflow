@@ -947,7 +947,11 @@ NSCRIBES=${NSCRIBES:-7}
 # Find SCHISM executable based on framework
 case "${OFS_FRAMEWORK}" in
     stofs)
-        SCHISM_EXEC=${EXECstofs3d}/pschism_TVD-VL
+        # STOFS naming: stofs_3d_atl_pschism (matches deterministic run)
+        SCHISM_EXEC=${EXECstofs3d}/${RUN}_pschism
+        if [ ! -x "${SCHISM_EXEC}" ]; then
+            SCHISM_EXEC=${EXECstofs3d}/pschism_TVD-VL
+        fi
         if [ ! -x "${SCHISM_EXEC}" ]; then
             SCHISM_EXEC=${EXECstofs3d}/schism_${OFS}
         fi
@@ -968,7 +972,9 @@ case "${OFS_FRAMEWORK}" in
 esac
 if [ ! -x "${SCHISM_EXEC}" ]; then
     echo "ERROR: SCHISM executable not found" >&2
-    echo "  Tried: ${EXECnos}/schism_${RUN}, ${EXECnos}/${PREFIXNOS}" >&2
+    echo "  EXECstofs3d=${EXECstofs3d:-not set}" >&2
+    echo "  EXECnos=${EXECnos:-not set}" >&2
+    ls -la ${EXECstofs3d:-/dev/null}/ ${EXECnos:-/dev/null}/ 2>/dev/null || true
     exit 1
 fi
 
