@@ -1,11 +1,3 @@
-// NCO script for renaming NAM wgrib2-output variables to SCHISM sflux names
-// Used by: stofs_3d_atl_create_surface_forcing_nam.sh
-// NAM uses PRMSL (same as GFS), not MSLMA (used by HRRR)
-//
-// IMPORTANT: Must create 2D lon/lat from 1D longitude/latitude coordinates.
-// SCHISM sflux reader requires lon[latitude,longitude] and lat[latitude,longitude].
-// Without these, SCHISM aborts with "get_dims(2)" when reading sflux files.
-
 time[time]=float(tin/24.) ;
 lon[latitude,longitude]=float(longitude);
 lat[latitude,longitude]=float(latitude);
@@ -17,3 +9,4 @@ prmsl[time,latitude,longitude]=PRMSL_meansealevel;
 prate[time,latitude,longitude]=PRATE_surface;
 dswrf[time,latitude,longitude]=DSWRF_surface;
 dlwrf[time,latitude,longitude]=DLWRF_surface;
+
