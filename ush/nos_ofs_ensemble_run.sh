@@ -60,6 +60,8 @@ ensemble_generate_params() {
 
     echo "Parameter overrides for member ${MEMBER_ID}:"
     cat ${PARAM_FILE}
+
+    return 0
 }
 
 
@@ -82,6 +84,8 @@ ensemble_stage_files() {
     _ensemble_stage_forcing
 
     echo "Ensemble file staging complete for member ${MEMBER_ID}"
+
+    return 0
 }
 
 
@@ -113,6 +117,8 @@ ensemble_configure_runtime() {
 
     # 3d: Apply parameter perturbations from params.json
     _ensemble_apply_perturbations
+
+    return 0
 }
 
 
@@ -174,6 +180,8 @@ ensemble_prepare_restart() {
     for i in 1 2 3 4 5 6 7 8 9; do
         [ ! -f "${MEMBER_DATA}/outputs/staout_${i}" ] && touch "${MEMBER_DATA}/outputs/staout_${i}"
     done
+
+    return 0
 }
 
 
@@ -335,6 +343,8 @@ ensemble_archive_outputs() {
     cp ${PARAM_FILE} ${ENSEMBLE_COMOUT}/params.json
 
     echo "Member ${MEMBER_ID} output archived to ${ENSEMBLE_COMOUT}"
+
+    return 0
 }
 
 
@@ -426,6 +436,8 @@ _ensemble_stage_static_files() {
         cp -p "${_vgrid_src}" ${MEMBER_DATA}/vgrid_nu.in
         echo "Created vgrid_nu.in from $(basename ${_vgrid_src})"
     fi
+
+    return 0
 }
 
 
@@ -507,6 +519,8 @@ print(atm.get('label', ''))
                 cp "${FIXofs}/${PREFIXNOS}.bctides.in" ${MEMBER_DATA}/bctides.in
         fi
     fi
+
+    return 0
 }
 
 
@@ -580,6 +594,8 @@ _ensemble_stofs_stage_atmos() {
 
     # Generate per-member sflux_inputs.txt
     _ensemble_generate_sflux_inputs "${N_MET_SOURCES}" "${ATMOS_MET1:-}" "${ATMOS_CONFIGURED}"
+
+    return 0
 }
 
 
@@ -669,6 +685,8 @@ _ensemble_comf_stage_atmos() {
 
     # Generate per-member sflux_inputs.txt
     _ensemble_generate_sflux_inputs "${N_MET_SOURCES}" "${ATMOS_MET1:-}" "${ATMOS_CONFIGURED}"
+
+    return 0
 }
 
 
@@ -778,6 +796,8 @@ SFLUX_EOF
             fi
         fi
     fi
+
+    return 0
 }
 
 
@@ -830,6 +850,8 @@ _ensemble_stofs_stage_obc_river() {
         cp -p "${COMOUTrerun}/${RUN}.${cycle}.bctides.in" "${MEMBER_DATA}/bctides.in"
         echo "  bctides.in from COMOUTrerun"
     fi
+
+    return 0
 }
 
 
@@ -854,6 +876,8 @@ _ensemble_comf_stage_obc_river() {
             tar xf "${tar_file}" -C ${MEMBER_DATA}/
         fi
     done
+
+    return 0
 }
 
 
@@ -962,6 +986,8 @@ print(int((t2 - t1).total_seconds() / 3600))
         sed -i "s/rnday *= *[0-9.eE+-]*/rnday = ${_fc_rnday}/" ${MEMBER_DATA}/param.nml
         echo "Set rnday=${_fc_rnday} (${_fc_hours} hours)"
     fi
+
+    return 0
 }
 
 
@@ -1032,4 +1058,6 @@ with open(nml_path, "w") as f:
 
 print("Parameter perturbations applied successfully")
 APPLY_PARAMS
+
+    return 0
 }
