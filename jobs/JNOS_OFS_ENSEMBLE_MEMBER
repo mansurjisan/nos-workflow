@@ -304,7 +304,13 @@ if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
 
     if [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
         # Source 1 (primary, sflux stack 1)
-        SRC1=$(echo "${ATMOS_MET1}" | tr '[:upper:]' '[:lower:]')
+        if [[ "${ATMOS_MET1}" == GEFS_* ]]; then
+            # GEFS member: GEFS_01 -> gefs_01, GEFS_c00 -> gefs_c00
+            GEFS_ID=$(echo "${ATMOS_MET1}" | sed 's/GEFS_//')
+            SRC1="gefs_${GEFS_ID}"
+        else
+            SRC1=$(echo "${ATMOS_MET1}" | tr '[:upper:]' '[:lower:]')
+        fi
         for var in air prc rad; do
             src="${COMOUTrerun}/${RUN}.${cycle}.${SRC1}.${var}.nc"
             dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
@@ -357,6 +363,21 @@ elif [ "${ATMOS_CONFIGURED}" = true ] && [ -n "${ATMOS_MET1}" ]; then
         GFS)
             # GFS is the default primary source produced by normal prep
             MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+            ;;
+        GEFS_*)
+            # GEFS member: GEFS_01 -> gep01, GEFS_c00 -> gec00
+            _GEFS_ID=$(echo "${ATMOS_MET1}" | sed 's/GEFS_//')
+            if [ "${_GEFS_ID}" = "c00" ] || [ "${_GEFS_ID}" = "00" ]; then
+                _GEFS_TAG="gec00"
+            else
+                _GEFS_TAG="gep$(printf '%02d' "${_GEFS_ID}" 2>/dev/null || echo "${_GEFS_ID}")"
+            fi
+            # Try .nc.tar first (wrapper naming), then .tar (renamed)
+            MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.nc.tar"
+            if [ ! -f "${MET1_TAR}" ]; then
+                MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.tar"
+            fi
+            echo "GEFS primary: member=${_GEFS_ID} tag=${_GEFS_TAG}"
             ;;
         *)
             # Other sources (NAM, etc.) have source-specific tar from atmos_prep
@@ -424,9 +445,47 @@ fi
 # Generate per-member sflux_inputs.txt
 # For single-source members, we create a 1-source namelist.
 # For dual-source members, use the default from COMOUT or FIX.
+# GEFS uses 3-hourly data, so max_window_hours must accommodate the wider gap.
+#
+# Determine primary max_window_hours based on source:
+#   GFS  (hourly)  -> 120 hours (generous default)
+#   GEFS (3-hourly) -> 120 hours (SCHISM interpolates between 3h steps)
+_PRIMARY_WINDOW=120.
 if [ "${N_MET_SOURCES:-2}" -eq 1 ]; then
     echo "Generating single-source sflux_inputs.txt (nfile=1)"
-    cat > ${MEMBER_DATA}/sflux/sflux_inputs.txt << 'SFLUX_EOF'
+    cat > ${MEMBER_DATA}/sflux/sflux_inputs.txt << SFLUX_EOF
+&sflux_inputs
+air_1_relative_weight=1.,
+air_1_max_window_hours=${_PRIMARY_WINDOW},
+air_1_fail_if_missing=.true.,
+air_1_file='sflux_air_1',
+uwind_name='uwind',
+vwind_name='vwind',
+prmsl_name='prmsl',
+stmp_name='stmp',
+spfh_name='spfh',
+
+rad_1_relative_weight=1.,
+rad_1_max_window_hours=${_PRIMARY_WINDOW},
+rad_1_fail_if_missing=.true.,
+rad_1_file='sflux_rad_1',
+dlwrf_name='dlwrf',
+dswrf_name='dswrf',
+
+prc_1_relative_weight=1.,
+prc_1_max_window_hours=${_PRIMARY_WINDOW},
+prc_1_fail_if_missing=.true.,
+prc_1_file='sflux_prc_1',
+prate_name='prate',
+/
+SFLUX_EOF
+elif ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
+    # Dual-source: GEFS primary needs a custom sflux_inputs.txt because the
+    # FIX default assumes GFS (hourly). For GEFS (3-hourly) primary + HRRR
+    # secondary, we generate one inline. For GFS primary, copy from FIX.
+    if [[ "${ATMOS_MET1:-}" == GEFS_* ]]; then
+        echo "Generating GEFS+HRRR dual-source sflux_inputs.txt (GEFS=3-hourly primary)"
+        cat > ${MEMBER_DATA}/sflux/sflux_inputs.txt << 'SFLUX_EOF'
 &sflux_inputs
 air_1_relative_weight=1.,
 air_1_max_window_hours=120.,
@@ -438,6 +497,11 @@ prmsl_name='prmsl',
 stmp_name='stmp',
 spfh_name='spfh',
 
+air_2_relative_weight=1.,
+air_2_max_window_hours=120.,
+air_2_fail_if_missing=.false.,
+air_2_file='sflux_air_2',
+
 rad_1_relative_weight=1.,
 rad_1_max_window_hours=120.,
 rad_1_fail_if_missing=.true.,
@@ -445,16 +509,24 @@ rad_1_file='sflux_rad_1',
 dlwrf_name='dlwrf',
 dswrf_name='dswrf',
 
+rad_2_relative_weight=1.,
+rad_2_max_window_hours=120.,
+rad_2_fail_if_missing=.false.,
+rad_2_file='sflux_rad_2',
+
 prc_1_relative_weight=1.,
 prc_1_max_window_hours=120.,
 prc_1_fail_if_missing=.true.,
 prc_1_file='sflux_prc_1',
 prate_name='prate',
+
+prc_2_relative_weight=1.,
+prc_2_max_window_hours=120.,
+prc_2_fail_if_missing=.false.,
+prc_2_file='sflux_prc_2',
 /
 SFLUX_EOF
-elif ls ${MEMBER_DATA}/sflux/sflux_air_*.nc 1>/dev/null 2>&1; then
-    # Dual-source: copy the default sflux_inputs.txt from FIX
-    if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    elif [ "${OFS_FRAMEWORK}" = "stofs" ]; then
         # STOFS: sflux_inputs.txt is in FIXstofs3d with underscore naming
         if [ -f "${FIXstofs3d}/${RUN}_sflux_inputs.txt" ]; then
             cp "${FIXstofs3d}/${RUN}_sflux_inputs.txt" ${MEMBER_DATA}/sflux/sflux_inputs.txt

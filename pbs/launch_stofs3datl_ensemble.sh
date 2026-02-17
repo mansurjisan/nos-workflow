@@ -28,6 +28,8 @@
 #   ./launch_stofs3datl_ensemble.sh 12 3                     # Cycle 12, 3 members
 #   ./launch_stofs3datl_ensemble.sh 12 5 --with-det          # Also submit deterministic
 #   ./launch_stofs3datl_ensemble.sh 12 3 --atmos-ensemble    # Include atmospheric forcing ensemble
+#   ./launch_stofs3datl_ensemble.sh 12 --gefs                 # GEFS ensemble (5 members, auto)
+#   ./launch_stofs3datl_ensemble.sh 12 3 --gefs               # GEFS ensemble (3 members, override)
 #   ./launch_stofs3datl_ensemble.sh 12 3 --pdy 20260216      # Explicit PDY
 #   ./launch_stofs3datl_ensemble.sh 12 --det-only             # Deterministic only (prep→nowcast→forecast)
 #   ./launch_stofs3datl_ensemble.sh 12 --det-only --pdy 20260216
@@ -43,6 +45,11 @@ set -e
 
 # ---- Configuration ---------------------------------------------------
 CYC=${1:-12}
+# Track whether user explicitly provided N_MEMBERS (before shift consumes $2)
+_USER_SET_MEMBERS=false
+if [[ "${2:-}" != --* ]] && [ -n "${2:-}" ]; then
+    _USER_SET_MEMBERS=true
+fi
 # If $2 is a flag (starts with --), don't consume it as N_MEMBERS
 if [[ "${2:-}" == --* ]]; then
     N_MEMBERS=5
@@ -54,6 +61,7 @@ fi
 WITH_DET=false
 SKIP_PREP=false
 ATMOS_ENSEMBLE=false
+GEFS_ENSEMBLE=false
 DET_ONLY=false
 
 # Check for flags
@@ -62,6 +70,7 @@ for arg in "$@"; do
         --with-det)          WITH_DET=true ;;
         --skip-prep)         SKIP_PREP=true ;;
         --atmos-ensemble)    ATMOS_ENSEMBLE=true ;;
+        --gefs)              GEFS_ENSEMBLE=true; ATMOS_ENSEMBLE=true ;;
         --det-only)          DET_ONLY=true ;;
         --pdy)               _NEXT_IS_PDY=true ;;
         *)
@@ -73,6 +82,12 @@ for arg in "$@"; do
     esac
 done
 unset _NEXT_IS_PDY
+
+# GEFS defaults: 5 members for STOFS-3D-ATL (if user didn't specify member count)
+if [ "${GEFS_ENSEMBLE}" = true ] && [ "${_USER_SET_MEMBERS}" = false ]; then
+    N_MEMBERS=5
+fi
+unset _USER_SET_MEMBERS
 
 # PDY: use env var, --pdy flag, or default to today
 PDY=${PDY:-$(date +%Y%m%d)}
@@ -91,6 +106,9 @@ else
 echo " Members:   ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
 echo " Det run:   ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
+if [ "${GEFS_ENSEMBLE}" = true ]; then
+echo " GEFS ens:  true (0.50 deg pgrb2ap5, members gep01-gep$(printf '%02d' $((N_MEMBERS - 1))))"
+fi
 fi
 echo " Skip prep: ${SKIP_PREP}"
 echo " PBS dir:   ${PBS_DIR}"
@@ -185,15 +203,25 @@ if [ "${DET_ONLY}" = true ]; then
     exit 0
 fi
 
-# ---- Step 1b: Submit atmos prep job (if --atmos-ensemble) ------------
+# ---- Step 1b: Submit atmos prep job (if --atmos-ensemble or --gefs) ---
 ATMOS_PREP_JOBID_SHORT=""
 if [ "${ATMOS_ENSEMBLE}" = true ]; then
     echo ""
-    echo ">>> Submitting atmospheric ensemble prep job..."
-    ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY}" \
-                      -N "stofs3datl_atmos_prep_${CYC}" \
-                      -o "${RPTDIR}/stofs3datl_atmos_prep_${CYC}.out" \
-                      -e "${RPTDIR}/stofs3datl_atmos_prep_${CYC}.err")
+    if [ "${GEFS_ENSEMBLE}" = true ]; then
+        echo ">>> Submitting GEFS atmospheric ensemble prep job..."
+        # Build GEFS member list: 01 02 03 ... (skip control member 000 which uses GFS)
+        GEFS_MEMBER_LIST=$(seq -f "%02g" 1 $((N_MEMBERS - 1)) | paste -sd' ')
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true,GEFS_MEMBERS=${GEFS_MEMBER_LIST},N_GEFS_MEMBERS=$((N_MEMBERS - 1))" \
+                          -N "stofs3datl_gefs_prep_${CYC}" \
+                          -o "${RPTDIR}/stofs3datl_gefs_prep_${CYC}.out" \
+                          -e "${RPTDIR}/stofs3datl_gefs_prep_${CYC}.err")
+    else
+        echo ">>> Submitting atmospheric ensemble prep job..."
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY}" \
+                          -N "stofs3datl_atmos_prep_${CYC}" \
+                          -o "${RPTDIR}/stofs3datl_atmos_prep_${CYC}.out" \
+                          -e "${RPTDIR}/stofs3datl_atmos_prep_${CYC}.err")
+    fi
     if [ -n "${PREP_JOBID_SHORT}" ]; then
         ATMOS_QSUB_ARGS+=(-W "depend=afterok:${PREP_JOBID_SHORT}")
     fi
@@ -220,7 +248,14 @@ fi
 
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
-    QSUB_ARGS=(-v "MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY}" \
+    # Base variables for every member
+    MEMBER_VARS="MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY}"
+    # Pass GEFS_ENSEMBLE flag so J-job knows to stage GEFS sflux files
+    if [ "${GEFS_ENSEMBLE}" = true ]; then
+        GEFS_MEM_ID=$(printf '%02d' $i)
+        MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=${GEFS_MEM_ID}"
+    fi
+    QSUB_ARGS=(-v "${MEMBER_VARS}" \
                -N "stofs3datl_ens${MID}_${CYC}" \
                -o "${RPTDIR}/stofs3datl_ens${MID}_${CYC}.out" \
                -e "${RPTDIR}/stofs3datl_ens${MID}_${CYC}.err")

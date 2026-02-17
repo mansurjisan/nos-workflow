@@ -4,25 +4,31 @@ set -x
 ########################################
 # JNOS_OFS_ENSEMBLE_ATMOS_PREP - Atmospheric Forcing for Ensemble
 #
-# Creates sflux tar archives for atmospheric sources NOT produced by
-# normal prep.  Normal prep already creates GFS (metnum=1) and HRRR
-# (metnum=2) tar files.  This job creates tars for extra sources
-# (e.g., NAM) defined in the YAML atmospheric_ensemble.extra_sources.
+# Creates atmospheric forcing for ensemble members beyond what normal
+# prep produces.  Normal prep already creates GFS (metnum=1) and HRRR
+# (metnum=2).  This job handles:
 #
-# For each extra source:
-#   1. Source nos_ofs_launch.sh to get env (TIME_START, TIME_END, etc.)
-#   2. Set DBASE=<source>, metnum=1 (primary sflux slot)
-#   3. Call nos_ofs_create_forcing_met.sh forecast
-#   4. Rename output tar to include source name:
-#      ${PREFIXNOS}.${cycle}.${PDY}.met.forecast.<SOURCE>.tar
-#   5. Copy to $COMOUT
+#   1. Extra sources (e.g., NAM) defined in atmospheric_ensemble.extra_sources
+#   2. GEFS members defined in ensemble.gefs or atmospheric_ensemble
 #
-# This job uses a staging directory ($DATA/atmos_ensemble/) to avoid
-# overwriting normal prep output.
+# For non-GEFS extra sources (e.g., NAM):
+#   - COMF: nos_ofs_create_forcing_met.sh with DBASE=<source>
+#   - STOFS: stofs_3d_atl_create_surface_forcing_<source>.sh
+#   - Output: ${PREFIXNOS}.${cycle}.${PDY}.met.forecast.<SOURCE>.tar
+#
+# For GEFS members (parallel via cfp):
+#   - COMF: nos_ofs_create_forcing_met.sh with DBASE=GEFS, GEFS_MEMBER=<id>
+#     Output: ${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_gep<NN>.nc.tar
+#   - STOFS: stofs_3d_atl_create_surface_forcing_gefs.sh with GEFS_MEMBER=<id>
+#     Output: ${RUN}.${cycle}.gefs_<NN>.{air,prc,rad}.nc in COMOUTrerun
 #
 # Required environment variables:
-#   OFS         - OFS system name (e.g., secofs)
+#   OFS         - OFS system name (e.g., secofs, stofs_3d_atl)
 #   cyc         - Cycle hour (00, 06, 12, 18)
+#
+# Optional:
+#   GEFS_MEMBERS - Override GEFS member IDs (e.g., "01 02 03 04 05")
+#   GEFS_PPN     - Max parallel tasks per node for cfp (default: 8)
 ########################################
 export PS4=' $SECONDS + '
 date
@@ -151,6 +157,7 @@ if command -v compath.py &> /dev/null; then
     export COMINrap=${COMINrap:-$(compath.py prod/rap/${rap_ver:-v5.1})}
     export COMINrtma=${COMINrtma:-$(compath.py prod/rtma/${rtma_ver:-v2.8})}
     export COMINgfs=${COMINgfs:-$(compath.py prod/gfs/${gfs_ver:-v16.3})}
+    export COMINgefs=${COMINgefs:-$(compath.py prod/gefs/${gefs_ver:-v12.3})}
 fi
 
 export DCOMINndfd=${DCOMROOT:-}
@@ -164,14 +171,19 @@ export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.atmos_ensemble.corms.
 env
 
 ########################################################
-# Read extra_sources from YAML config
+# Read atmospheric ensemble config from YAML
+# Extracts:
+#   EXTRA_SOURCES  - non-GEFS extra sources (e.g., NAM)
+#   GEFS_MEMBERS   - GEFS member IDs to process (e.g., "01 02 03")
+#   GEFS_PRODUCT   - GEFS product directory (pgrb2ap5)
+#   GEFS_RESOLUTION- GEFS resolution string (0p50)
 ########################################################
 echo "=== Reading atmospheric ensemble configuration ==="
 
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-# Extract extra_sources list from YAML
-EXTRA_SOURCES=$(python3 << 'PYEOF'
+# Extract extra_sources and GEFS member list from YAML
+_yaml_output=$(python3 << 'PYEOF'
 import os, sys
 try:
     import yaml
@@ -186,13 +198,60 @@ with open(config_path) as f:
     data = yaml.safe_load(f)
 
 ens = data.get("ensemble", {})
+method = ens.get("method", "parameter_perturbation")
 atm = ens.get("atmospheric_ensemble", {})
-if not atm.get("enabled", False):
-    print("")
-    sys.exit(0)
+gefs_cfg = ens.get("gefs", {})
 
-sources = atm.get("extra_sources", [])
-print(" ".join(sources))
+# Line 1: ensemble method
+print(method)
+
+# Line 2: non-GEFS extra_sources (space-separated)
+non_gefs_sources = []
+if atm.get("enabled", False):
+    for src in atm.get("extra_sources", []):
+        if not src.upper().startswith("GEFS"):
+            non_gefs_sources.append(src)
+print(" ".join(non_gefs_sources))
+
+# Line 3: GEFS member IDs to process (space-separated)
+# Collected from gefs.extra_sources, gefs.members, or atmospheric_ensemble
+gefs_ids = []
+if gefs_cfg.get("enabled", False):
+    # New-style GEFS config: extra_sources contains GEFS_01, GEFS_02, etc.
+    for src in gefs_cfg.get("extra_sources", []):
+        if src.upper().startswith("GEFS_"):
+            gefs_id = src.split("_", 1)[1]
+            if gefs_id not in gefs_ids:
+                gefs_ids.append(gefs_id)
+    # Also check gefs.members definitions for sources
+    if not gefs_ids:
+        for mid, mcfg in sorted(gefs_cfg.get("members", {}).items()):
+            ms1 = mcfg.get("met_source_1", "")
+            if ms1.upper().startswith("GEFS_"):
+                gefs_id = ms1.split("_", 1)[1]
+                if gefs_id not in gefs_ids:
+                    gefs_ids.append(gefs_id)
+elif atm.get("enabled", False):
+    # Legacy atmospheric_ensemble: extract GEFS from extra_sources
+    for src in atm.get("extra_sources", []):
+        if src.upper().startswith("GEFS_"):
+            gefs_id = src.split("_", 1)[1]
+            if gefs_id not in gefs_ids:
+                gefs_ids.append(gefs_id)
+    # Also check member definitions for GEFS sources
+    for mid, mcfg in sorted(atm.get("members", {}).items()):
+        ms1 = mcfg.get("met_source_1", "")
+        if ms1.upper().startswith("GEFS_"):
+            gefs_id = ms1.split("_", 1)[1]
+            if gefs_id not in gefs_ids:
+                gefs_ids.append(gefs_id)
+print(" ".join(gefs_ids))
+
+# Line 4: GEFS product directory
+print(gefs_cfg.get("product", "pgrb2ap5"))
+
+# Line 5: GEFS resolution string
+print(gefs_cfg.get("resolution", "0p50"))
 PYEOF
 )
 rc=$?
@@ -201,13 +260,23 @@ if [ $rc -ne 0 ]; then
     exit $rc
 fi
 
-if [ -z "${EXTRA_SOURCES}" ]; then
-    echo "No extra atmospheric sources configured. Nothing to do."
+ENSEMBLE_METHOD=$(echo "${_yaml_output}" | sed -n '1p')
+EXTRA_SOURCES=$(echo "${_yaml_output}" | sed -n '2p')
+GEFS_MEMBERS=${GEFS_MEMBERS:-$(echo "${_yaml_output}" | sed -n '3p')}
+export GEFS_PRODUCT=$(echo "${_yaml_output}" | sed -n '4p')
+export GEFS_RESOLUTION=$(echo "${_yaml_output}" | sed -n '5p')
+
+echo "Ensemble method: ${ENSEMBLE_METHOD}"
+echo "Extra atmospheric sources (non-GEFS): ${EXTRA_SOURCES:-none}"
+echo "GEFS members to process: ${GEFS_MEMBERS:-none}"
+echo "GEFS product: ${GEFS_PRODUCT}"
+echo "GEFS resolution: ${GEFS_RESOLUTION}"
+
+if [ -z "${EXTRA_SOURCES}" ] && [ -z "${GEFS_MEMBERS}" ]; then
+    echo "No extra atmospheric sources or GEFS members configured. Nothing to do."
     date
     exit 0
 fi
-
-echo "Extra atmospheric sources to process: ${EXTRA_SOURCES}"
 
 ########################################################
 # Framework-specific processing
@@ -305,6 +374,91 @@ print(fc_end.strftime('%Y%m%d%H'))
         done
     done
 
+    ########################################################
+    # Process GEFS ensemble members (STOFS pipeline)
+    # Uses stofs_3d_atl_create_surface_forcing_gefs.sh for
+    # each GEFS member, running in parallel via cfp.
+    # Output: ${RUN}.${cycle}.gefs_${ID}.{air,prc,rad}.nc
+    ########################################################
+    if [ -n "${GEFS_MEMBERS}" ]; then
+        echo ""
+        echo "=============================================="
+        echo "Processing GEFS ensemble members: ${GEFS_MEMBERS}"
+        echo "=============================================="
+        echo "COMINgefs=${COMINgefs:-not set}"
+
+        GEFS_FORCING_SCRIPT="${USHstofs3d}/stofs_3d_atl_create_surface_forcing_gefs.sh"
+
+        if [ ! -f "${GEFS_FORCING_SCRIPT}" ]; then
+            echo "ERROR: GEFS forcing script not found: ${GEFS_FORCING_SCRIPT}" >&2
+            echo "GEFS ensemble atmospheric forcing will not be available"
+        else
+            # Build cfp command file for parallel GEFS processing
+            # Each member gets its own work directory to avoid race conditions
+            GEFS_CMDFILE=${DATA}/gefs_cmdfile
+            cat /dev/null > ${GEFS_CMDFILE}
+            GEFS_COUNT=0
+
+            # Set COMOUT_PREV for fallback path in GEFS script
+            if [ -z "${COMOUT_PREV:-}" ]; then
+                _pdy_prev=$(date -d "${PDY} -1 day" +%Y%m%d 2>/dev/null || echo "")
+                if [ -n "${_pdy_prev}" ]; then
+                    export COMOUT_PREV=${COMOUTroot:-${COMROOT}/${NET}/${stofs_ver:-v2.1.0}}/${RUN}.${_pdy_prev}
+                fi
+            fi
+
+            for GEFS_MEM in ${GEFS_MEMBERS}; do
+                # Each member gets isolated DATA_prep_gefs to prevent cfp race conditions
+                GEFS_MEM_WORKDIR=${DATA}/atmos_ensemble/gefs_${GEFS_MEM}
+                mkdir -p ${GEFS_MEM_WORKDIR}
+                echo "export GEFS_MEMBER=${GEFS_MEM}; export DATA_prep_gefs=${GEFS_MEM_WORKDIR}; bash ${GEFS_FORCING_SCRIPT}" >> ${GEFS_CMDFILE}
+                (( GEFS_COUNT = GEFS_COUNT + 1 ))
+            done
+
+            echo "GEFS command file (${GEFS_COUNT} members):"
+            cat ${GEFS_CMDFILE}
+
+            # Run all GEFS members in parallel using cfp
+            chmod 755 ${GEFS_CMDFILE}
+            GEFS_NP=${GEFS_COUNT}
+            GEFS_PPN=${GEFS_PPN:-8}
+            if [ ${GEFS_NP} -gt ${GEFS_PPN} ]; then
+                GEFS_NP=${GEFS_PPN}
+            fi
+            echo "Launching cfp with ${GEFS_NP} parallel tasks for ${GEFS_COUNT} GEFS members"
+            mpiexec -n ${GEFS_NP} -ppn ${GEFS_NP} cfp ${GEFS_CMDFILE}
+            rc=$?
+            if [ $rc -ne 0 ]; then
+                echo "WARNING: cfp GEFS processing returned exit code $rc" >&2
+                echo "Some GEFS members may have failed. Continuing..."
+            fi
+
+            # Verify GEFS output files in COMOUTrerun
+            echo ""
+            echo "GEFS member outputs in COMOUTrerun:"
+            GEFS_SUCCESS=0
+            GEFS_FAIL=0
+            for GEFS_MEM in ${GEFS_MEMBERS}; do
+                _all_ok=true
+                for var in air prc rad; do
+                    _outfile="${COMOUTrerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
+                    if [ -s "${_outfile}" ]; then
+                        echo "  OK: $(basename ${_outfile})"
+                    else
+                        echo "  MISSING: $(basename ${_outfile})"
+                        _all_ok=false
+                    fi
+                done
+                if [ "${_all_ok}" = true ]; then
+                    (( GEFS_SUCCESS = GEFS_SUCCESS + 1 ))
+                else
+                    (( GEFS_FAIL = GEFS_FAIL + 1 ))
+                fi
+            done
+            echo "GEFS summary: ${GEFS_SUCCESS} succeeded, ${GEFS_FAIL} failed out of ${GEFS_COUNT}"
+        fi
+    fi
+
 else
     ########################################################
     # COMF: Use nos_ofs_launch.sh + nos_ofs_create_forcing_met.sh
@@ -401,6 +555,144 @@ else
 
     # Restore original tar name
     export MET_NETCDF_1_FORECAST="${ORIG_MET_TAR}"
+
+    ########################################################
+    # Process GEFS ensemble members (COMF pipeline)
+    # Uses nos_ofs_create_forcing_met.sh with DBASE=GEFS
+    # and GEFS_MEMBER env var for each member, running in
+    # parallel via cfp.
+    # Output: ${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_gep${NN}.nc.tar
+    ########################################################
+    if [ -n "${GEFS_MEMBERS}" ]; then
+        echo ""
+        echo "=============================================="
+        echo "Processing GEFS ensemble members: ${GEFS_MEMBERS}"
+        echo "=============================================="
+        echo "COMINgefs=${COMINgefs:-not set}"
+
+        # Build cfp command file for parallel GEFS member processing
+        # Each line runs a wrapper script for one GEFS member
+        GEFS_CMDFILE=${DATA}/gefs_cmdfile
+        cat /dev/null > ${GEFS_CMDFILE}
+
+        # Create a wrapper script that each cfp task will execute.
+        # The wrapper sets member-specific env vars, runs the met script,
+        # then renames the output tar to include the GEFS member ID.
+        GEFS_WRAPPER=${DATA}/gefs_member_wrapper.sh
+        cat > ${GEFS_WRAPPER} << 'GEFSWRAPEOF'
+#!/bin/bash
+set -x
+# Arguments: GEFS_MEMBER_ID (e.g., "01", "02", "c00")
+GEFS_MEM_ID=${1:?}
+
+# Determine prefix for filenames (gec00 for control, gep01-gep30 for perturbation)
+if [ "${GEFS_MEM_ID}" = "c00" ] || [ "${GEFS_MEM_ID}" = "00" ]; then
+    GEFS_MEM_PREFIX="gec00"
+else
+    GEFS_MEM_PREFIX="gep$(printf '%02d' "${GEFS_MEM_ID}" 2>/dev/null || echo "${GEFS_MEM_ID}")"
+fi
+
+# Set up working directory for this member to avoid collision
+MEMBER_WORK=${DATA}/gefs_member_${GEFS_MEM_ID}
+mkdir -p ${MEMBER_WORK}
+cd ${MEMBER_WORK}
+
+# Symlink required input files from $DATA (grid files, control files, etc.)
+for f in ${DATA}/*.dat ${DATA}/*.ctl ${DATA}/*.gr3 ${DATA}/*.in ${DATA}/*.ll; do
+    [ -f "${f}" ] && ln -sf "${f}" ${MEMBER_WORK}/ 2>/dev/null
+done
+
+# Set member-specific env vars
+export DBASE=GEFS
+export GEFS_MEMBER=${GEFS_MEM_ID}
+export GEFS_MEMBER_ID=${GEFS_MEM_PREFIX}
+export metnum=1
+export MET_NUM=1
+export nfore=1
+export DATA=${MEMBER_WORK}
+export MET_NETCDF_1_FORECAST="${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${GEFS_MEM_PREFIX}.nc.tar"
+
+echo "Processing GEFS member ${GEFS_MEM_ID} (prefix=${GEFS_MEM_PREFIX})"
+echo "Output tar: ${MET_NETCDF_1_FORECAST}"
+
+# Disable internal MPMD cfp inside met script (we are already inside cfp)
+export RUN_MPMD=NO
+
+# Run the met forcing script
+${USHnos}/nos_ofs_create_forcing_met.sh forecast GEFS ${time_nowcastend} ${time_forecastend}
+rc=$?
+
+if [ $rc -ne 0 ]; then
+    echo "ERROR: GEFS member ${GEFS_MEM_ID} met forcing failed (rc=$rc)" >&2
+    exit $rc
+fi
+
+# Archive the output tar to COMOUT
+DEST_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${GEFS_MEM_PREFIX}.nc.tar"
+if [ -f "${MEMBER_WORK}/${MET_NETCDF_1_FORECAST}" ]; then
+    cp "${MEMBER_WORK}/${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+    echo "Archived GEFS member ${GEFS_MEM_ID}: ${DEST_TAR}"
+elif [ -f "${COMOUT}/${MET_NETCDF_1_FORECAST}" ]; then
+    # Met script may have already copied it
+    if [ "${COMOUT}/${MET_NETCDF_1_FORECAST}" != "${DEST_TAR}" ]; then
+        mv "${COMOUT}/${MET_NETCDF_1_FORECAST}" "${DEST_TAR}"
+    fi
+    echo "Archived GEFS member ${GEFS_MEM_ID}: ${DEST_TAR}"
+else
+    echo "ERROR: No output tar found for GEFS member ${GEFS_MEM_ID}" >&2
+    exit 1
+fi
+GEFSWRAPEOF
+        chmod 755 ${GEFS_WRAPPER}
+
+        # Build command file: one line per GEFS member
+        GEFS_COUNT=0
+        for GEFS_MEM in ${GEFS_MEMBERS}; do
+            echo "${GEFS_WRAPPER} ${GEFS_MEM}" >> ${GEFS_CMDFILE}
+            (( GEFS_COUNT = GEFS_COUNT + 1 ))
+        done
+
+        echo "GEFS command file (${GEFS_COUNT} members):"
+        cat ${GEFS_CMDFILE}
+
+        # Run all GEFS members in parallel using cfp
+        chmod 755 ${GEFS_CMDFILE}
+        GEFS_NP=${GEFS_COUNT}
+        GEFS_PPN=${GEFS_PPN:-8}
+        # Cap at available MPI ranks
+        if [ ${GEFS_NP} -gt ${GEFS_PPN} ]; then
+            GEFS_NP=${GEFS_PPN}
+        fi
+        echo "Launching cfp with ${GEFS_NP} parallel tasks for ${GEFS_COUNT} GEFS members"
+        mpiexec -n ${GEFS_NP} -ppn ${GEFS_NP} cfp ${GEFS_CMDFILE}
+        rc=$?
+        if [ $rc -ne 0 ]; then
+            echo "WARNING: cfp GEFS processing returned exit code $rc" >&2
+            echo "Some GEFS members may have failed. Continuing..."
+        fi
+
+        # Verify GEFS output tars
+        echo ""
+        echo "GEFS member tars in COMOUT:"
+        GEFS_SUCCESS=0
+        GEFS_FAIL=0
+        for GEFS_MEM in ${GEFS_MEMBERS}; do
+            if [ "${GEFS_MEM}" = "c00" ] || [ "${GEFS_MEM}" = "00" ]; then
+                _tag="gec00"
+            else
+                _tag="gep$(printf '%02d' "${GEFS_MEM}" 2>/dev/null || echo "${GEFS_MEM}")"
+            fi
+            GEFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_tag}.nc.tar"
+            if [ -f "${GEFS_TAR}" ]; then
+                echo "  OK: $(basename ${GEFS_TAR}) ($(stat -c%s "${GEFS_TAR}" 2>/dev/null || echo '?') bytes)"
+                (( GEFS_SUCCESS = GEFS_SUCCESS + 1 ))
+            else
+                echo "  MISSING: $(basename ${GEFS_TAR})"
+                (( GEFS_FAIL = GEFS_FAIL + 1 ))
+            fi
+        done
+        echo "GEFS summary: ${GEFS_SUCCESS} succeeded, ${GEFS_FAIL} failed out of ${GEFS_COUNT}"
+    fi
 fi
 
 ########################################################
@@ -408,15 +700,50 @@ fi
 ########################################################
 echo ""
 echo "=== Atmospheric ensemble prep complete ==="
-echo "Extra source tars in COMOUT:"
-for SOURCE in ${EXTRA_SOURCES}; do
-    tar_file="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
-    if [ -f "${tar_file}" ]; then
-        echo "  OK: $(basename ${tar_file}) ($(stat -c%s "${tar_file}" 2>/dev/null || echo '?') bytes)"
-    else
-        echo "  MISSING: $(basename ${tar_file})"
-    fi
-done
+
+if [ -n "${EXTRA_SOURCES}" ]; then
+    echo "Extra source tars in COMOUT:"
+    for SOURCE in ${EXTRA_SOURCES}; do
+        tar_file="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${SOURCE}.tar"
+        if [ -f "${tar_file}" ]; then
+            echo "  OK: $(basename ${tar_file}) ($(stat -c%s "${tar_file}" 2>/dev/null || echo '?') bytes)"
+        else
+            echo "  MISSING: $(basename ${tar_file})"
+        fi
+    done
+fi
+
+if [ -n "${GEFS_MEMBERS}" ]; then
+    echo "GEFS member outputs:"
+    for GEFS_MEM in ${GEFS_MEMBERS}; do
+        if [ "${GEFS_MEM}" = "c00" ] || [ "${GEFS_MEM}" = "00" ]; then
+            _tag="gec00"
+        else
+            _tag="gep$(printf '%02d' "${GEFS_MEM}" 2>/dev/null || echo "${GEFS_MEM}")"
+        fi
+        if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+            # STOFS: check individual NetCDFs in COMOUTrerun
+            _ok=true
+            for var in air prc rad; do
+                _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
+                [ ! -s "${_f}" ] && _ok=false
+            done
+            if [ "${_ok}" = true ]; then
+                echo "  OK: gefs_${GEFS_MEM} (air/prc/rad in COMOUTrerun)"
+            else
+                echo "  MISSING: gefs_${GEFS_MEM}"
+            fi
+        else
+            # COMF: check tar in COMOUT
+            tar_file="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_tag}.nc.tar"
+            if [ -f "${tar_file}" ]; then
+                echo "  OK: $(basename ${tar_file}) ($(stat -c%s "${tar_file}" 2>/dev/null || echo '?') bytes)"
+            else
+                echo "  MISSING: $(basename ${tar_file})"
+            fi
+        fi
+    done
+fi
 
 ########################################################
 # Post-processing

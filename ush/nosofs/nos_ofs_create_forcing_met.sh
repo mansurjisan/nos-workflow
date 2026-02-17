@@ -211,6 +211,8 @@ do
      modelist="RAP NAM"
   elif [ $DBASE == "HRRR" ]; then
      modelist="HRRR GFS25"
+  elif [ $DBASE == "GEFS" ]; then
+     modelist="GEFS GFS"
   fi
  
   totalcheck=`echo "$modelist"|wc -w`
@@ -325,7 +327,7 @@ do
          done
         fi
       fi
-    elif [ $DBASE == "NAM" -o $DBASE == "NAM4" -o $DBASE == "GFS" -o $DBASE == "GFS25" ]; then
+    elif [ $DBASE == "NAM" -o $DBASE == "NAM4" -o $DBASE == "GFS" -o $DBASE == "GFS25" -o $DBASE == "GEFS" ]; then
       while [ $TMPDATE -le $ENDDATE ]
       do
         if [ $DBASE == "NAM" ]; then
@@ -357,6 +359,26 @@ do
           if [ -d ${COMINgfs}/gfs.${TMPDATE} ]; then
             find  ${COMINgfs}/gfs.${TMPDATE} -name "gfs.t*.pgrb2.0p25.f???.idx" |awk -F".idx" '{print $1}' |sort -u >> tmp.out
 	  fi
+        elif [ $DBASE == "GEFS" ]; then
+          # GEFS ensemble member forcing (0.50 deg, 3-hourly)
+          # GEFS_MEMBER env var selects the member: "01"-"30" for perturbation, "c00" for control
+          # File pattern: gep{NN}.t{CYC}z.pgrb2a.0p50.f{FFF} (perturbation)
+          #               gec00.t{CYC}z.pgrb2a.0p50.f{FFF}   (control)
+          GEFS_MEMBER=${GEFS_MEMBER:?GEFS_MEMBER must be set for DBASE=GEFS}
+          GEFS_PRODUCT=${GEFS_PRODUCT:-pgrb2ap5}
+          if [ "${GEFS_MEMBER}" = "c00" ]; then
+            GEFS_PREFIX="gec00"
+          else
+            GEFS_PREFIX="gep${GEFS_MEMBER}"
+          fi
+          GEFS_DIR=${COMINgefs}/gefs.${TMPDATE}
+          if [ -d ${GEFS_DIR} ]; then
+            find ${GEFS_DIR} -path "*/${GEFS_PRODUCT}/${GEFS_PREFIX}.t*.pgrb2a.0p50.f???" -name "${GEFS_PREFIX}.t*.pgrb2a.0p50.f???" 2>/dev/null | sort -u >> tmp.out
+            # Also check for .idx-based discovery (some WCOSS2 installations)
+            if [ ! -s tmp.out ]; then
+              find ${GEFS_DIR} -name "${GEFS_PREFIX}.t*.pgrb2a.0p50.f???.idx" 2>/dev/null |awk -F".idx" '{print $1}' |sort -u >> tmp.out
+            fi
+          fi
         fi
         CURRENTTIME=`$NDATE +24 $CURRENTTIME `
         YYYY=`echo $CURRENTTIME | cut -c1-4 `
@@ -1225,10 +1247,10 @@ if [ $DBASE == "RTMA" -o $DBASE == "RAP" -o $DBASE == "NDFD"  -o $DBASE == "HRRR
 #           FPSTG="${N3}-${N} hour fcst"
             FPSTG="" 
           fi   
-          if [ $DBASE == 'GFS' -o $DBASE == 'GFS25' ]; then
+          if [ $DBASE == 'GFS' -o $DBASE == 'GFS25' -o $DBASE == 'GEFS' ]; then
             if [ $count -ge 6 -a $count -le 11 ]; then
               FPSTG=""
-            fi   
+            fi
           fi	     
           if [ $count -ge 13 -a $count -le 16 ]; then
  #         if [  $count = 13 -o $count = 14  -o $count = 15 ]; then

@@ -1,9 +1,10 @@
 """
 NOS-OFS Ensemble Forecasting Module
 
-Provides parameter perturbation ensemble capability for uncertainty
-quantification. Supports Latin Hypercube Sampling of model physics
-parameters (bottom friction, mixing coefficients, roughness).
+Provides ensemble capability for uncertainty quantification using:
+  - GEFS atmospheric forcing ensemble (method: gefs)
+  - LHS physics parameter perturbation (method: parameter_perturbation)
+  - Atmospheric source switching (method: atmospheric)
 
 Usage:
     from nos_ofs.ensemble import EnsembleConfig, ParamGenerator, EnsemblePost
@@ -13,11 +14,20 @@ Usage:
     members = generator.generate()
 """
 
-from .param_generator import EnsembleConfig, ParamGenerator
+from .param_generator import (
+    EnsembleConfig,
+    GEFSEnsembleConfig,
+    ParamGenerator,
+)
 from .ensemble_post import EnsemblePost
+from .plot_ensemble_stations import plot_station_timeseries
+from .plot_ensemble_spatial import plot_spatial_stats
 
 __all__ = [
     "EnsembleConfig",
+    "GEFSEnsembleConfig",
     "ParamGenerator",
     "EnsemblePost",
+    "plot_station_timeseries",
+    "plot_spatial_stats",
 ]

@@ -1,0 +1,24 @@
+// NCO script for renaming GEFS wgrib2-output variables to SCHISM sflux names
+// Used by: stofs_3d_atl_create_surface_forcing_gefs.sh
+//
+// After the ncap2 RH->SPFH and APCP->PRATE conversions in the GEFS script,
+// variable names match the GFS/NAM convention exactly:
+//   TMP_2maboveground    -> stmp    (surface temperature, K)
+//   SPFH_2maboveground   -> spfh    (specific humidity, kg/kg)
+//   UGRD_10maboveground  -> uwind   (u-wind component, m/s)
+//   VGRD_10maboveground  -> vwind   (v-wind component, m/s)
+//   PRMSL_meansealevel   -> prmsl   (pressure at mean sea level, Pa)
+//   PRATE_surface        -> prate   (precipitation rate, kg/m2/s)
+//   DSWRF_surface        -> dswrf   (downward shortwave radiation, W/m2)
+//   DLWRF_surface        -> dlwrf   (downward longwave radiation, W/m2)
+
+time=double(tin/24.0);
+
+stmp=TMP_2maboveground;
+spfh=SPFH_2maboveground;
+uwind=UGRD_10maboveground;
+vwind=VGRD_10maboveground;
+prmsl=PRMSL_meansealevel;
+prate=PRATE_surface;
+dswrf=DSWRF_surface;
+dlwrf=DLWRF_surface;
