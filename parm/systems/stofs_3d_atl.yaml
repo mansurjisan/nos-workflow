@@ -216,13 +216,53 @@ stages:
   - temp_salt_restart        # T/S restart for next cycle
 
 # Ensemble configuration for uncertainty quantification
-# Method: parameter_perturbation - perturb model physics parameters
-# Member 000 is always the control run (unperturbed defaults)
+# Method: gefs - GEFS atmospheric forcing ensemble + physics perturbation
+# Member 000 is always the control run (GFS deterministic + default params)
+# Members 001+ use GEFS perturbation members + LHS-perturbed physics
 ensemble:
   enabled: true
   n_members: 5
-  method: parameter_perturbation
+  method: gefs
   seed: 42                          # Reproducible sampling
+  # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
+  # Uses 0.50 deg pgrb2ap5 product (has all 8 sflux variables)
+  # Control member uses GFS deterministic (0.25 deg), perturbed members use GEFS (0.50 deg)
+  # All members keep HRRR as secondary sflux stack for coastal detail
+  gefs:
+    enabled: true
+    n_gefs_members: 5
+    resolution: "0p50"
+    product: "pgrb2ap5"
+    control_member: "gec00"
+    perturbation_prefix: "gep"
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GEFS p01 + HRRR"
+        met_source_1: GEFS_01
+        met_source_2: HRRR
+      "002":
+        label: "GEFS p02 + HRRR"
+        met_source_1: GEFS_02
+        met_source_2: HRRR
+      "003":
+        label: "GEFS p03 + HRRR"
+        met_source_1: GEFS_03
+        met_source_2: HRRR
+      "004":
+        label: "GEFS p04 + HRRR"
+        met_source_1: GEFS_04
+        met_source_2: HRRR
+    extra_sources:
+      - GEFS_01
+      - GEFS_02
+      - GEFS_03
+      - GEFS_04
+  # Physics perturbation parameters (applied via LHS to members 001+)
+  # Member 000 (control) always uses default physics values
   parameters:
     rdrg2:
       min: 0.001
@@ -242,28 +282,6 @@ ensemble:
       default: 5.0e-6
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
-  # Atmospheric forcing ensemble
-  # Members use different atmospheric sources to quantify forcing uncertainty
-  atmospheric_ensemble:
-    enabled: true
-    members:
-      "000":
-        label: "control (GFS+HRRR)"
-        met_source_1: GFS
-        met_source_2: HRRR
-      "001":
-        label: "GFS only"
-        met_source_1: GFS
-        met_source_2: null
-      "002":
-        label: "GFS+NAM"
-        met_source_1: GFS
-        met_source_2: NAM
-    # Extra sources beyond what normal prep creates.
-    # Normal prep already creates GFS and HRRR in COMOUTrerun.
-    # Only list sources that need additional prep work.
-    extra_sources:
-      - NAM
   # Ensemble-specific resources (per member)
   resources:
     select: "select=20:ncpus=128:mpiprocs=120"

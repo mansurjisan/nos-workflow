@@ -5,6 +5,15 @@ Generates perturbed parameter sets for ensemble model runs using
 Latin Hypercube Sampling (LHS). Member 000 is always the control
 run with unperturbed default values.
 
+Supports three ensemble methods:
+  - parameter_perturbation: LHS-based physics parameter perturbation only
+  - atmospheric:            Different atmospheric forcing sources per member
+  - gefs:                   GEFS atmospheric ensemble + optional LHS physics
+                            perturbation. Each member gets a distinct GEFS
+                            perturbation member for atmospheric forcing.
+                            Member 000 = GFS control + default physics.
+                            Members 001+ = GEFS gep01..N + LHS-perturbed physics.
+
 Supports two distribution types:
   - uniform:     Linear uniform sampling between [min, max]
   - log_uniform: Uniform sampling in log10 space (good for parameters
@@ -102,6 +111,59 @@ class AtmosphericEnsembleConfig:
 
 
 @dataclass
+class GEFSMemberConfig:
+    """GEFS atmospheric forcing configuration for a single ensemble member."""
+    label: str
+    met_source_1: str                    # Primary met source (GFS, GEFS_01, etc.)
+    met_source_2: Optional[str] = None   # Secondary met source (HRRR, etc.)
+
+
+@dataclass
+class GEFSEnsembleConfig:
+    """Configuration for GEFS atmospheric forcing ensemble.
+
+    GEFS provides 30 physically consistent perturbation members from
+    perturbed initial conditions and stochastic physics. This replaces
+    the 3-source atmospheric ensemble (GFS/HRRR/NAM switching) with
+    statistically robust atmospheric uncertainty quantification.
+    """
+    enabled: bool = False
+    n_gefs_members: int = 0
+    resolution: str = "0p50"
+    product: str = "pgrb2ap5"
+    control_member: str = "gec00"
+    perturbation_prefix: str = "gep"
+    members: Dict[str, GEFSMemberConfig] = field(default_factory=dict)
+    extra_sources: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict]) -> "GEFSEnsembleConfig":
+        """Parse gefs section from YAML dict."""
+        if not data or not data.get("enabled", False):
+            return cls(enabled=False)
+
+        members = {}
+        for mid, mdef in data.get("members", {}).items():
+            mid_str = str(mid).zfill(3)
+            members[mid_str] = GEFSMemberConfig(
+                label=mdef.get("label", f"GEFS member {mid_str}"),
+                met_source_1=mdef.get("met_source_1", "GFS"),
+                met_source_2=mdef.get("met_source_2"),
+            )
+
+        return cls(
+            enabled=True,
+            n_gefs_members=int(data.get("n_gefs_members", len(members))),
+            resolution=data.get("resolution", "0p50"),
+            product=data.get("product", "pgrb2ap5"),
+            control_member=data.get("control_member", "gec00"),
+            perturbation_prefix=data.get("perturbation_prefix", "gep"),
+            members=members,
+            extra_sources=data.get("extra_sources", []),
+        )
+
+
+@dataclass
 class EnsembleConfig:
     """Configuration for an ensemble run."""
     n_members: int
@@ -110,6 +172,9 @@ class EnsembleConfig:
     parameters: List[ParameterDef] = field(default_factory=list)
     atmospheric: AtmosphericEnsembleConfig = field(
         default_factory=AtmosphericEnsembleConfig
+    )
+    gefs: GEFSEnsembleConfig = field(
+        default_factory=GEFSEnsembleConfig
     )
 
     @classmethod
@@ -152,12 +217,17 @@ class EnsembleConfig:
             ens.get("atmospheric_ensemble")
         )
 
+        gefs = GEFSEnsembleConfig.from_dict(
+            ens.get("gefs")
+        )
+
         return cls(
             n_members=int(ens.get("n_members", 5)),
             method=ens.get("method", "parameter_perturbation"),
             seed=int(ens.get("seed", 42)),
             parameters=params,
             atmospheric=atmospheric,
+            gefs=gefs,
         )
 
     def validate(self):
@@ -175,6 +245,23 @@ class EnsembleConfig:
                     "method: atmospheric requires "
                     "atmospheric_ensemble.enabled: true"
                 )
+        elif self.method == "gefs":
+            # GEFS mode: gefs config must be enabled
+            if not self.gefs.enabled:
+                raise ValueError(
+                    "method: gefs requires gefs.enabled: true"
+                )
+            # Verify that GEFS member definitions cover all ensemble members
+            for i in range(self.n_members):
+                mid = f"{i:03d}"
+                if mid not in self.gefs.members:
+                    raise ValueError(
+                        f"method: gefs requires gefs.members to define "
+                        f"member '{mid}', but it was not found. "
+                        f"Defined members: {list(self.gefs.members.keys())}"
+                    )
+            # Parameters are optional for GEFS mode (physics perturbation
+            # is additive, not required)
         else:
             if not self.parameters:
                 raise ValueError("No parameters defined for perturbation.")
@@ -212,63 +299,44 @@ class ParamGenerator:
         # Members not listed in atmospheric_ensemble.members use defaults
         return None
 
-    def generate(self) -> List[Dict[str, Any]]:
-        """Generate parameter sets for all ensemble members.
+    def _get_gefs_source(self, member_id: str) -> Optional[Dict[str, Any]]:
+        """Get GEFS atmospheric source config for a member."""
+        gefs = self.config.gefs
+        if not gefs.enabled:
+            return None
+        member_cfg = gefs.members.get(member_id)
+        if member_cfg:
+            return {
+                "met_source_1": member_cfg.met_source_1,
+                "met_source_2": member_cfg.met_source_2,
+                "label": member_cfg.label,
+            }
+        return None
+
+    def _generate_lhs_params(
+        self,
+        rng,
+        n_perturbed: int,
+    ) -> List[Dict[str, float]]:
+        """Generate LHS-perturbed physics parameters for n_perturbed members.
+
+        Args:
+            rng: Random number generator (seeded)
+            n_perturbed: Number of perturbed members (excludes control)
 
         Returns:
-            List of dicts, one per member. Each dict contains:
-              - member_id: str (e.g., "000", "001")
-              - is_control: bool
-              - parameters: dict mapping param name to value
-              - atmospheric_source: dict or null (if atmospheric ensemble enabled)
+            List of dicts mapping parameter name to perturbed value,
+            one dict per perturbed member (index 0 = member 001, etc.)
         """
-        import random
-
-        rng = random.Random(self.config.seed)
-        n_perturbed = self.config.n_members - 1  # Exclude control
         n_params = len(self.config.parameters)
+        if n_params == 0 or n_perturbed == 0:
+            return [{} for _ in range(n_perturbed)]
 
-        members = []
-
-        # Member 000: control (unperturbed defaults)
-        control = {
-            "member_id": "000",
-            "is_control": True,
-            "parameters": {
-                p.name: p.default for p in self.config.parameters
-            },
-            "atmospheric_source": self._get_atmospheric_source("000"),
-        }
-        members.append(control)
-
-        if n_perturbed == 0:
-            return members
-
-        # Atmospheric-only mode: all members use default physics parameters,
-        # only atmospheric source differs per member.
-        if self.config.method == "atmospheric":
-            default_params = {
-                p.name: p.default for p in self.config.parameters
-            }
-            for i in range(n_perturbed):
-                member_id = f"{i + 1:03d}"
-                members.append({
-                    "member_id": member_id,
-                    "is_control": False,
-                    "parameters": dict(default_params),
-                    "atmospheric_source": self._get_atmospheric_source(member_id),
-                })
-            return members
-
-        # Latin Hypercube Sampling for perturbed members
-        # For each parameter, divide [0, 1] into n_perturbed equal strata
-        # and sample one point from each stratum
+        # Latin Hypercube Sampling
         lhs_samples = []
         for _ in range(n_params):
-            # Create strata permutation
             perm = list(range(n_perturbed))
             rng.shuffle(perm)
-            # Sample one uniform value within each stratum
             samples = []
             for i in range(n_perturbed):
                 stratum = perm[i]
@@ -277,8 +345,8 @@ class ParamGenerator:
             lhs_samples.append(samples)
 
         # Transform unit samples to physical parameter values
+        all_params = []
         for i in range(n_perturbed):
-            member_id = f"{i + 1:03d}"
             member_params = {}
             for j, p in enumerate(self.config.parameters):
                 u = lhs_samples[j][i]
@@ -291,11 +359,141 @@ class ParamGenerator:
                 else:
                     val = p.min_val + u * (p.max_val - p.min_val)
                 member_params[p.name] = val
+            all_params.append(member_params)
+
+        return all_params
+
+    def generate(self) -> List[Dict[str, Any]]:
+        """Generate parameter sets for all ensemble members.
+
+        Returns:
+            List of dicts, one per member. Each dict contains:
+              - member_id: str (e.g., "000", "001")
+              - is_control: bool
+              - parameters: dict mapping param name to value
+              - atmospheric_source: dict or null (if atmospheric/gefs ensemble enabled)
+        """
+        import random
+
+        rng = random.Random(self.config.seed)
+        n_perturbed = self.config.n_members - 1  # Exclude control
+
+        # Dispatch to method-specific generator
+        if self.config.method == "gefs":
+            return self._generate_gefs(rng, n_perturbed)
+        elif self.config.method == "atmospheric":
+            return self._generate_atmospheric(rng, n_perturbed)
+        else:
+            return self._generate_parameter_perturbation(rng, n_perturbed)
+
+    def _generate_gefs(
+        self,
+        rng,
+        n_perturbed: int,
+    ) -> List[Dict[str, Any]]:
+        """Generate members with GEFS atmospheric sources + optional physics perturbation.
+
+        Member 000 = control (GFS deterministic + default physics).
+        Members 001+ = GEFS perturbation members + LHS-perturbed physics
+        (if parameters section exists).
+        """
+        default_params = {
+            p.name: p.default for p in self.config.parameters
+        }
+
+        members = []
+
+        # Member 000: control
+        members.append({
+            "member_id": "000",
+            "is_control": True,
+            "parameters": dict(default_params),
+            "atmospheric_source": self._get_gefs_source("000"),
+        })
+
+        if n_perturbed == 0:
+            return members
+
+        # Generate LHS physics perturbations for members 001+
+        # (returns empty dicts if no parameters are defined)
+        lhs_params = self._generate_lhs_params(rng, n_perturbed)
+
+        for i in range(n_perturbed):
+            member_id = f"{i + 1:03d}"
+            # Start with default params, then override with LHS perturbations
+            member_params = dict(default_params)
+            if lhs_params[i]:
+                member_params.update(lhs_params[i])
 
             members.append({
                 "member_id": member_id,
                 "is_control": False,
                 "parameters": member_params,
+                "atmospheric_source": self._get_gefs_source(member_id),
+            })
+
+        return members
+
+    def _generate_atmospheric(
+        self,
+        rng,
+        n_perturbed: int,
+    ) -> List[Dict[str, Any]]:
+        """Generate members with different atmospheric sources, default physics."""
+        default_params = {
+            p.name: p.default for p in self.config.parameters
+        }
+        members = []
+
+        # Member 000: control
+        members.append({
+            "member_id": "000",
+            "is_control": True,
+            "parameters": dict(default_params),
+            "atmospheric_source": self._get_atmospheric_source("000"),
+        })
+
+        for i in range(n_perturbed):
+            member_id = f"{i + 1:03d}"
+            members.append({
+                "member_id": member_id,
+                "is_control": False,
+                "parameters": dict(default_params),
+                "atmospheric_source": self._get_atmospheric_source(member_id),
+            })
+
+        return members
+
+    def _generate_parameter_perturbation(
+        self,
+        rng,
+        n_perturbed: int,
+    ) -> List[Dict[str, Any]]:
+        """Generate members with LHS physics perturbation + optional atmospheric ensemble."""
+        members = []
+
+        # Member 000: control
+        members.append({
+            "member_id": "000",
+            "is_control": True,
+            "parameters": {
+                p.name: p.default for p in self.config.parameters
+            },
+            "atmospheric_source": self._get_atmospheric_source("000"),
+        })
+
+        if n_perturbed == 0:
+            return members
+
+        # Generate LHS physics perturbations
+        lhs_params = self._generate_lhs_params(rng, n_perturbed)
+
+        for i in range(n_perturbed):
+            member_id = f"{i + 1:03d}"
+            members.append({
+                "member_id": member_id,
+                "is_control": False,
+                "parameters": lhs_params[i],
                 "atmospheric_source": self._get_atmospheric_source(member_id),
             })
 
@@ -338,18 +536,31 @@ class ParamGenerator:
                       f"(1 control + {self.config.n_members - 1} perturbed)")
         lines.append(f"Method: {self.config.method}")
         lines.append(f"Seed: {self.config.seed}")
-        lines.append(f"Parameters: {', '.join(p.name for p in self.config.parameters)}")
-        if self.config.atmospheric.enabled:
+        if self.config.parameters:
+            lines.append(f"Parameters: {', '.join(p.name for p in self.config.parameters)}")
+        if self.config.method == "gefs" and self.config.gefs.enabled:
+            lines.append(f"GEFS ensemble: enabled "
+                          f"(resolution: {self.config.gefs.resolution}, "
+                          f"product: {self.config.gefs.product})")
+            lines.append(f"GEFS extra sources: "
+                          f"{', '.join(self.config.gefs.extra_sources)}")
+        elif self.config.atmospheric.enabled:
             lines.append(f"Atmospheric ensemble: enabled "
                           f"(extra sources: {', '.join(self.config.atmospheric.extra_sources)})")
         lines.append("")
+
+        # Determine if we should show atmospheric source column
+        show_atmos = (
+            self.config.atmospheric.enabled
+            or (self.config.method == "gefs" and self.config.gefs.enabled)
+        )
 
         # Header
         param_names = [p.name for p in self.config.parameters]
         header = f"{'Member':<10} {'Control':<10}"
         for name in param_names:
             header += f" {name:>12}"
-        if self.config.atmospheric.enabled:
+        if show_atmos:
             header += f"  {'Atmos Source':<25}"
         lines.append(header)
         lines.append("-" * len(header))
@@ -357,9 +568,12 @@ class ParamGenerator:
         for m in members:
             line = f"{m['member_id']:<10} {'yes' if m['is_control'] else 'no':<10}"
             for name in param_names:
-                val = m["parameters"][name]
-                line += f" {val:>12.6g}"
-            if self.config.atmospheric.enabled:
+                val = m["parameters"].get(name)
+                if val is not None:
+                    line += f" {val:>12.6g}"
+                else:
+                    line += f" {'N/A':>12}"
+            if show_atmos:
                 atm = m.get("atmospheric_source")
                 if atm:
                     line += f"  {atm['label']:<25}"

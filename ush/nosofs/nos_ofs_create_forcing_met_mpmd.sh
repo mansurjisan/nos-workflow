@@ -46,10 +46,10 @@ do
 #    FPSTG="${N3}-${N} hour fcst"
     FPSTG="" 
   fi   
-  if [ $DBASE == 'GFS' -o $DBASE == 'GFS25' ]; then
+  if [ $DBASE == 'GFS' -o $DBASE == 'GFS25' -o $DBASE == 'GEFS' ]; then
     if [ $count -ge 6 -a $count -le 11 ]; then
       FPSTG=""
-    fi   
+    fi
   fi	     
   if [ $count -ge 13 -a $count -le 16 ]; then
 #  if [  $count = 13 -o $count = 14  -o $count = 15 ]; then
