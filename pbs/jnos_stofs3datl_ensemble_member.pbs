@@ -4,7 +4,8 @@
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_ens${MEMBER_ID}_${CYC}.out
 #PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_ens${MEMBER_ID}_${CYC}.err
-#PBS  -l place=vscatter:excl,select=20:ncpus=128:mpiprocs=120
+#PBS  -l select=34:ncpus=128:mpiprocs=128
+#PBS  -l place=vscatter:exclhost
 #PBS  -l walltime=06:00:00
 
 # ------------------------------------------------------------------
@@ -120,5 +121,8 @@ export jobid=${jobid:-$job.$PBS_JOBID}
 export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# SCHISM scribes — must match partition.prop (34*128 - 6 scribes = 4346 compute ranks)
+export NSCRIBES=6
 
 ${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_MEMBER
