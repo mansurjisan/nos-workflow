@@ -225,6 +225,7 @@ case "${OFS_FRAMEWORK}" in
         export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
         export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
         export COMINadt=${COMINadt:-${DCOMROOT:-}}
+        export OBC_MODE=${OBC_MODE:-non_adjust}
         mkdir -p ${COMOUTrerun}
 
         # Prevent user site-packages from interfering with STOFS Python scripts

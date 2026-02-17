@@ -257,10 +257,40 @@ echo $msg
 echo
 
 
+# ---------------------------------------> OBC dynamic bias adjustment (optional)
+# If OBC_MODE=dynamic_adjust, apply time-varying bias correction from CO-OPS obs
+OBC_MODE=${OBC_MODE:-non_adjust}
+echo "OBC mode: ${OBC_MODE}"
+
+if [[ "${OBC_MODE}" == "dynamic_adjust" ]]; then
+  file_log=log_stofs_3d_atl_create_obc_3d_th_dynamic_adjust.${cycle}.log
+
+  export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh"
+  ${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh >> ${file_log} 2>&1
+
+  export err=$?
+  if [ $err -ne 0 ]
+  then
+     msg=" Execution of $pgm did not complete normally - WARNING"
+     postmsg  "$msg"
+     cat ${file_log}
+     # Dynamic adjust failure is non-fatal; non_adj version is already archived
+     echo "WARNING: dynamic_adjust failed, using non_adj elev2dth"
+  else
+     msg=" Execution of $pgm completed normally"
+     postmsg  "$msg"
+     cat ${file_log}
+  fi
+
+  echo $msg
+  echo
+fi
+
+
 # ---------------------------------------> create rtofs/obc_nudge forcing
 # ---------------------------------------> create rtofs/obc_nudge forcing
 file_log=log_stofs_3d_atl_create_obc_nudge.${cycle}.log
-  
+
 export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_nudge.sh"
 ${USHstofs3d}/stofs_3d_atl_create_obc_nudge.sh  >> ${file_log} 2>&1
 

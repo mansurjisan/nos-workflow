@@ -487,114 +487,91 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
   
   # -----> prepare ADT data
-  fn_adt_today=${COMINadt}/${yyyymmdd_today}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_today}_${yyyymmdd_today}.nc;
-  fn_adt_prev=${COMINadt}${yyyymmdd_prev}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_prev}_${yyyymmdd_prev}.nc;
+  # ADT (Absolute Dynamic Topography) from CMEMS satellite altimetry
+  # Blends satellite SSH observations with RTOFS to improve boundary accuracy
+  # Typically adds ~0.05-0.10m correction to SSH boundaries
+  fn_adt_today=${COMINadt}/${yyyymmdd_today}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_today}_${yyyymmdd_today}.nc
+  fn_adt_prev=${COMINadt}/${yyyymmdd_prev}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_prev}_${yyyymmdd_prev}.nc
 
-  # Let's modify it to use the available data from the 25th
-  # First, define the date we know has data
-  export yyyymmdd_adt="20241125"
-  # Then modify the file paths to use this date
-  fn_adt_today=${COMINadt}/${yyyymmdd_adt}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_adt}_${yyyymmdd_adt}.nc
-  
-  
-  rm -f adt_roi_today.nc  
-  rm -f adt_roi_prev.nc
-  rm -f adt_roi_fnl.nc
- 
-  #
-#  if [[ -f ${fn_adt_today}  &&  -f ${fn_adt_prev} ]]; then
-#       flag_ADT=3
-#       echo "Both exist: ${fn_adt_today} and ${fn_adt_prev}"
-#
-#       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_today} adt_roi_today.nc
-#       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_prev}  adt_roi_prev.nc
-#
-#       ncks -O --mk_rec_dmn time  adt_roi_today.nc -o adt_roi_rec_dim_T.nc
-#       ncks -O --mk_rec_dmn time  adt_roi_prev.nc  -o adt_roi_rec_dim_P.nc
-#
-#       ncpdq -O -U adt_roi_rec_dim_T.nc  adt_roi_rec_dim_T.nc
-#       ncpdq -O -U adt_roi_rec_dim_P.nc  adt_roi_rec_dim_P.nc       
-#
-#
-#       ncremap -i adt_roi_rec_dim_T.nc -m ${fn_adt_weight}  -o adt_aft_wt_T.nc
-#       ncremap -i adt_roi_rec_dim_P.nc -m ${fn_adt_weight}  -o adt_aft_wt_P.nc
-#
-#
-#       ncap2 -O -S ${fn_adt_cvtz_nco}  adt_aft_wt_T.nc adt_aft_cvtz_T.nc
-#       ncap2 -O -S ${fn_adt_cvtz_nco}  adt_aft_wt_P.nc adt_aft_cvtz_P.nc
-#
-#       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_T.nc adt_aft_cvtz_cln_T.nc
-#       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_P.nc adt_aft_cvtz_cln_P.nc
-#
-#       ncra adt_aft_cvtz_cln_T.nc  adt_aft_cvtz_cln_P.nc -O adt_aft_cvtz_cln.nc 
-#
-#       ncrename -d longitude,xlon -d latitude,ylat  -O adt_aft_cvtz_cln.nc
-#
-#
-#  elif [ -f ${fn_adt_today} ]; then
-#       flag_ADT=2
-#       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_today} adt_roi_fnl.nc
-#
-#       ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
-#       
-#       ncpdq -O -U adt_roi_rec_dim.nc  adt_roi_rec_dim.nc
-#       ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight}  -o adt_aft_wt.nc
-#       ncap2 -O -S ${fn_adt_cvtz_nco}  adt_aft_wt.nc adt_aft_cvtz.nc
-#
-#       ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
-#       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
-#
-#       echo "Using: ${fn_adt_today}"
-#
-#  elif [  -f ${fn_adt_prev}  ]; then
-#       flag_ADT=1
-#       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_prev} adt_roi_fnl.nc
-#
-#       ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
-#
-#       ncpdq -O -U adt_roi_rec_dim.nc  adt_roi_rec_dim.nc
-#       ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight}  -o adt_aft_wt.nc
-#       ncap2 -O -S ${fn_adt_cvtz_nco}  adt_aft_wt.nc adt_aft_cvtz.nc
-#
-#       ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
-#       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
-#
-#       echo "Using: ${fn_adt_prev}" 
-#
-#  else
-#       flag_ADT=0
-#       echo "Neither exits: ${fn_adt_today} or  ${fn_adt_prev}"
-#
-#  fi  
+  rm -f adt_roi_today.nc adt_roi_prev.nc adt_roi_fnl.nc
 
-  # Replace the existing if-elif-else block with this simpler version
-  #if [[ -f ${fn_adt_today} ]]; then
-  #    flag_ADT=1
-  #    echo "Using ADT data from: ${yyyymmdd_adt}"
-  #
-  #    # Process the single ADT file
-  #    ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla ${fn_adt_today} adt_roi_fnl.nc
-  #
-  #    ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
-  #    ncpdq -O -U adt_roi_rec_dim.nc adt_roi_rec_dim.nc
-  #    ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight} -o adt_aft_wt.nc
-  #    ncap2 -O -S ${fn_adt_cvtz_nco} adt_aft_wt.nc adt_aft_cvtz.nc
-  #
-  #    ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
-  #    ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
-  #else
-  #    flag_ADT=0
-  #    echo "ERROR: ADT data not found at ${fn_adt_today}"
-  #fi
-
-  # --------------------------> SSH_1.nc: combine rtofs_only with ADT
+  # Check for pre-processed ADT in rerun directory first (from previous prep)
   if [[ -f ${COMOUTrerun}/adt_aft_cvtz_cln.nc ]]; then
       flag_ADT=1
       echo "Using pre-processed ADT data from rerun directory"
       cp -p ${COMOUTrerun}/adt_aft_cvtz_cln.nc ./
+
+  # Process raw ADT data if weight file and NCO script are available
+  elif [[ -f ${fn_adt_weight} ]] && [[ -f ${fn_adt_cvtz_nco} ]]; then
+
+    if [[ -f ${fn_adt_today} && -f ${fn_adt_prev} ]]; then
+       flag_ADT=3
+       echo "Both ADT files exist: today and previous day"
+
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla ${fn_adt_today} adt_roi_today.nc
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla ${fn_adt_prev}  adt_roi_prev.nc
+
+       ncks -O --mk_rec_dmn time adt_roi_today.nc -o adt_roi_rec_dim_T.nc
+       ncks -O --mk_rec_dmn time adt_roi_prev.nc  -o adt_roi_rec_dim_P.nc
+
+       ncpdq -O -U adt_roi_rec_dim_T.nc adt_roi_rec_dim_T.nc
+       ncpdq -O -U adt_roi_rec_dim_P.nc adt_roi_rec_dim_P.nc
+
+       ncremap -i adt_roi_rec_dim_T.nc -m ${fn_adt_weight} -o adt_aft_wt_T.nc
+       ncremap -i adt_roi_rec_dim_P.nc -m ${fn_adt_weight} -o adt_aft_wt_P.nc
+
+       ncap2 -O -S ${fn_adt_cvtz_nco} adt_aft_wt_T.nc adt_aft_cvtz_T.nc
+       ncap2 -O -S ${fn_adt_cvtz_nco} adt_aft_wt_P.nc adt_aft_cvtz_P.nc
+
+       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_T.nc adt_aft_cvtz_cln_T.nc
+       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_P.nc adt_aft_cvtz_cln_P.nc
+
+       ncra adt_aft_cvtz_cln_T.nc adt_aft_cvtz_cln_P.nc -O adt_aft_cvtz_cln.nc
+
+       ncrename -d longitude,xlon -d latitude,ylat -O adt_aft_cvtz_cln.nc
+
+    elif [[ -f ${fn_adt_today} ]]; then
+       flag_ADT=2
+       echo "Using ADT data from today: ${fn_adt_today}"
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla ${fn_adt_today} adt_roi_fnl.nc
+
+       ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
+       ncpdq -O -U adt_roi_rec_dim.nc adt_roi_rec_dim.nc
+       ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight} -o adt_aft_wt.nc
+       ncap2 -O -S ${fn_adt_cvtz_nco} adt_aft_wt.nc adt_aft_cvtz.nc
+
+       ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
+       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
+
+    elif [[ -f ${fn_adt_prev} ]]; then
+       flag_ADT=1
+       echo "Using ADT data from previous day: ${fn_adt_prev}"
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla ${fn_adt_prev} adt_roi_fnl.nc
+
+       ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
+       ncpdq -O -U adt_roi_rec_dim.nc adt_roi_rec_dim.nc
+       ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight} -o adt_aft_wt.nc
+       ncap2 -O -S ${fn_adt_cvtz_nco} adt_aft_wt.nc adt_aft_cvtz.nc
+
+       ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
+       ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
+
+    else
+       flag_ADT=0
+       echo "WARNING: No ADT data found: ${fn_adt_today} or ${fn_adt_prev}"
+    fi
+
+    # Archive processed ADT for ensemble members to reuse
+    if [[ ${flag_ADT} -gt 0 ]] && [[ -f adt_aft_cvtz_cln.nc ]]; then
+        cp -p adt_aft_cvtz_cln.nc ${COMOUTrerun}/adt_aft_cvtz_cln.nc
+        echo "ADT data archived to ${COMOUTrerun}/adt_aft_cvtz_cln.nc"
+    fi
+
   else
       flag_ADT=0
-      echo "WARNING: No ADT data available in ${COMOUTrerun}"
+      echo "WARNING: ADT weight file or NCO script not found"
+      echo "  fn_adt_weight=${fn_adt_weight}"
+      echo "  fn_adt_cvtz_nco=${fn_adt_cvtz_nco}"
       echo "Proceeding with RTOFS-only SSH data (no ADT adjustment)"
   fi
 
@@ -667,11 +644,13 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
   $fn_exe_gen_3Dth    >> $pgmout 2> errfile
 
-  # add 0.04 m on zeta.th.nc
+  # Apply SSH offset to elev2D.th.nc (configurable via YAML ssh_offset or env SSH_OFFSET)
+  SSH_OFFSET=${SSH_OFFSET:-0.04}
+  echo "Applying SSH offset: +${SSH_OFFSET} m to elev2D.th.nc"
 
      mv elev2D.th.nc elev2D.th.nc_ORI
-  
-     ncap2 -s  'time_series=time_series+float(0.04)' elev2D.th.nc_ORI -O A1.nc
+
+     ncap2 -s  "time_series=time_series+float(${SSH_OFFSET})" elev2D.th.nc_ORI -O A1.nc
 
      ncap2 -s "time_series[time,nOpenBndNodes,nLevels,nComponents]=time_series(0,:,:,:)" A1.nc -O  elev2D.th.nc
 
@@ -772,9 +751,17 @@ echo $k, $fn_ori, $fn_std
 done # for files
 
 
+# Archive non_adj copy of elev2dth for dynamic_adjust script
+fn_elev2dth_std=${RUN}.${cycle}.elev2dth.nc
+fn_elev2dth_non_adj=${RUN}.${cycle}.elev2dth_non_adj.nc
+if [[ -f ${COMOUTrerun}/${fn_elev2dth_std} ]]; then
+  cpreq -pf ${COMOUTrerun}/${fn_elev2dth_std} ${COMOUTrerun}/${fn_elev2dth_non_adj}
+  echo "Archived non_adj copy: ${COMOUTrerun}/${fn_elev2dth_non_adj}"
+fi
 
-  echo 
-  echo "stofs_3d_atl_create_obc_forcing_rtofs.sh completed "  
-  echo 
+
+  echo
+  echo "stofs_3d_atl_create_obc_forcing_rtofs.sh completed "
+  echo
 
 
