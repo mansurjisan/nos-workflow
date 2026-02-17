@@ -102,6 +102,7 @@ forcing:
       wl_source: rtofs        # -> DBASE_WL_NOW, DBASE_WL_FOR
       ts_source: rtofs        # Temperature/Salinity source
       ssh_offset: 0.04        # SSH offset correction (meters)
+      obc_mode: dynamic_adjust  # non_adjust or dynamic_adjust
       # Target number of RTOFS files (126hr/6hr = 21 points)
       n_list_target_2d: 21    # -> N_list_target_2D
       n_list_target_3d: 21    # -> N_list_target_3D
@@ -379,6 +380,7 @@ shell_mappings:
     idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
     idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
     SSH_OFFSET: forcing.ocean.obc.ssh_offset
+    OBC_MODE: forcing.ocean.obc.obc_mode
 
     # RTOFS nudge parameters (slightly different ROI from OBC)
     idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
