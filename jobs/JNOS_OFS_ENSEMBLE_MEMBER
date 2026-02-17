@@ -256,6 +256,29 @@ for f in ${MEMBER_DATA}/${_PREFIX_SEP}*; do
     fi
 done
 
+# --- STOFS special name mappings ---
+# The automated bare-name loop strips ${PREFIXNOS}_ but some SCHISM files
+# have different target names than the bare remainder. These match the
+# explicit symlinks in exstofs_3d_atl_prep_processing.sh (lines 69-88).
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    # river_source_sink.in → source_sink.in (SCHISM expects no "river_" prefix)
+    [ -e "${MEMBER_DATA}/river_source_sink.in" ] && \
+        ln -sf "${MEMBER_DATA}/river_source_sink.in" ${MEMBER_DATA}/source_sink.in
+    # river_msource.th → msource.th
+    [ -e "${MEMBER_DATA}/river_msource.th" ] && \
+        ln -sf "${MEMBER_DATA}/river_msource.th" ${MEMBER_DATA}/msource.th
+    # river_vsink.th → vsink.th
+    [ -e "${MEMBER_DATA}/river_vsink.th" ] && \
+        ln -sf "${MEMBER_DATA}/river_vsink.th" ${MEMBER_DATA}/vsink.th
+    # tem_nudge.gr3 → TEM_nudge.gr3 (SCHISM expects uppercase)
+    [ -e "${MEMBER_DATA}/tem_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/TEM_nudge.gr3" ] && \
+        ln -sf "${MEMBER_DATA}/tem_nudge.gr3" ${MEMBER_DATA}/TEM_nudge.gr3
+    # sal_nudge.gr3 → SAL_nudge.gr3 (SCHISM expects uppercase)
+    [ -e "${MEMBER_DATA}/sal_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/SAL_nudge.gr3" ] && \
+        ln -sf "${MEMBER_DATA}/sal_nudge.gr3" ${MEMBER_DATA}/SAL_nudge.gr3
+    echo "Created STOFS special name mappings (source_sink.in, msource.th, TEM/SAL_nudge)"
+fi
+
 # --- Create vgrid_nu.in for nudging ---
 # SCHISM nudging expects vgrid_nu.in (a copy of vgrid.in with underscore name).
 _vgrid_src="${FIXofs}/${_PREFIX_SEP}vgrid.in"
