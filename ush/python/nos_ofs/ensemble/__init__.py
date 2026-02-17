@@ -20,14 +20,18 @@ from .param_generator import (
     ParamGenerator,
 )
 from .ensemble_post import EnsemblePost
-from .plot_ensemble_stations import plot_station_timeseries
-from .plot_ensemble_spatial import plot_spatial_stats
 
 __all__ = [
     "EnsembleConfig",
     "GEFSEnsembleConfig",
     "ParamGenerator",
     "EnsemblePost",
-    "plot_station_timeseries",
-    "plot_spatial_stats",
 ]
+
+# Optional plotting modules (require matplotlib, not available on HPC)
+try:
+    from .plot_ensemble_stations import plot_station_timeseries
+    from .plot_ensemble_spatial import plot_spatial_stats
+    __all__.extend(["plot_station_timeseries", "plot_spatial_stats"])
+except ImportError:
+    pass
