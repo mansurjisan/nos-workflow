@@ -665,14 +665,26 @@ if [ -f "${PARAM_NML_SRC}" ]; then
 else
     # Fallback to FIX directory template
     echo "WARNING: Forecast param.nml not found in COMOUT, using FIX template"
-    PARAM_NML_SRC="${FIXofs}/${PREFIXNOS}.param.nml"
+    if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+        # STOFS naming: ${RUN}_param.nml_6globaloutput (underscore-separated)
+        PARAM_NML_SRC="${FIXofs}/${RUN}_param.nml_6globaloutput"
+    else
+        # COMF naming: ${PREFIXNOS}.param.nml (dot-separated)
+        PARAM_NML_SRC="${FIXofs}/${PREFIXNOS}.param.nml"
+    fi
+    if [ ! -f "${PARAM_NML_SRC}" ]; then
+        PARAM_NML_SRC="${FIXofs}/${OFS}_param.nml_6globaloutput"
+    fi
     if [ ! -f "${PARAM_NML_SRC}" ]; then
         PARAM_NML_SRC="${FIXofs}/${OFS}.param.nml"
     fi
     if [ -f "${PARAM_NML_SRC}" ]; then
+        echo "Using FIX template: ${PARAM_NML_SRC}"
         cp "${PARAM_NML_SRC}" ${MEMBER_DATA}/param.nml
     else
         echo "ERROR: No param.nml source found" >&2
+        echo "  Tried: ${COMOUTrerun}/${RUN}.${cycle}.param.forecast.nml" >&2
+        echo "  Tried: ${FIXofs}/${RUN}_param.nml_6globaloutput" >&2
         exit 1
     fi
 fi
