@@ -226,8 +226,8 @@ ensemble:
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
   # Uses 0.50 deg pgrb2ap5 product (has all 8 sflux variables)
-  # Control member uses GFS deterministic (0.25 deg), perturbed members use GEFS (0.50 deg)
-  # All members keep HRRR as secondary sflux stack for coastal detail
+  # Control member uses GFS deterministic (0.25 deg) + HRRR coastal blending
+  # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
   gefs:
     enabled: true
     n_gefs_members: 5
@@ -241,21 +241,21 @@ ensemble:
         met_source_1: GFS
         met_source_2: HRRR
       "001":
-        label: "GEFS p01 + HRRR"
+        label: "GEFS p01"
         met_source_1: GEFS_01
-        met_source_2: HRRR
+        met_source_2: null
       "002":
-        label: "GEFS p02 + HRRR"
+        label: "GEFS p02"
         met_source_1: GEFS_02
-        met_source_2: HRRR
+        met_source_2: null
       "003":
-        label: "GEFS p03 + HRRR"
+        label: "GEFS p03"
         met_source_1: GEFS_03
-        met_source_2: HRRR
+        met_source_2: null
       "004":
-        label: "GEFS p04 + HRRR"
+        label: "GEFS p04"
         met_source_1: GEFS_04
-        met_source_2: HRRR
+        met_source_2: null
     extra_sources:
       - GEFS_01
       - GEFS_02
