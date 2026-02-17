@@ -232,16 +232,24 @@ fi
 
 # --- Create SCHISM-required bare-name symlinks ---
 # SCHISM expects hgrid.gr3, hgrid.ll, vgrid.in etc. without the OFS prefix.
-# FIX files are stored as secofs.hgrid.gr3, secofs.vgrid.in etc.
+# COMF uses dot separator: secofs.hgrid.gr3 -> hgrid.gr3
+# STOFS uses underscore separator: stofs_3d_atl_hgrid.gr3 -> hgrid.gr3
 # EXCLUDE param.nml — it is handled explicitly below (forecast copy + perturbation).
-echo "Creating SCHISM bare-name symlinks (stripping ${PREFIXNOS}. prefix)"
-for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
+if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+    _PREFIX_SEP="${PREFIXNOS}_"
+else
+    _PREFIX_SEP="${PREFIXNOS}."
+fi
+echo "Creating SCHISM bare-name symlinks (stripping ${_PREFIX_SEP} prefix)"
+for f in ${MEMBER_DATA}/${_PREFIX_SEP}*; do
     [ ! -e "$f" ] && continue
     bname=$(basename "$f")
-    bare=${bname#${PREFIXNOS}.}
+    bare=${bname#${_PREFIX_SEP}}
     # Skip param.nml and bctides.in — handled separately to avoid symlink-follows-to-FIX bug
     [ "${bare}" = "param.nml" ] && continue
+    [ "${bare}" = "param.nml_6globaloutput" ] && continue
     [ "${bare}" = "bctides.in" ] && continue
+    [ "${bare}" = "bctides.in_template" ] && continue
     if [ ! -e "${MEMBER_DATA}/${bare}" ]; then
         ln -sf "$f" ${MEMBER_DATA}/${bare}
         echo "  ${bname} -> ${bare}"
@@ -249,12 +257,11 @@ for f in ${MEMBER_DATA}/${PREFIXNOS}.*; do
 done
 
 # --- Create vgrid_nu.in for nudging ---
-# The deterministic nos_ofs_nowcast_forecast.sh copies secofs.vgrid.in → vgrid_nu.in
-# (underscore, NOT dots).  The bare-name loop above creates vgrid.nu.in (dots) from
-# secofs.vgrid.nu.in, which is a different file.  SCHISM nudging expects vgrid_nu.in.
-if [ -f "${FIXofs}/${PREFIXNOS}.vgrid.in" ]; then
-    cp -p "${FIXofs}/${PREFIXNOS}.vgrid.in" ${MEMBER_DATA}/vgrid_nu.in
-    echo "Created vgrid_nu.in from ${PREFIXNOS}.vgrid.in ($(stat -c%s "${FIXofs}/${PREFIXNOS}.vgrid.in" 2>/dev/null || echo '?') bytes)"
+# SCHISM nudging expects vgrid_nu.in (a copy of vgrid.in with underscore name).
+_vgrid_src="${FIXofs}/${_PREFIX_SEP}vgrid.in"
+if [ -f "${_vgrid_src}" ]; then
+    cp -p "${_vgrid_src}" ${MEMBER_DATA}/vgrid_nu.in
+    echo "Created vgrid_nu.in from $(basename ${_vgrid_src})"
 fi
 
 # --- Extract forcing files from COMOUT tar archives ---
@@ -823,8 +830,10 @@ echo "=== Retrieving hotstart file ==="
 
 # Look for hotstart/restart file in COMOUT (archived by nowcast job)
 # COMF naming: ${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc
+# STOFS naming: ${RUN}.t${cyc}z.hotstart.stofs3d.nc
 HOTSTART_FILE=""
 for candidate in \
+    "${COMOUT}/${RUN}.${cycle}.hotstart.stofs3d.nc" \
     "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc" \
     "${COMOUT}/${RUN}.${cycle}.${PDY}.rst.nowcast.nc" \
     "${COMOUT}/${PREFIXNOS}.${cycle}.rst.nowcast.nc" \
