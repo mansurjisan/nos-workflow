@@ -575,7 +575,7 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
       echo "Proceeding with RTOFS-only SSH data (no ADT adjustment)"
   fi
 
-  if [[ ${flag_ADT} -eq 1 ]]; then
+  if [[ ${flag_ADT} -ge 1 ]]; then
       # -----> Process ADT and merge with RTOFS
       ncap2 -O -F -s 'surf_el_t1_adt=surf_el(1,:,:)' adt_aft_cvtz_cln.nc adt_surf_el_t1.nc
       ncatted -O -a  _FillValue,surf_el_t1_adt,o,f,-30000 -a missing_value,surf_el_t1_adt,o,f,-30000 -a scale_factor,surf_el_t1_adt,o,f,1.0 adt_surf_el_t1.nc adt_fnl.nc
