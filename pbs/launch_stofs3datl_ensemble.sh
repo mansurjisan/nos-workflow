@@ -144,6 +144,11 @@ fi
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/stofs_3d_atl
 mkdir -p ${RPTDIR} 2>/dev/null || true
 
+# Archive old log files before submission (prevents PBS output file race condition)
+for f in ${RPTDIR}/stofs3datl_*_${CYC}.out ${RPTDIR}/stofs3datl_*_${CYC}.err; do
+    [ -s "$f" ] && mv "$f" "${f}.$(date -r "$f" +%Y%m%d_%H%M%S)" 2>/dev/null || true
+done
+
 # ---- Step 1: Submit prep job (unless --skip-prep) --------------------
 if [ "${SKIP_PREP}" = true ]; then
     echo ""
