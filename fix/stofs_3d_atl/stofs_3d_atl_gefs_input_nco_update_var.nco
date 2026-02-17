@@ -2,23 +2,20 @@
 // Used by: stofs_3d_atl_create_surface_forcing_gefs.sh
 //
 // After the ncap2 RH->SPFH and APCP->PRATE conversions in the GEFS script,
-// variable names match the GFS/NAM convention exactly:
-//   TMP_2maboveground    -> stmp    (surface temperature, K)
-//   SPFH_2maboveground   -> spfh    (specific humidity, kg/kg)
-//   UGRD_10maboveground  -> uwind   (u-wind component, m/s)
-//   VGRD_10maboveground  -> vwind   (v-wind component, m/s)
-//   PRMSL_meansealevel   -> prmsl   (pressure at mean sea level, Pa)
-//   PRATE_surface        -> prate   (precipitation rate, kg/m2/s)
-//   DSWRF_surface        -> dswrf   (downward shortwave radiation, W/m2)
-//   DLWRF_surface        -> dlwrf   (downward longwave radiation, W/m2)
+// variable names match the GFS convention exactly.
+//
+// IMPORTANT: Must create 2D lon/lat from 1D longitude/latitude coordinates.
+// SCHISM sflux reader requires lon[latitude,longitude] and lat[latitude,longitude].
+// Without these, SCHISM aborts with "get_dims(2)" when reading sflux files.
 
-time=double(tin/24.0);
-
-stmp=TMP_2maboveground;
-spfh=SPFH_2maboveground;
-uwind=UGRD_10maboveground;
-vwind=VGRD_10maboveground;
-prmsl=PRMSL_meansealevel;
-prate=PRATE_surface;
-dswrf=DSWRF_surface;
-dlwrf=DLWRF_surface;
+time[time]=float(tin/24.) ;
+lon[latitude,longitude]=float(longitude);
+lat[latitude,longitude]=float(latitude);
+stmp[time,latitude,longitude]=TMP_2maboveground;
+spfh[time,latitude,longitude]=SPFH_2maboveground;
+uwind[time,latitude,longitude]=UGRD_10maboveground;
+vwind[time,latitude,longitude]=VGRD_10maboveground;
+prmsl[time,latitude,longitude]=PRMSL_meansealevel;
+prate[time,latitude,longitude]=PRATE_surface;
+dswrf[time,latitude,longitude]=DSWRF_surface;
+dlwrf[time,latitude,longitude]=DLWRF_surface;
