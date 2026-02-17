@@ -930,12 +930,13 @@ echo "=== Running SCHISM for member ${MEMBER_ID} ==="
 
 cd ${MEMBER_DATA}
 
-# Determine MPI task count from PBS allocation or default
-# On WCOSS2: select=10:ncpus=128:mpiprocs=120 → 10*120 = 1200
-if [ -n "${PBS_NODEFILE:-}" ] && [ -f "${PBS_NODEFILE}" ]; then
+# Determine MPI task count.
+# Priority: explicit TOTAL_TASKS (from PBS script) > PBS_NODEFILE > default
+# STOFS partition.prop requires an exact match, so PBS scripts must set TOTAL_TASKS.
+if [ -n "${TOTAL_TASKS:-}" ]; then
+    : # already set by PBS script — use it (required for partition.prop match)
+elif [ -n "${PBS_NODEFILE:-}" ] && [ -f "${PBS_NODEFILE}" ]; then
     TOTAL_TASKS=$(wc -l < ${PBS_NODEFILE})
-elif [ -n "${TOTAL_TASKS:-}" ]; then
-    : # already set
 else
     TOTAL_TASKS=1200  # default for SECOFS (10 nodes x 120 mpiprocs)
 fi
