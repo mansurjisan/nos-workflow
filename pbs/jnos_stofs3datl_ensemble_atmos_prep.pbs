@@ -85,6 +85,7 @@ export SENDSMS=NO
 
 # Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
 export nosofs_ver=v3.7.0
+export com_ver=v2.1.0
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
