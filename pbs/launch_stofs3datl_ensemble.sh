@@ -290,6 +290,8 @@ done
 ENSPOST_JOBID=$(qsub \
     -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY}" \
     -N "stofs3datl_enspost_${CYC}" \
+    -o "${RPTDIR}/stofs3datl_enspost_${CYC}.out" \
+    -e "${RPTDIR}/stofs3datl_enspost_${CYC}.err" \
     -W depend=${DEP_STR} \
     "${POST_PBS}")
 echo "    Ensemble post: ${ENSPOST_JOBID}"
