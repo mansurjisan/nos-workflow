@@ -291,6 +291,12 @@ ensemble_execute_model() {
     echo "=== end param.nml ==="
 
     # --- Run SCHISM with MPI ---
+    # Apply LD_PRELOAD for COMF Fortran executables only at model execution time.
+    # Setting it earlier causes Python scripts (param_generator, staging) to segfault.
+    if [ -n "${COMF_LD_PRELOAD:-}" ]; then
+        export LD_PRELOAD="${COMF_LD_PRELOAD}:${LD_PRELOAD:-}"
+        echo "LD_PRELOAD set for COMF Fortran: ${LD_PRELOAD}"
+    fi
     echo "SCHISM simulation began at: $(date)"
     mpiexec -n ${TOTAL_TASKS} ${SCHISM_EXEC} ${_nscribes} \
         > ${MEMBER_DATA}/${RUN}.${cycle}.member_${MEMBER_ID}.log 2>&1
