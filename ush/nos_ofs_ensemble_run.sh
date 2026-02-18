@@ -105,12 +105,14 @@ ensemble_configure_runtime() {
     local rc=$?
     if [ $rc -ne 0 ]; then return $rc; fi
 
-    # 3b: Set ihot=1 for hot restart with fresh output
-    # ihot=1: reads hotstart.nc but starts output from scratch (no staout dependency)
-    # ihot=2: reads hotstart.nc AND continues output (requires real staout/mirror/flux)
-    # For ensemble members, ihot=1 is correct -- each member produces independent output.
-    sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
-    echo "Set ihot=1 for hot restart with fresh output"
+    # 3b: Set ihot=2 for hot restart with continued output
+    # ihot=1: reads hotstart.nc but starts output from scratch (forecast-only staout)
+    # ihot=2: reads hotstart.nc AND continues output (appends forecast to nowcast staout)
+    # ihot=2 gives continuous nowcast+forecast timeseries in staout files.
+    # Requires real staout/mirror/flux files from the deterministic nowcast
+    # (restored in ensemble_prepare_restart).
+    sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
+    echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
 
     # 3c: Update start time and rnday for forecast period
     _ensemble_update_start_time
@@ -157,21 +159,35 @@ ensemble_prepare_restart() {
         ls ${COMOUT}/*rst* ${COMOUT}/*hotstart* 2>/dev/null || echo "No restart/hotstart files found"
     fi
 
-    # Restore staout/mirror/flux files if available (SCHISM ihot=2 requirement).
-    # SCHISM reads these on restart -- empty files cause EOF errors in some
-    # versions but are better than missing files.  If the nowcast archived
-    # real files, use them.
+    # Restore staout/mirror/flux files from deterministic nowcast (ihot=2 requirement).
+    # With ihot=2, SCHISM appends forecast output to existing staout files,
+    # giving continuous nowcast+forecast timeseries.  Real nowcast staout files
+    # are required -- empty files cause EOF errors.
     mkdir -p ${MEMBER_DATA}/outputs
     local RESTART_OUTPUTS_DIR="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+    local _has_staout=false
     if [ -d "${RESTART_OUTPUTS_DIR}" ]; then
         echo "Restoring restart output files from ${RESTART_OUTPUTS_DIR}"
         for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
                  staout_5 staout_6 staout_7 staout_8 staout_9; do
-            [ -f "${RESTART_OUTPUTS_DIR}/$f" ] && cp -p "${RESTART_OUTPUTS_DIR}/$f" ${MEMBER_DATA}/outputs/
+            if [ -f "${RESTART_OUTPUTS_DIR}/$f" ]; then
+                cp -p "${RESTART_OUTPUTS_DIR}/$f" ${MEMBER_DATA}/outputs/
+            fi
         done
+        # Check if staout_1 has real data (not empty)
+        if [ -s "${MEMBER_DATA}/outputs/staout_1" ]; then
+            _has_staout=true
+            echo "Nowcast staout files restored -- ihot=2 will produce continuous timeseries"
+        fi
     else
         echo "WARNING: restart_outputs dir not found: ${RESTART_OUTPUTS_DIR}"
-        echo "Creating empty placeholder files for SCHISM restart"
+    fi
+
+    # If nowcast staout files are missing, fall back to ihot=1 (forecast-only output)
+    if [ "${_has_staout}" = "false" ]; then
+        echo "WARNING: No nowcast staout data available -- falling back to ihot=1"
+        echo "Station timeseries will contain forecast period only"
+        sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
     fi
 
     # Ensure all required output state files exist (touch creates only if missing)
@@ -964,11 +980,11 @@ _ensemble_copy_param_nml() {
 #-------------------------------------------------------------------------------
 # Update param.nml start time and rnday for forecast period
 #
-# CRITICAL: With ihot=1, SCHISM starts its clock at start_year/month/day/hour
-# from param.nml, NOT from the hotstart file time.  The forecast param.nml
-# has start times from the simulation start (BASE_DATE), which can predate
-# the forecast sflux data.  We must update start times to the forecast start
-# (= nowcast end) so SCHISM's time_now falls within the sflux data window.
+# With ihot=2, SCHISM continues from the hotstart and appends output to
+# existing staout files.  start_year/month/day/hour must be set to the
+# forecast start (= nowcast end), and rnday is the forecast duration only.
+# This matches the COMF deterministic forecast behavior in
+# nos_ofs_prep_schism_ctl.sh (RUNTYPE=FORECAST, IHOT_VALUE=2).
 #-------------------------------------------------------------------------------
 _ensemble_update_start_time() {
     echo "Updating param.nml start time and rnday for forecast period"
