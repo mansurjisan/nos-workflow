@@ -169,6 +169,7 @@ class EnsembleConfig:
     n_members: int
     method: str
     seed: int
+    perturb_physics: bool = True
     parameters: List[ParameterDef] = field(default_factory=list)
     atmospheric: AtmosphericEnsembleConfig = field(
         default_factory=AtmosphericEnsembleConfig
@@ -202,16 +203,19 @@ class EnsembleConfig:
                 "Set ensemble.enabled: true"
             )
 
+        perturb_physics = ens.get("perturb_physics", True)
+
         params = []
-        for name, pdef in ens.get("parameters", {}).items():
-            params.append(ParameterDef(
-                name=name,
-                min_val=float(pdef["min"]),
-                max_val=float(pdef["max"]),
-                default=float(pdef.get("default", (pdef["min"] + pdef["max"]) / 2)),
-                distribution=pdef.get("distribution", "uniform"),
-                description=pdef.get("description", ""),
-            ))
+        if perturb_physics:
+            for name, pdef in ens.get("parameters", {}).items():
+                params.append(ParameterDef(
+                    name=name,
+                    min_val=float(pdef["min"]),
+                    max_val=float(pdef["max"]),
+                    default=float(pdef.get("default", (pdef["min"] + pdef["max"]) / 2)),
+                    distribution=pdef.get("distribution", "uniform"),
+                    description=pdef.get("description", ""),
+                ))
 
         atmospheric = AtmosphericEnsembleConfig.from_dict(
             ens.get("atmospheric_ensemble")
@@ -225,6 +229,7 @@ class EnsembleConfig:
             n_members=int(ens.get("n_members", 5)),
             method=ens.get("method", "parameter_perturbation"),
             seed=int(ens.get("seed", 42)),
+            perturb_physics=perturb_physics,
             parameters=params,
             atmospheric=atmospheric,
             gefs=gefs,
@@ -263,7 +268,7 @@ class EnsembleConfig:
             # Parameters are optional for GEFS mode (physics perturbation
             # is additive, not required)
         else:
-            if not self.parameters:
+            if not self.parameters and self.perturb_physics:
                 raise ValueError("No parameters defined for perturbation.")
         for p in self.parameters:
             p.validate()
@@ -536,6 +541,7 @@ class ParamGenerator:
                       f"(1 control + {self.config.n_members - 1} perturbed)")
         lines.append(f"Method: {self.config.method}")
         lines.append(f"Seed: {self.config.seed}")
+        lines.append(f"Physics perturbation: {'enabled' if self.config.perturb_physics else 'disabled'}")
         if self.config.parameters:
             lines.append(f"Parameters: {', '.join(p.name for p in self.config.parameters)}")
         if self.config.method == "gefs" and self.config.gefs.enabled:

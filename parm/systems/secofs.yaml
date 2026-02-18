@@ -331,7 +331,7 @@ shell_mappings:
 # Members 001+ use GEFS perturbation members + LHS-perturbed physics
 ensemble:
   enabled: true
-  n_members: 10
+  n_members: 11
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
@@ -386,6 +386,10 @@ ensemble:
         label: "GEFS p09"
         met_source_1: GEFS_09
         met_source_2: null
+      "010":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
     extra_sources:
       - GEFS_01
       - GEFS_02
@@ -396,7 +400,23 @@ ensemble:
       - GEFS_07
       - GEFS_08
       - GEFS_09
-  # Physics perturbation parameters (applied via LHS to members 001+)
+      - RRFS
+  # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
+  # 3km resolution, North America domain, available on WCOSS2 at para status
+  # Path: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/rrfs.tHHz.prslev.3km.fFFF.na.grib2
+  # Note: RRFS does NOT have PRMSL — uses MSLET instead (forcing script handles this)
+  # SECOFS forecast is 48h — RRFS covers 84h at main cycles, no fallback needed.
+  rrfs:
+    enabled: true
+    resolution: "3km"
+    domain: "na"                    # North America
+    max_forecast_hours: 84          # At main cycles (00/06/12/18Z)
+    fallback_source: null           # 48h forecast fits within RRFS 84h coverage
+    version: "v1.0"
+    status: "para"                  # Not yet in prod
+  # Physics perturbation via Latin Hypercube Sampling (members 001+)
+  # Set to false for GEFS-only ensemble (atmospheric forcing differences only)
+  perturb_physics: true
   # Member 000 (control) always uses default physics values
   parameters:
     rdrg2:
@@ -444,6 +464,7 @@ legacy:
     gfs: true                       # nos_ofs_create_forcing_met.sh (GFS)
     hrrr: false                     # nos_ofs_create_forcing_met.sh (HRRR) - optional
     nam: false                      # nos_ofs_create_forcing_met.sh (NAM) - fallback
+    rrfs: true                      # nos_ofs_create_forcing_met.sh (RRFS) - ensemble only
     # River forcing
     river: true                     # nos_ofs_create_forcing_river.sh
     # Ocean boundary conditions
