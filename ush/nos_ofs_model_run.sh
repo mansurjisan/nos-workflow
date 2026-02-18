@@ -452,6 +452,14 @@ _stofs_archive_outputs() {
         [ -s "$DATA/${RUN}.${cycle}.forecast.log" ] && \
             cp -p "$DATA/${RUN}.${cycle}.forecast.log" "$COMOUT/"
 
+        # Archive staout_1 to COMOUT root for dynamic bias correction.
+        # The next cycle's prep (dynamic_adjust) reads ${COMOUT_PREV}/staout_1
+        # to calculate model-vs-observation bias.
+        if [ -f "$DATA/outputs/staout_1" ] && [ -s "$DATA/outputs/staout_1" ]; then
+            cp -p "$DATA/outputs/staout_1" "${COMOUT}/staout_1"
+            echo "Archived staout_1 to ${COMOUT}/ for bias correction"
+        fi
+
         # The hotstart file for next cycle is handled by post/restart jobs
         echo "Forecast archive complete"
     fi
