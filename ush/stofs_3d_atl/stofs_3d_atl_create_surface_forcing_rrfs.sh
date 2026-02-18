@@ -154,195 +154,211 @@ esac
 #
 # RRFS cycle structure:
 #   - 00Z, 06Z, 12Z, 18Z: extended runs with forecasts out to f084 (84 hours)
-#   - All other hours (01-05, 07-11, 13-17, 19-23): short runs, f001-f018 only
+#   - All other hours: short runs, f001-f018 only
 #
-# Strategy for assembling nowcast + forecast coverage (~5.5 days = 132 hours):
+# Strategy: Cycle-aware file collection
+#   Each file's ACTUAL valid time is computed from its cycle date + hour + forecast hour.
+#   This avoids time ordering issues when stitching files from multiple cycles.
 #
-# For a 12Z cycle (STOFS-3D-ATL standard):
-#   Nowcast window (previous day ~12Z through today 12Z = ~24 hours):
-#     - Previous day 06Z cycle: use f006 to get coverage at ~12Z yesterday
-#     - Previous day 12Z cycle: f001-f006 (covers 13Z-18Z yesterday)
-#     - Previous day 18Z cycle: f001-f006 (covers 19Z-00Z)
-#     - Today 00Z cycle: f001-f006 (covers 01Z-06Z today)
-#     - Today 06Z cycle: f001-f006 (covers 07Z-12Z today)
-#   Forecast window (today 12Z + 84 hours = 3.5 days):
-#     - Today 12Z cycle: f001-f084 (covers 13Z today through 00Z in 3.5 days)
+#   For 00Z: prev_day 00Z extended (f001-f024) + today 00Z extended (f001-f084)
+#   For 06Z: prev_day 06Z extended (f001-f024) + today 06Z extended (f001-f084)
+#   For 12Z: prev_day 12Z f006 + short cycles + today 12Z extended (f001-f084)
+#   For 18Z: prev_day 18Z extended (f001-f024) + today 18Z extended (f001-f084)
 #
-# Total coverage: ~24h nowcast + 84h forecast = ~108 hours = 4.5 days
-#
-# LIMITATION: RRFS maximum forecast is 84h. For STOFS-3D-ATL 108h forecasts,
-# the last ~24h must be filled by GFS (handled externally by the calling prep script).
-# For SECOFS 48h forecasts from 00Z, a single 00Z 84h run provides full coverage.
+# Each file entry is stored as "VALID_HOUR|FILEPATH" so we can sort by valid time.
 
-# ------ Primary list (using today's cycles) ------
+    # Compute day offset between yyyymmdd_prev and yyyymmdd_today (in days)
+    # Used for valid-time calculation: valid_hour = day_offset*24 + cycle_hour + forecast_hour
+    _today_day_off=$(( ($(date -d "${yyyymmdd_today}" +%s) - $(date -d "${yyyymmdd_prev}" +%s)) / 86400 ))
+    echo "Day offset (prev→today): ${_today_day_off}"
 
-# Previous day 06Z cycle: f006 (1 file, providing coverage at ~12Z yesterday)
-    list_fn_yest_t06z_1=''
-    fn_k=${COMINrrfs}/rrfs.${yyyymmdd_prev}/06/rrfs.t06z.prslev.${RRFS_RESOLUTION}.f006.na.grib2
-    if [ -f "${fn_k}" ]; then
-        list_fn_yest_t06z_1="${fn_k}"
+    # Helper: add a file with its valid time to the collection
+    # Usage: _add_rrfs_file YYYYMMDD CYC_HOUR FCAST_HOUR
+    # Stores: "VALID_HOURS_FROM_BASE|FILEPATH" in _RRFS_FILE_LIST
+    # Valid hour = (file_date - base_date)*24 + cycle_hour + forecast_hour
+    _RRFS_FILE_LIST=()
+    _add_rrfs_file() {
+        local _fdate=$1 _fcyc=$2 _fhr=$3
+        local _fstr=$(printf "%03d" ${_fhr})
+        local _cstr=$(printf "%02d" ${_fcyc})
+        local _fpath=${COMINrrfs}/rrfs.${_fdate}/${_cstr}/rrfs.t${_cstr}z.prslev.${RRFS_RESOLUTION}.f${_fstr}.na.grib2
+        # Valid time in hours from base (yyyymmdd_prev 00Z)
+        local _day_off=0
+        [ "${_fdate}" = "${yyyymmdd_today}" ] && _day_off=${_today_day_off}
+        local _fepoch=$(( _day_off * 24 + 10#${_fcyc} + _fhr ))
+        _RRFS_FILE_LIST+=("${_fepoch}|${_fpath}")
+    }
+
+    echo "Cycle hour: ${cyc:-00}"
+    _cyc_hr=$((10#${cyc:-0}))
+
+    # ------ Build file list based on cycle ------
+    # Strategy: use the latest available extended cycle for each time window.
+    # Extended cycles (00/06/12/18Z) go to f084; we stitch 2-3 of them.
+
+    if [ ${_cyc_hr} -eq 0 ] || [ ${_cyc_hr} -eq 6 ]; then
+        # 00Z or 06Z cycle: nowcast coverage from prev extended cycles
+
+        # Previous day's matching extended cycle for nowcast (f001-f024)
+        _prev_ext_cyc=${_cyc_hr}
+        for _fhr in $(seq 1 24); do
+            _add_rrfs_file ${yyyymmdd_prev} ${_prev_ext_cyc} ${_fhr}
+        done
+
+        # Today's matching extended cycle for forecast (f001-f084)
+        for _fhr in $(seq 1 84); do
+            _add_rrfs_file ${yyyymmdd_today} ${_cyc_hr} ${_fhr}
+        done
+
+    elif [ ${_cyc_hr} -eq 12 ]; then
+        # 12Z cycle (STOFS-3D-ATL): nowcast from short cycles, forecast from 12Z extended
+
+        # Previous day 06Z f006 (1 file)
+        _add_rrfs_file ${yyyymmdd_prev} 6 6
+        # Previous day 12Z f001-f006
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_prev} 12 ${_fhr}
+        done
+        # Previous day 18Z f001-f006
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_prev} 18 ${_fhr}
+        done
+        # Today 00Z f001-f006
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_today} 0 ${_fhr}
+        done
+        # Today 06Z f001-f006
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_today} 6 ${_fhr}
+        done
+        # Today 12Z extended: f001-f084
+        for _fhr in $(seq 1 84); do
+            _add_rrfs_file ${yyyymmdd_today} 12 ${_fhr}
+        done
+
+    elif [ ${_cyc_hr} -eq 18 ]; then
+        # 18Z cycle: nowcast from earlier cycles, forecast from 18Z extended
+        _add_rrfs_file ${yyyymmdd_prev} 12 6
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_prev} 18 ${_fhr}
+        done
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_today} 0 ${_fhr}
+        done
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_today} 6 ${_fhr}
+        done
+        for _fhr in $(seq 1 6); do
+            _add_rrfs_file ${yyyymmdd_today} 12 ${_fhr}
+        done
+        # Today 18Z extended: f001-f084
+        for _fhr in $(seq 1 84); do
+            _add_rrfs_file ${yyyymmdd_today} 18 ${_fhr}
+        done
+
+    else
+        echo "WARNING: Non-standard cycle hour ${_cyc_hr}, using 00Z strategy"
+        for _fhr in $(seq 1 24); do
+            _add_rrfs_file ${yyyymmdd_prev} 0 ${_fhr}
+        done
+        for _fhr in $(seq 1 84); do
+            _add_rrfs_file ${yyyymmdd_today} 0 ${_fhr}
+        done
     fi
 
-# Previous day 12Z cycle: f001-f006 (hourly, 6 files)
-    list_fn_yest_t12z=''
-    for str_hhh in $(seq -f "%03g" 1 1 6); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_prev}/12/rrfs.t12z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_yest_t12z="${list_fn_yest_t12z} ${fn_k}"
+    echo "Total candidate RRFS files: ${#_RRFS_FILE_LIST[@]}"
+
+    # ------ Backup list: previous day's latest extended cycle ------
+    # Fall back to previous day's cycle that matches or precedes ours
+    _RRFS_BACKUP_LIST=()
+    _bk_cyc=${_cyc_hr}
+    _bk_cstr=$(printf "%02d" ${_bk_cyc})
+    for _fhr in $(seq 1 84); do
+        _bk_fstr=$(printf "%03d" ${_fhr})
+        _fpath=${COMINrrfs}/rrfs.${yyyymmdd_prev}/${_bk_cstr}/rrfs.t${_bk_cstr}z.prslev.${RRFS_RESOLUTION}.f${_bk_fstr}.na.grib2
+        # day_offset = 0 since all backup files are from yyyymmdd_prev
+        _fepoch=$(( _bk_cyc + _fhr ))
+        _RRFS_BACKUP_LIST+=("${_fepoch}|${_fpath}")
     done
 
-# Previous day 18Z cycle: f001-f006 (hourly, 6 files)
-    list_fn_yest_t18z=''
-    for str_hhh in $(seq -f "%03g" 1 1 6); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_prev}/18/rrfs.t18z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_yest_t18z="${list_fn_yest_t18z} ${fn_k}"
+    echo; echo "Primary list (first 10):"
+    for _entry in "${_RRFS_FILE_LIST[@]:0:10}"; do echo "  $_entry"; done
+    echo "  ..."
+
+    echo; echo "Backup list (first 10):"
+    for _entry in "${_RRFS_BACKUP_LIST[@]:0:10}"; do echo "  $_entry"; done
+    echo "  ..."
+
+
+# ------------------------> Check file sizes and filter
+# RRFS native 3km files are ~6GB each. Set minimum threshold at 500 MB.
+FILESIZE=500000000
+
+_filter_rrfs_list() {
+    local -n _input_list=$1
+    local -n _output_list=$2
+    _output_list=()
+    for _entry in "${_input_list[@]}"; do
+        local _vhour=${_entry%%|*}
+        local _fpath=${_entry##*|}
+        if [ -s "${_fpath}" ]; then
+            local _fsz=$(wc -c < "${_fpath}")
+            if [ ${_fsz} -ge ${FILESIZE} ]; then
+                _output_list+=("${_entry}")
+                echo "OK [vh=${_vhour}h]: ${_fpath} (${_fsz} bytes)"
+            else
+                echo "SMALL [vh=${_vhour}h]: ${_fpath} (${_fsz} < ${FILESIZE})"
+            fi
+        else
+            echo "MISS [vh=${_vhour}h]: ${_fpath}"
+        fi
     done
+}
 
-# Today 00Z cycle: f001-f006 (hourly, 6 files)
-    list_fn_today_t00z=''
-    for str_hhh in $(seq -f "%03g" 1 1 6); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_today}/00/rrfs.t00z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_today_t00z="${list_fn_today_t00z} ${fn_k}"
-    done
+echo; echo "=== Checking primary file list ==="
+_RRFS_PRIMARY_VALID=()
+_filter_rrfs_list _RRFS_FILE_LIST _RRFS_PRIMARY_VALID
 
-# Today 06Z cycle: f001-f006 (hourly, 6 files)
-    list_fn_today_t06z=''
-    for str_hhh in $(seq -f "%03g" 1 1 6); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_today}/06/rrfs.t06z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_today_t06z="${list_fn_today_t06z} ${fn_k}"
-    done
+echo; echo "=== Checking backup file list ==="
+_RRFS_BACKUP_VALID=()
+_filter_rrfs_list _RRFS_BACKUP_LIST _RRFS_BACKUP_VALID
 
-# Today 12Z cycle: f001-f084 (hourly, 84 files -- main forecast period)
-    list_fn_today_t12z=''
-    for str_hhh in $(seq -f "%03g" 1 1 84); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_today}/12/rrfs.t12z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_today_t12z="${list_fn_today_t12z} ${fn_k}"
-    done
+N_primary=${#_RRFS_PRIMARY_VALID[@]}
+N_backup=${#_RRFS_BACKUP_VALID[@]}
+echo; echo "Primary valid: ${N_primary} files"
+echo "Backup valid:  ${N_backup} files"
 
-    # Concatenate primary list
-    # Total: 1 + 6 + 6 + 6 + 6 + 84 = 109 files (hourly, covering ~109 hours)
-    LIST_fn_all_1="${list_fn_yest_t06z_1} "
-    LIST_fn_all_1+="${list_fn_yest_t12z} "
-    LIST_fn_all_1+="${list_fn_yest_t18z} "
-    LIST_fn_all_1+="${list_fn_today_t00z} "
-    LIST_fn_all_1+="${list_fn_today_t06z} "
-    LIST_fn_all_1+="${list_fn_today_t12z}"
-
-
-# ------ Backup list (previous day's 12Z extended forecast) ------
-# If today's cycles are not yet available, fall back to yesterday's 12Z cycle
-# which provides up to 84h of forecast data.
-
-    list_fn_bk_1=''
-    fn_k=${COMINrrfs}/rrfs.${yyyymmdd_prev}/06/rrfs.t06z.prslev.${RRFS_RESOLUTION}.f006.na.grib2
-    if [ -f "${fn_k}" ]; then
-        list_fn_bk_1="${fn_k}"
-    fi
-
-    # Previous day 12Z: f001-f084 (hourly, 84 files)
-    list_fn_bk_2=''
-    for str_hhh in $(seq -f "%03g" 1 1 84); do
-        fn_k=${COMINrrfs}/rrfs.${yyyymmdd_prev}/12/rrfs.t12z.prslev.${RRFS_RESOLUTION}.f${str_hhh}.na.grib2
-        list_fn_bk_2="${list_fn_bk_2} ${fn_k}"
-    done
-
-    LIST_fn_all_2="${list_fn_bk_1} "
-    LIST_fn_all_2+="${list_fn_bk_2}"
-
-    echo; echo "list_1 (primary):"
-    A=$LIST_fn_all_1; for a in ${A[@]}; do echo $a; done
-
-    echo; echo "list_2 (backup):"
-    A=$LIST_fn_all_2; for a in ${A[@]}; do echo $a; done
-
-
-# ------------------------> Check file sizes
-# RRFS native 3km files are ~6GB each. After subsetting to the STOFS domain,
-# files are much smaller (~50-200 MB depending on domain size).
-# We check the ORIGINAL file size before subsetting.
-# Set minimum threshold at 500 MB to catch truncated/corrupt files.
-# (Even a subset of the domain at 3km is substantial)
-list_route_no=(1 2)
-for flag_route_no in ${list_route_no[@]}; do
-
- echo $flag_route_no
- if [[ $flag_route_no == 1 ]]; then
-    list_wk=$LIST_fn_all_1
- else
-    list_wk=$LIST_fn_all_2
- fi
-
- FILESIZE=500000000
- LIST_fn_final=''
- for fn_rrfs_k_sz in ${list_wk[@]}
- do
-   echo "Processing:: " $fn_rrfs_k_sz
-
-   if [ -s $fn_rrfs_k_sz ]; then
-      filesize=`wc -c $fn_rrfs_k_sz | awk '{print $1}' `
-
-      if [ $filesize -ge $FILESIZE ];
-      then
-         LIST_fn_final+="${fn_rrfs_k_sz} "
-         echo "File size OK: $fn_rrfs_k_sz : filesize $filesize GE $FILESIZE"
-      else
-         echo "WARNING: " $fn_rrfs_k_sz ": filesize $filesize less than $FILESIZE"
-         echo "WARNING: " $fn_rrfs_k_sz ": filesize $filesize less than $FILESIZE"  >> $pgmout
-      fi
-
-   else
-      echo "WARNING: "  $fn_rrfs_k_sz " does not exist"
-      echo "WARNING: "  $fn_rrfs_k_sz " does not exist"
-   fi
- done
-
-
-  if [[ $flag_route_no == 1 ]]; then
-    LIST_fn_final_qa_sz_1=$LIST_fn_final
-  else
-    LIST_fn_final_qa_sz_2=$LIST_fn_final
-  fi
-
-done # for flag_route_no
-
-
-# ----------> Combine primary and backup lists if needed
-# RRFS hourly: ~109 files expected for full nowcast+forecast (primary list)
-# Minimum target: ~70 files (~2.9 days coverage from nowcast start)
-  N_list_target=${N_list_target:-70}
-
- A1=($LIST_fn_final_qa_sz_1)
- B2=($LIST_fn_final_qa_sz_2)
-
-  N_list_1=${#A1[@]}; echo "Primary list count: $N_list_1"
-  N_list_2=${#B2[@]}; echo "Backup list count: $N_list_2"
-
-
-if [[ ${N_list_1} -gt 1 ]]; then
-
-  LIST_fn_final_qa_sz=(${A1[@]})
-
-  if [[ ${N_list_1} -lt ${N_list_target} ]] && [[ ${N_list_2} -gt ${N_list_1} ]]; then
-    echo "N_list_1 = $N_list_1"; echo "N_list_2 = $N_list_2"
-
-    n_diff_1_2=$((${N_list_2}-${N_list_1}))
-
-    LIST_fn_final_qa_sz=(${A1[@]} ${B2[@]:$N_list_1:$n_diff_1_2})
-
-    echo "combined: LIST_fn_1 & 2: "
-    for a in ${LIST_fn_final_qa_sz[@]}; do echo $a; done
-
-  else
-    echo "List from LIST_fn_final_qa_sz_1"
-
-  fi
-
-elif  [[ ${N_list_2} -gt 1 ]]; then
-  echo "List from LIST_fn_final_qa_sz_2"
-  LIST_fn_final_qa_sz=(${B2[@]})
-
+# Use primary if sufficient (>30), otherwise try backup, otherwise combine
+N_dim_cr_min_cntList=30
+if [ ${N_primary} -ge ${N_dim_cr_min_cntList} ]; then
+    LIST_fn_final_qa_sz=("${_RRFS_PRIMARY_VALID[@]}")
+    echo "Using primary list (${N_primary} files)"
+elif [ ${N_backup} -ge ${N_dim_cr_min_cntList} ]; then
+    LIST_fn_final_qa_sz=("${_RRFS_BACKUP_VALID[@]}")
+    echo "Using backup list (${N_backup} files)"
+elif [ ${N_primary} -gt 0 ]; then
+    # Combine: primary + any backup files with valid hours beyond primary's range
+    LIST_fn_final_qa_sz=("${_RRFS_PRIMARY_VALID[@]}" "${_RRFS_BACKUP_VALID[@]}")
+    echo "Using combined list (${N_primary} + ${N_backup} files)"
 else
-  LIST_fn_final_qa_sz=()
+    LIST_fn_final_qa_sz=()
+    echo "WARNING: No valid RRFS files found"
+fi
 
+# Sort by valid hour and deduplicate (keep first occurrence for each valid hour)
+if [ ${#LIST_fn_final_qa_sz[@]} -gt 0 ]; then
+    _SORTED_UNIQUE=()
+    _seen_hours=""
+    while IFS= read -r _entry; do
+        _vh=${_entry%%|*}
+        if [[ ! " ${_seen_hours} " =~ " ${_vh} " ]]; then
+            _SORTED_UNIQUE+=("${_entry}")
+            _seen_hours="${_seen_hours} ${_vh}"
+        fi
+    done < <(printf '%s\n' "${LIST_fn_final_qa_sz[@]}" | sort -t'|' -k1 -n)
+    LIST_fn_final_qa_sz=("${_SORTED_UNIQUE[@]}")
+    echo "After sort+dedup: ${#LIST_fn_final_qa_sz[@]} files"
+    echo "Valid hour range: ${LIST_fn_final_qa_sz[0]%%|*}h to ${LIST_fn_final_qa_sz[-1]%%|*}h"
 fi
 
 
@@ -368,20 +384,7 @@ fi
  rm -f *_voi*.
  rm -f *_sflux.nc
 
- ihr=$((10#${cyc:-12}))  # reference cycle hour (from env, default 12Z)
- hr_1st_file=0
-
- # Create symbolic links for reference
- let cnt="hr_1st_file-1"
- for fn_rrfs_k in ${LIST_fn_final_qa_sz[@]}
- do
-   let cnt=$cnt+1
-   str_xxx_cnt=`seq -f "%03g" $cnt 1 $cnt`
-   ln -sf $fn_rrfs_k sorce_rrfs_no_${str_xxx_cnt}
- done
-
 # Minimum number of time steps for a valid merged file
-# RRFS hourly: 70 files covers ~2.9 days from nowcast start; 30 is absolute minimum (~1.25 days)
 N_dim_cr_min_cntList=30
 N_LIST_fn_final_qa_sz=${#LIST_fn_final_qa_sz[@]}
 
@@ -394,17 +397,18 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
   echo "N_LIST_fn_final_qa_sz = ${N_LIST_fn_final_qa_sz}"
   echo
 
-  # Counter for hourly time steps
-  # RRFS is hourly, so each file advances 1 hour (same as GFS)
-  let cnt="hr_1st_file-1"
-  for fn_rrfs_k in ${LIST_fn_final_qa_sz[@]}
+  # Process each file using its ACTUAL valid hour from the sorted list.
+  # Each entry is "VALID_HOUR|FILEPATH" — the valid hour is hours from base
+  # (yyyymmdd_prev 00Z), which maps directly to the SCHISM time variable.
+  cnt=0
+  for _entry in "${LIST_fn_final_qa_sz[@]}"
   do
+   # Parse valid hour and filepath from the entry
+   _valid_hour=${_entry%%|*}
+   fn_rrfs_k=${_entry##*|}
 
-   let cnt=$cnt+1
-
-   str_xxx_cnt=`seq -f "%03g" $cnt 1 $cnt`
-   echo "Processing($str_xxx_cnt): " $fn_rrfs_k
-
+   str_xxx_cnt=$(printf "%03d" $cnt)
+   echo "Processing(${str_xxx_cnt}, vh=${_valid_hour}h): ${fn_rrfs_k}"
 
    # Step 1: Extract variables of interest from GRIB2
    fn_varOI=RRFS_voi_${str_xxx_cnt}.grb2
@@ -412,7 +416,6 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
       export err=$?;
 
    # Step 2: Subset to region of interest (CRITICAL -- RRFS files are ~6GB at native 3km)
-   # This reduces file size from ~6GB to ~50-200MB depending on domain
    fn_roi=iRRFS_voi_rio_${str_xxx_cnt}.grb2
       $WGRIB2  $fn_varOI  -small_grib ${LONMIN}:${LONMAX} ${LATMIN}:${LATMAX} $fn_roi   >> $pgmout 2> errfile
       export err=$?;
@@ -423,9 +426,6 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
       export err=$?;
 
    # Step 4: Rename MSLET -> PRMSL for SCHISM compatibility
-   # RRFS uses MSLET (Mean Sea Level Pressure, ETA model reduction) instead of PRMSL.
-   # wgrib2 -netcdf names this MSLET_meansealevel. The NCO update script expects
-   # PRMSL_meansealevel, so we must rename it before applying the NCO script.
    fn_0_rnVar=RRFS_voi_rio_0rename_${str_xxx_cnt}.nc
       cp ${fn_0_rnVar_raw} ${fn_0_rnVar}
       ncrename -O -v MSLET_meansealevel,PRMSL_meansealevel ${fn_0_rnVar}  >> $pgmout 2> errfile
@@ -433,7 +433,6 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
 
       if [ $err -ne 0 ]; then
           echo "WARNING: ncrename MSLET->PRMSL failed for ${str_xxx_cnt}, checking if PRMSL already exists"
-          # Some RRFS versions might use PRMSL directly; check and continue
           ncdump -h ${fn_0_rnVar_raw} | grep -q "PRMSL_meansealevel"
           if [ $? -eq 0 ]; then
               echo "INFO: PRMSL_meansealevel already present, using as-is"
@@ -442,20 +441,22 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
               echo "ERROR: Neither MSLET nor PRMSL found in ${fn_rrfs_k}"
               echo "ERROR: Skipping file ${str_xxx_cnt}"  >> $pgmout
               rm -f ${fn_0_rnVar}
+              cnt=$((cnt + 1))
               continue
           fi
       fi
 
-   # Step 5: Update time variable and rename to SCHISM sflux names
+   # Step 5: Update time variable using ACTUAL valid hour (not sequential counter)
+   # _valid_hour is hours from base (yyyymmdd_prev 00Z). The NCO script converts
+   # tin (hours) to fractional days: time[time] = float(tin/24.)
    fn_out=RRFS_sflux_no_${str_xxx_cnt}.nc
 
    str_time=`echo '"'days since $iyr-$imon-$iday 00:00:00'"'`
-   # RRFS is hourly, so advance time by 1*cnt hours from start (same as GFS)
-   let hr_cnt_since_hr00=${ihr}+${cnt}
 
-     ncap2 -Oh -s "tin=${hr_cnt_since_hr00}"  -s "time@units=$str_time"  -s "time@base_date ={ $iyr, $imon, $iday, 0}" -S $fn_nco_update_time_varName -v ${fn_0_rnVar}  $fn_out   >> $pgmout 2> errfile
+     ncap2 -Oh -s "tin=${_valid_hour}"  -s "time@units=$str_time"  -s "time@base_date ={ $iyr, $imon, $iday, 0}" -S $fn_nco_update_time_varName -v ${fn_0_rnVar}  $fn_out   >> $pgmout 2> errfile
      export err=$?;
 
+   cnt=$((cnt + 1))
  done
 
 # Merge all time steps into a single file
