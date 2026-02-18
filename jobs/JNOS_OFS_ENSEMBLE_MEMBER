@@ -199,9 +199,12 @@ case "${OFS_FRAMEWORK}" in
         $SCRIstofs3d/exnos_ofs_ensemble_member.sh
         ;;
     comf|*)
-        # COMF Fortran executables need NetCDF Fortran library preloaded
+        # LD_PRELOAD of libnetcdff.so is deferred to ensemble_execute_model()
+        # (right before mpiexec) because Python scripts (param_generator,
+        # ensemble staging) segfault when the Fortran library is force-loaded.
+        # Export the path so the ensemble run library can apply it at model time.
         if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+            export COMF_LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so
         fi
 
         # Execute ensemble member ex-script
