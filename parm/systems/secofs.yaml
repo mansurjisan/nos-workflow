@@ -331,7 +331,7 @@ shell_mappings:
 # Members 001+ use GEFS perturbation members + LHS-perturbed physics
 ensemble:
   enabled: true
-  n_members: 11
+  n_members: 6
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
@@ -340,7 +340,7 @@ ensemble:
   # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
   gefs:
     enabled: true
-    n_gefs_members: 10
+    n_gefs_members: 4
     resolution: "0p50"
     product: "pgrb2ap5"
     control_member: "gec00"
@@ -367,26 +367,6 @@ ensemble:
         met_source_1: GEFS_04
         met_source_2: null
       "005":
-        label: "GEFS p05"
-        met_source_1: GEFS_05
-        met_source_2: null
-      "006":
-        label: "GEFS p06"
-        met_source_1: GEFS_06
-        met_source_2: null
-      "007":
-        label: "GEFS p07"
-        met_source_1: GEFS_07
-        met_source_2: null
-      "008":
-        label: "GEFS p08"
-        met_source_1: GEFS_08
-        met_source_2: null
-      "009":
-        label: "GEFS p09"
-        met_source_1: GEFS_09
-        met_source_2: null
-      "010":
         label: "RRFS"
         met_source_1: RRFS
         met_source_2: null
@@ -395,11 +375,6 @@ ensemble:
       - GEFS_02
       - GEFS_03
       - GEFS_04
-      - GEFS_05
-      - GEFS_06
-      - GEFS_07
-      - GEFS_08
-      - GEFS_09
       - RRFS
   # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
   # 3km resolution, North America domain, available on WCOSS2 at para status
