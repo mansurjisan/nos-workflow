@@ -83,9 +83,9 @@ for arg in "$@"; do
 done
 unset _NEXT_IS_PDY
 
-# GEFS defaults: 10 members for SECOFS (if user didn't specify member count)
+# GEFS defaults: 6 members for SECOFS (4 GEFS + 1 RRFS + 1 control)
 if [ "${GEFS_ENSEMBLE}" = true ] && [ "${_USER_SET_MEMBERS}" = false ]; then
-    N_MEMBERS=10
+    N_MEMBERS=6
 fi
 unset _USER_SET_MEMBERS
 
@@ -209,9 +209,9 @@ if [ "${ATMOS_ENSEMBLE}" = true ]; then
     echo ""
     if [ "${GEFS_ENSEMBLE}" = true ]; then
         echo ">>> Submitting GEFS atmospheric ensemble prep job..."
-        # Build GEFS member list: 01 02 03 ... (skip control member 000 which uses GFS)
-        GEFS_MEMBER_LIST=$(seq -f "%02g" 1 $((N_MEMBERS - 1)) | paste -sd' ')
-        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true,GEFS_MEMBERS=${GEFS_MEMBER_LIST},N_GEFS_MEMBERS=$((N_MEMBERS - 1))" \
+        # Don't pass GEFS_MEMBERS — let the J-job read from YAML config.
+        # YAML correctly distinguishes GEFS members from RRFS/other sources.
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true" \
                           -N "secofs_gefs_prep_${CYC}" \
                           -o "${RPTDIR}/secofs_gefs_prep_${CYC}.out" \
                           -e "${RPTDIR}/secofs_gefs_prep_${CYC}.err")
