@@ -666,31 +666,58 @@ _ensemble_comf_stage_atmos() {
                     MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
                     ;;
                 GEFS_*)
+                    # GEFS now uses sflux NetCDFs in COMOUTrerun (wgrib2/NCO pipeline),
+                    # NOT tar archives.  Check COMOUTrerun first, fall back to tar.
                     local _GEFS_ID=$(echo "${ATMOS_MET1}" | sed 's/GEFS_//')
-                    local _GEFS_TAG
-                    if [ "${_GEFS_ID}" = "c00" ] || [ "${_GEFS_ID}" = "00" ]; then
-                        _GEFS_TAG="gec00"
-                    else
-                        _GEFS_TAG="gep$(printf '%02d' "${_GEFS_ID}" 2>/dev/null || echo "${_GEFS_ID}")"
+                    local _COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+                    local _gefs_found=false
+
+                    # Try COMOUTrerun sflux NetCDFs first
+                    if [ -s "${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.air.nc" ]; then
+                        echo "GEFS primary: staging sflux from ${_COMOUTrerun} (member=${_GEFS_ID})"
+                        for var in air prc rad; do
+                            local src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.${var}.nc"
+                            local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
+                            if [ -s "${src}" ]; then
+                                cp -p "${src}" "${dst}"
+                                echo "  sflux_${var}_1 <- gefs_${_GEFS_ID}"
+                            else
+                                echo "WARNING: GEFS sflux not found: ${src}" >&2
+                            fi
+                        done
+                        _gefs_found=true
                     fi
-                    MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.nc.tar"
-                    [ ! -f "${MET1_TAR}" ] && \
-                        MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.tar"
-                    echo "GEFS primary: member=${_GEFS_ID} tag=${_GEFS_TAG}"
+
+                    # Fall back to tar archives (legacy path)
+                    if [ "${_gefs_found}" = false ]; then
+                        local _GEFS_TAG
+                        if [ "${_GEFS_ID}" = "c00" ] || [ "${_GEFS_ID}" = "00" ]; then
+                            _GEFS_TAG="gec00"
+                        else
+                            _GEFS_TAG="gep$(printf '%02d' "${_GEFS_ID}" 2>/dev/null || echo "${_GEFS_ID}")"
+                        fi
+                        MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.nc.tar"
+                        [ ! -f "${MET1_TAR}" ] && \
+                            MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.GEFS_${_GEFS_TAG}.tar"
+                        echo "GEFS primary: member=${_GEFS_ID} tag=${_GEFS_TAG} (tar fallback)"
+                    fi
                     ;;
                 *)
                     MET1_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.${ATMOS_MET1}.tar"
                     ;;
             esac
 
-            if [ -f "${MET1_TAR}" ]; then
-                echo "Extracting primary met (${ATMOS_MET1}): $(basename ${MET1_TAR})"
-                tar xf "${MET1_TAR}" -C ${MEMBER_DATA}/sflux/
-            else
-                echo "ERROR: Primary met tar not found: ${MET1_TAR}" >&2
-                echo "  Falling back to default GFS tar"
-                local FALLBACK_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
-                [ -f "${FALLBACK_TAR}" ] && tar xf "${FALLBACK_TAR}" -C ${MEMBER_DATA}/sflux/
+            # MET1_TAR is empty when GEFS sflux were already staged from COMOUTrerun
+            if [ -n "${MET1_TAR}" ]; then
+                if [ -f "${MET1_TAR}" ]; then
+                    echo "Extracting primary met (${ATMOS_MET1}): $(basename ${MET1_TAR})"
+                    tar xf "${MET1_TAR}" -C ${MEMBER_DATA}/sflux/
+                else
+                    echo "ERROR: Primary met tar not found: ${MET1_TAR}" >&2
+                    echo "  Falling back to default GFS tar"
+                    local FALLBACK_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+                    [ -f "${FALLBACK_TAR}" ] && tar xf "${FALLBACK_TAR}" -C ${MEMBER_DATA}/sflux/
+                fi
             fi
         fi
 
