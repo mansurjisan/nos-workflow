@@ -396,7 +396,9 @@ ensemble:
       - GEFS_07
       - GEFS_08
       - GEFS_09
-  # Physics perturbation parameters (applied via LHS to members 001+)
+  # Physics perturbation via Latin Hypercube Sampling (members 001+)
+  # Set to false for GEFS-only ensemble (atmospheric forcing differences only)
+  perturb_physics: true
   # Member 000 (control) always uses default physics values
   parameters:
     rdrg2:
