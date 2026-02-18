@@ -222,7 +222,7 @@ stages:
 # Members 001+ use GEFS perturbation members + LHS-perturbed physics
 ensemble:
   enabled: true
-  n_members: 5
+  n_members: 6
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
@@ -257,11 +257,30 @@ ensemble:
         label: "GEFS p04"
         met_source_1: GEFS_04
         met_source_2: null
+      "005":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
     extra_sources:
       - GEFS_01
       - GEFS_02
       - GEFS_03
       - GEFS_04
+      - RRFS
+  # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
+  # 3km resolution, North America domain, available on WCOSS2 at para status
+  # Path: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/rrfs.tHHz.prslev.3km.fFFF.na.grib2
+  # Note: RRFS does NOT have PRMSL — uses MSLET instead (forcing script handles this)
+  # STOFS-3D-ATL forecast is 108h but RRFS covers 84h at main cycles;
+  # hours beyond 84 fall back to GFS.
+  rrfs:
+    enabled: true
+    resolution: "3km"
+    domain: "na"                    # North America
+    max_forecast_hours: 84          # At main cycles (00/06/12/18Z)
+    fallback_source: GFS            # For hours beyond RRFS coverage (84h < 108h forecast)
+    version: "v1.0"
+    status: "para"                  # Not yet in prod
   # Physics perturbation via Latin Hypercube Sampling (members 001+)
   # Set to false for GEFS-only ensemble (atmospheric forcing differences only)
   perturb_physics: true
@@ -312,6 +331,7 @@ legacy:
     gfs: true                     # stofs_3d_atl_create_surface_forcing_gfs.sh
     hrrr: true                    # stofs_3d_atl_create_surface_forcing_hrrr.sh
     nam: true                     # stofs_3d_atl_create_surface_forcing_nam.sh (ensemble only)
+    rrfs: true                    # stofs_3d_atl_create_surface_forcing_rrfs.sh (ensemble only)
     river: true                   # stofs_3d_atl_create_river_forcing_nwm.sh
     obc: true                     # stofs_3d_atl_create_obc_3d_th.sh
     tides: true                   # stofs_3d_atl_create_bctides_in.sh
@@ -320,6 +340,7 @@ legacy:
     gfs: stofs_3d_atl_create_surface_forcing_gfs.sh
     hrrr: stofs_3d_atl_create_surface_forcing_hrrr.sh
     nam: stofs_3d_atl_create_surface_forcing_nam.sh
+    rrfs: stofs_3d_atl_create_surface_forcing_rrfs.sh
     river: stofs_3d_atl_create_river_forcing_nwm.sh
     obc: stofs_3d_atl_create_obc_3d_th.sh
     tides: stofs_3d_atl_create_bctides_in.sh

@@ -158,6 +158,8 @@ if command -v compath.py &> /dev/null; then
     export COMINrtma=${COMINrtma:-$(compath.py prod/rtma/${rtma_ver:-v2.8})}
     export COMINgfs=${COMINgfs:-$(compath.py prod/gfs/${gfs_ver:-v16.3})}
     export COMINgefs=${COMINgefs:-$(compath.py prod/gefs/${gefs_ver:-v12.3})}
+    # RRFS is in para status (not prod yet)
+    export COMINrrfs=${COMINrrfs:-$(compath.py para/rrfs/${rrfs_ver:-v1.0})}
 fi
 
 export DCOMINndfd=${DCOMROOT:-}
@@ -182,7 +184,7 @@ echo "=== Reading atmospheric ensemble configuration ==="
 
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-# Extract extra_sources and GEFS member list from YAML
+# Extract extra_sources, GEFS member list, and RRFS config from YAML
 _yaml_output=$(python3 << 'PYEOF'
 import os, sys
 try:
@@ -201,15 +203,16 @@ ens = data.get("ensemble", {})
 method = ens.get("method", "parameter_perturbation")
 atm = ens.get("atmospheric_ensemble", {})
 gefs_cfg = ens.get("gefs", {})
+rrfs_cfg = ens.get("rrfs", {})
 
 # Line 1: ensemble method
 print(method)
 
-# Line 2: non-GEFS extra_sources (space-separated)
+# Line 2: non-GEFS/non-RRFS extra_sources (space-separated)
 non_gefs_sources = []
 if atm.get("enabled", False):
     for src in atm.get("extra_sources", []):
-        if not src.upper().startswith("GEFS"):
+        if not src.upper().startswith("GEFS") and src.upper() != "RRFS":
             non_gefs_sources.append(src)
 print(" ".join(non_gefs_sources))
 
@@ -252,6 +255,26 @@ print(gefs_cfg.get("product", "pgrb2ap5"))
 
 # Line 5: GEFS resolution string
 print(gefs_cfg.get("resolution", "0p50"))
+
+# Line 6: RRFS enabled (true/false)
+# Check ensemble.rrfs.enabled OR if any member/extra_sources references RRFS
+rrfs_enabled = rrfs_cfg.get("enabled", False)
+if not rrfs_enabled:
+    # Also check if RRFS appears in gefs.extra_sources or member definitions
+    all_extra = gefs_cfg.get("extra_sources", [])
+    if atm.get("enabled", False):
+        all_extra += atm.get("extra_sources", [])
+    for src in all_extra:
+        if src.upper() == "RRFS":
+            rrfs_enabled = True
+            break
+print("true" if rrfs_enabled else "false")
+
+# Line 7: RRFS max forecast hours
+print(rrfs_cfg.get("max_forecast_hours", 84))
+
+# Line 8: RRFS fallback source (for hours beyond RRFS coverage)
+print(rrfs_cfg.get("fallback_source", "") or "")
 PYEOF
 )
 rc=$?
@@ -265,15 +288,21 @@ EXTRA_SOURCES=$(echo "${_yaml_output}" | sed -n '2p')
 GEFS_MEMBERS=${GEFS_MEMBERS:-$(echo "${_yaml_output}" | sed -n '3p')}
 export GEFS_PRODUCT=$(echo "${_yaml_output}" | sed -n '4p')
 export GEFS_RESOLUTION=$(echo "${_yaml_output}" | sed -n '5p')
+RRFS_ENABLED=$(echo "${_yaml_output}" | sed -n '6p')
+export RRFS_MAX_FHOURS=$(echo "${_yaml_output}" | sed -n '7p')
+export RRFS_FALLBACK_SOURCE=$(echo "${_yaml_output}" | sed -n '8p')
 
 echo "Ensemble method: ${ENSEMBLE_METHOD}"
-echo "Extra atmospheric sources (non-GEFS): ${EXTRA_SOURCES:-none}"
+echo "Extra atmospheric sources (non-GEFS/non-RRFS): ${EXTRA_SOURCES:-none}"
 echo "GEFS members to process: ${GEFS_MEMBERS:-none}"
 echo "GEFS product: ${GEFS_PRODUCT}"
 echo "GEFS resolution: ${GEFS_RESOLUTION}"
+echo "RRFS enabled: ${RRFS_ENABLED}"
+echo "RRFS max forecast hours: ${RRFS_MAX_FHOURS}"
+echo "RRFS fallback source: ${RRFS_FALLBACK_SOURCE:-none}"
 
-if [ -z "${EXTRA_SOURCES}" ] && [ -z "${GEFS_MEMBERS}" ]; then
-    echo "No extra atmospheric sources or GEFS members configured. Nothing to do."
+if [ -z "${EXTRA_SOURCES}" ] && [ -z "${GEFS_MEMBERS}" ] && [ "${RRFS_ENABLED}" != "true" ]; then
+    echo "No extra atmospheric sources, GEFS members, or RRFS configured. Nothing to do."
     date
     exit 0
 fi
@@ -456,6 +485,62 @@ print(fc_end.strftime('%Y%m%d%H'))
                 fi
             done
             echo "GEFS summary: ${GEFS_SUCCESS} succeeded, ${GEFS_FAIL} failed out of ${GEFS_COUNT}"
+        fi
+    fi
+
+    ########################################################
+    # Process RRFS atmospheric forcing (STOFS pipeline)
+    # Uses stofs_3d_atl_create_surface_forcing_rrfs.sh
+    # Output: ${RUN}.${cycle}.rrfs.{air,prc,rad}.nc in COMOUTrerun
+    # RRFS data: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/
+    #   rrfs.tHHz.prslev.3km.fFFF.na.grib2
+    ########################################################
+    if [ "${RRFS_ENABLED}" = "true" ]; then
+        echo ""
+        echo "=============================================="
+        echo "Processing RRFS atmospheric forcing"
+        echo "=============================================="
+        echo "COMINrrfs=${COMINrrfs:-not set}"
+        echo "RRFS_MAX_FHOURS=${RRFS_MAX_FHOURS}"
+        echo "RRFS_FALLBACK_SOURCE=${RRFS_FALLBACK_SOURCE:-none}"
+
+        RRFS_FORCING_SCRIPT="${USHstofs3d}/stofs_3d_atl_create_surface_forcing_rrfs.sh"
+
+        if [ ! -f "${RRFS_FORCING_SCRIPT}" ]; then
+            echo "ERROR: RRFS forcing script not found: ${RRFS_FORCING_SCRIPT}" >&2
+            echo "RRFS ensemble atmospheric forcing will not be available"
+        else
+            # Set up working directory for RRFS
+            export DATA_prep_rrfs=${DATA}/atmos_ensemble/rrfs
+            mkdir -p ${DATA_prep_rrfs}
+
+            echo "Running: ${RRFS_FORCING_SCRIPT}"
+            bash ${RRFS_FORCING_SCRIPT}
+            rc=$?
+
+            if [ $rc -ne 0 ]; then
+                echo "ERROR: ${RRFS_FORCING_SCRIPT} failed (exit code $rc)" >&2
+                echo "WARNING: RRFS forcing failed, ensemble member using RRFS will use fallback"
+            fi
+
+            # Verify RRFS output files in COMOUTrerun
+            echo ""
+            echo "RRFS outputs in COMOUTrerun:"
+            _rrfs_ok=true
+            for var in air prc rad; do
+                _outfile="${COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
+                if [ -s "${_outfile}" ]; then
+                    echo "  OK: $(basename ${_outfile}) ($(stat -c%s "${_outfile}" 2>/dev/null || echo '?') bytes)"
+                else
+                    echo "  MISSING: $(basename ${_outfile})"
+                    _rrfs_ok=false
+                fi
+            done
+            if [ "${_rrfs_ok}" = true ]; then
+                echo "RRFS forcing: SUCCESS"
+            else
+                echo "RRFS forcing: INCOMPLETE (some files missing)"
+            fi
         fi
     fi
 
@@ -693,6 +778,109 @@ GEFSWRAPEOF
         done
         echo "GEFS summary: ${GEFS_SUCCESS} succeeded, ${GEFS_FAIL} failed out of ${GEFS_COUNT}"
     fi
+
+    ########################################################
+    # Process RRFS atmospheric forcing (COMF pipeline)
+    # Uses the same wgrib2/ncap2 shell script as STOFS — the COMF Fortran
+    # nos_ofs_create_forcing_met does NOT support RRFS as a data source.
+    # Output: ${RUN}.${cycle}.rrfs.{air,prc,rad}.nc in COMOUTrerun
+    # RRFS data: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/
+    #   rrfs.tHHz.prslev.3km.fFFF.na.grib2
+    ########################################################
+    if [ "${RRFS_ENABLED}" = "true" ]; then
+        echo ""
+        echo "=============================================="
+        echo "Processing RRFS atmospheric forcing (shell/wgrib2 pipeline)"
+        echo "=============================================="
+        echo "COMINrrfs=${COMINrrfs:-not set}"
+        echo "RRFS_MAX_FHOURS=${RRFS_MAX_FHOURS}"
+        echo "RRFS_FALLBACK_SOURCE=${RRFS_FALLBACK_SOURCE:-none}"
+
+        # The RRFS forcing script is shared between STOFS and COMF.
+        # It lives under ush/stofs_3d_atl/ but works for any SCHISM OFS.
+        RRFS_FORCING_SCRIPT="${HOMEnos}/ush/stofs_3d_atl/stofs_3d_atl_create_surface_forcing_rrfs.sh"
+
+        if [ ! -f "${RRFS_FORCING_SCRIPT}" ]; then
+            echo "ERROR: RRFS forcing script not found: ${RRFS_FORCING_SCRIPT}" >&2
+            echo "RRFS ensemble atmospheric forcing will not be available"
+        else
+            # Set up STOFS-style variables that the RRFS script expects.
+            # COMF uses MINLON/MAXLON; the RRFS script handles both conventions.
+            export DATA_prep_rrfs=${DATA}/atmos_ensemble/rrfs
+            mkdir -p ${DATA_prep_rrfs}
+
+            # COMOUTrerun: STOFS convention for storing sflux forcing files.
+            # Create it for COMF if not already set.
+            export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+            mkdir -p ${COMOUTrerun}
+
+            # FIXstofs3d: the RRFS script reads the NCO update file from here.
+            # For COMF, the NCO file is installed under fix/stofs_3d_atl/.
+            # Set FIXstofs3d temporarily so the script finds the file.
+            _SAVE_FIXstofs3d="${FIXstofs3d:-}"
+            export FIXstofs3d=${HOMEnos}/fix/stofs_3d_atl
+
+            # PDYHH timestamps: the RRFS script derives dates from these.
+            # For COMF, construct from PDY + cyc + run lengths.
+            export PDYHH_FCAST_BEGIN=${PDYHH_FCAST_BEGIN:-${PDY}${cyc}}
+            if [ -z "${PDYHH_NCAST_BEGIN:-}" ]; then
+                if command -v ${NDATE:-ndate} &> /dev/null; then
+                    export PDYHH_NCAST_BEGIN=$(${NDATE:-ndate} -24 ${PDY}${cyc})
+                else
+                    # Fallback: assume 24h nowcast lookback
+                    export PDYHH_NCAST_BEGIN=${PDY}${cyc}
+                fi
+            fi
+
+            # WGRIB2 path (usually set by module load)
+            export WGRIB2=${WGRIB2:-wgrib2}
+
+            # Temporarily clear LD_PRELOAD — the Fortran library causes
+            # segfaults in wgrib2/ncap2/ncrename (same issue as param_generator).
+            _SAVE_LD_PRELOAD="${LD_PRELOAD:-}"
+            unset LD_PRELOAD
+
+            echo "Running: ${RRFS_FORCING_SCRIPT}"
+            echo "  DATA_prep_rrfs=${DATA_prep_rrfs}"
+            echo "  COMOUTrerun=${COMOUTrerun}"
+            echo "  FIXstofs3d=${FIXstofs3d}"
+            echo "  PDYHH_FCAST_BEGIN=${PDYHH_FCAST_BEGIN}"
+            echo "  PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN}"
+
+            bash ${RRFS_FORCING_SCRIPT}
+            rc=$?
+
+            # Restore LD_PRELOAD and FIXstofs3d
+            if [ -n "${_SAVE_LD_PRELOAD}" ]; then
+                export LD_PRELOAD="${_SAVE_LD_PRELOAD}"
+            fi
+            export FIXstofs3d="${_SAVE_FIXstofs3d}"
+
+            if [ $rc -ne 0 ]; then
+                echo "ERROR: ${RRFS_FORCING_SCRIPT} failed (exit code $rc)" >&2
+                echo "WARNING: RRFS forcing failed, ensemble member using RRFS will use fallback"
+            fi
+
+            # Verify RRFS output files in COMOUTrerun
+            echo ""
+            echo "RRFS outputs in COMOUTrerun:"
+            _rrfs_ok=true
+            for var in air prc rad; do
+                _outfile="${COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
+                if [ -s "${_outfile}" ]; then
+                    echo "  OK: $(basename ${_outfile}) ($(stat -c%s "${_outfile}" 2>/dev/null || echo '?') bytes)"
+                else
+                    echo "  MISSING: $(basename ${_outfile})"
+                    _rrfs_ok=false
+                fi
+            done
+            if [ "${_rrfs_ok}" = true ]; then
+                echo "RRFS forcing: SUCCESS"
+            else
+                echo "RRFS forcing: INCOMPLETE (some files missing)"
+            fi
+        fi
+    fi
 fi
 
 ########################################################
@@ -743,6 +931,45 @@ if [ -n "${GEFS_MEMBERS}" ]; then
             fi
         fi
     done
+fi
+
+if [ "${RRFS_ENABLED}" = "true" ]; then
+    echo "RRFS forcing output:"
+    if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
+        # STOFS: check individual NetCDFs in COMOUTrerun
+        _rrfs_ok=true
+        for var in air prc rad; do
+            _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.rrfs.${var}.nc"
+            if [ -s "${_f}" ]; then
+                echo "  OK: $(basename ${_f}) ($(stat -c%s "${_f}" 2>/dev/null || echo '?') bytes)"
+            else
+                echo "  MISSING: $(basename ${_f})"
+                _rrfs_ok=false
+            fi
+        done
+        if [ "${_rrfs_ok}" = true ]; then
+            echo "  RRFS: OK (air/prc/rad in COMOUTrerun)"
+        else
+            echo "  RRFS: INCOMPLETE"
+        fi
+    else
+        # COMF: also uses sflux NetCDFs in COMOUTrerun (same shell/wgrib2 pipeline)
+        _rrfs_ok=true
+        for var in air prc rad; do
+            _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.rrfs.${var}.nc"
+            if [ -s "${_f}" ]; then
+                echo "  OK: $(basename ${_f}) ($(stat -c%s "${_f}" 2>/dev/null || echo '?') bytes)"
+            else
+                echo "  MISSING: $(basename ${_f})"
+                _rrfs_ok=false
+            fi
+        done
+        if [ "${_rrfs_ok}" = true ]; then
+            echo "  RRFS: OK (air/prc/rad in COMOUTrerun)"
+        else
+            echo "  RRFS: INCOMPLETE"
+        fi
+    fi
 fi
 
 ########################################################
