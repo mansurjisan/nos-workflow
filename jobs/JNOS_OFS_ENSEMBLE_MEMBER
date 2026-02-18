@@ -188,9 +188,9 @@ case "${OFS_FRAMEWORK}" in
             export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
         fi
 
-        # STOFS COM paths
+        # STOFS COM paths — use COMOUTroot to stay consistent with compath.py
         export stofs_ver=${stofs_ver:-v2.1.0}
-        export COMINstofs=${COMINstofs:-${COMROOT}/${NET}/${stofs_ver}}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
 
         # Prevent user site-packages from interfering with STOFS Python scripts
         export PYTHONNOUSERSITE=1
