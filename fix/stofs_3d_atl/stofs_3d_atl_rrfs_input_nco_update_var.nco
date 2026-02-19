@@ -1,27 +1,29 @@
 // NCO script for renaming RRFS wgrib2-output variables to SCHISM sflux names
 // Used by: stofs_3d_atl_create_surface_forcing_rrfs.sh
 //
-// KEY DIFFERENCE from GFS/GEFS: RRFS uses MSLET (Mean Sea Level Pressure,
-// ETA model reduction) instead of PRMSL.  wgrib2 -netcdf outputs this as
-// MSLET_meansealevel.  The ncrename step in the calling script renames it
-// to PRMSL_meansealevel before this NCO script runs, so the mapping below
-// is identical to the GFS version.
+// KEY DIFFERENCE from GFS/GEFS: RRFS is on a Lambert Conformal grid.
+// wgrib2 -netcdf produces dimensions y,x (not latitude,longitude like GFS/GEFS).
+// The calling script runs ncks -x -v y,x to remove the y,x coordinate variables
+// while keeping the y,x dimensions for the data arrays.
+//
+// RRFS uses MSLET (Mean Sea Level Pressure, ETA model reduction) instead of PRMSL.
+// wgrib2 -netcdf outputs this as MSLET_meansealevel.  The ncrename step in the
+// calling script renames it to PRMSL_meansealevel before this NCO script runs.
 //
 // NOTE: Radiation variables (DSWRF, DLWRF) are excluded because RRFS
 // GRIB2 encodes them as averaged fields, producing wgrib2 -netcdf
 // variable names that don't match the simple DSWRF_surface pattern.
 // Radiation forcing must come from a secondary source (GFS/HRRR sflux_*_2).
 //
-// IMPORTANT: Must create 2D lon/lat from 1D longitude/latitude coordinates.
-// SCHISM sflux reader requires lon[latitude,longitude] and lat[latitude,longitude].
-// Without these, SCHISM aborts with "get_dims(2)" when reading sflux files.
+// For Lambert Conformal grids, longitude(y,x) and latitude(y,x) are already
+// 2D arrays from wgrib2, so lon/lat creation is a simple copy/rename.
 
 time[time]=float(tin/24.) ;
-lon[latitude,longitude]=float(longitude);
-lat[latitude,longitude]=float(latitude);
-stmp[time,latitude,longitude]=TMP_2maboveground;
-spfh[time,latitude,longitude]=SPFH_2maboveground;
-uwind[time,latitude,longitude]=UGRD_10maboveground;
-vwind[time,latitude,longitude]=VGRD_10maboveground;
-prmsl[time,latitude,longitude]=PRMSL_meansealevel;
-prate[time,latitude,longitude]=PRATE_surface;
+lon[y,x]=float(longitude);
+lat[y,x]=float(latitude);
+stmp[time,y,x]=TMP_2maboveground;
+spfh[time,y,x]=SPFH_2maboveground;
+uwind[time,y,x]=UGRD_10maboveground;
+vwind[time,y,x]=VGRD_10maboveground;
+prmsl[time,y,x]=PRMSL_meansealevel;
+prate[time,y,x]=PRATE_surface;
