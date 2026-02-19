@@ -496,12 +496,12 @@ list_offset_time=(1.0)
 
 
 
+# RRFS radiation variables (DSWRF/DLWRF) have inconsistent wgrib2 -netcdf
+# naming (averaged fields get suffixes). Archive only air and prc.
+# Radiation must come from a secondary source (GFS/HRRR sflux_*_2).
 fn_ori=${fn_merged_sflux}
-fn_std_1=${fn_rrfs_rad_std}
-fn_std_2=${fn_rrfs_prc_std}
-fn_std_3=${fn_rrfs_air_std}
 
-fn_std=${fn_std_1}
+fn_std=${fn_rrfs_air_std}
 rm -f ${fn_std}
 
 k=0
@@ -529,17 +529,15 @@ k=0
 
       ncap2 -s "time(0)=float(0.499999);time(-1)=float(${time_end_step})" ${fn_ori} -O ${fn_std}
 
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
-      echo "done: method - non-backup (RRFS)"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_air_std}
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_prc_std}
+      echo "done: method - non-backup (RRFS, air+prc only, no rad)"
 
    elif [[ ${dim_k} -ge ${N_dim_cr_min} ]]; then
       ncap2 -s "time(0)=float(0.499999);time(-1)=${time_end_step}" ${fn_ori} -O ${fn_std}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
-      echo "done: method - backup 1 (RRFS)"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_air_std}
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_prc_std}
+      echo "done: method - backup 1 (RRFS, air+prc only, no rad)"
 
    else
       if [[ -f  ${COMOUT_PREV}/rerun/${fn_std} ]]; then
@@ -549,13 +547,12 @@ k=0
 
         ncap2 -s "time(-1)=float(${time_end_step})" ${fn_prev} -O ${fn_std}
 
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
+         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_air_std}
+         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_rrfs_prc_std}
          echo "done: method - backup 2 (RRFS, from previous cycle)"
 
       else
-         msg="Warning: failed of (non-backup, backup1, backup 2) \n ${fn_std} Not created for RRFS"
+         msg="Warning: failed of (non-backup, backup1, backup 2) \n ${fn_rrfs_air_std} Not created for RRFS"
          echo -e ${msg}
       fi
 

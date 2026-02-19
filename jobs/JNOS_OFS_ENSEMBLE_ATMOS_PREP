@@ -542,10 +542,11 @@ GEFSWRAPEOF
             fi
 
             # Verify RRFS output files in COMOUTrerun
+            # RRFS only produces air+prc (radiation has incompatible variable naming)
             echo ""
             echo "RRFS outputs in COMOUTrerun:"
             _rrfs_ok=true
-            for var in air prc rad; do
+            for var in air prc; do
                 _outfile="${COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
                 if [ -s "${_outfile}" ]; then
                     echo "  OK: $(basename ${_outfile}) ($(stat -c%s "${_outfile}" 2>/dev/null || echo '?') bytes)"
@@ -555,7 +556,7 @@ GEFSWRAPEOF
                 fi
             done
             if [ "${_rrfs_ok}" = true ]; then
-                echo "RRFS forcing: SUCCESS"
+                echo "RRFS forcing: SUCCESS (air+prc; rad from GFS fallback)"
             else
                 echo "RRFS forcing: INCOMPLETE (some files missing)"
             fi
@@ -866,10 +867,11 @@ GEFSWRAPEOF
             fi
 
             # Verify RRFS output files in COMOUTrerun
+            # RRFS only produces air+prc (radiation has incompatible variable naming)
             echo ""
             echo "RRFS outputs in COMOUTrerun:"
             _rrfs_ok=true
-            for var in air prc rad; do
+            for var in air prc; do
                 _outfile="${COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
                 if [ -s "${_outfile}" ]; then
                     echo "  OK: $(basename ${_outfile}) ($(stat -c%s "${_outfile}" 2>/dev/null || echo '?') bytes)"
@@ -879,7 +881,7 @@ GEFSWRAPEOF
                 fi
             done
             if [ "${_rrfs_ok}" = true ]; then
-                echo "RRFS forcing: SUCCESS"
+                echo "RRFS forcing: SUCCESS (air+prc; rad from GFS fallback)"
             else
                 echo "RRFS forcing: INCOMPLETE (some files missing)"
             fi
@@ -929,40 +931,22 @@ fi
 
 if [ "${RRFS_ENABLED}" = "true" ]; then
     echo "RRFS forcing output:"
-    if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
-        # STOFS: check individual NetCDFs in COMOUTrerun
-        _rrfs_ok=true
-        for var in air prc rad; do
-            _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.rrfs.${var}.nc"
-            if [ -s "${_f}" ]; then
-                echo "  OK: $(basename ${_f}) ($(stat -c%s "${_f}" 2>/dev/null || echo '?') bytes)"
-            else
-                echo "  MISSING: $(basename ${_f})"
-                _rrfs_ok=false
-            fi
-        done
-        if [ "${_rrfs_ok}" = true ]; then
-            echo "  RRFS: OK (air/prc/rad in COMOUTrerun)"
+    # RRFS only produces air+prc (radiation has incompatible variable naming;
+    # rad comes from GFS fallback during member staging)
+    _rrfs_ok=true
+    for var in air prc; do
+        _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.rrfs.${var}.nc"
+        if [ -s "${_f}" ]; then
+            echo "  OK: $(basename ${_f}) ($(stat -c%s "${_f}" 2>/dev/null || echo '?') bytes)"
         else
-            echo "  RRFS: INCOMPLETE"
+            echo "  MISSING: $(basename ${_f})"
+            _rrfs_ok=false
         fi
+    done
+    if [ "${_rrfs_ok}" = true ]; then
+        echo "  RRFS: OK (air+prc in COMOUTrerun; rad from GFS fallback)"
     else
-        # COMF: also uses sflux NetCDFs in COMOUTrerun (same shell/wgrib2 pipeline)
-        _rrfs_ok=true
-        for var in air prc rad; do
-            _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.rrfs.${var}.nc"
-            if [ -s "${_f}" ]; then
-                echo "  OK: $(basename ${_f}) ($(stat -c%s "${_f}" 2>/dev/null || echo '?') bytes)"
-            else
-                echo "  MISSING: $(basename ${_f})"
-                _rrfs_ok=false
-            fi
-        done
-        if [ "${_rrfs_ok}" = true ]; then
-            echo "  RRFS: OK (air/prc/rad in COMOUTrerun)"
-        else
-            echo "  RRFS: INCOMPLETE"
-        fi
+        echo "  RRFS: INCOMPLETE"
     fi
 fi
 

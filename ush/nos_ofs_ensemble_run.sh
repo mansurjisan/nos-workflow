@@ -642,22 +642,37 @@ _ensemble_comf_stage_atmos() {
             # RRFS uses sflux NetCDFs in COMOUTrerun (same as STOFS pipeline),
             # NOT tar archives.  The RRFS forcing script produces SCHISM-ready
             # sflux files directly via wgrib2/ncap2.
+            # RRFS radiation variables (DSWRF/DLWRF) are encoded as averaged fields
+            # in GRIB2, so wgrib2 -netcdf variable names don't match NCO expectations.
+            # Stage air+prc from RRFS; use GFS rad from default prep output.
             local _COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
             echo "RRFS primary: staging sflux from ${_COMOUTrerun}"
-            for var in air prc rad; do
+            for var in air prc; do
                 local src="${_COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
                 local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
                 if [ -s "${src}" ]; then
                     cp -p "${src}" "${dst}"
                     echo "  sflux_${var}_1 <- rrfs"
                 else
-                    echo "ERROR: RRFS sflux not found: ${src}" >&2
-                    echo "  Falling back to default GFS tar"
-                    local FALLBACK_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
-                    [ -f "${FALLBACK_TAR}" ] && tar xf "${FALLBACK_TAR}" -C ${MEMBER_DATA}/sflux/
-                    break
+                    echo "WARNING: RRFS sflux not found: ${src}" >&2
                 fi
             done
+            # Radiation: check if RRFS rad exists (future-proof),
+            # otherwise use GFS rad from default prep tar
+            local rad_src="${_COMOUTrerun}/${RUN}.${cycle}.rrfs.rad.nc"
+            if [ -s "${rad_src}" ]; then
+                cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.0001.nc"
+                echo "  sflux_rad_1 <- rrfs"
+            else
+                local _GFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+                if [ -f "${_GFS_TAR}" ]; then
+                    echo "  sflux_rad_1 <- GFS (RRFS has no radiation data)"
+                    tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.0001.nc 2>/dev/null || \
+                        tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ 2>/dev/null
+                else
+                    echo "  WARNING: No rad source (RRFS has no rad, GFS tar not found)"
+                fi
+            fi
         else
             # GFS/GEFS/other: use tar archives from COMOUT
             local MET1_TAR
