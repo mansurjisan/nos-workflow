@@ -7,6 +7,11 @@
 // to PRMSL_meansealevel before this NCO script runs, so the mapping below
 // is identical to the GFS version.
 //
+// NOTE: Radiation variables (DSWRF, DLWRF) are excluded because RRFS
+// GRIB2 encodes them as averaged fields, producing wgrib2 -netcdf
+// variable names that don't match the simple DSWRF_surface pattern.
+// Radiation forcing must come from a secondary source (GFS/HRRR sflux_*_2).
+//
 // IMPORTANT: Must create 2D lon/lat from 1D longitude/latitude coordinates.
 // SCHISM sflux reader requires lon[latitude,longitude] and lat[latitude,longitude].
 // Without these, SCHISM aborts with "get_dims(2)" when reading sflux files.
@@ -20,5 +25,3 @@ uwind[time,latitude,longitude]=UGRD_10maboveground;
 vwind[time,latitude,longitude]=VGRD_10maboveground;
 prmsl[time,latitude,longitude]=PRMSL_meansealevel;
 prate[time,latitude,longitude]=PRATE_surface;
-dswrf[time,latitude,longitude]=DSWRF_surface;
-dlwrf[time,latitude,longitude]=DLWRF_surface;
