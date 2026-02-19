@@ -421,8 +421,15 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
       export err=$?;
 
    # Step 3: Convert GRIB2 to NetCDF
+   # RRFS is Lambert Conformal — wgrib2 -netcdf produces y,x dimensions
+   # (not latitude,longitude like GFS/GEFS). Remove y,x variables with ncks
+   # so ncap2 NCO script can reference the y,x dimensions cleanly.
+   fn_0_rnVar_with_xy=RRFS_voi_rio_0rename_with_xy_${str_xxx_cnt}.nc
+      $WGRIB2  $fn_roi -netcdf $fn_0_rnVar_with_xy  >> $pgmout 2> errfile
+      export err=$?;
+
    fn_0_rnVar_raw=RRFS_voi_rio_0rename_raw_${str_xxx_cnt}.nc
-      $WGRIB2  $fn_roi -netcdf $fn_0_rnVar_raw  >> $pgmout 2> errfile
+      ncks -CO -x -v y,x $fn_0_rnVar_with_xy $fn_0_rnVar_raw  >> $pgmout 2> errfile
       export err=$?;
 
    # Step 4: Rename MSLET -> PRMSL for SCHISM compatibility
