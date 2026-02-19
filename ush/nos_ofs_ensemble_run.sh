@@ -645,14 +645,26 @@ _ensemble_comf_stage_atmos() {
             # RRFS radiation variables (DSWRF/DLWRF) are encoded as averaged fields
             # in GRIB2, so wgrib2 -netcdf variable names don't match NCO expectations.
             # Stage air+prc from RRFS; use GFS rad from default prep output.
+            #
+            # COMF SCHISM uses .{N}.nc naming (sflux_air_1.1.nc), NOT .0001.nc.
+            # The STOFS archival also sets time(0)=0.499999 making the time axis
+            # non-monotonic; fix time(0) to 0.0 for COMF compatibility.
             local _COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
             echo "RRFS primary: staging sflux from ${_COMOUTrerun}"
             for var in air prc; do
                 local src="${_COMOUTrerun}/${RUN}.${cycle}.rrfs.${var}.nc"
-                local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
+                local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.1.nc"
                 if [ -s "${src}" ]; then
                     cp -p "${src}" "${dst}"
-                    echo "  sflux_${var}_1 <- rrfs"
+                    # Fix non-monotonic time(0) from STOFS archival convention.
+                    # Use Python netCDF4 for in-place edit (fast for large RRFS files);
+                    # fall back to ncap2 (rewrites entire file, slow for multi-GB files).
+                    python3 -c "
+import netCDF4
+with netCDF4.Dataset('${dst}', 'r+') as f:
+    f.variables['time'][0] = 0.0
+" 2>/dev/null || ncap2 -Oh -s 'time(0)=float(0.0)' "${dst}" "${dst}" 2>/dev/null || true
+                    echo "  sflux_${var}_1 <- rrfs (time[0] fixed)"
                 else
                     echo "WARNING: RRFS sflux not found: ${src}" >&2
                 fi
@@ -661,14 +673,19 @@ _ensemble_comf_stage_atmos() {
             # otherwise use GFS rad from default prep tar
             local rad_src="${_COMOUTrerun}/${RUN}.${cycle}.rrfs.rad.nc"
             if [ -s "${rad_src}" ]; then
-                cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.0001.nc"
-                echo "  sflux_rad_1 <- rrfs"
+                cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc"
+                python3 -c "
+import netCDF4
+with netCDF4.Dataset('${MEMBER_DATA}/sflux/sflux_rad_1.1.nc', 'r+') as f:
+    f.variables['time'][0] = 0.0
+" 2>/dev/null || ncap2 -Oh -s 'time(0)=float(0.0)' "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc" "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc" 2>/dev/null || true
+                echo "  sflux_rad_1 <- rrfs (time[0] fixed)"
             else
                 local _GFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
                 if [ -f "${_GFS_TAR}" ]; then
                     echo "  sflux_rad_1 <- GFS (RRFS has no radiation data)"
-                    tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.0001.nc 2>/dev/null || \
-                        tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ 2>/dev/null
+                    # Extract ONLY sflux_rad; COMF tar uses .1.nc naming
+                    tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.1.nc
                 else
                     echo "  WARNING: No rad source (RRFS has no rad, GFS tar not found)"
                 fi
@@ -692,12 +709,18 @@ _ensemble_comf_stage_atmos() {
                         echo "GEFS primary: staging sflux from ${_COMOUTrerun} (member=${_GEFS_ID})"
                         # GEFS pgrb2ap5 has air+prc but NOT radiation (DSWRF/DLWRF).
                         # Stage air and prc from GEFS; use GFS rad from default prep output.
+                        #
+                        # COMF SCHISM uses .{N}.nc naming (sflux_air_1.1.nc), NOT .0001.nc.
+                        # The STOFS archival also sets time(0)=0.499999 making the time axis
+                        # non-monotonic; fix time(0) to 0.0 for COMF compatibility.
                         for var in air prc; do
                             local src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.${var}.nc"
-                            local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
+                            local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.1.nc"
                             if [ -s "${src}" ]; then
                                 cp -p "${src}" "${dst}"
-                                echo "  sflux_${var}_1 <- gefs_${_GEFS_ID}"
+                                # Fix non-monotonic time(0) from STOFS archival convention
+                                ncap2 -Oh -s 'time(0)=float(0.0)' "${dst}" "${dst}" 2>/dev/null || true
+                                echo "  sflux_${var}_1 <- gefs_${_GEFS_ID} (time[0] fixed)"
                             else
                                 echo "WARNING: GEFS sflux not found: ${src}" >&2
                             fi
@@ -706,15 +729,15 @@ _ensemble_comf_stage_atmos() {
                         # otherwise use GFS rad from default prep tar
                         local rad_src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.rad.nc"
                         if [ -s "${rad_src}" ]; then
-                            cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.0001.nc"
-                            echo "  sflux_rad_1 <- gefs_${_GEFS_ID}"
+                            cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc"
+                            ncap2 -Oh -s 'time(0)=float(0.0)' "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc" "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc" 2>/dev/null || true
+                            echo "  sflux_rad_1 <- gefs_${_GEFS_ID} (time[0] fixed)"
                         else
-                            # Extract GFS rad from default prep tar
+                            # Extract ONLY sflux_rad from default prep tar; COMF tar uses .1.nc naming
                             local _GFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
                             if [ -f "${_GFS_TAR}" ]; then
                                 echo "  sflux_rad_1 <- GFS (GEFS has no radiation data)"
-                                tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.0001.nc 2>/dev/null || \
-                                    tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ 2>/dev/null
+                                tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.1.nc
                             else
                                 echo "  WARNING: No rad source (GEFS has no rad, GFS tar not found)"
                             fi
