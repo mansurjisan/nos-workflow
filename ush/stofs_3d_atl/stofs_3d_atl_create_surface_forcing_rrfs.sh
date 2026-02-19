@@ -453,7 +453,15 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
           fi
       fi
 
-   # Step 5: Update time variable using ACTUAL valid hour (not sequential counter)
+   # Step 5: Check for missing variables and fill with zeros if absent.
+   # Some RRFS forecast hours encode PRATE differently (e.g., avg vs instantaneous),
+   # so the wgrib2 extraction pattern may not match at all hours.
+   if ! ncdump -h ${fn_0_rnVar} 2>/dev/null | grep -q "PRATE_surface"; then
+       echo "WARNING: PRATE_surface missing in ${str_xxx_cnt}, filling with zero"
+       ncap2 -Oh -s 'PRATE_surface[$time,$y,$x]=0.0f' ${fn_0_rnVar} ${fn_0_rnVar}
+   fi
+
+   # Step 6: Update time variable using ACTUAL valid hour (not sequential counter)
    # _valid_hour is hours from base (yyyymmdd_prev 00Z). The NCO script converts
    # tin (hours) to fractional days: time[time] = float(tin/24.)
    fn_out=RRFS_sflux_no_${str_xxx_cnt}.nc
