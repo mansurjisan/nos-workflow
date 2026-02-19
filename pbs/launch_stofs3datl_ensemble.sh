@@ -52,10 +52,10 @@ if [[ "${2:-}" != --* ]] && [ -n "${2:-}" ]; then
 fi
 # If $2 is a flag (starts with --), don't consume it as N_MEMBERS
 if [[ "${2:-}" == --* ]]; then
-    N_MEMBERS=5
+    N_MEMBERS=6
     shift 1 2>/dev/null || true
 else
-    N_MEMBERS=${2:-5}
+    N_MEMBERS=${2:-6}
     shift 2 2>/dev/null || true
 fi
 WITH_DET=false
@@ -83,9 +83,9 @@ for arg in "$@"; do
 done
 unset _NEXT_IS_PDY
 
-# GEFS defaults: 5 members for STOFS-3D-ATL (if user didn't specify member count)
+# GEFS defaults: 6 members for STOFS-3D-ATL (GFS+HRRR control, 4×GEFS, RRFS)
 if [ "${GEFS_ENSEMBLE}" = true ] && [ "${_USER_SET_MEMBERS}" = false ]; then
-    N_MEMBERS=5
+    N_MEMBERS=6
 fi
 unset _USER_SET_MEMBERS
 
@@ -103,11 +103,12 @@ echo " Cycle:     ${CYC}"
 if [ "${DET_ONLY}" = true ]; then
 echo " Mode:      DETERMINISTIC ONLY (prep→nowcast→forecast)"
 else
-echo " Members:   ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
+echo " Members:   ${N_MEMBERS} (1 control + 4 GEFS + 1 RRFS)"
 echo " Det run:   ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
 if [ "${GEFS_ENSEMBLE}" = true ]; then
-echo " GEFS ens:  true (0.50 deg pgrb2ap5, members gep01-gep$(printf '%02d' $((N_MEMBERS - 1))))"
+echo " GEFS ens:  true (0.50 deg pgrb2ap5, members gep01-gep04)"
+echo " RRFS:      true (3km regridded, member 005)"
 fi
 fi
 echo " Skip prep: ${SKIP_PREP}"
@@ -213,10 +214,10 @@ ATMOS_PREP_JOBID_SHORT=""
 if [ "${ATMOS_ENSEMBLE}" = true ]; then
     echo ""
     if [ "${GEFS_ENSEMBLE}" = true ]; then
-        echo ">>> Submitting GEFS atmospheric ensemble prep job..."
-        # Build GEFS member list: 01 02 03 ... (skip control member 000 which uses GFS)
-        GEFS_MEMBER_LIST=$(seq -f "%02g" 1 $((N_MEMBERS - 1)) | paste -sd' ')
-        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true,GEFS_MEMBERS=${GEFS_MEMBER_LIST},N_GEFS_MEMBERS=$((N_MEMBERS - 1))" \
+        echo ">>> Submitting GEFS+RRFS atmospheric ensemble prep job..."
+        # Don't override GEFS_MEMBERS — J-job reads the correct list from YAML
+        # (YAML defines 4 GEFS members 01-04, plus RRFS member 005 handled separately)
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true" \
                           -N "stofs3datl_gefs_prep_${CYC}" \
                           -o "${RPTDIR}/stofs3datl_gefs_prep_${CYC}.out" \
                           -e "${RPTDIR}/stofs3datl_gefs_prep_${CYC}.err")
@@ -271,9 +272,11 @@ for i in $(seq 0 $((N_MEMBERS - 1))); do
     MEMBER_JOBIDS+=("${MJOB}")
     MJOB_SHORT=${MJOB%%.*}
     if [ "${MID}" = "000" ]; then
-        echo "    Member ${MID} (control): ${MJOB}"
+        echo "    Member ${MID} (control GFS+HRRR): ${MJOB}"
+    elif [ "${MID}" = "005" ] && [ "${GEFS_ENSEMBLE}" = true ]; then
+        echo "    Member ${MID} (RRFS 3km): ${MJOB}"
     else
-        echo "    Member ${MID} (perturbed): ${MJOB}"
+        echo "    Member ${MID} (GEFS gep${GEFS_MEM_ID}): ${MJOB}"
     fi
 done
 
