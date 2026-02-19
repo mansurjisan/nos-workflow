@@ -62,8 +62,13 @@ fi
 
 # ---------------------------> RRFS Configuration
 RRFS_RESOLUTION=${RRFS_RESOLUTION:-3km}
+# Regrid resolution: RRFS native Lambert Conformal grid must be regridded to
+# regular lat/lon for COMF SCHISM compatibility.  SCHISM's get_weight() fails
+# on LC grids ("orientation not consistent") because LC quadrilaterals can be
+# non-convex in lon/lat space.  Default 0.03° preserves most RRFS detail (~3.3km).
+RRFS_REGRID_DX=${RRFS_REGRID_DX:-0.03}
 
-echo "RRFS resolution: ${RRFS_RESOLUTION}"
+echo "RRFS resolution: ${RRFS_RESOLUTION}, regrid dx: ${RRFS_REGRID_DX} deg"
 
 
 # ---------------------------> SAFETY CHECK: Validate required environment variables
@@ -98,21 +103,15 @@ esac
 
 
 # ---------------------------> Global Variables
-  # NCO update script: RRFS-specific version that documents the MSLET->PRMSL rename.
-  # After ncrename in the processing loop, variable names match the GFS convention,
-  # so the NCO script is structurally identical to the GFS version.
-  fn_nco_update_time_varName=${FIXstofs3d}/stofs_3d_atl_rrfs_input_nco_update_var.nco
+  # NCO update script: After regridding from Lambert Conformal to regular lat/lon,
+  # wgrib2 -netcdf produces latitude,longitude dimensions (like GFS/GEFS).
+  # Use the GEFS NCO script which has the same variable set (no radiation) with
+  # lat/lon dimensions.  The old RRFS NCO script used y,x dims from native LC grid.
+  fn_nco_update_time_varName=${FIXstofs3d}/stofs_3d_atl_gefs_input_nco_update_var.nco
 
-  # Fallback: if RRFS-specific NCO script does not exist, use the GFS one (same variable names
-  # after our ncrename step converts MSLET_meansealevel -> PRMSL_meansealevel)
   if [ ! -f "${fn_nco_update_time_varName}" ]; then
       fn_nco_update_time_varName=${FIXstofs3d}/stofs_3d_atl_gfs_input_nco_update_var.nco
       echo "INFO: Using GFS NCO update script as fallback: ${fn_nco_update_time_varName}"
-  fi
-
-  if [ ! -f "${fn_nco_update_time_varName}" ]; then
-      fn_nco_update_time_varName=${FIXstofs3d}/stofs_3d_atl_nam_input_nco_update_var.nco
-      echo "INFO: Using NAM NCO update script as second fallback: ${fn_nco_update_time_varName}"
   fi
 
   fn_rrfs_rad_schism=sflux_rad_1.0001.nc
@@ -135,6 +134,11 @@ esac
     LATMAX=${LATMAX:-${MAXLAT:-52.5904}}
     echo "Domain bounds: LONMIN=$LONMIN LONMAX=$LONMAX LATMIN=$LATMIN LATMAX=$LATMAX"
 
+# Compute regrid target grid dimensions for wgrib2 -new_grid latlon
+    _REGRID_NLON=$(awk "BEGIN {printf \"%d\", (${LONMAX} - (${LONMIN})) / ${RRFS_REGRID_DX} + 1}")
+    _REGRID_NLAT=$(awk "BEGIN {printf \"%d\", (${LATMAX} - (${LATMIN})) / ${RRFS_REGRID_DX} + 1}")
+    echo "Regrid target: ${LONMIN}:${_REGRID_NLON}:${RRFS_REGRID_DX} ${LATMIN}:${_REGRID_NLAT}:${RRFS_REGRID_DX}"
+    echo "  -> regular lat/lon grid: ${_REGRID_NLON} x ${_REGRID_NLAT} points"
 
 
 # ---------------> Dates
@@ -415,21 +419,22 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
       $WGRIB2  -s  $fn_rrfs_k  | egrep "$list_var_oi" | $WGRIB2  -i  $fn_rrfs_k  -grib  $fn_varOI  >> $pgmout 2> errfile
       export err=$?;
 
-   # Step 2: Subset to region of interest (CRITICAL -- RRFS files are ~6GB at native 3km)
-   fn_roi=iRRFS_voi_rio_${str_xxx_cnt}.grb2
-      $WGRIB2  $fn_varOI  -small_grib ${LONMIN}:${LONMAX} ${LATMIN}:${LATMAX} $fn_roi   >> $pgmout 2> errfile
+   # Step 2: Regrid from Lambert Conformal to regular lat/lon
+   # RRFS native LC grid causes COMF SCHISM get_weight() to abort with
+   # "orientation not consistent" because LC quadrilaterals can be non-convex
+   # in lon/lat space.  Regridding to regular lat/lon solves this and also
+   # reduces file size dramatically (~460MB -> ~20MB per timestep).
+   # This replaces the old -small_grib step (which kept LC projection).
+   fn_regrid=RRFS_voi_regrid_${str_xxx_cnt}.grb2
+      $WGRIB2  $fn_varOI  -new_grid_winds earth -new_grid latlon ${LONMIN}:${_REGRID_NLON}:${RRFS_REGRID_DX} ${LATMIN}:${_REGRID_NLAT}:${RRFS_REGRID_DX}  $fn_regrid  >> $pgmout 2> errfile
       export err=$?;
 
-   # Step 3: Convert GRIB2 to NetCDF
-   # RRFS is Lambert Conformal — wgrib2 -netcdf produces y,x dimensions
-   # (not latitude,longitude like GFS/GEFS). Remove y,x variables with ncks
-   # so ncap2 NCO script can reference the y,x dimensions cleanly.
-   fn_0_rnVar_with_xy=RRFS_voi_rio_0rename_with_xy_${str_xxx_cnt}.nc
-      $WGRIB2  $fn_roi -netcdf $fn_0_rnVar_with_xy  >> $pgmout 2> errfile
-      export err=$?;
-
-   fn_0_rnVar_raw=RRFS_voi_rio_0rename_raw_${str_xxx_cnt}.nc
-      ncks -CO -x -v y,x $fn_0_rnVar_with_xy $fn_0_rnVar_raw  >> $pgmout 2> errfile
+   # Step 3: Convert regridded GRIB2 to NetCDF
+   # After regridding, wgrib2 -netcdf produces latitude,longitude dimensions
+   # (like GFS/GEFS), NOT y,x dimensions from the original LC grid.
+   # No ncks -x -v y,x step needed since there are no y,x variables.
+   fn_0_rnVar_raw=RRFS_voi_regrid_0rename_raw_${str_xxx_cnt}.nc
+      $WGRIB2  $fn_regrid  -netcdf $fn_0_rnVar_raw  >> $pgmout 2> errfile
       export err=$?;
 
    # Step 4: Rename MSLET -> PRMSL for SCHISM compatibility
@@ -458,7 +463,7 @@ if [[ ${N_LIST_fn_final_qa_sz} -gt ${N_dim_cr_min_cntList} ]]; then
    # so the wgrib2 extraction pattern may not match at all hours.
    if ! ncdump -h ${fn_0_rnVar} 2>/dev/null | grep -q "PRATE_surface"; then
        echo "WARNING: PRATE_surface missing in ${str_xxx_cnt}, filling with zero"
-       ncap2 -Oh -s 'PRATE_surface[$time,$y,$x]=0.0f' ${fn_0_rnVar} ${fn_0_rnVar}
+       ncap2 -Oh -s 'PRATE_surface[$time,$latitude,$longitude]=0.0f' ${fn_0_rnVar} ${fn_0_rnVar}
    fi
 
    # Step 6: Update time variable using ACTUAL valid hour (not sequential counter)
