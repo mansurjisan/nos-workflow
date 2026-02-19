@@ -4,6 +4,10 @@
 // After the ncap2 RH->SPFH and APCP->PRATE conversions in the GEFS script,
 // variable names match the GFS convention exactly.
 //
+// NOTE: GEFS pgrb2ap5 (0.50 deg) does NOT contain radiation variables
+// (DSWRF, DLWRF). These are only in pgrb2b or higher-res products.
+// Radiation forcing must come from a secondary source (GFS/HRRR sflux_rad_2).
+//
 // IMPORTANT: Must create 2D lon/lat from 1D longitude/latitude coordinates.
 // SCHISM sflux reader requires lon[latitude,longitude] and lat[latitude,longitude].
 // Without these, SCHISM aborts with "get_dims(2)" when reading sflux files.
@@ -17,5 +21,3 @@ uwind[time,latitude,longitude]=UGRD_10maboveground;
 vwind[time,latitude,longitude]=VGRD_10maboveground;
 prmsl[time,latitude,longitude]=PRMSL_meansealevel;
 prate[time,latitude,longitude]=PRATE_surface;
-dswrf[time,latitude,longitude]=DSWRF_surface;
-dlwrf[time,latitude,longitude]=DLWRF_surface;

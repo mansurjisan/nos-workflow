@@ -456,12 +456,12 @@ list_offset_time=(1.0)
 
 
 
+# GEFS pgrb2ap5 does NOT contain radiation variables (DSWRF, DLWRF).
+# Archive only air and prc sflux files.  Radiation must come from a
+# secondary source (GFS/HRRR) configured as sflux_*_2 in the member.
 fn_ori=${fn_merged_sflux}
-fn_std_1=${fn_gefs_rad_std}
-fn_std_2=${fn_gefs_prc_std}
-fn_std_3=${fn_gefs_air_std}
 
-fn_std=${fn_std_1}
+fn_std=${fn_gefs_air_std}
 rm -f ${fn_std}
 
 k=0
@@ -489,17 +489,15 @@ k=0
 
       ncap2 -s "time(0)=float(0.499999);time(-1)=float(${time_end_step})" ${fn_ori} -O ${fn_std}
 
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
-      echo "done: method - non-backup (GEFS ${GEFS_MEMBER_LABEL})"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
+      echo "done: method - non-backup (GEFS ${GEFS_MEMBER_LABEL}, air+prc only, no rad)"
 
    elif [[ ${dim_k} -ge ${N_dim_cr_min} ]]; then
       ncap2 -s "time(0)=float(0.499999);time(-1)=${time_end_step}" ${fn_ori} -O ${fn_std}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
-      echo "done: method - backup 1 (GEFS ${GEFS_MEMBER_LABEL})"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
+      echo "done: method - backup 1 (GEFS ${GEFS_MEMBER_LABEL}, air+prc only, no rad)"
 
    else
       if [[ -f  ${COMOUT_PREV}/rerun/${fn_std} ]]; then
@@ -509,13 +507,12 @@ k=0
 
         ncap2 -s "time(-1)=float(${time_end_step})" ${fn_prev} -O ${fn_std}
 
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_1}
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_2}
-         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_std_3}
+         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
+         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
          echo "done: method - backup 2 (GEFS ${GEFS_MEMBER_LABEL}, from previous cycle)"
 
       else
-         msg="Warning: failed of (non-backup, backup1, backup 2) \n ${fn_std} Not created for GEFS member ${GEFS_MEMBER_LABEL}"
+         msg="Warning: failed of (non-backup, backup1, backup 2) \n ${fn_gefs_air_std} Not created for GEFS member ${GEFS_MEMBER_LABEL}"
          echo -e ${msg}
       fi
 

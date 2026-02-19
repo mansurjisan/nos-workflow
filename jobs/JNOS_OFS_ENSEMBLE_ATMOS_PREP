@@ -487,7 +487,7 @@ GEFSWRAPEOF
             GEFS_FAIL=0
             for GEFS_MEM in ${GEFS_MEMBERS}; do
                 _all_ok=true
-                for var in air prc rad; do
+                for var in air prc; do
                     _outfile="${COMOUTrerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
                     if [ -s "${_outfile}" ]; then
                         echo "  OK: $(basename ${_outfile})"
@@ -764,7 +764,7 @@ GEFSWRAPEOF
             GEFS_FAIL=0
             for GEFS_MEM in ${GEFS_MEMBERS}; do
                 _all_ok=true
-                for var in air prc rad; do
+                for var in air prc; do
                     _outfile="${COMOUTrerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
                     if [ -s "${_outfile}" ]; then
                         echo "  OK: $(basename ${_outfile})"
@@ -913,30 +913,16 @@ if [ -n "${GEFS_MEMBERS}" ]; then
         else
             _tag="gep$(printf '%02d' "${GEFS_MEM}" 2>/dev/null || echo "${GEFS_MEM}")"
         fi
-        if [ "${OFS_FRAMEWORK}" = "stofs" ]; then
-            # STOFS: check individual NetCDFs in COMOUTrerun
-            _ok=true
-            for var in air prc rad; do
-                _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
-                [ ! -s "${_f}" ] && _ok=false
-            done
-            if [ "${_ok}" = true ]; then
-                echo "  OK: gefs_${GEFS_MEM} (air/prc/rad in COMOUTrerun)"
-            else
-                echo "  MISSING: gefs_${GEFS_MEM}"
-            fi
+        # GEFS pgrb2ap5 only produces air+prc (no radiation)
+        _ok=true
+        for var in air prc; do
+            _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
+            [ ! -s "${_f}" ] && _ok=false
+        done
+        if [ "${_ok}" = true ]; then
+            echo "  OK: gefs_${GEFS_MEM} (air/prc in COMOUTrerun)"
         else
-            # COMF: check sflux NetCDFs in COMOUTrerun (wgrib2/NCO pipeline)
-            _ok=true
-            for var in air prc rad; do
-                _f="${COMOUTrerun:-${COMOUT}/rerun}/${RUN}.${cycle}.gefs_${GEFS_MEM}.${var}.nc"
-                [ ! -s "${_f}" ] && _ok=false
-            done
-            if [ "${_ok}" = true ]; then
-                echo "  OK: gefs_${GEFS_MEM} (air/prc/rad in COMOUTrerun)"
-            else
-                echo "  MISSING: gefs_${GEFS_MEM}"
-            fi
+            echo "  MISSING: gefs_${GEFS_MEM}"
         fi
     done
 fi
