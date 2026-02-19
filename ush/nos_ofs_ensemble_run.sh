@@ -675,7 +675,9 @@ _ensemble_comf_stage_atmos() {
                     # Try COMOUTrerun sflux NetCDFs first
                     if [ -s "${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.air.nc" ]; then
                         echo "GEFS primary: staging sflux from ${_COMOUTrerun} (member=${_GEFS_ID})"
-                        for var in air prc rad; do
+                        # GEFS pgrb2ap5 has air+prc but NOT radiation (DSWRF/DLWRF).
+                        # Stage air and prc from GEFS; use GFS rad from default prep output.
+                        for var in air prc; do
                             local src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.${var}.nc"
                             local dst="${MEMBER_DATA}/sflux/sflux_${var}_1.0001.nc"
                             if [ -s "${src}" ]; then
@@ -685,6 +687,23 @@ _ensemble_comf_stage_atmos() {
                                 echo "WARNING: GEFS sflux not found: ${src}" >&2
                             fi
                         done
+                        # Radiation: check if GEFS rad exists (future-proof),
+                        # otherwise use GFS rad from default prep tar
+                        local rad_src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.rad.nc"
+                        if [ -s "${rad_src}" ]; then
+                            cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.0001.nc"
+                            echo "  sflux_rad_1 <- gefs_${_GEFS_ID}"
+                        else
+                            # Extract GFS rad from default prep tar
+                            local _GFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
+                            if [ -f "${_GFS_TAR}" ]; then
+                                echo "  sflux_rad_1 <- GFS (GEFS has no radiation data)"
+                                tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.0001.nc 2>/dev/null || \
+                                    tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ 2>/dev/null
+                            else
+                                echo "  WARNING: No rad source (GEFS has no rad, GFS tar not found)"
+                            fi
+                        fi
                         _gefs_found=true
                     fi
 
