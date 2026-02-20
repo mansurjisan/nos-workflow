@@ -1,0 +1,3 @@
+# Override GitHub linguist detection
+# The PySCHISM tutorial notebook (4MB) skews the language stats
+*.ipynb linguist-detectable=false
