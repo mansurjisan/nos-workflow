@@ -62,8 +62,13 @@ fi
 echo "GEFS member: ${GEFS_MEMBER}, file prefix: ${GEFS_FILE_PREFIX}, label: ${GEFS_MEMBER_LABEL}"
 
 # GEFS product directory and resolution
-GEFS_PRODUCT=${GEFS_PRODUCT:-pgrb2ap5}
-GEFS_RESOLUTION=${GEFS_RESOLUTION:-0p50}
+GEFS_PRODUCT=${GEFS_PRODUCT:-pgrb2sp25}
+GEFS_RESOLUTION=${GEFS_RESOLUTION:-0p25}
+
+# Derive filename product component from directory name:
+#   pgrb2ap5 → pgrb2a, pgrb2sp25 → pgrb2s, pgrb2bp5 → pgrb2b
+GEFS_FILE_PRODUCT=${GEFS_PRODUCT:0:6}
+echo "GEFS product: ${GEFS_PRODUCT}, resolution: ${GEFS_RESOLUTION}, file component: ${GEFS_FILE_PRODUCT}"
 
 
 # ---------------------------> SAFETY CHECK: Validate required environment variables
@@ -141,15 +146,15 @@ esac
 
 
 # --------------------------> Create file lists
-# GEFS file naming: gep{NN}.t{HH}z.pgrb2a.0p50.f{FFF}  (perturbation)
-#                    gec00.t{HH}z.pgrb2a.0p50.f{FFF}     (control)
+# GEFS file naming: gep{NN}.t{HH}z.{pgrb2a|pgrb2s}.{0p50|0p25}.f{FFF}  (perturbation)
+#                    gec00.t{HH}z.{pgrb2a|pgrb2s}.{0p50|0p25}.f{FFF}     (control)
 # GEFS is 3-hourly: f000, f003, f006, ..., f240 (then 6-hourly f246-f384)
 # For STOFS nowcast+forecast (~5.5 days = 132 hrs), we use f003 through f132
 
 # ------ Primary list (today's cycle) ------
 # Yesterday t06z: use f006 (provides 1 file at analysis+6h)
     list_fn_yest_t06z_1=''
-    fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.pgrb2a.${GEFS_RESOLUTION}.f006
+    fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f006
     if [ -f "${fn_k}" ]; then
         list_fn_yest_t06z_1="${fn_k}"
     fi
@@ -157,28 +162,28 @@ esac
 # Yesterday t12z: f003-f006 (3-hourly, 2 files)
     list_fn_yest_t12z=''
     for str_hhh in $(seq -f "%03g" 3 3 6); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_yest_t12z="${list_fn_yest_t12z} ${fn_k}"
     done
 
 # Yesterday t18z: f003-f006 (3-hourly, 2 files)
     list_fn_yest_t18z=''
     for str_hhh in $(seq -f "%03g" 3 3 6); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/18/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t18z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/18/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t18z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_yest_t18z="${list_fn_yest_t18z} ${fn_k}"
     done
 
 # Today t00z: f003-f006 (3-hourly, 2 files)
     list_fn_today_t00z=''
     for str_hhh in $(seq -f "%03g" 3 3 6); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/00/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t00z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/00/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t00z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_today_t00z="${list_fn_today_t00z} ${fn_k}"
     done
 
 # Today t06z: f003-f006 (3-hourly, 2 files)
     list_fn_today_t06z=''
     for str_hhh in $(seq -f "%03g" 3 3 6); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_today_t06z="${list_fn_today_t06z} ${fn_k}"
     done
 
@@ -186,7 +191,7 @@ esac
     # 132 hr = 5.5 days, matching the STOFS forecast period
     list_fn_today_t12z=''
     for str_hhh in $(seq -f "%03g" 3 3 132); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_today}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_today_t12z="${list_fn_today_t12z} ${fn_k}"
     done
 
@@ -201,7 +206,7 @@ esac
 
 # ------ Backup list (yesterday's 12Z extended forecast) ------
     list_fn_bk_1=''
-    fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.pgrb2a.${GEFS_RESOLUTION}.f006
+    fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/06/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t06z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f006
     if [ -f "${fn_k}" ]; then
         list_fn_bk_1="${fn_k}"
     fi
@@ -209,7 +214,7 @@ esac
     # Yesterday t12z: f003-f132 (3-hourly, 44 files)
     list_fn_bk_2=''
     for str_hhh in $(seq -f "%03g" 3 3 132); do
-        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.pgrb2a.${GEFS_RESOLUTION}.f${str_hhh}
+        fn_k=${COMINgefs}/gefs.${yyyymmdd_prev}/12/atmos/${GEFS_PRODUCT}/${GEFS_FILE_PREFIX}.t12z.${GEFS_FILE_PRODUCT}.${GEFS_RESOLUTION}.f${str_hhh}
         list_fn_bk_2="${list_fn_bk_2} ${fn_k}"
     done
 
@@ -456,9 +461,8 @@ list_offset_time=(1.0)
 
 
 
-# GEFS pgrb2ap5 does NOT contain radiation variables (DSWRF, DLWRF).
-# Archive only air and prc sflux files.  Radiation must come from a
-# secondary source (GFS/HRRR) configured as sflux_*_2 in the member.
+# GEFS pgrb2ap5 and pgrb2sp25 both contain radiation variables (DSWRF, DLWRF).
+# Archive air, prc, AND rad sflux files.
 fn_ori=${fn_merged_sflux}
 
 fn_std=${fn_gefs_air_std}
@@ -491,13 +495,15 @@ k=0
 
       cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
       cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
-      echo "done: method - non-backup (GEFS ${GEFS_MEMBER_LABEL}, air+prc only, no rad)"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_rad_std}
+      echo "done: method - non-backup (GEFS ${GEFS_MEMBER_LABEL}, air+prc+rad)"
 
    elif [[ ${dim_k} -ge ${N_dim_cr_min} ]]; then
       ncap2 -s "time(0)=float(0.499999);time(-1)=${time_end_step}" ${fn_ori} -O ${fn_std}
       cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
       cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
-      echo "done: method - backup 1 (GEFS ${GEFS_MEMBER_LABEL}, air+prc only, no rad)"
+      cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_rad_std}
+      echo "done: method - backup 1 (GEFS ${GEFS_MEMBER_LABEL}, air+prc+rad)"
 
    else
       if [[ -f  ${COMOUT_PREV}/rerun/${fn_std} ]]; then
@@ -509,6 +515,7 @@ k=0
 
          cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_air_std}
          cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_prc_std}
+         cpreq -pf ${fn_std} ${COMOUTrerun}/${fn_gefs_rad_std}
          echo "done: method - backup 2 (GEFS ${GEFS_MEMBER_LABEL}, from previous cycle)"
 
       else

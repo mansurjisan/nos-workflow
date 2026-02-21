@@ -107,7 +107,7 @@ echo " Members:  ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
 echo " Det run:  ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
 if [ "${GEFS_ENSEMBLE}" = true ]; then
-echo " GEFS ens:  true (0.50 deg pgrb2ap5, members gep01-gep$(printf '%02d' $((N_MEMBERS - 1))))"
+echo " GEFS ens:  true (0.25 deg pgrb2sp25, members gep01-gep$(printf '%02d' $((N_MEMBERS - 1))))"
 fi
 fi
 echo " Skip prep: ${SKIP_PREP}"
