@@ -55,8 +55,8 @@ export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 
 # STOFS specific paths
 export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
-export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/stofs_3d_atl}
-export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
 export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
 
 ####################################
@@ -126,18 +126,18 @@ case "${OFS_FRAMEWORK}" in
         # STOFS has two-phase post-processing
         case "${POST_STAGE}" in
             1)
-                if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_1.sh" ]; then
-                    ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_1.sh
+                if [ -f "${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh" ]; then
+                    ${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh
                 else
-                    echo "ERROR: STOFS post_1 script not found" >&2
+                    echo "ERROR: STOFS post_1 script not found: ${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh" >&2
                     exit 1
                 fi
                 ;;
             2)
-                if [ -f "${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_2.sh" ]; then
-                    ${SCRIPTSnos}/stofs_3d_atl/exstofs_3d_atl_post_2.sh
+                if [ -f "${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh" ]; then
+                    ${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh
                 else
-                    echo "ERROR: STOFS post_2 script not found" >&2
+                    echo "ERROR: STOFS post_2 script not found: ${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh" >&2
                     exit 1
                 fi
                 ;;
