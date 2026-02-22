@@ -4,11 +4,12 @@
 #  Name: stofs_3d_atl_add_attr_2d_3d_nc.sh                                      #
 #  This script adds the meta data attributes the NetCDF variables in SCHISM     #
 #  output files with their names containing any strings in {out2d,temperature,  #
-#  salinity,horizontalVelX,horizontalVelY,zCoordinates}.                        #
+#  salinity,horizontalVelX,horizontalVelY,zCoordinates,verticalVelocity,        #
+#  diffusivity                                                                  #
 #                                                                               #
 #  Remarks:                                                                     #
-#    This script was originally developed by the SCHISM team in VIMS.           # 
-#                                              May, 2023               September, 2022   #
+#                                              May, 2023; February, 2025        #
+#  Synced with STOFS operational v3.1.0                                         #
 #################################################################################
 
 
@@ -34,7 +35,7 @@
 # -------------------------->
   cd ${DATA}/outputs
   
-  msg="Found nc files: `ls {out2d,horizontalVel?,salinity,temperature,zCoordinates}_${i_cnt_file}.nc`"
+  msg="Found nc files: `ls {out2d,horizontalVel?,salinity,temperature,zCoordinates,verticalVelocity,diffusivity}_${i_cnt_file}.nc`"
   echo ${msg}; echo $msg >> $pgmout   
   echo 
 
@@ -51,7 +52,7 @@ mhr=`cat param.nml | grep start_hour | cut -d'=' -f2 | cut -d'!' -f1 | awk '{pri
 utchr=`cat param.nml | grep utc_start | cut -d'=' -f2 | cut -d'!' -f1 | awk '{print $1}'`
 echo "Adding time attribute:" $myr $mmon $mday $mhr $utchr
 
- outfn=("out2d" "temperature" "salinity" "horizontalVelX" "horizontalVelY" "zCoordinates")
+ outfn=("out2d" "temperature" "salinity" "horizontalVelX" "horizontalVelY" "zCoordinates" "verticalVelocity" "diffusivity")
 
 
 
@@ -85,8 +86,9 @@ ict=${i_cnt_file}
               fn_non_mask=./outputs/${str}_${ict}.nc_non_mask
               mv ${fn_with_mask}  ${fn_non_mask}
 
-              ncks -A -v idmask ${fn_mask_land_bnd} ${fn_non_mask}
-              ncap2 -s 'where(idmask==1) elevation=float(-99999.)' ${fn_non_mask} ${fn_with_mask}
+	      ncks -A -v idmask ${fn_mask_land_bnd} ${fn_non_mask}
+
+              ncap2 -s 'where(idmask==1) elevation=float(-99999.);defdim("nSCHISM_vgrid_layers",49);vgrid_dummy[nSCHISM_vgrid_layers]=0.' ${fn_non_mask} ${fn_with_mask}
               ncatted -O -a missing_value,elevation,a,f,-99999. ${fn_with_mask} 
 
            fi
@@ -116,7 +118,20 @@ ict=${i_cnt_file}
               then
               ncatted  -a units,$str,o,c,"m" -a data_horizontal_center,$str,o,c,"node" -a data_vertical_center,$str,o,c,"full" -a mesh,$str,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
            fi
-        fi
+
+           #Add verticalVelocity
+	   if [ $str == "verticalVelocity" ]
+	      then
+              ncatted  -a units,$str,o,c,"m/s" -a data_horizontal_center,$str,o,c,"node" -a data_vertical_center,$str,o,c,"full" -a mesh,$str,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
+	   fi
+
+	   #Add diffusivity
+	   if [ $str == "diffusivity" ]
+              then
+	      ncatted  -a units,$str,o,c,"m2/s" -a data_horizontal_center,$str,o,c,"node" -a data_vertical_center,$str,o,c,"full" -a mesh,$str,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
+           fi
+
+	fi
      done
 
 
@@ -124,7 +139,7 @@ ict=${i_cnt_file}
 # ------------------> archive
     fn_prefix=${RUN}.${cycle}.fields
 
-    list_var=("out2d" "temperature" "salinity" "horizontalVelX" "horizontalVelY" "zCoordinates")
+    list_var=("out2d" "temperature" "salinity" "horizontalVelX" "horizontalVelY" "zCoordinates" "verticalVelocity" "diffusivity")
 
 
     

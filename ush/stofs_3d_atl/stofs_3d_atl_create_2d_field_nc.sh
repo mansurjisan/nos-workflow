@@ -63,10 +63,14 @@
      str_hr_range=${list_hr_range[${i_hr_range}]}
 
 
-      echo "Processing: results/stack_no = ${stack_no}" 
+      echo "Processing: ${dir_wk_slab_2d_py}/stack_no = ${stack_no}"
 
-      mkdir -p results
-      python ${PYstofs3d}/extract_slab_fcst_netcdf4.py  --date ${yyyymmdd_hh_ref}  --stack ${stack_no}  >> $pgmout 2> errfile
+      ln -sf $FIXstofs3d/${RUN}_vgrid.in  vgrid.in
+      dir_wk_slab_2d_py=dir_slab_2d
+      mkdir -p ${DATA}/${dir_wk_slab_2d_py}
+
+      # 2024-10-17: removed --date (psutil import issue); changed --dir_result to --output_dir
+      python ${PYstofs3d}/extract_slab_fcst_netcdf4.py   --stack ${stack_no}  --output_dir ${dir_wk_slab_2d_py}  >> $pgmout 2> errfile
 
 
    msg="Completed: extract_slab_fcst_netcdf4.py, stack_no: ${idx_day_no} "
@@ -74,7 +78,7 @@
    echo $msg > $pgmout
 
   # cp files
-      fn_out_py=results/schout_2d_${stack_no}.nc
+      fn_out_py=${dir_wk_slab_2d_py}/schout_2d_${stack_no}.nc
       fn_2d_field_std=${RUN}.${cycle}.field2d_${str_hr_range}.nc
 
       echo pwd = `pwd`

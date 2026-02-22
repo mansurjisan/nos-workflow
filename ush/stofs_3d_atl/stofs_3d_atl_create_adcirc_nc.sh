@@ -9,7 +9,8 @@
 #  Coastal Emergency Risks Assessment (CERA) Project.                          #
 #                                                                              #
 #  Remarks:                                                                    #
-#                                                            September, 2022   #
+#                                                    Sep. 2022; Aug. 2025      #
+#  Synced with STOFS operational v3.1.0                                        #
 ################################################################################
 
 
@@ -32,31 +33,36 @@ set -x
 
 
 # ------------------> check file existence
-# staout_x: listed in *_staout.json
+# Accepts 3 arguments: idx_1_adc idx_2_adc idx_day_adc
+# e.g., 1 2 1 (merge out2d_1.nc + out2d_2.nc into day 1)
 
-    list_num=(1 2 3 4 5 6 7 8 9 10)
+      idx_1_adc=$1
+      idx_2_adc=$2
+      idx_day_adc=$3
 
+      # e.g., idx_1_adc=1; idx_2_adc=2; idx_day_adc=1
+
+      list_num=($idx_1_adc $idx_2_adc)
 
   list_fn_base=(out2d_)
 
   echo "In : checking file existence: "
- 
 
-  dir_input=outputs/
+
   num_missing_files=0
-  for k_no in ${list_num[@]};  
+  for k_no in ${list_num[@]};
   do
-   
-    for k_fn in ${list_fn_base[@]}; 
+
+    for k_fn in ${list_fn_base[@]};
     do
 
        fn_k=outputs/${k_fn}${k_no}.nc
        if [ -s ${fn_k} ]; then
           echo "checked: ${fn_k} exists"
-       
+
        else
           num_missing_files=`expr ${num_missing_files} + 1`
-          echo "checked: ${fn_k} does NOT exist" 
+          echo "checked: ${fn_k} does NOT exist"
        fi
     done
 
@@ -64,65 +70,60 @@ set -x
 
 
 # ------------------> create nc files
-  
-     dir_input=./outputs
-     dir_output=./dir_adcirc_nc
-     mkdir -p ${dir_output}
 
+  dir_input=outputs
+
+  mkdir -p dir_adcirc_nc
+
+# ------------------> merge out2d_x 12hr to 24hr
+  fn_out2d_ncrcat=out2dMerged${idx_1_adc}and${idx_2_adc}_${idx_day_adc}.nc
+  ncrcat ${dir_input}/out2d_${idx_1_adc}.nc ${dir_input}/out2d_${idx_2_adc}.nc -O dir_adcirc_nc/${fn_out2d_ncrcat}
+
+
+# ------------------> date variables
    echo {PDYHH_NCAST_BEGIN:0:8}, {PDYHH_FCAST_BEGIN:0:8}, {PDYHH_FCAST_END:0:8}
    echo ${PDYHH_NCAST_BEGIN:0:8}, ${PDYHH_FCAST_BEGIN:0:8}, ${PDYHH_FCAST_END:0:8}
 
 
-   
    PDY_FCAST_DAY2=${PDYp1}
    PDY_FCAST_DAY3=${PDYp2}
 
    list_YMD=(${PDYHH_NCAST_BEGIN:0:8} ${PDYHH_FCAST_BEGIN:0:8} ${PDY_FCAST_DAY2} ${PDY_FCAST_DAY3} ${PDYHH_FCAST_END:0:8})
    echo "list_YMD= ${list_YMD[@]}"
 
-   for k_no in ${list_num[@]};
+
+   python ${fn_py_gen_nc}  --input_filename dir_adcirc_nc/${fn_out2d_ncrcat}  --input_city_identifier_file  ${fn_node_id_cityPoly_adc}  --output_dir dir_adcirc_nc  >> $pgmout 2> errfile
+
+   echo "Done - `pwd`/dir_adcirc_nc/out2d_merged_day_${idx_day_adc}.nc"
+
+
+   list_k_no=(${idx_day_adc})
+   for k_no in ${list_k_no[@]}
    do
 
-
-     echo "python - processing: ${dir_input}/out2d_${k_no}.nc: "   #  for ${YMD_k_no}: "
-     python ${fn_py_gen_nc}  --input_filename ${dir_input}/out2d_${k_no}.nc  --input_city_identifier_file  ${fn_node_id_cityPoly_adc}  --output_dir ${dir_output}  >> $pgmout 2> errfile 
-     echo "Done - ${dir_input}/out2d_${k_no}.nc"
-   done
-
-  
-   # merge half day file into daily 
-   ncrcat ${dir_output}/schout_adcirc_1.nc  ${dir_output}/schout_adcirc_2.nc  -O ${dir_output}/schout_adcirc_merged_1.nc
-   ncrcat ${dir_output}/schout_adcirc_3.nc  ${dir_output}/schout_adcirc_4.nc  -O ${dir_output}/schout_adcirc_merged_2.nc
-   ncrcat ${dir_output}/schout_adcirc_5.nc  ${dir_output}/schout_adcirc_6.nc  -O ${dir_output}/schout_adcirc_merged_3.nc
-   ncrcat ${dir_output}/schout_adcirc_7.nc  ${dir_output}/schout_adcirc_8.nc  -O ${dir_output}/schout_adcirc_merged_4.nc
-   ncrcat ${dir_output}/schout_adcirc_9.nc  ${dir_output}/schout_adcirc_10.nc -O ${dir_output}/schout_adcirc_merged_5.nc 
-
-
-   for k_no in {1,2,3,4,5}
-   do	   
-     
      let k_merged=$k_no
-     fn_py_out_nc=schout_adcirc_merged_${k_no}.nc
+
+     fn_py_out_nc=schout_adcirc_${k_no}.nc
 
      let k_list_YMD=$((k_no-1))
      YMD_k_no=${list_YMD[$k_list_YMD]}
-     fn_adc_nfcast_std=schout_adcirc_${YMD_k_no}.nc     
- 
-     echo $fn_adc_nfcast_std 
+     fn_adc_nfcast_std=schout_adcirc_${YMD_k_no}.nc
+
+     echo $fn_adc_nfcast_std
 
      export err=$?
         if [ $err -eq 0 ]; then
-           cp -pf ${dir_output}/${fn_py_out_nc} ${COMOUT}/${fn_adc_nfcast_std}
+           cp -pf dir_adcirc_nc/${fn_py_out_nc} ${COMOUT}/${fn_adc_nfcast_std}
         else
-           mstofs="Creation/Archiving of ${dir_output}/${fn_adc_nfcast_std} failed"
+           msg="Creation/Archiving of dir_adcirc_nc/${fn_adc_nfcast_std} failed"
            echo $msg; echo $msg >> $pgmout
         fi
 
    done
 
 
-echo 
+echo
 echo "${fn_this_sh} completed "
-echo 
+echo
 
 

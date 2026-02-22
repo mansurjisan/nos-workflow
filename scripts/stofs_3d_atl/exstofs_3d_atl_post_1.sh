@@ -178,11 +178,70 @@ if [[ ${flag_run_status} == 0 ]]; then
     echo
 
 
-    # ---------> create profile netcdf files
+    # ---------> create profile netcdf files (per-stack MPI parallelization)
+    cd ${DATA}; pwd
+
     file_log_prof=log_create_sta_profile.${cycle}.log
     fn_ush_script_prof=stofs_3d_atl_create_station_profile_nc.sh
     export pgm="${USHstofs3d}/${fn_ush_script_prof}"
-    ${USHstofs3d}/${fn_ush_script_prof} >> ${file_log_prof} 2>&1
+
+    file_log_prof_mpi=create_sta_profile.${cycle}
+
+    dir_wk_profile=dir_profile
+    mkdir -p ${DATA}/${dir_wk_profile}
+
+    # ncast (stacks 1-2)
+      postmsg "profile: begin ncast python, `date`"
+
+      file_mpmd_prof_ncast=mpmdscript_sta_prof_ncast
+      rm -f $DATA/${file_mpmd_prof_ncast}
+
+      list_stack=(1 2)
+      for stack_no_k in ${list_stack[@]}
+      do
+         echo "${USHstofs3d}/${fn_ush_script_prof} ${stack_no_k} > $DATA/${file_log_prof_mpi}_${stack_no_k} " >> $DATA/${file_mpmd_prof_ncast}
+      done
+
+      chmod 775 $DATA/${file_mpmd_prof_ncast}
+      export MP_PGMMODEL=mpmd
+      mpiexec -l -n 2 --cpu-bind verbose,core cfp $DATA/${file_mpmd_prof_ncast}
+
+      postmsg "profile: done ncast python, `date`"
+
+    # fcast (stacks 3-10)
+      postmsg "profile: begin fcast python, `date`"
+
+      file_mpmd_prof_fcast=mpmdscript_sta_prof_fcast
+      rm -f $DATA/${file_mpmd_prof_fcast}
+
+      list_stack=(3 4 5 6 7 8 9 10)
+      for stack_no_k in ${list_stack[@]}
+      do
+         echo "${USHstofs3d}/${fn_ush_script_prof} ${stack_no_k} > $DATA/${file_log_prof_mpi}_${stack_no_k} " >> $DATA/${file_mpmd_prof_fcast}
+      done
+
+      chmod 775 $DATA/${file_mpmd_prof_fcast}
+      export MP_PGMMODEL=mpmd
+      mpiexec -l -n 8 --cpu-bind verbose,core cfp $DATA/${file_mpmd_prof_fcast}
+
+      postmsg "profile: end fcast python, `date`"
+
+    # Merge per-stack profiles into ncast/fcast files
+    cd ${DATA}/${dir_wk_profile}
+
+    fn_sta_profile_ncast_std=${RUN}.${cycle}.ncast.station.profile.nc
+    rm -f ${fn_sta_profile_ncast_std}
+
+    str_f=stofs_stations_profile
+    ncrcat -C ${str_f}_1_1.nc ${str_f}_2_2.nc  ${fn_sta_profile_ncast_std}
+    cpreq -pf ${fn_sta_profile_ncast_std}  ${COMOUT}/${fn_sta_profile_ncast_std}
+
+    fn_sta_profile_fcast_std=${RUN}.${cycle}.fcast.station.profile.nc
+    rm -f ${fn_sta_profile_fcast_std}
+
+    str_f=stofs_stations_profile
+    ncrcat -C ${str_f}_3_3.nc ${str_f}_4_4.nc ${str_f}_5_5.nc ${str_f}_6_6.nc ${str_f}_7_7.nc ${str_f}_8_8.nc ${str_f}_9_9.nc ${str_f}_10_10.nc  ${fn_sta_profile_fcast_std}
+    cpreq -pf ${fn_sta_profile_fcast_std}  ${COMOUT}/${fn_sta_profile_fcast_std}
 
     export err=$?
     if [ $err -ne 0 ];
@@ -196,15 +255,32 @@ if [[ ${flag_run_status} == 0 ]]; then
     fi
 
     echo $msg
+    postmsg "`date` : $msg"
     echo
 
 
-  #  ---------> Create ADCIRC format water level fields: stofs_3d_atl_create_adcirc_nc.sh
+  #  ---------> Create ADCIRC format water level fields (pair-wise MPI parallelization)
+    cd ${DATA}; pwd
+
     file_log_adc=log_stofs_3d_atl_create_adcirc_nc.${cycle}.log
     fn_ush_script_adc=stofs_3d_atl_create_adcirc_nc.sh
 
     export pgm="${USHstofs3d}/${fn_ush_script_adc}"
-    ${USHstofs3d}/${fn_ush_script_adc} >> ${file_log_adc} 2>&1
+
+    file_log_adc_mpi=log_adc.${cycle}_mpi
+    file_mpmd_adc_mpi=mpmdscript_adc
+
+    rm -f $DATA/${file_mpmd_adc_mpi}
+
+    echo "${USHstofs3d}/${fn_ush_script_adc} 1 2 1 > $DATA/${file_log_adc_mpi}_1_2 " >> $DATA/${file_mpmd_adc_mpi}
+    echo "${USHstofs3d}/${fn_ush_script_adc} 3 4 2 > $DATA/${file_log_adc_mpi}_3_4 " >> $DATA/${file_mpmd_adc_mpi}
+    echo "${USHstofs3d}/${fn_ush_script_adc} 5 6 3 > $DATA/${file_log_adc_mpi}_5_6 " >> $DATA/${file_mpmd_adc_mpi}
+    echo "${USHstofs3d}/${fn_ush_script_adc} 7 8 4 > $DATA/${file_log_adc_mpi}_7_8 " >> $DATA/${file_mpmd_adc_mpi}
+    echo "${USHstofs3d}/${fn_ush_script_adc} 9 10 5 > $DATA/${file_log_adc_mpi}_9_10 " >> $DATA/${file_mpmd_adc_mpi}
+
+    chmod 775 $DATA/${file_mpmd_adc_mpi}
+    export MP_PGMMODEL=mpmd
+    mpiexec -l -np 5 --cpu-bind verbose,core cfp $DATA/${file_mpmd_adc_mpi}
 
     export err=$?
     if [ $err -ne 0 ];

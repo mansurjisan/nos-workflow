@@ -153,7 +153,8 @@ idx_y2_3dz=815
 
 echo "cnt_2d = $cnt_2d, cnt_3d = $cnt_3d"
 
-if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
+# (2025/6/25) relaxed threshold from -gt 1 to -gt 0
+if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
    LIST_fn_final_2d_qc=`echo ${LIST_fn_final_2d}  | awk -F' ' '{print $1}'`
    LIST_fn_final_3d_qc=`echo ${LIST_fn_final_3d}  | awk -F' ' '{print $1}'`
 
@@ -164,7 +165,8 @@ if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
 
 fi
 
-if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
+# (2025/6/25) relaxed threshold from -gt 1 to -gt 0
+if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
   # ----------> Process 
     rm -f rtofs_glo_*nc
     rm -f RTOFS_2D_*nc
@@ -307,7 +309,7 @@ if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
     echo "Failed to create: rtofs restart file - ${fn_restart_rtofs_ftn}/${fn_restart_rtofs_std}" 
   fi
 
-else  # if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]] 
+else  # if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]] 
     flag_rst_rtofs_success=0
     msg="Failed to create: rtofs restart file - No input RTOFS files"
     echo -e ${msg}

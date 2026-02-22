@@ -8,6 +8,7 @@
 #                                                                              #
 #  Remarks:                                                                    #
 #                                                            September, 2022   #
+#  Synced with STOFS operational v3.1.0                                        #
 ################################################################################
 
 
@@ -23,27 +24,34 @@ set -x
 
 
 # ------------------> check file existence
-  list_day_no=(1 2 3 4 5 6 7 8 9 10)
+
+  # Per-stack invocation: accepts stack number as $1
+  stack_no_oi=$1
+
+  stack_start=${stack_no_oi}
+  stack_end=${stack_no_oi}
+
+  list_day_no=(${stack_no_oi})
 
   list_fn_base=(horizontalVelX  horizontalVelY  out2d  salinity  temperature  zCoordinates)
 
 
   echo "In stofs_3d_atl_create_profile_2d_nc.sh: checking file existence: "
- 
+
   num_missing_files=0
-  for k_no in ${list_day_no[@]};  
+  for k_no in ${list_day_no[@]};
   do
-   
-    for k_fn in ${list_fn_base[@]}; 
+
+    for k_fn in ${list_fn_base[@]};
     do
 
        fn_k=outputs/${k_fn}_${k_no}.nc
        if [ -s ${fn_k} ]; then
           echo "checked: ${fn_k} exists"
-       
+
        else
           num_missing_files=`expr ${num_missing_files} + 1`
-          echo "checked: ${fn_k} does NOT exist; number of missing files=${num_missing_files}" 
+          echo "checked: ${fn_k} does NOT exist; number of missing files=${num_missing_files}"
        fi
     done
 
@@ -52,93 +60,49 @@ set -x
 
 # ------------------> create station profile data
 
+     dir_output=dir_profile
+     mkdir -p ${DATA}/${dir_output}
 
-   fn_nco_xg_navd=${FIXstofs3d}/stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco
+     ln -sf $FIXstofs3d/${RUN}_vgrid.in  vgrid.in
+     ln -sf $FIXstofs3d/${RUN}_hgrid.gr3  hgrid.gr3
+     ln -sf $FIXstofs3d/${RUN}_station.in  station.in
 
-   # nowcast
-   fn_sta_profile_ncast_std=${RUN}.${cycle}.ncast.station.profile.nc
-   fn_sta_profile_ncast_date_tag=${RUN}.station.profile.ncast.${PDYHH_FCAST_BEGIN:0:8}.${cycle}.nc
-
-     stack_start=1
-     stack_end=2
-     dir_output=results
      yyyymmdd_hh_ref=${PDYHH_NCAST_BEGIN:0:4}-${PDYHH_NCAST_BEGIN:4:2}-${PDYHH_NCAST_BEGIN:6:2}-${cyc}
 
 
+     fn_sta_profile=stofs_stations_profile_${stack_start}_${stack_end}.nc
+     rm -rf ${dir_output}/${fn_sta_profile}*
 
-     python ${PYstofs3d}/get_stations_profile.py --date ${yyyymmdd_hh_ref}  --stack_start  ${stack_start}  --stack_end  ${stack_end}  --output_dir  ${dir_output}  >> $pgmout 2> errfile
+     python ${PYstofs3d}/get_stations_profile.py --date ${yyyymmdd_hh_ref}  --stack_start  ${stack_start}  --stack_end  ${stack_end}  --output_dir  ${dir_output}  >> $pgmout 2> errfile_${stack_start}_${stack_end}
 
-     cp -paf ${dir_output}/stofs_stations_forecast.nc ${dir_output}/stofs_stations_nowcast.nc_original
-       ncap2 -O  -F -S ${fn_nco_xg_navd} ${dir_output}/stofs_stations_nowcast.nc_original ${dir_output}/stofs_stations_nowcast.nc
 
-     mv ${dir_output}/stofs_stations_nowcast.nc  ${dir_output}/${fn_sta_profile_ncast_std}  
+    # Datum conversion: xgeoid to MSL (changed from NAVD in v3.1.0)
+    fn_nco_xg_msl=${FIXstofs3d}/stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco
 
-     # archive
+    cp -pf ${dir_output}/$fn_sta_profile  ${dir_output}/${fn_sta_profile}_ori
+    ncap2 -O  -F -S ${fn_nco_xg_msl} ${dir_output}/${fn_sta_profile}_ori  ${dir_output}/${fn_sta_profile}
+
+
      export err=$?
 
         if [ $err -eq 0 ]; then
 
-           cpreq -pf ${dir_output}/${fn_sta_profile_ncast_std}  ${COMOUT}/${fn_sta_profile_ncast_std}
+           # Archiving disabled in v3.1.0 (handled separately in post-processing)
+           #cpreq -pf ${dir_output}/${fn_sta_profile}  ${COMOUT}/${fn_sta_profile}
 
-           msg="Creation/Archiving of ${dir_output}/${fn_sta_profile_ncast_std} was successfully created"
+           msg="Creating stofs_stations_profile_${stack_start}_${stack_end}.nc  was successfully created"
            echo $msg; echo $msg >> $pgmout
-
-           if [ $SENDDBN = YES ]; then
-              $DBNROOT/bin/dbn_alert MODEL STOFS_NETCDF $job ${COMOUT}/${fn_sta_profile_ncast_std}
-              export err=$?; err_chk
-           fi
 
         else
-           msg="Creation/Archiving of ${dir_output}/${fn_sta_profile_ncast_std} failed"
+           msg="Creation/Archiving of ${dir_output}/${fn_sta_profile} failed"
            echo $msg; echo $msg >> $pgmout
         fi
-          
-   # forecast
-   fn_sta_profile_fcast_std=${RUN}.${cycle}.fcast.station.profile.nc
-   fn_sta_profile_fcast_date_tag=${RUN}.station.profile.fcast.${PDYHH_FCAST_BEGIN:0:8}.${cycle}.nc
-
-       stack_start=3
-       stack_end=10
-
-     dir_output=results
-     yyyymmdd_hh_ref=${PDYHH_FCAST_BEGIN:0:4}-${PDYHH_FCAST_BEGIN:4:2}-${PDYHH_FCAST_BEGIN:6:2}-${cyc}
-
-
-     python ${PYstofs3d}/get_stations_profile.py --date ${yyyymmdd_hh_ref}  --stack_start  ${stack_start}  --stack_end  ${stack_end}  --output_dir  ${dir_output}  >> $pgmout 2> errfile
-
-     cp -paf ${dir_output}/stofs_stations_forecast.nc ${dir_output}/stofs_stations_forecast.nc_original
-       ncap2 -O  -F -S ${fn_nco_xg_navd} ${dir_output}/stofs_stations_forecast.nc_original ${dir_output}/stofs_stations_forecast.nc
-     
-     mv ${dir_output}/stofs_stations_forecast.nc  ${dir_output}/${fn_sta_profile_fcast_std}
-    
-          
- 
-    # archive
-     export err=$?
-
-        if [ $err -eq 0 ]; then
-
-           cpreq -pf ${dir_output}/${fn_sta_profile_fcast_std}  ${COMOUT}/${fn_sta_profile_fcast_std}
-
-           msg="Creation/Archiving of ${dir_output}/${fn_sta_profile_fcast_std} was successfully created"
-           echo $msg; echo $msg >> $pgmout
-
-           if [ $SENDDBN = YES ]; then
-              $DBNROOT/bin/dbn_alert MODEL STOFS_NETCDF $job ${COMOUT}/${fn_sta_profile_fcast_std}
-              export err=$?; err_chk
-           fi
-
-        else
-           msg="Creation/Archiving of ${dir_output}/${fn_sta_profile_fcast_std} failed"
-           echo $msg; echo $msg >> $pgmout
-        fi
-
 
 
 export err=$?;
 
-echo 
+echo
 echo "stofs_3d_atl_create_profile_2d_nc.sh  completed "
-echo 
+echo
 
 
