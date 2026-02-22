@@ -230,20 +230,70 @@ if [ "${ATMOS_ENSEMBLE}" = true ]; then
     echo "    Atmos prep: ${ATMOS_PREP_JOBID}"
 fi
 
-# ---- Step 2: Submit ensemble members (depend on prep + atmos_prep) ---
+# ---- Step 2a (optional): Submit deterministic nowcast before ensemble ----
+# When --with-det, run the deterministic nowcast FIRST so that its
+# restart_outputs/ (staout, mirror.out, flux.out) are available for
+# ensemble members to use ihot=2 (continuous nowcast+forecast timeseries).
+# The deterministic forecast runs in parallel with ensemble members.
+NCST_JOBID_SHORT=""
+FCST_JOBID_SHORT=""
+if [ "${WITH_DET}" = true ]; then
+    echo ""
+    echo ">>> Submitting deterministic nowcast (required for ensemble ihot=2)..."
+
+    NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
+    FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
+
+    if [ ! -f "${NCST_PBS}" ]; then
+        echo "ERROR: Nowcast PBS script not found: ${NCST_PBS}" >&2
+        exit 1
+    fi
+
+    NCST_JOBID=$(qsub \
+        -v "PDY=${PDY},cyc=${CYC}" \
+        ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
+        "${NCST_PBS}")
+    NCST_JOBID_SHORT=${NCST_JOBID%%.*}
+    echo "    Nowcast:  ${NCST_JOBID}"
+
+    # Submit forecast (depends on nowcast, runs in parallel with ensemble members)
+    if [ -f "${FCST_PBS}" ]; then
+        FCST_JOBID=$(qsub \
+            -v "PDY=${PDY},cyc=${CYC}" \
+            -W depend=afterok:${NCST_JOBID_SHORT} \
+            "${FCST_PBS}")
+        FCST_JOBID_SHORT=${FCST_JOBID%%.*}
+        echo "    Forecast: ${FCST_JOBID} (parallel with ensemble)"
+    fi
+fi
+
+# ---- Step 2b: Submit ensemble members (depend on nowcast + atmos_prep) ---
 echo ""
 echo ">>> Submitting ${N_MEMBERS} ensemble members..."
 MEMBER_JOBIDS=()
 
 # Build member dependency string
-# Members depend on prep, and also on atmos_prep when --atmos-ensemble is used
-MEMBER_DEP_STR=""
-if [ -n "${PREP_JOBID_SHORT}" ] && [ -n "${ATMOS_PREP_JOBID_SHORT}" ]; then
-    MEMBER_DEP_STR="afterok:${PREP_JOBID_SHORT}:${ATMOS_PREP_JOBID_SHORT}"
+# With --with-det: members depend on nowcast (for restart_outputs/) + atmos_prep
+# Without --with-det: members depend on prep + atmos_prep (user must ensure
+#   nowcast completed previously, e.g., via --det-only or --skip-prep)
+MEMBER_DEP_PARTS=()
+if [ -n "${NCST_JOBID_SHORT}" ]; then
+    # --with-det: depend on nowcast (which already depends on prep)
+    MEMBER_DEP_PARTS+=("${NCST_JOBID_SHORT}")
 elif [ -n "${PREP_JOBID_SHORT}" ]; then
-    MEMBER_DEP_STR="afterok:${PREP_JOBID_SHORT}"
-elif [ -n "${ATMOS_PREP_JOBID_SHORT}" ]; then
-    MEMBER_DEP_STR="afterok:${ATMOS_PREP_JOBID_SHORT}"
+    # No det: depend on prep only
+    MEMBER_DEP_PARTS+=("${PREP_JOBID_SHORT}")
+fi
+if [ -n "${ATMOS_PREP_JOBID_SHORT}" ]; then
+    MEMBER_DEP_PARTS+=("${ATMOS_PREP_JOBID_SHORT}")
+fi
+
+MEMBER_DEP_STR=""
+if [ ${#MEMBER_DEP_PARTS[@]} -gt 0 ]; then
+    MEMBER_DEP_STR="afterok"
+    for dep in "${MEMBER_DEP_PARTS[@]}"; do
+        MEMBER_DEP_STR="${MEMBER_DEP_STR}:${dep}"
+    done
 fi
 
 for i in $(seq 0 $((N_MEMBERS - 1))); do
@@ -289,29 +339,7 @@ ENSPOST_JOBID=$(qsub \
     "${POST_PBS}")
 echo "    Ensemble post: ${ENSPOST_JOBID}"
 
-# ---- Step 4 (optional): Submit deterministic workflow ----------------
-if [ "${WITH_DET}" = true ]; then
-    echo ""
-    echo ">>> Submitting deterministic workflow..."
-
-    NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
-    FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
-
-    if [ ! -f "${NCST_PBS}" ] || [ ! -f "${FCST_PBS}" ]; then
-        echo "    WARNING: Deterministic PBS scripts not found, skipping"
-    else
-        NCST_JOBID=$(qsub \
-            -W depend=afterok:${PREP_JOBID_SHORT} \
-            "${NCST_PBS}")
-        echo "    Nowcast:  ${NCST_JOBID}"
-
-        NCST_SHORT=${NCST_JOBID%%.*}
-        FCST_JOBID=$(qsub \
-            -W depend=afterok:${NCST_SHORT} \
-            "${FCST_PBS}")
-        echo "    Forecast: ${FCST_JOBID}"
-    fi
-fi
+# (Deterministic workflow already submitted in Step 2a above)
 
 # ---- Summary ---------------------------------------------------------
 echo ""
@@ -320,7 +348,13 @@ echo " Ensemble workflow submitted successfully"
 echo "=============================================="
 echo ""
 echo " Dependency chain:"
-echo "   prep (${PREP_JOBID_SHORT})"
+echo "   prep (${PREP_JOBID_SHORT:-skipped})"
+if [ -n "${NCST_JOBID_SHORT}" ]; then
+    echo "     └─> nowcast (${NCST_JOBID_SHORT})"
+    if [ -n "${FCST_JOBID_SHORT}" ]; then
+        echo "     │     └─> forecast (${FCST_JOBID_SHORT})"
+    fi
+fi
 if [ -n "${ATMOS_PREP_JOBID_SHORT}" ]; then
     echo "     └─> atmos_prep (${ATMOS_PREP_JOBID_SHORT})"
 fi
@@ -331,9 +365,15 @@ for i in $(seq 0 $((N_MEMBERS - 1))); do
 done
 ENSPOST_SHORT=${ENSPOST_JOBID%%.*}
 echo "           └─> post_ensemble (${ENSPOST_SHORT})"
+if [ -n "${NCST_JOBID_SHORT}" ]; then
+    echo ""
+    echo " Members wait for nowcast to finish (ihot=2 continuous staout)"
+fi
 echo ""
 echo " Monitor with:  qstat -u $LOGNAME"
-ALL_JOBIDS="${PREP_JOBID_SHORT}"
+ALL_JOBIDS="${PREP_JOBID_SHORT:-}"
+[ -n "${NCST_JOBID_SHORT}" ] && ALL_JOBIDS="${ALL_JOBIDS} ${NCST_JOBID_SHORT}"
+[ -n "${FCST_JOBID_SHORT}" ] && ALL_JOBIDS="${ALL_JOBIDS} ${FCST_JOBID_SHORT}"
 [ -n "${ATMOS_PREP_JOBID_SHORT}" ] && ALL_JOBIDS="${ALL_JOBIDS} ${ATMOS_PREP_JOBID_SHORT}"
 ALL_JOBIDS="${ALL_JOBIDS} ${MEMBER_JOBIDS[*]%%.*} ${ENSPOST_SHORT}"
 echo " Cancel all:    qdel ${ALL_JOBIDS}"

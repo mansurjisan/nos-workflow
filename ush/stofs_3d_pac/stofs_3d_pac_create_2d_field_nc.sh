@@ -2,11 +2,11 @@
 
 
 #############################################################################
-#  Name: stofs_3d_atl_create_2d_field_nc.sh                                 #
+#  Name: stofs_3d_pac_create_2d_field_nc.sh                                 #
 #  This script reads the SCHISM output files with the names containing any  #
 #  strings in {out2d,temperature,salinity,horizontalVelX,horizontalVelY,    #
 #  zCoordinates} and creates the 2-D field data,                            #
-#  stofs_3d_atl.t12z.{n001_024,f001_024,025_048}.field2d.nc                 #
+#  stofs_3d_pac.t12z.{n001_024,f001_024,025_048}.field2d.nc                 #
 #                                                                           #
 #  Remarks:                                                                 #
 #############################################################################
@@ -15,7 +15,7 @@
 # ---------------------------> Begin ...
  set -x
 
-  echo " stofs_3d_atl_create_2d_field_nc.sh began" 
+  echo " stofs_3d_pac_create_2d_field_nc.sh began" 
 
   pgmout=pgmout_stofs3d_create_2d_field_nc.$$
   rm -f $pgmout
@@ -31,7 +31,7 @@
 
   list_fn_base=(horizontalVelX  horizontalVelY  out2d  salinity  temperature  zCoordinates)
 
-  echo "In stofs_3d_atl_create_2d_field_nc.sh: checking file existence: "
+  echo "In stofs_3d_pac_create_2d_field_nc.sh: checking file existence: "
  
   num_missing_files=0
   k_no=${idx_day_no}
@@ -111,7 +111,7 @@
 export err=$?;
 
 echo 
-echo "stofs_3d_atl_create_2d_field_nc.sh  completed "
+echo "stofs_3d_pac_create_2d_field_nc.sh  completed "
 echo 
 
 

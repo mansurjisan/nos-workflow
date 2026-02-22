@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #################################################################################
-#  Name: stofs_3d_atl_create_geopackage.sh                                      #
+#  Name: stofs_3d_pac_create_geopackage.sh                                      #
 #  This is a post-processing script that reads the water level field            #
 #  time series data, out2d_{1,2,3}.nc (which are the outputs of the schisms     #
 #  model run) to generate the GoePackage (.gpkg) files to support the NOAA/NOS  #
@@ -16,7 +16,7 @@
 set -x
 
 
-  fn_this_sh="stofs_3d_atl_create_geopackage.sh"
+  fn_this_sh="stofs_3d_pac_create_geopackage.sh"
 
   echo "${fn_this_sh} began " 
   echo; echo

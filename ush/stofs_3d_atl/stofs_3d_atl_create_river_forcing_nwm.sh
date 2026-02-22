@@ -78,21 +78,10 @@ esac
 
 
 # cp files to work dir
- fn_src_sink_before_reloc=stofs_3d_atl_river_source_sink.in.before_relocate
+# VIMS v7 simplified pipeline (replaces v2.1.9 full relocation)
  fn_src_conus_json=stofs_3d_atl_river_sources_conus.json
- fn_src_scale=stofs_3d_atl_river_source_scale.txt
- fn_sink_conus_json=stofs_3d_atl_river_sinks_conus.json
- fn_reloc_map=stofs_3d_atl_river_relocate_map.txt
- fn_src_sink_in=stofs_3d_atl_river_source_sink.in
- 
 
- cp -f  ${PYstofs3d}/relocate_source_feeder_lean.py  relocate_source_feeder_lean.py
- cp -f  ${FIXstofs3d}/${fn_src_sink_before_reloc} source_sink.in.before_relocate
- cp -f  ${FIXstofs3d}/${fn_src_conus_json} sources_conus.json
- cp -f  ${FIXstofs3d}/${fn_src_scale} source_scale.txt
- cp -f  ${FIXstofs3d}/${fn_sink_conus_json} sinks_conus.json
- cp -f  ${FIXstofs3d}/${fn_reloc_map} relocate_map.txt
- cp -f  ${FIXstofs3d}/${fn_src_sink_in} source_sink.in
+  cp -f  ${FIXstofs3d}/${fn_src_conus_json} sources.json
 
 
 # ---------------------------> Dates
@@ -367,18 +356,20 @@ for str_fn_river_th in ${list_riv_src_sink[@]}; do
     fi
 
 
+if [ 1 -eq 1 ]; then
       fn_tmp1=${fn_river_th}_tmp_1
-      fn_tmp2=${fn_river_th}_tmp_2    
+      fn_tmp2=${fn_river_th}_tmp_2
       fn_tmp3=${fn_river_th}_tmp_3
 
       rm -f $fn_tmp1; rm -f $fn_tmp2; rm -f $fn_tmp3
-    
+
       cp -f ${fn_river_th}  ${fn_tmp1}
       echo; echo fn_tmp1=`ls -l  ${fn_tmp1}`
       echo; echo  fn_river_th=`ls -l ${fn_river_th}`
 
       mv ${fn_river_th}  ${fn_tmp2}
- 
+      sed 's/^ *//g' -i ${fn_tmp2}
+
       line_1_ori_2_end=`head -n 1 ${fn_tmp2} | cut -d' ' -f 2-`
       line_2_ori_2_end=`head -n 2 ${fn_tmp2} | tail -n 1 | cut -d' ' -f 2-`
 
@@ -390,8 +381,13 @@ for str_fn_river_th in ${list_riv_src_sink[@]}; do
       rm -f ${fn_river_th_std}
       { echo  ${line_1_new}; echo  ${line_2_new}; cat ${fn_tmp3}; } > ${fn_river_th_std}
 
+fi  # v2.1.9 timestamp manipulation; VIMS v7 gen_sourcesink.py handles timestamps directly
+
+      # VIMS v7: direct copy (2024/07/25)
+      cp -f ${fn_river_th} ${fn_river_th_std}
+
       cpreq -pf ${fn_river_th_std} ${COMOUTrerun}/${fn_river_th_std}
- 
+
     msg_tmp="${msg_tmp}\n File archived: cpreq -pf ${fn_river_th} ${COMOUTrerun}/${fn_river_th_std}"
     echo -e ${msg_tmp};
 

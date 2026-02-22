@@ -2,7 +2,7 @@
 
 
 ################################################################################
-#  Name: stofs_3d_atl_create_adcirc_nc.sh                                      #
+#  Name: stofs_3d_pac_create_adcirc_nc.sh                                      #
 #  This is a post-processing script that reads the water level field           #
 #  time series data, outputs/out2d_{1,2,3}.nc to create the field water level  #
 #  time series data, schout_adcirc_{1,2,3}.nc (that are used to support the    #
@@ -17,7 +17,7 @@
 # ---------------------------> Begin ...
 set -x
 
-  fn_this_sh="stofs_3d_atl_create_adcirc_nc.sh"
+  fn_this_sh="stofs_3d_pac_create_adcirc_nc.sh"
 
   echo "${fn_this_sh} began"
 
@@ -27,7 +27,7 @@ set -x
   cd ${DATA}
 
 # ---------------------------> Global Variables
-  fn_node_id_cityPoly_adc=${FIXstofs3d}/stofs_3d_atl_node_id_city_poly_adcirc.txt
+  fn_node_id_cityPoly_adc=${FIXstofs3d}/stofs_3d_pac_node_id_city_poly_adcirc.txt
 
   fn_py_gen_nc=${PYstofs3d}/generate_adcirc.py
 

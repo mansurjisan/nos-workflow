@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #################################################################################
-#  Name: stofs_3d_atl_add_attr_2d_3d_nc.sh                                      #
+#  Name: stofs_3d_pac_add_attr_2d_3d_nc.sh                                      #
 #  This script adds the meta data attributes the NetCDF variables in SCHISM     #
 #  output files with their names containing any strings in {out2d,temperature,  #
 #  salinity,horizontalVelX,horizontalVelY,zCoordinates,verticalVelocity,        #
@@ -16,7 +16,7 @@
 # ---------------------------> Begin ...
  set -x
 
-  fn_this_sh="stofs_3d_atl_add_attr_2d_3d_nc.sh"
+  fn_this_sh="stofs_3d_pac_add_attr_2d_3d_nc.sh"
 
   echo " ${fn_this_sh} began"  
  
@@ -28,7 +28,7 @@
   
 
 # ---------------------------> Global Variables
-  fn_mask_land_bnd=${FIXstofs3d}/stofs_3d_atl_mask_land_ocean_bnd_out2d.nc
+  fn_mask_land_bnd=${FIXstofs3d}/stofs_3d_pac_mask_land_ocean_bnd_out2d.nc
 
   i_cnt_file=$1
 

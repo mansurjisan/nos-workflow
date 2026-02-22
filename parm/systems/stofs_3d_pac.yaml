@@ -3,7 +3,7 @@
 #
 # Inherits from base SCHISM configuration and overrides specific values.
 # This config maps to STOFS shell script environment variables.
-# NOTE: This is a placeholder config - Pacific STOFS may have different parameters
+# Values extracted from operational STOFS-3D-PAC v3.1.0 scripts.
 
 _base: schism
 
@@ -12,27 +12,28 @@ system:
   description: "Storm Surge and Tide Operational Forecast System - 3D Pacific"
   region: pacific
   framework: stofs
-  version: "2.2.0"
+  version: "3.1.0"
   prefix: stofs_3d_pac
 
 # Grid configuration - maps to shell variables
 grid:
   type: unstructured
-  # SCHISM grid dimensions (estimates based on Pacific domain)
-  n_nodes: 2000000
-  n_elements: 4000000
-  n_sides: 6000000
-  n_levels: 51
+  # SCHISM grid dimensions (read from hgrid.gr3 at runtime)
+  n_nodes: 2000000            # -> np_global (approximate; read from grid file)
+  n_elements: 4000000         # -> ne_global (approximate; read from grid file)
+  n_sides: 6000000            # -> ns_global (approximate; read from grid file)
+  n_levels: 51                # -> nvrt, KBm
   files:
-    horizontal: stofs_3d_pac.hgrid.gr3
-    vertical: stofs_3d_pac.vgrid.in
-    horizontal_ll: stofs_3d_pac.hgrid.ll
-  # Pacific domain bounds (US West Coast to Hawaii)
+    horizontal: stofs_3d_pac.hgrid.gr3    # -> GRIDFILE
+    vertical: stofs_3d_pac.vgrid.in       # -> VGRID_CTL
+    horizontal_ll: stofs_3d_pac.hgrid.ll  # -> GRIDFILE_LL
+  # Pacific domain bounds (global Pacific basin)
+  # Maps to: LONMIN, LONMAX, LATMIN, LATMAX
   domain:
-    lon_min: -180.0
-    lon_max: -115.0
-    lat_min: 10.0
-    lat_max: 62.0
+    lon_min: 92.5               # Eastern boundary of Indian Ocean
+    lon_max: 290.0              # Western Atlantic (290°E = -70°W)
+    lat_min: -33.5              # Southern extent
+    lat_max: 67.0               # Northern extent (includes Alaska)
 
 # Forcing configuration
 forcing:
@@ -40,59 +41,134 @@ forcing:
     primary: gfs
     fallback: null
     gfs:
-      resolution: "0.25"
-      levels: [10, 2]
+      resolution: "0.25"         # GFS 0.25 degree
+      levels: [10, 2]            # Heights for wind (10m), temp/humidity (2m)
+      max_forecast_hours: 50     # f001 to f050
     variables:
-      - PRMSL
-      - TMP
-      - SPFH
-      - RH
-      - UGRD
-      - VGRD
-      - PRATE
-      - DSWRF
-      - DLWRF
-    # No HRRR for Pacific (out of CONUS domain)
+      - PRMSL                    # Pressure reduced to MSL
+      - TMP                      # Temperature
+      - SPFH                     # Specific humidity
+      - RH                       # Relative humidity
+      - UGRD                     # U-component of wind
+      - VGRD                     # V-component of wind
+      - PRATE                    # Precipitation rate
+      - DSWRF                    # Downward shortwave radiation flux
+      - DLWRF                    # Downward longwave radiation flux
+      - ALBDO                    # Albedo (surface)
+      - USWRF                    # Upward shortwave radiation flux
+      - ULWRF                    # Upward longwave radiation flux
+    # HRRR blending for 3 regions (Alaska, CONUS West Coast, Caribbean Basin)
     hrrr_blend:
-      enabled: false
+      enabled: true
+      forecast_hours: 48         # HRRR forecast length for each region
+      regions:
+        us:
+          label: "CONUS West Coast"
+          resolution: "3km"
+          lon_min: -135.0
+          lon_max: -103.0
+          lat_min: 21.5
+          lat_max: 53.0
+          file_size_min: 100000000   # 100MB minimum for valid file
+        ak:
+          label: "Alaska HRRR"
+          resolution: "3km"
+          file_size_min: 50000000    # 50MB minimum
+        cb:
+          label: "Combo (GFS+HRRR-US+HRRR-AK blend)"
+          # Blends GFS, HRRR-US, HRRR-AK via ncremap interpolation
+          gfs_hours: 72             # GFS base hours for combo blend
 
   river:
     enabled: true
-    primary: nwm
-    n_rivers: 5000            # Estimated Pacific coast rivers
+    primary: nwm                   # National Water Model
+    n_rivers: 5000                 # Approximate Pacific coast rivers
     version: "v3.0"
-    n_list_target: 121
-    n_list_min: 97
+    n_list_target: 74              # Target NWM files (50hr forecast + nowcast)
+    n_list_min: 49                 # Minimum files needed
     files:
-      sources_json: stofs_3d_pac_sources.json
+      sources_json:
+        - sources_alaska_global.json    # Alaska NWM river sources
+        - sources_hawaii_global.json    # Hawaii NWM river sources
+        - sources_conus_global.json     # CONUS NWM river sources
       sinks_json: stofs_3d_pac_sinks.json
+    # GloFAS (Global Flood Awareness System) blending
+    glofas:
+      enabled: true
+      clim_dir: GloFAS_clim
+      prep_file: glofas_prepRUN31l_NWM500km.npz
+    # File size thresholds for validation
+    file_size_min:
+      msource_th: 3043000
+      vsource_th: 2536000
+      source_sink_in: 25800
+    # redistribute_source_static executable for river redistribution
+    redistribute:
+      enabled: true
+      executable: redistribute_source_static
+      config: redistribute_source.in
+
+  # Open boundary river forcing (USGS/Canadian/USACE gauges)
+  river_ob:
+    enabled: true
+    n_list_target: 74
+    n_list_min: 49
+    sources:
+      usgs: true                   # USGS river gauges
+      canadian: true               # Canadian hydrometric stations
+      usace: true                  # USACE streamflow data
+    file_size_min:
+      flux_th: 200
+      tem_1_th: 200
 
   ocean:
     enabled: true
-    primary: rtofs
+    primary: rtofs                 # -> DBASE_TS_NOW, DBASE_TS_FOR = "RTOFS"
+    # Open boundary settings — combined OBC + nudge + restore in single script
     obc:
       wl_source: rtofs
       ts_source: rtofs
-      ssh_offset: 0.04
-      n_list_target_2d: 21
-      n_list_target_3d: 21
-      # RTOFS region of interest indices (Pacific specific)
+      ssh_offset: 0.04            # SSH offset correction (meters)
+      obc_mode: nudge_restore     # Combined OBC + nudge + surface_restore
+      n_list_target_2d: 21        # -> N_list_target_2D
+      n_list_target_3d: 21        # -> N_list_target_3D
+      # RTOFS region of interest indices for convert_rtofs subsampling
       roi_2ds:
-        x1: 100
-        x2: 500
-        y1: 200
-        y2: 800
+        x1: 222                   # -> idx_x1_2ds (id_gx1)
+        x2: 2703                  # -> idx_x2_2ds (id_gx2)
+        y1: 1051                  # -> idx_y1_2ds (id_gy1)
+        y2: 2641                  # -> idx_y2_2ds (id_gy2)
+        skip: 2                   # Stride/skip for subsampling (isk_x, isk_y)
+      # 3D fields use same ROI as 2D (combined script handles both)
       roi_3dz:
-        x1: 50
-        x2: 250
-        y1: 100
-        y2: 400
+        x1: 222
+        x2: 2703
+        y1: 1051
+        y2: 2641
+        skip: 2
     nudging:
       enabled: true
       timescale_days: 1.0
+      # Nudge ROI same as OBC for PAC (combined script)
+      roi_3dz:
+        x1: 222
+        x2: 2703
+        y1: 1051
+        y2: 2641
+        skip: 2
       files:
         sal_nudge: stofs_3d_pac.SAL_nudge.gr3
         tem_nudge: stofs_3d_pac.TEM_nudge.gr3
+    # Surface restore output (PAC-specific: combined OBC script generates this)
+    surface_restore:
+      enabled: true
+      file: surface_restore.nc
+    # ADT satellite data for SSH boundary correction
+    adt:
+      enabled: true
+      lon_range_1: [92.5, 180.0]    # Western Pacific
+      lon_range_2: [-180.0, -70.0]  # Eastern Pacific
+      lat_range: [-33.5, 67.0]
 
   tidal:
     enabled: true
@@ -112,16 +188,22 @@ forcing:
 
 # Model physics and runtime configuration
 model:
-  executable: pschism_WCOSS2
+  executable: stofs_3d_pac_pschism    # PAC-specific SCHISM executable
   physics:
-    dt: 150.0
-    slam0: -140.0             # Reference longitude (Pacific)
-    sfea0: 40.0               # Reference latitude
-    nws: 2
-    wtiminc: 3600
+    dt: 90.0                     # Timestep in seconds -> DELT_MODEL (90s for PAC vs 150s for ATL)
+    slam0: -140.0                # Reference longitude (Pacific)
+    sfea0: 40.0                  # Reference latitude
+    nws: 2                       # Atmospheric forcing format
+    wtiminc: 3600                # Wind time increment (seconds)
   run:
-    hindcast_days: 0.25
-    forecast_days: 5.25
+    hindcast_days: 1.0           # 24-hour nowcast (lookback from cycle time)
+    forecast_days: 4.5           # 4.5-day forecast (108 hours)
+    nowcast_hours: 24
+    forecast_hours: 108
+    # Total simulation coverage = 24h + 108h = 5.5 days
+    coldstart_allowed: false     # PAC is baroclinic — requires current T/S conditions
+    hotstart_search_days: 5      # Search back 5 days for valid hotstart
+    hotstart_min_size_gb: 20     # Minimum valid hotstart file size
 
 # Output configuration
 output:
@@ -129,11 +211,11 @@ output:
   prefix: stofs_3d_pac
   stations:
     enabled: true
-    interval: 360.0
+    interval: 360.0              # 6 minutes
     file: stofs_3d_pac.station.in
   fields_2d:
     enabled: true
-    interval: 3600.0
+    interval: 3600.0             # 1 hour
     variables:
       - elevation
       - dahv
@@ -149,18 +231,23 @@ output:
       - horizontalVelY
   restart:
     interval_days: 1.0
+    # Hot restart step indices for 90-second timestep
+    # 2400*90=216000s=60h, 1920=48h, 1440=36h, 960=24h, 480=12h
+    hotstart_steps: [2400, 1920, 1440, 960, 480]
+    default_hotstart_step: 960   # 24 hours (960*90s = 86400s)
 
-# Computational resources
+# Computational resources for STOFS-3D-PAC
 resources:
-  nprocs: 1200
-  nscribes: 8
-  memory_gb: 2500
-  walltime_hours: 4
+  nprocs: 3960                   # MPI processes (from operational ECF: 33 nodes × 120 mpiprocs)
+  nscribes: 8                    # SCHISM I/O server processes
+  memory_gb: 500                 # Per-node memory (from ECF mem=500GB)
+  walltime_hours: 6              # Model run walltime
 
-# STOFS workflow stages
+# STOFS workflow stages (split nowcast + forecast, matching ATL unified pattern)
 stages:
-  - prep_nowcast
-  - now_forecast
+  - prep
+  - nowcast
+  - forecast
   - post_1
   - post_2
   - temp_salt_restart
@@ -173,14 +260,20 @@ legacy:
   fix_dir: ""
   scripts:
     gfs: true
-    hrrr: false               # No HRRR for Pacific
+    hrrr: true                     # PAC has 3-region HRRR (ak/us/cb)
     river: true
-    obc: true
+    river_ob: true                 # PAC-specific: open boundary rivers
+    obc: true                      # Combined OBC + nudge + restore script
     tides: true
   script_names:
     gfs: stofs_3d_pac_create_surface_forcing_gfs.sh
+    hrrr: stofs_3d_pac_create_surface_forcing_hrrr.sh
+    hrrr_ak: stofs_3d_pac_create_surface_forcing_hrrr_ak.sh
+    hrrr_us: stofs_3d_pac_create_surface_forcing_hrrr_us.sh
+    hrrr_cb: stofs_3d_pac_create_surface_forcing_hrrr_cb.sh
     river: stofs_3d_pac_create_river_forcing_nwm.sh
-    obc: stofs_3d_pac_create_obc_3d_th.sh
+    river_ob: stofs_3d_pac_create_river_forcing_ob.sh
+    obc: stofs_3d_pac_create_obc_3dth_nudge_restore.sh
     tides: stofs_3d_pac_create_bctides_in.sh
 
 # Environment variable mappings for shell scripts
@@ -188,22 +281,61 @@ shell_mappings:
   framework: stofs
   env_prefix: stofs3d
   variables:
+    # Model identification
     OCEAN_MODEL: model.ocean_model
     DELT_MODEL: model.physics.dt
+
+    # Grid files
     GRIDFILE: grid.files.horizontal
     VGRID_CTL: grid.files.vertical
+
+    # Grid dimensions
     nvrt: grid.n_levels
     KBm: grid.n_levels
     np_global: grid.n_nodes
     ne_global: grid.n_elements
     ns_global: grid.n_sides
+
+    # GFS domain bounds (primary forcing)
     LONMIN: grid.domain.lon_min
     LONMAX: grid.domain.lon_max
     LATMIN: grid.domain.lat_min
     LATMAX: grid.domain.lat_max
+
+    # HRRR CONUS domain bounds
+    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.regions.us.lon_min
+    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.regions.us.lon_max
+    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.regions.us.lat_min
+    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.regions.us.lat_max
+
+    # River forcing parameters
     N_RIVERS: forcing.river.n_rivers
     N_list_target: forcing.river.n_list_target
     N_list_min: forcing.river.n_list_min
+
+    # RTOFS OBC parameters
     N_list_target_2D: forcing.ocean.obc.n_list_target_2d
     N_list_target_3D: forcing.ocean.obc.n_list_target_3d
+    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
+    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
+    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
+    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
+    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
+    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
+    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
+    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
     SSH_OFFSET: forcing.ocean.obc.ssh_offset
+    OBC_MODE: forcing.ocean.obc.obc_mode
+
+    # RTOFS nudge parameters (same ROI as OBC for PAC)
+    idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
+    idx_x2_3dz_nudge: forcing.ocean.nudging.roi_3dz.x2
+    idx_y1_3dz_nudge: forcing.ocean.nudging.roi_3dz.y1
+    idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
+
+    # Computed values (derived at runtime)
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast

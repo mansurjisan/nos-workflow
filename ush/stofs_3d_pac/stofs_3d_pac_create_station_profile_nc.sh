@@ -1,10 +1,10 @@
 #!/bin/bash
 
 ################################################################################
-#  Name: stofs_3d_atl_create_station_profile_nc.sh                             #
+#  Name: stofs_3d_pac_create_station_profile_nc.sh                             #
 #  This script reads the 3-D field files (see details in the STOFS Transition  #
 #  Release Form) to create the station profile nc files,                       #
-#    stofs_3d_atl.t12z.{ncast,fcast}.station.profile.nc                        #
+#    stofs_3d_pac.t12z.{ncast,fcast}.station.profile.nc                        #
 #                                                                              #
 #  Remarks:                                                                    #
 #                                                            September, 2022   #
@@ -15,7 +15,7 @@
 # ---------------------------> Begin ...
 set -x
 
-  echo " stofs_3d_atl_create_profile_2d_nc.sh began at UTC: "
+  echo " stofs_3d_pac_create_profile_2d_nc.sh began at UTC: "
 
   pgmout=pgmout_stofs3d_create_profile_2d_nc.$$
   rm -f $pgmout
@@ -36,7 +36,7 @@ set -x
   list_fn_base=(horizontalVelX  horizontalVelY  out2d  salinity  temperature  zCoordinates)
 
 
-  echo "In stofs_3d_atl_create_profile_2d_nc.sh: checking file existence: "
+  echo "In stofs_3d_pac_create_profile_2d_nc.sh: checking file existence: "
 
   num_missing_files=0
   for k_no in ${list_day_no[@]};
@@ -77,7 +77,7 @@ set -x
 
 
     # Datum conversion: xgeoid to MSL (changed from NAVD in v3.1.0)
-    fn_nco_xg_msl=${FIXstofs3d}/stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco
+    fn_nco_xg_msl=${FIXstofs3d}/stofs_3d_pac_sta_cwl_xgeoid_to_msl.nco
 
     cp -pf ${dir_output}/$fn_sta_profile  ${dir_output}/${fn_sta_profile}_ori
     ncap2 -O  -F -S ${fn_nco_xg_msl} ${dir_output}/${fn_sta_profile}_ori  ${dir_output}/${fn_sta_profile}
@@ -102,7 +102,7 @@ set -x
 export err=$?;
 
 echo
-echo "stofs_3d_atl_create_profile_2d_nc.sh  completed "
+echo "stofs_3d_pac_create_profile_2d_nc.sh  completed "
 echo
 
 
