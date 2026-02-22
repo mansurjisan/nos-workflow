@@ -707,8 +707,8 @@ with netCDF4.Dataset('${MEMBER_DATA}/sflux/sflux_rad_1.1.nc', 'r+') as f:
                     # Try COMOUTrerun sflux NetCDFs first
                     if [ -s "${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.air.nc" ]; then
                         echo "GEFS primary: staging sflux from ${_COMOUTrerun} (member=${_GEFS_ID})"
-                        # GEFS pgrb2ap5 has air+prc but NOT radiation (DSWRF/DLWRF).
-                        # Stage air and prc from GEFS; use GFS rad from default prep output.
+                        # GEFS pgrb2sp25 has all 8 sflux variables including radiation.
+                        # Stage air, prc, and rad from GEFS; fall back to GFS rad if missing.
                         #
                         # COMF SCHISM uses .{N}.nc naming (sflux_air_1.1.nc), NOT .0001.nc.
                         # The STOFS archival also sets time(0)=0.499999 making the time axis
@@ -725,8 +725,8 @@ with netCDF4.Dataset('${MEMBER_DATA}/sflux/sflux_rad_1.1.nc', 'r+') as f:
                                 echo "WARNING: GEFS sflux not found: ${src}" >&2
                             fi
                         done
-                        # Radiation: check if GEFS rad exists (future-proof),
-                        # otherwise use GFS rad from default prep tar
+                        # Radiation: use GEFS rad if available,
+                        # otherwise fall back to GFS rad from default prep tar
                         local rad_src="${_COMOUTrerun}/${RUN}.${cycle}.gefs_${_GEFS_ID}.rad.nc"
                         if [ -s "${rad_src}" ]; then
                             cp -p "${rad_src}" "${MEMBER_DATA}/sflux/sflux_rad_1.1.nc"
@@ -736,10 +736,10 @@ with netCDF4.Dataset('${MEMBER_DATA}/sflux/sflux_rad_1.1.nc', 'r+') as f:
                             # Extract ONLY sflux_rad from default prep tar; COMF tar uses .1.nc naming
                             local _GFS_TAR="${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.met.forecast.nc.tar"
                             if [ -f "${_GFS_TAR}" ]; then
-                                echo "  sflux_rad_1 <- GFS (GEFS has no radiation data)"
+                                echo "  sflux_rad_1 <- GFS fallback (GEFS rad not found)"
                                 tar xf "${_GFS_TAR}" -C ${MEMBER_DATA}/sflux/ sflux_rad_1.1.nc
                             else
-                                echo "  WARNING: No rad source (GEFS has no rad, GFS tar not found)"
+                                echo "  WARNING: No rad source (GEFS rad missing, GFS tar not found)"
                             fi
                         fi
                         _gefs_found=true

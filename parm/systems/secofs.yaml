@@ -335,14 +335,14 @@ ensemble:
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
-  # Uses 0.50 deg pgrb2ap5 product (has all 8 sflux variables)
+  # Uses 0.25 deg pgrb2sp25 product (has all 8 sflux variables)
   # Control member uses GFS deterministic (0.25 deg) + HRRR coastal blending
   # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
   gefs:
     enabled: true
     n_gefs_members: 4
-    resolution: "0p50"
-    product: "pgrb2ap5"
+    resolution: "0p25"
+    product: "pgrb2sp25"
     control_member: "gec00"
     perturbation_prefix: "gep"
     members:

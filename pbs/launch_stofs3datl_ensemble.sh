@@ -107,7 +107,7 @@ echo " Members:   ${N_MEMBERS} (1 control + 4 GEFS + 1 RRFS)"
 echo " Det run:   ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
 if [ "${GEFS_ENSEMBLE}" = true ]; then
-echo " GEFS ens:  true (0.50 deg pgrb2ap5, members gep01-gep04)"
+echo " GEFS ens:  true (0.25 deg pgrb2sp25, members gep01-gep04)"
 echo " RRFS:      true (3km regridded, member 005)"
 fi
 fi
