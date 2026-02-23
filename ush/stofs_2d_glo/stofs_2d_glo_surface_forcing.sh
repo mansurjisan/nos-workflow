@@ -20,7 +20,7 @@
   do
 #     if [ $ymdh -lt $YMDH ]; then
      if [ $ymdh -le $YMDH ]; then
-        ${USHstofs}/${RUN}_getges.sh -t sfgges -v $ymdh -n gfs > getges.out 2> getges.err
+        ${USHstofs2d}/${RUN}_getges.sh -t sfgges -v $ymdh -n gfs > getges.out 2> getges.err
         export err=$?; err_chk
         echo "====================="
         echo "DEBUG-ush: cat getges.out"

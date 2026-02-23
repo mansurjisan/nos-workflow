@@ -60,6 +60,7 @@ load_ofs_config() {
     if [ "$framework" = "auto" ]; then
         case "${OFS:-}" in
             stofs_3d_atl|stofs_3d_pac) framework="stofs" ;;
+            stofs_2d_glo)              framework="adcirc" ;;
             *)                         framework="comf" ;;
         esac
     fi
@@ -221,8 +222,9 @@ _load_defaults() {
     local framework="${1:-comf}"
 
     case "$framework" in
-        stofs)  _load_stofs_defaults ;;
-        *)      _load_comf_defaults ;;
+        stofs)   _load_stofs_defaults ;;
+        adcirc)  _load_adcirc_defaults ;;
+        *)       _load_comf_defaults ;;
     esac
 }
 
@@ -258,6 +260,22 @@ _load_stofs_defaults() {
     export ATMOS_FALLBACK=${ATMOS_FALLBACK:-hrrr}
     export OCEAN_SOURCE=${OCEAN_SOURCE:-rtofs}
     export RIVER_SOURCE=${RIVER_SOURCE:-nwm}
+}
+
+################################################################################
+# _load_adcirc_defaults - ADCIRC (STOFS-2D-GLO) default values
+################################################################################
+_load_adcirc_defaults() {
+    export OCEAN_MODEL=${OCEAN_MODEL:-ADCIRC}
+    export DELT_MODEL=${DELT_MODEL:-2.0}
+    export LEN_NOWCAST=${LEN_NOWCAST:-6}
+    export LEN_FORECAST=${LEN_FORECAST:-180}
+    export NCPU=${NCPU:-960}
+    export TOT_NCPU=${TOT_NCPU:-966}
+    export PPN=${PPN:-120}
+    export NUM_WRITERS=${NUM_WRITERS:-6}
+    export nback=${nback:-20}
+    export ADCIRC_LSTH=${ADCIRC_LSTH:-180}
 }
 
 ################################################################################

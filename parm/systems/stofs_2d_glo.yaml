@@ -70,3 +70,80 @@ output:
     - guam
     - micronesia
     - northpacific
+
+post_processing:
+  # Post-processing pipeline steps (executed by stofs_2d_glo_post.sh)
+  steps:
+    - ncrcat          # Concatenate nowcast + forecast forcing files
+    - ncdiff          # Compute sub-tidal water level (swl = cwl - htp)
+    - anomaly         # Station-level anomaly correction from tide gauges
+    - shef            # SHEF bulletin generation for NWS
+    - grib2           # GRIB2 generation for sub-domains
+  # SHEF WMO header codes per product type
+  shef_wmo_headers:
+    cwl: SXUS02       # Combined water level
+    htp: SXUS01       # Harmonic tide prediction
+    swl: SXUS03       # Sub-tidal water level
+  shef_origin: KWBM
+  # GRIB2 domain-to-fort-unit mapping (base unit for netcdf2grib)
+  grib2_domain_units:
+    conus.east: 3000
+    conus.west: 4000
+    puertori: 5000
+    alaska: 6000
+    hawaii: 7000
+    guam: 8000
+    northpacific: 9000
+  # Forecast length for post products
+  forecast_hours: 180
+
+# Ensemble configuration for uncertainty quantification
+# Method: parameter_perturbation - LHS physics perturbation only
+# Member 000 is always the control run (default physics parameters)
+# Members 001+ use LHS-perturbed ADCIRC physics parameters
+#
+# ADCIRC ensemble runs only the surface forecast sub-phase (NWS=12).
+# The tidal component is deterministic (same across all members).
+# Only the surface forecast (where wind forcing and friction/viscosity
+# parameters matter) is perturbed.
+ensemble:
+  enabled: false
+  n_members: 5
+  method: parameter_perturbation
+  seed: 42                            # Reproducible sampling
+  # Physics perturbation via Latin Hypercube Sampling (members 001+)
+  perturb_physics: true
+  # ADCIRC perturbable parameters (applied to fort.15 via sed)
+  # Member 000 (control) always uses default physics values
+  parameters:
+    ffactor:
+      min: 0.8
+      max: 1.2
+      default: 1.0
+      distribution: uniform           # Linear scaling of bottom friction CF
+      description: "Friction factor scaling (multiplies CF in fort.15)"
+    eslm:
+      min: 10.0
+      max: 100.0
+      default: 50.0
+      distribution: log_uniform       # Uniform in log space (spans 1 order of magnitude)
+      description: "Lateral eddy viscosity / Smagorinsky coefficient"
+    tau0:
+      min: -3.0
+      max: -1.0
+      default: -3.0
+      distribution: uniform           # GWCE weighting (negative = spatially variable)
+      description: "GWCE weighting factor (negative = spatially variable)"
+  # Atmospheric forcing: all members use GFS (same as deterministic)
+  # Future: could add GEFS atmospheric ensemble for ADCIRC
+  atmospheric_sources:
+    primary: gfs
+    resolution: 0.25
+  # Ensemble-specific resources (per member)
+  resources:
+    select: "select=8:ncpus=128:mpiprocs=120"
+    walltime: "03:00:00"
+  # Ensemble post-processing resources
+  post_resources:
+    select: "select=1:ncpus=8:mpiprocs=8"
+    walltime: "01:00:00"

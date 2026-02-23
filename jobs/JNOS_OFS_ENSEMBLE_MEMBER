@@ -198,6 +198,38 @@ case "${OFS_FRAMEWORK}" in
         # Execute ensemble member ex-script
         $SCRIstofs3d/exnos_ofs_ensemble_member.sh
         ;;
+    adcirc)
+        # ADCIRC (STOFS-2D-GLO) specific paths
+        export FIXstofs2d=${FIXstofs3d}
+        export USHstofs2d=${USHstofs3d}
+        export EXECstofs2d=${EXECstofs3d}
+        export SCRIPTSstofs2d=${SCRIstofs3d}
+        export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
+
+        # ADCIRC execution parameters
+        export NCPU=${NCPU:-960}
+        export TOT_NCPU=${TOT_NCPU:-966}
+        export PPN=${PPN:-120}
+        export NUM_WRITERS=${NUM_WRITERS:-6}
+
+        # ADCIRC time variables
+        export YMDH=${PDY}${cyc}
+        export PDYHH=${PDY}${cyc}
+        export NDATE=${NDATE:-ndate}
+        export NHOUR=${NHOUR:-nhour}
+        export ADCIRC_LSTH=${ADCIRC_LSTH:-180}
+
+        # COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
+        export COM=${COM:-${COMOUTroot}}
+
+        # Prevent user site-packages from interfering with Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute ADCIRC ensemble member ex-script
+        ${SCRIPTSstofs2d}/exnos_ofs_ensemble_member.sh
+        ;;
     comf|*)
         # LD_PRELOAD of libnetcdff.so is deferred to ensemble_execute_model()
         # (right before mpiexec) because Python scripts (param_generator,
@@ -208,7 +240,7 @@ case "${OFS_FRAMEWORK}" in
         fi
 
         # Execute ensemble member ex-script
-        $SCRIPTSnos/exnos_ofs_ensemble_member.sh $OFS
+        $SCRIPTSnos/nosofs/exnos_ofs_ensemble_member.sh $OFS
         ;;
 esac
 

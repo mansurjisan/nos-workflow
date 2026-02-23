@@ -219,7 +219,7 @@ case "${OFS_FRAMEWORK}" in
             export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
         fi
         # nosofs/COMF forecast-only ex-script
-        $SCRIPTSnos/exnos_ofs_forecast.sh $OFS
+        $SCRIPTSnos/nosofs/exnos_ofs_forecast.sh $OFS
         ;;
 esac
 
