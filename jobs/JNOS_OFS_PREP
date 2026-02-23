@@ -1,0 +1,299 @@
+#!/bin/bash
+set -x
+
+########################################
+# NOS_OFS_PREP - Unified Prep Job
+#
+# Supports both nosofs/COMF and STOFS frameworks with YAML configuration
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Load shared library if available
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+# STOFS uses Python scripts (numpy/netCDF4) that segfault when the
+# Fortran library is force-loaded into the process.
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+# Support both nosofs_ver (production) and nos_ofs_ver (unified) naming
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export CONTINUE_FORECAST=${CONTINUE_FORECAST:-NO}
+export SENDDBN=${SENDDBN:-NO}
+
+###############################################################
+# Specify DBN_ALERT_TYPE
+###############################################################
+export DBN_ALERT_TYPE_NETCDF=${DBN_ALERT_TYPE_NETCDF:-NOS_OFS_FCST_NETCDF}
+export DBN_ALERT_TYPE_NETCDF_LRG=${DBN_ALERT_TYPE_NETCDF_LRG:-NOS_OFS_FCST_NETCDF_LP}
+export DBN_ALERT_TYPE_TEXT=${DBN_ALERT_TYPE_TEXT:-NOS_OFS_FCST_TEXT}
+
+export cycle=t${cyc}z
+
+########################################################
+# Make working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+# Clean up existing working directories for new cycle
+echo "Check for existing working directory for nos_${OFS}_*_${cyc}_${envir}"
+ls -ltrd ${DATAROOT:?}/nos_${OFS}_*_${cyc}_${envir}* 2> /dev/null
+isWKDirsExist=$?
+if [ $isWKDirsExist -eq 0 ]; then
+    echo "WARNING! Some working directories for nos_${OFS} in ${cyc} $envir exist, moving before starting prep job"
+    renameTag=$(date +%Y%m%d%H%M)
+    for dir in $(ls -d ${DATAROOT:?}/nos_${OFS}_*_${cyc}_${envir}* 2>/dev/null); do
+        mv $dir ${dir}_${renameTag}
+    done
+fi
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+    rm -fr $DATA/*
+fi
+
+############################################
+# Determine Job Output Name on System
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Specify Execution Areas (unified paths)
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
+####################################
+# YAML Configuration Loading
+####################################
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+# Source unified config loader and load YAML config
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+echo "OFS Config: ${OFS_CONFIG:-none}"
+
+###########################################
+# Run setpdy and initialize PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+export cyc=$(printf '%02d' "${cyc}")
+export time_nowcastend=${PDY}${cyc}
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/${envir}/dcom}
+
+# Use appropriate version for COM paths
+case "${OFS_FRAMEWORK}" in
+    stofs|adcirc)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)             _com_ver=${nosofs_ver} ;;
+esac
+
+if command -v compath.py &> /dev/null; then
+    export COMIN=${COMIN:-$(compath.py ${NET}/${_com_ver})/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${_com_ver})}
+    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${_com_ver})/${RUN}.${PDY}}
+else
+    export COMIN=${COMIN:-${COMROOT}/${NET}/${_com_ver}/${RUN}.${PDY}}
+    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${_com_ver}}
+    export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+fi
+
+mkdir -m 775 -p $COMOUT
+
+##############################################
+# Set up input data paths
+##############################################
+if command -v compath.py &> /dev/null; then
+    export COMINnam=${COMINnam:-$(compath.py prod/nam/${nam_ver:-v4.2})}
+    export COMINhrrr=${COMINhrrr:-$(compath.py prod/hrrr/${hrrr_ver:-v4.1})}
+    export COMINrap=${COMINrap:-$(compath.py prod/rap/${rap_ver:-v5.1})}
+    export COMINrtma=${COMINrtma:-$(compath.py prod/rtma/${rtma_ver:-v2.8})}
+    export COMINgfs=${COMINgfs:-$(compath.py prod/gfs/${gfs_ver:-v16.3})}
+    export COMINrtofs=$(compath.py prod/rtofs/${rtofs_ver:-v2.5})
+    export COMINrtofs_2d=${COMINrtofs_2d:-${COMINrtofs}}
+    export COMINrtofs_3d=${COMINrtofs_3d:-${COMINrtofs}}
+    export COMINnwm=${COMINnwm:-$(compath.py prod/nwm/${nwm_ver:-v3.0})}
+fi
+
+export DCOMINndfd=${DCOMROOT:-}
+export DCOMINncom=${DCOMROOT:-}
+export DCOMINusgs=${DCOMROOT:-}
+export DCOMINports=${DCOMROOT:-}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute the appropriate script based on framework
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # STOFS prep - create forcing prep subdirectories
+        export DATA_prep_nwm=${DATA}/river
+        export DATA_prep_river_st_lawrence=${DATA}/river_st_lawrence
+        export DATA_prep_gfs=${DATA}/gfs
+        export DATA_prep_hrrr=${DATA}/hrrr
+        export DATA_prep_rtofs=${DATA}/rtofs
+        export DATA_prep_restart=${DATA}/restart
+        mkdir -p $DATA_prep_nwm $DATA_prep_river_st_lawrence \
+                 $DATA_prep_gfs $DATA_prep_hrrr \
+                 $DATA_prep_rtofs $DATA_prep_restart
+
+        # STOFS additional directory paths
+        export PARMstofs3d=${PARMstofs3d:-${HOMEstofs}/parm/${RUN}}
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        if command -v ${NDATE} &> /dev/null; then
+            export PDYHH_FCAST_END=$(${NDATE} 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
+        fi
+        export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
+
+        # STOFS COM paths — use COMOUTroot to stay consistent with compath.py
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
+        export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
+        export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+        export COMINadt=${COMINadt:-${DCOMROOT:-}}
+        export OBC_MODE=${OBC_MODE:-non_adjust}
+        mkdir -p ${COMOUTrerun}
+
+        # Prevent user site-packages from interfering with STOFS Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute unified prep script (STOFS path)
+        $SCRIstofs3d/exnos_ofs_prep.sh
+        ;;
+    adcirc)
+        # ADCIRC-specific paths (alias stofs3d paths for 2D variable names)
+        export FIXstofs2d=${FIXstofs3d}
+        export USHstofs2d=${USHstofs3d}
+        export EXECstofs2d=${EXECstofs3d}
+
+        # ADCIRC persistent GES directory (tidal factors, decomposed grids)
+        export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
+        mkdir -p ${COMGES}
+
+        # ADCIRC time variables
+        export PDYHH=${PDY}${cyc}
+        export YMDH=${PDYHH}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        export NHOUR=${NHOUR:-nhour}
+        export NCDUMP=${NCDUMP:-ncdump}
+
+        # ADCIRC COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COM=${COM:-${COMOUTroot}}
+        export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+        export COMINges=${COMINges:-${COMINgfs:-}}
+        mkdir -p ${COMOUTrerun}
+
+        # ADCIRC execution resources (from YAML or defaults)
+        export NCPU=${NCPU:-960}
+        export TOT_NCPU=${TOT_NCPU:-966}
+        export PPN=${PPN:-120}
+        export NUM_WRITERS=${NUM_WRITERS:-6}
+        export COLDSTART=${COLDSTART:-NO}
+        export nback=${nback:-20}
+
+        # Execute unified prep script (ADCIRC path)
+        $SCRIstofs3d/exnos_ofs_prep.sh
+        ;;
+    comf|*)
+        # COMF Fortran executables need NetCDF Fortran library preloaded
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        fi
+        # nosofs/COMF prep script
+        $SCRIPTSnos/nosofs/exnos_ofs_prep.sh $OFS
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Remove the Temporary working directory
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

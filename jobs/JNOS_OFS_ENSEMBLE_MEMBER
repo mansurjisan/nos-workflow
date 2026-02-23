@@ -1,0 +1,263 @@
+#!/bin/bash
+set -x
+
+########################################
+# JNOS_OFS_ENSEMBLE_MEMBER - Single Ensemble Member Run
+#
+# Thin J-job following NCO standards: environment setup only.
+# All operational logic is in the ex-script and shared library:
+#   ex-script: scripts/{nosofs,stofs_3d_atl}/exnos_ofs_ensemble_member.sh
+#   library:   ush/nos_ofs_ensemble_run.sh
+#
+# Required environment variables:
+#   OFS         - OFS system name (e.g., secofs, stofs_3d_atl)
+#   MEMBER_ID   - Ensemble member ID (e.g., 000, 001, 002)
+#   cyc         - Cycle hour (00, 06, 12, 18)
+#
+# Member 000 is the control run (unperturbed defaults).
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Validate ensemble-specific variables
+########################################
+export MEMBER_ID=${MEMBER_ID:?MEMBER_ID is required}
+echo "Ensemble member: ${MEMBER_ID}"
+
+########################################
+# Load shared library
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nosofs.${nosofs_ver:?}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nosofs}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory - each member gets its own workspace
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+# Member-specific working directory
+export MEMBER_DATA=${DATA}/member_${MEMBER_ID}
+mkdir -p ${MEMBER_DATA}
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
+####################################
+# YAML Configuration Loading
+####################################
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+if [ -f "${USHnos}/nos_ofs_config.sh" ]; then
+    source "${USHnos}/nos_ofs_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+echo "Ensemble Member: ${MEMBER_ID}"
+
+###########################################
+# PDY variables
+# If PDY is already set (from qsub -v), use it.
+# Otherwise fall back to setpdy.sh or today's date.
+###########################################
+if [ -z "${PDY:-}" ]; then
+    if command -v setpdy.sh &> /dev/null; then
+        setpdy.sh
+        . PDY
+    fi
+    export PDY=${PDY:-$(date +%Y%m%d)}
+else
+    echo "Using PDY=${PDY} from environment"
+fi
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+# COM directory uses major.minor version (e.g., v3.7), which may differ
+# from the package version (v3.7.0).  Allow override via com_ver.
+_com_ver=${com_ver:-${nosofs_ver}}
+if command -v compath.py &> /dev/null; then
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+# Ensemble output directory for this member
+export ENSEMBLE_COMOUT=${COMOUT}/ensemble/member_${MEMBER_ID}
+mkdir -m 775 -p ${ENSEMBLE_COMOUT}
+
+# STOFS COMOUTrerun (where prep job places forcing files)
+export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${ENSEMBLE_COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.member_${MEMBER_ID}.jlogfile.log
+export cormslogfile=${ENSEMBLE_COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.member_${MEMBER_ID}.corms.log
+
+env
+
+########################################################
+# Execute ensemble member script based on framework
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # STOFS additional directory paths
+        export PARMstofs3d=${PARMstofs3d:-${HOMEstofs}/parm/${RUN}}
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        if command -v ${NDATE} &> /dev/null; then
+            export PDYHH_FCAST_END=$(${NDATE} 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
+        fi
+
+        # STOFS COM paths — use COMOUTroot to stay consistent with compath.py
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
+
+        # Prevent user site-packages from interfering with STOFS Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute ensemble member ex-script
+        $SCRIstofs3d/exnos_ofs_ensemble_member.sh
+        ;;
+    adcirc)
+        # ADCIRC (STOFS-2D-GLO) specific paths
+        export FIXstofs2d=${FIXstofs3d}
+        export USHstofs2d=${USHstofs3d}
+        export EXECstofs2d=${EXECstofs3d}
+        export SCRIPTSstofs2d=${SCRIstofs3d}
+        export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
+
+        # ADCIRC execution parameters
+        export NCPU=${NCPU:-960}
+        export TOT_NCPU=${TOT_NCPU:-966}
+        export PPN=${PPN:-120}
+        export NUM_WRITERS=${NUM_WRITERS:-6}
+
+        # ADCIRC time variables
+        export YMDH=${PDY}${cyc}
+        export PDYHH=${PDY}${cyc}
+        export NDATE=${NDATE:-ndate}
+        export NHOUR=${NHOUR:-nhour}
+        export ADCIRC_LSTH=${ADCIRC_LSTH:-180}
+
+        # COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
+        export COM=${COM:-${COMOUTroot}}
+
+        # Prevent user site-packages from interfering with Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute ADCIRC ensemble member ex-script
+        ${SCRIPTSstofs2d}/exnos_ofs_ensemble_member.sh
+        ;;
+    comf|*)
+        # LD_PRELOAD of libnetcdff.so is deferred to ensemble_execute_model()
+        # (right before mpiexec) because Python scripts (param_generator,
+        # ensemble staging) segfault when the Fortran library is force-loaded.
+        # Export the path so the ensemble run library can apply it at model time.
+        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+            export COMF_LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so
+        fi
+
+        # Execute ensemble member ex-script
+        $SCRIPTSnos/nosofs/exnos_ofs_ensemble_member.sh $OFS
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout 2>/dev/null || true
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 member ${MEMBER_ID} completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf ${MEMBER_DATA}
+fi
+
+date
