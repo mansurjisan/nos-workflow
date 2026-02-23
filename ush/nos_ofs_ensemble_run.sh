@@ -14,7 +14,7 @@
 #     ensemble_archive_outputs
 #
 #  Environment Requirements:
-#     OFS_FRAMEWORK   - "stofs", "comf", or "adcirc"
+#     OFS_FRAMEWORK   - "stofs" or "comf"
 #     MEMBER_ID       - Ensemble member ID (e.g., 000, 001)
 #     MEMBER_DATA     - Member working directory
 #     DATA            - Parent working directory
@@ -75,24 +75,13 @@ ensemble_stage_files() {
     echo "=== ensemble_stage_files: member ${MEMBER_ID} (framework: ${OFS_FRAMEWORK}) ==="
 
     cd ${MEMBER_DATA}
+    mkdir -p ${MEMBER_DATA}/sflux ${MEMBER_DATA}/outputs
 
-    case "${OFS_FRAMEWORK}" in
-        adcirc)
-            # ADCIRC does not use sflux/ directory; uses fort.* files directly
-            _ensemble_adcirc_stage_static_files
-            _ensemble_adcirc_stage_forcing
-            ;;
-        *)
-            # SCHISM (stofs/comf) uses sflux/ and outputs/ directories
-            mkdir -p ${MEMBER_DATA}/sflux ${MEMBER_DATA}/outputs
+    # 2a: Link fix files and create bare-name symlinks
+    _ensemble_stage_static_files
 
-            # 2a: Link fix files and create bare-name symlinks
-            _ensemble_stage_static_files
-
-            # 2b: Stage atmospheric, OBC, and river forcing
-            _ensemble_stage_forcing
-            ;;
-    esac
+    # 2b: Stage atmospheric, OBC, and river forcing
+    _ensemble_stage_forcing
 
     echo "Ensemble file staging complete for member ${MEMBER_ID}"
 
@@ -111,39 +100,25 @@ ensemble_configure_runtime() {
 
     cd ${MEMBER_DATA}
 
-    case "${OFS_FRAMEWORK}" in
-        adcirc)
-            # ADCIRC uses fort.15 (plain text), not param.nml (Fortran namelist)
-            _ensemble_adcirc_prepare_fort15
-            local rc=$?
-            if [ $rc -ne 0 ]; then return $rc; fi
+    # 3a: Copy param.nml (forecast version from COMOUT or FIX fallback)
+    _ensemble_copy_param_nml
+    local rc=$?
+    if [ $rc -ne 0 ]; then return $rc; fi
 
-            # Apply parameter perturbations via sed on fort.15
-            _ensemble_adcirc_apply_perturbations
-            ;;
-        *)
-            # SCHISM: copy param.nml, set ihot, update times, apply perturbations
-            # 3a: Copy param.nml (forecast version from COMOUT or FIX fallback)
-            _ensemble_copy_param_nml
-            local rc=$?
-            if [ $rc -ne 0 ]; then return $rc; fi
+    # 3b: Set ihot=2 for hot restart with continued output
+    # ihot=1: reads hotstart.nc but starts output from scratch (forecast-only staout)
+    # ihot=2: reads hotstart.nc AND continues output (appends forecast to nowcast staout)
+    # ihot=2 gives continuous nowcast+forecast timeseries in staout files.
+    # Requires real staout/mirror/flux files from the deterministic nowcast
+    # (restored in ensemble_prepare_restart).
+    sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
+    echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
 
-            # 3b: Set ihot=2 for hot restart with continued output
-            # ihot=1: reads hotstart.nc but starts output from scratch (forecast-only staout)
-            # ihot=2: reads hotstart.nc AND continues output (appends forecast to nowcast staout)
-            # ihot=2 gives continuous nowcast+forecast timeseries in staout files.
-            # Requires real staout/mirror/flux files from the deterministic nowcast
-            # (restored in ensemble_prepare_restart).
-            sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
-            echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
+    # 3c: Update start time and rnday for forecast period
+    _ensemble_update_start_time
 
-            # 3c: Update start time and rnday for forecast period
-            _ensemble_update_start_time
-
-            # 3d: Apply parameter perturbations from params.json
-            _ensemble_apply_perturbations
-            ;;
-    esac
+    # 3d: Apply parameter perturbations from params.json
+    _ensemble_apply_perturbations
 
     return 0
 }
@@ -157,14 +132,6 @@ ensemble_configure_runtime() {
 ################################################################################
 ensemble_prepare_restart() {
     echo "=== ensemble_prepare_restart: member ${MEMBER_ID} ==="
-
-    if [ "${OFS_FRAMEWORK}" = "adcirc" ]; then
-        # ADCIRC restart is handled within _ensemble_adcirc_execute via
-        # hotstart/restart files from the deterministic nowcast (fort.67/68).
-        # The execute function stages these directly from COMOUT/COMOUTrerun.
-        echo "ADCIRC restart preparation deferred to execute phase"
-        return 0
-    fi
 
     # Search for hotstart file in COMOUT (archived by nowcast job)
     # STOFS naming: ${RUN}.t${cyc}z.hotstart.stofs3d.nc
@@ -245,12 +212,7 @@ ensemble_execute_model() {
 
     cd ${MEMBER_DATA}
 
-    if [ "${OFS_FRAMEWORK}" = "adcirc" ]; then
-        _ensemble_adcirc_execute
-        return $?
-    fi
-
-    # --- Verify critical input files (SCHISM) ---
+    # --- Verify critical input files ---
     local MISSING=0
     for required in param.nml hotstart.nc bctides.in flux.th; do
         if [ ! -e "${MEMBER_DATA}/${required}" ]; then
@@ -384,27 +346,20 @@ ensemble_execute_model() {
 ensemble_archive_outputs() {
     echo "=== ensemble_archive_outputs: member ${MEMBER_ID} ==="
 
-    case "${OFS_FRAMEWORK}" in
-        adcirc)
-            _ensemble_adcirc_collect_output
-            ;;
-        *)
-            # Copy outputs to ensemble COMOUT
-            # SCHISM writes split output: out2d_*.nc, temperature_*.nc, salinity_*.nc
-            # (not combined schout_*.nc when using I/O scribes)
-            if [ -d "${MEMBER_DATA}/outputs" ]; then
-                mkdir -p ${ENSEMBLE_COMOUT}/outputs
-                for pattern in out2d_*.nc temperature_*.nc salinity_*.nc \
-                               horizontalVelX_*.nc horizontalVelY_*.nc \
-                               schout_*.nc staout_*; do
-                    cp ${MEMBER_DATA}/outputs/${pattern} ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
-                done
-                # Report what was archived
-                local N_ARCHIVED=$(ls ${ENSEMBLE_COMOUT}/outputs/*.nc 2>/dev/null | wc -l)
-                echo "Archived ${N_ARCHIVED} NetCDF files to ${ENSEMBLE_COMOUT}/outputs/"
-            fi
-            ;;
-    esac
+    # Copy outputs to ensemble COMOUT
+    # SCHISM writes split output: out2d_*.nc, temperature_*.nc, salinity_*.nc
+    # (not combined schout_*.nc when using I/O scribes)
+    if [ -d "${MEMBER_DATA}/outputs" ]; then
+        mkdir -p ${ENSEMBLE_COMOUT}/outputs
+        for pattern in out2d_*.nc temperature_*.nc salinity_*.nc \
+                       horizontalVelX_*.nc horizontalVelY_*.nc \
+                       schout_*.nc staout_*; do
+            cp ${MEMBER_DATA}/outputs/${pattern} ${ENSEMBLE_COMOUT}/outputs/ 2>/dev/null || true
+        done
+        # Report what was archived
+        local N_ARCHIVED=$(ls ${ENSEMBLE_COMOUT}/outputs/*.nc 2>/dev/null | wc -l)
+        echo "Archived ${N_ARCHIVED} NetCDF files to ${ENSEMBLE_COMOUT}/outputs/"
+    fi
 
     # Save parameter overrides for provenance
     cp ${PARAM_FILE} ${ENSEMBLE_COMOUT}/params.json
@@ -542,7 +497,6 @@ print(atm.get('label', ''))
     fi
 
     # --- Stage atmospheric forcing ---
-    # Note: adcirc is handled separately by _ensemble_adcirc_stage_forcing
     case "${OFS_FRAMEWORK}" in
         stofs) _ensemble_stofs_stage_atmos "${ATMOS_MET1}" "${ATMOS_MET2}" "${ATMOS_LABEL}" "${ATMOS_CONFIGURED}" ;;
         comf)  _ensemble_comf_stage_atmos  "${ATMOS_MET1}" "${ATMOS_MET2}" "${ATMOS_LABEL}" "${ATMOS_CONFIGURED}" ;;
@@ -1234,633 +1188,6 @@ with open(nml_path, "w") as f:
 
 print("Parameter perturbations applied successfully")
 APPLY_PARAMS
-
-    return 0
-}
-
-
-################################################################################
-#
-#  ADCIRC (STOFS-2D-GLO) ENSEMBLE FUNCTIONS
-#
-#  ADCIRC is fundamentally different from SCHISM:
-#    - Uses fort.15 (plain text) instead of param.nml (Fortran namelist)
-#    - Uses OWI format forcing (fort.221/222) instead of sflux/ NetCDF
-#    - Runs multiple sub-phases: tide (NWS=0) → surface (NWS=12)
-#    - Uses adcprep + padcirc instead of pschism
-#    - Hotstart alternates between fort.67.nc and fort.68.nc
-#
-#  For ensemble, we run only the surface forecast (NWS=12) sub-phase
-#  to keep ensemble member runs tractable. The tidal component is
-#  deterministic (same across members), so we reuse the deterministic
-#  tide forecast output and only perturb the surface (wind+pressure)
-#  portion where physics parameters matter.
-#
-################################################################################
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Stage static fix files to member directory
-#
-# Links ADCIRC grid (fort.14), attributes (fort.13), body tide (fort.24),
-# rotation matrix (fort.rotm), station lists, and pre-decomposed grid.
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_stage_static_files() {
-    echo "Staging ADCIRC static files for member ${MEMBER_ID}"
-
-    export FIXstofs2d=${FIXstofs2d:-${FIXstofs3d:-${FIXofs}}}
-
-    # Link ADCIRC static grid and attribute files
-    ln -sf $FIXstofs2d/${RUN}_attr       ${MEMBER_DATA}/fort.13
-    ln -sf $FIXstofs2d/${RUN}_grid       ${MEMBER_DATA}/fort.14
-    ln -sf $FIXstofs2d/${RUN}_body       ${MEMBER_DATA}/fort.24
-    ln -sf $FIXstofs2d/${RUN}_rotm       ${MEMBER_DATA}/fort.rotm
-    ln -sf $FIXstofs2d/${RUN}_elev_stat  ${MEMBER_DATA}/elev_stat.151
-    ln -sf $FIXstofs2d/${RUN}_elev_stat  ${MEMBER_DATA}/vel_stat.151
-
-    # Copy tidal nodal equilibrium file (needed for fort.15 generation)
-    export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
-    if [ -f $COMGES/${RUN}_nod_equi ]; then
-        cp -p $COMGES/${RUN}_nod_equi ${MEMBER_DATA}/${RUN}_nod_equi
-        echo "  Copied nod_equi from $COMGES"
-    elif [ -f ${COMOUTrerun}/${RUN}_nod_equi ]; then
-        cp -p ${COMOUTrerun}/${RUN}_nod_equi ${MEMBER_DATA}/${RUN}_nod_equi
-        echo "  Copied nod_equi from COMOUTrerun"
-    else
-        echo "  WARNING: ${RUN}_nod_equi not found"
-    fi
-
-    # Copy fort.15 templates from FIX
-    for tmpl in tide.15 surf.15; do
-        if [ -f $FIXstofs2d/${RUN}_${tmpl} ]; then
-            cp -p $FIXstofs2d/${RUN}_${tmpl} ${MEMBER_DATA}/${RUN}_${tmpl}
-            echo "  Copied template: ${RUN}_${tmpl}"
-        fi
-    done
-
-    # Link meteorological control file (fort.22, for surface runs)
-    if [ -f $FIXstofs2d/${RUN}_met ]; then
-        ln -sf $FIXstofs2d/${RUN}_met ${MEMBER_DATA}/fort.22
-        echo "  Linked fort.22 (met control)"
-    fi
-
-    # Extract pre-decomposed grid from COMGES
-    export ncpu=${NCPU:-${TOTAL_TASKS:-960}}
-    if [ -f $COMGES/${RUN}_${ncpu}.tar.gz ]; then
-        cp -p $COMGES/${RUN}_${ncpu}.tar.gz ${MEMBER_DATA}/
-        cd ${MEMBER_DATA}
-        tar xzf ${RUN}_${ncpu}.tar.gz
-        echo "  Extracted pre-decomposed grid (${ncpu} CPUs)"
-    else
-        echo "  INFO: No pre-decomposed grid tar (will run adcprep --prepall)"
-    fi
-
-    return 0
-}
-
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Stage atmospheric forcing for this member
-#
-# ADCIRC uses OWI format forcing: fort.221.nc (pressure), fort.222.nc (wind),
-# fort.225.nc (ice). These are prepared by the deterministic prep job and
-# archived in COMOUTrerun. For ensemble members that use different atmospheric
-# sources (e.g., GEFS), member-specific OWI files would need to be
-# pre-generated by a separate prep step. Currently, all members use the
-# same GFS forcing from the deterministic prep.
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_stage_forcing() {
-    echo "Staging ADCIRC forcing for member ${MEMBER_ID}"
-
-    export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
-
-    # Stage GFS OWI forcing files for the surface forecast sub-phase
-    # The deterministic prep archives these as ${RUN}_fcst1.221.nc etc.
-    # For the ensemble, we run the surface forecast (fcst1 period: 0-120h).
-    local _forcing_found=false
-    for forcing_prefix in "fcst1" "ncst"; do
-        if [ -f ${COMOUTrerun}/${RUN}_${forcing_prefix}.221.nc ]; then
-            ln -sf ${COMOUTrerun}/${RUN}_${forcing_prefix}.221.nc ${MEMBER_DATA}/fort.221.nc
-            ln -sf ${COMOUTrerun}/${RUN}_${forcing_prefix}.222.nc ${MEMBER_DATA}/fort.222.nc
-            [ -f ${COMOUTrerun}/${RUN}_${forcing_prefix}.225.nc ] && \
-                ln -sf ${COMOUTrerun}/${RUN}_${forcing_prefix}.225.nc ${MEMBER_DATA}/fort.225.nc
-            echo "  OWI forcing staged from ${forcing_prefix} (fort.221/222/225)"
-            _forcing_found=true
-            break
-        fi
-    done
-
-    if [ "${_forcing_found}" = false ]; then
-        echo "  WARNING: No OWI forcing files found in COMOUTrerun"
-        echo "  Checked: ${COMOUTrerun}/${RUN}_{fcst1,ncst}.221.nc"
-    fi
-
-    # Stage tide outputs from deterministic run (used as starting state
-    # for ensemble surface forecast)
-    for pair in "tide.61.nc:fort.61.nc" "tide.63.nc:fort.63.nc"; do
-        local src_suffix="${pair%%:*}"
-        local dst_name="${pair##*:}"
-        local src="${COMOUTrerun}/${RUN}_${src_suffix}"
-        if [ -s "${src}" ]; then
-            cp -p "${src}" "${MEMBER_DATA}/${dst_name}"
-            echo "  ${dst_name} <- ${src_suffix}"
-        fi
-    done
-
-    # Stage surface nowcast outputs (for continuation into forecast)
-    for f in surf.61.nc surf.62.nc surf.63.nc surf.64.nc \
-             maxele.63.nc maxvel.63.nc maxwvel.63.nc; do
-        local src="${COMOUTrerun}/${RUN}_${f}"
-        if [ -s "${src}" ]; then
-            # Map surf.6X.nc -> fort.6X.nc
-            local dst=$(echo "$f" | sed 's/^surf\./fort./')
-            # maxele/maxvel/maxwvel keep their names
-            case "$f" in
-                max*) dst="$f" ;;
-            esac
-            cp -p "${src}" "${MEMBER_DATA}/${dst}"
-            echo "  ${dst} <- ${f}"
-        fi
-    done
-
-    # Stage restart/hotstart from deterministic surface nowcast
-    if [ -f ${COMOUTrerun}/${RUN}_surf.68.nc ]; then
-        cp -p ${COMOUTrerun}/${RUN}_surf.68.nc ${MEMBER_DATA}/${YMDH:-${PDY}${cyc}}.restart
-        echo "  Restart staged from surf.68.nc"
-    elif [ -f ${COMOUT}/${RUN}.${cycle}.restart ]; then
-        cp -p ${COMOUT}/${RUN}.${cycle}.restart ${MEMBER_DATA}/${YMDH:-${PDY}${cyc}}.restart
-        echo "  Restart staged from COMOUT"
-    else
-        echo "  WARNING: No restart file found for ADCIRC ensemble member"
-    fi
-
-    # Stage retime.out (time tracking from deterministic nowcast)
-    if [ -f ${COMOUTrerun}/${RUN}_retime.out ]; then
-        cp -p ${COMOUTrerun}/${RUN}_retime.out ${MEMBER_DATA}/retime.out
-        echo "  retime.out staged"
-    fi
-
-    return 0
-}
-
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Generate fort.15 for this ensemble member
-#
-# Copies the surface forecast fort.15 template and fills in tidal nodal
-# factors, time parameters, and output settings. Uses the same approach
-# as the deterministic _adcirc_generate_fort15 but adapted for ensemble.
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_prepare_fort15() {
-    echo "Preparing ADCIRC fort.15 for ensemble member ${MEMBER_ID}"
-
-    cd ${MEMBER_DATA}
-
-    export FIXstofs2d=${FIXstofs2d:-${FIXstofs3d:-${FIXofs}}}
-    export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
-
-    # Verify nod_equi is available
-    if [ ! -f ${MEMBER_DATA}/${RUN}_nod_equi ]; then
-        echo "FATAL: ${RUN}_nod_equi not found in ${MEMBER_DATA}"
-        return 1
-    fi
-
-    # Use the surf.15 template (NWS=12, surface forcing)
-    local template="surf.15"
-    if [ ! -f ${MEMBER_DATA}/${RUN}_${template} ]; then
-        echo "FATAL: Template ${RUN}_${template} not found"
-        return 1
-    fi
-
-    cp ${MEMBER_DATA}/${RUN}_${template} ${MEMBER_DATA}/${RUN}_fort.15
-
-    # Read tidal nodal equilibrium values
-    local hh dd mm yyyy
-    local _con fft1 facet1 fft2 facet2 fft3 facet3 fft4 facet4
-    local fft5 facet5 fft6 facet6 fft7 facet7 fft8 facet8
-    {
-        read hh dd mm yyyy
-        read _con fft1 facet1
-        read _con fft2 facet2
-        read _con fft3 facet3
-        read _con fft4 facet4
-        read _con fft5 facet5
-        read _con fft6 facet6
-        read _con fft7 facet7
-        read _con fft8 facet8
-    } < "${MEMBER_DATA}/${RUN}_nod_equi"
-
-    mm=$(printf "%02d" $mm)
-    dd=$(printf "%02d" $dd)
-    hh=$(printf "%02d" $hh)
-
-    # Read time parameters from retime.out (from deterministic nowcast)
-    local restart_count=0 time_restart=0 touts=0 toutf=0
-    if [ -f ${MEMBER_DATA}/retime.out ]; then
-        restart_count=$(awk '{print $1}' ${MEMBER_DATA}/retime.out)
-        time_restart=$(awk '{print $2}' ${MEMBER_DATA}/retime.out)
-        touts=$(awk '{print $3}' ${MEMBER_DATA}/retime.out)
-        toutf=$(awk '{print $4}' ${MEMBER_DATA}/retime.out)
-    else
-        echo "WARNING: retime.out not found, using defaults"
-    fi
-
-    # Compute ADCIRC time parameters
-    local time_now=${YMDH:-${PDY}${cyc}}
-    local nowh=6
-    local lsth=${ADCIRC_LSTH:-180}
-    local wndh=3
-
-    # Determine ihot from restart time
-    local ihot=367
-    if [ -f ${MEMBER_DATA}/${time_now}.restart ]; then
-        local _restart_time
-        _restart_time=$(ncdump -v time ${MEMBER_DATA}/${time_now}.restart 2>/dev/null | \
-            grep 'time = [0-9]' | awk '{print $3}' || echo "0")
-        if [ -n "${_restart_time}" ] && [ "${_restart_time}" != "0" ]; then
-            if [ $(expr $(echo "scale=0; ${_restart_time}/($nowh*3600)" | bc) % 2) = 0 ]; then
-                ihot=368
-                cp -p ${MEMBER_DATA}/${time_now}.restart ${MEMBER_DATA}/fort.68.nc
-            else
-                ihot=367
-                cp -p ${MEMBER_DATA}/${time_now}.restart ${MEMBER_DATA}/fort.67.nc
-            fi
-            echo "  ihot=${ihot} (restart_time=${_restart_time})"
-        fi
-    else
-        echo "  WARNING: No restart file for ihot determination"
-    fi
-
-    # Calculate rnday for forecast surface run
-    local fcstd=$(echo "scale=5; $time_restart/86400" | bc)
-    local rnday=$(echo "scale=5; $fcstd+$lsth/36" | bc)
-    local winc=3600
-    local nout=3
-    local nhstar=3
-    local nhsinc=3600
-
-    # Apply sed substitutions to generate fort.15
-    sed -e "s/cycle/${time_now}/g" \
-        -e "s/ihot/${ihot}/g" \
-        -e "s/rnday/${rnday}/g" \
-        -e "s/fft1/${fft1}/g" -e "s/facet1/${facet1}/g" \
-        -e "s/fft2/${fft2}/g" -e "s/facet2/${facet2}/g" \
-        -e "s/fft3/${fft3}/g" -e "s/facet3/${facet3}/g" \
-        -e "s/fft4/${fft4}/g" -e "s/facet4/${facet4}/g" \
-        -e "s/fft5/${fft5}/g" -e "s/facet5/${facet5}/g" \
-        -e "s/fft6/${fft6}/g" -e "s/facet6/${facet6}/g" \
-        -e "s/fft7/${fft7}/g" -e "s/facet7/${facet7}/g" \
-        -e "s/fft8/${fft8}/g" -e "s/facet8/${facet8}/g" \
-        -e "s/nout/${nout}/g" \
-        -e "s/touts/${touts}/g" -e "s/toutf/${toutf}/g" \
-        -e "s/nhstar/${nhstar}/g" -e "s/nhsinc/${nhsinc}/g" \
-        -e "s/hh/${hh}/g" -e "s/dd/${dd}/g" \
-        -e "s/mm/${mm}/g" -e "s/yyyy/${yyyy}/g" \
-        -e "s/winc/${winc}/g" \
-        ${MEMBER_DATA}/${RUN}_fort.15 | \
-    sed -n "/DUMMY/!p" > ${MEMBER_DATA}/fort.15
-
-    rm -f ${MEMBER_DATA}/${RUN}_fort.15
-
-    if [ ! -f ${MEMBER_DATA}/fort.15 ]; then
-        echo "FATAL: fort.15 generation failed"
-        return 1
-    fi
-
-    echo "Generated fort.15 (rnday=${rnday}, ihot=${ihot}, winc=${winc})"
-
-    return 0
-}
-
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Apply parameter perturbations to fort.15 via sed
-#
-# Reads perturbation values from params.json and modifies specific lines
-# in fort.15. ADCIRC perturbable parameters:
-#   - FFACTOR: Bottom friction factor scaling (line with FFACTOR)
-#   - ESLM:    Lateral eddy viscosity / Smagorinsky coefficient
-#   - TAU0:    GWCE weighting factor (negative = spatially variable)
-#
-# Control member (000) is skipped (is_control=true in params.json).
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_apply_perturbations() {
-    echo "Applying ADCIRC parameter perturbations to fort.15"
-
-    python3 << 'APPLY_ADCIRC_PARAMS'
-import json
-import os
-import re
-import sys
-
-param_file = os.environ["PARAM_FILE"]
-member_data = os.environ["MEMBER_DATA"]
-fort15_path = os.path.join(member_data, "fort.15")
-
-with open(param_file, "r") as f:
-    member = json.load(f)
-
-if member.get("is_control", False):
-    print("Control member - no perturbations applied to fort.15")
-    sys.exit(0)
-
-params = member.get("parameters", {})
-if not params:
-    print("No parameter perturbations to apply to fort.15")
-    sys.exit(0)
-
-if not os.path.isfile(fort15_path):
-    print(f"WARNING: fort.15 not found at {fort15_path}, skipping perturbation")
-    sys.exit(0)
-
-with open(fort15_path, "r") as f:
-    lines = f.readlines()
-
-# ADCIRC fort.15 parameter modification strategy:
-# fort.15 is a fixed-format text file where specific lines contain
-# parameter values. We use sed-style line matching to find and modify
-# the relevant values.
-#
-# FFACTOR: appears on the line that sets the friction scaling factor.
-#   In fort.15, the FFACTOR line typically looks like:
-#   "0.0025  CF  FFACTOR" or just the numeric value on a specific line.
-#   We scale the existing CF value by FFACTOR.
-#
-# ESLM: lateral eddy viscosity coefficient, appears as a standalone value.
-#
-# TAU0: GWCE weighting, appears early in fort.15 (typically line ~15).
-
-modified = False
-new_lines = list(lines)
-
-for param_name, value in params.items():
-    param_lower = param_name.lower()
-
-    if param_lower == "ffactor":
-        # FFACTOR scales the bottom friction coefficient (CF).
-        # Find lines containing "FFACTOR" or the CF parameter line.
-        # In STOFS-2D-GLO fort.15, the friction line has format:
-        #   <CF_value>  <other> ! ... FFACTOR ...
-        # We replace the CF value (first number on the line).
-        for i, line in enumerate(new_lines):
-            if "FFACTOR" in line.upper() or "CF " in line.upper():
-                # Extract the first floating-point number and scale it
-                match = re.match(r"(\s*)([0-9.eE+-]+)(.*)", line)
-                if match:
-                    old_cf = float(match.group(2))
-                    new_cf = old_cf * value
-                    new_lines[i] = f"{match.group(1)}{new_cf:.6e}{match.group(3)}\n"
-                    print(f"  FFACTOR: CF {old_cf:.6e} * {value:.4f} = {new_cf:.6e}")
-                    modified = True
-                break
-
-    elif param_lower == "eslm":
-        # ESLM is the lateral viscosity (Smagorinsky) coefficient.
-        # In fort.15, it appears on a line by itself or with a comment.
-        for i, line in enumerate(new_lines):
-            if "ESLM" in line.upper():
-                match = re.match(r"(\s*)([0-9.eE+-]+)(.*)", line)
-                if match:
-                    old_val = float(match.group(2))
-                    new_lines[i] = f"{match.group(1)}{value:.6e}{match.group(3)}\n"
-                    print(f"  ESLM: {old_val:.6e} -> {value:.6e}")
-                    modified = True
-                break
-
-    elif param_lower == "tau0":
-        # TAU0 is the GWCE weighting factor.
-        # Negative values indicate spatially variable weighting.
-        for i, line in enumerate(new_lines):
-            if "TAU0" in line.upper():
-                match = re.match(r"(\s*)([0-9.eE+-]+)(.*)", line)
-                if match:
-                    old_val = float(match.group(2))
-                    new_lines[i] = f"{match.group(1)}{value:.6e}{match.group(3)}\n"
-                    print(f"  TAU0: {old_val:.6e} -> {value:.6e}")
-                    modified = True
-                break
-
-    else:
-        # Generic: search for the parameter name as a comment and modify
-        # the numeric value on that line.
-        param_upper = param_name.upper()
-        for i, line in enumerate(new_lines):
-            if param_upper in line.upper():
-                match = re.match(r"(\s*)([0-9.eE+-]+)(.*)", line)
-                if match:
-                    old_val = float(match.group(2))
-                    new_lines[i] = f"{match.group(1)}{value:.6e}{match.group(3)}\n"
-                    print(f"  {param_name}: {old_val:.6e} -> {value:.6e}")
-                    modified = True
-                break
-        if not modified:
-            print(f"  WARNING: Could not find '{param_name}' in fort.15")
-
-if modified:
-    with open(fort15_path, "w") as f:
-        f.writelines(new_lines)
-    print("ADCIRC parameter perturbations applied successfully")
-else:
-    print("No modifications made to fort.15")
-APPLY_ADCIRC_PARAMS
-
-    return 0
-}
-
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Execute the ensemble member
-#
-# For ensemble, runs only the surface forecast sub-phase (NWS=12).
-# The tidal component is deterministic (identical across members) so we
-# reuse the deterministic tide forecast output. Only the surface run
-# (where wind forcing and friction parameters matter) is perturbed.
-#
-# Steps: adcprep (partition + prep15) → padcirc → check completion
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_execute() {
-    echo "=== ADCIRC ensemble execute: member ${MEMBER_ID} ==="
-
-    cd ${MEMBER_DATA}
-
-    # --- Verify critical input files ---
-    local MISSING=0
-    for required in fort.14 fort.15 fort.22; do
-        if [ ! -e "${MEMBER_DATA}/${required}" ]; then
-            echo "MISSING: ${required}"
-            MISSING=$((MISSING + 1))
-        else
-            echo "OK: ${required}"
-        fi
-    done
-
-    # Check OWI forcing files
-    if [ ! -e "${MEMBER_DATA}/fort.221.nc" ]; then
-        echo "MISSING: fort.221.nc (OWI pressure forcing)"
-        MISSING=$((MISSING + 1))
-    else
-        echo "OK: fort.221.nc (OWI pressure)"
-    fi
-    if [ ! -e "${MEMBER_DATA}/fort.222.nc" ]; then
-        echo "MISSING: fort.222.nc (OWI wind forcing)"
-        MISSING=$((MISSING + 1))
-    else
-        echo "OK: fort.222.nc (OWI wind)"
-    fi
-
-    # Check for restart file (fort.67 or fort.68)
-    if [ ! -e "${MEMBER_DATA}/fort.67.nc" ] && [ ! -e "${MEMBER_DATA}/fort.68.nc" ]; then
-        echo "MISSING: fort.67.nc or fort.68.nc (restart/hotstart)"
-        MISSING=$((MISSING + 1))
-    else
-        echo "OK: restart file ($(ls ${MEMBER_DATA}/fort.6[78].nc 2>/dev/null | head -1))"
-    fi
-
-    if [ $MISSING -gt 0 ]; then
-        echo "FATAL: ${MISSING} required input files missing. Cannot run ADCIRC." >&2
-        ls -la ${MEMBER_DATA}/ >&2
-        return 1
-    fi
-
-    echo ""
-    echo "Working directory listing:"
-    ls -la ${MEMBER_DATA}/ | head -30
-    echo ""
-
-    # --- Determine MPI task count ---
-    export ncpu=${NCPU:-${TOTAL_TASKS:-960}}
-    local _ppn=${PPN:-120}
-    local _tot_ncpu=${TOT_NCPU:-$((ncpu + ${NUM_WRITERS:-6}))}
-    local _num_writers=${NUM_WRITERS:-6}
-
-    echo "ncpu: ${ncpu}"
-    echo "TOT_NCPU: ${_tot_ncpu}"
-    echo "PPN: ${_ppn}"
-    echo "NUM_WRITERS: ${_num_writers}"
-    echo "Working dir: ${MEMBER_DATA}"
-
-    # --- Run adcprep ---
-    # If pre-decomposed grid is available, only run --prep15 (fort.15 update)
-    # Otherwise run full partmesh + prepall
-    if [ -f ${MEMBER_DATA}/${RUN}_${ncpu}.tar.gz ] || [ -d ${MEMBER_DATA}/PE0000 ]; then
-        echo "Running adcprep --prep15 (pre-decomposed grid available)..."
-        mpiexec -n 1 -ppn 1 adcprep --np $ncpu --prep15 \
-            >> ${MEMBER_DATA}/${RUN}.member_${MEMBER_ID}.adcprep.log 2>&1
-        export err=$?
-        if [ $err -ne 0 ]; then
-            echo "FATAL: adcprep --prep15 failed (exit code: $err)"
-            return 1
-        fi
-    else
-        echo "Running full adcprep (partmesh + prepall)..."
-        mpiexec -n 1 -ppn 1 adcprep --np $ncpu --partmesh \
-            >> ${MEMBER_DATA}/${RUN}.member_${MEMBER_ID}.adcprep.log 2>&1
-        export err=$?
-        if [ $err -ne 0 ]; then
-            echo "FATAL: adcprep --partmesh failed (exit code: $err)"
-            return 1
-        fi
-        mpiexec -n 1 -ppn 1 adcprep --np $ncpu --prepall \
-            >> ${MEMBER_DATA}/${RUN}.member_${MEMBER_ID}.adcprep.log 2>&1
-        export err=$?
-        if [ $err -ne 0 ]; then
-            echo "FATAL: adcprep --prepall failed (exit code: $err)"
-            return 1
-        fi
-    fi
-
-    # --- Run padcirc (surface forecast with writers) ---
-    echo "ADCIRC simulation began at: $(date)"
-    echo "Running padcirc (ncpu=${_tot_ncpu}, writers=${_num_writers})..."
-
-    mpiexec -n ${_tot_ncpu} -ppn ${_ppn} --cpu-bind core \
-        padcirc -W ${_num_writers} \
-        > ${MEMBER_DATA}/${RUN}.${cycle}.member_${MEMBER_ID}.log 2>adcirc.err
-
-    export err=$?
-    echo "ADCIRC simulation ended at: $(date)"
-
-    # --- Check for successful completion ---
-    if [ -f adcirc.err ]; then
-        if grep -q 'ADCIRC stopping' adcirc.err 2>/dev/null || \
-           grep -q 'ADCIRC Terminating' adcirc.err 2>/dev/null; then
-            echo "FATAL: ADCIRC crashed for member ${MEMBER_ID}" >&2
-            tail -20 adcirc.err >&2
-            return 1
-        fi
-    fi
-
-    # Check fort.16 for completion message
-    if [ -f fort.16 ]; then
-        if grep -qi "Run completed" fort.16 2>/dev/null; then
-            echo "ADCIRC member ${MEMBER_ID} completed successfully"
-        else
-            echo "WARNING: fort.16 exists but no completion message"
-            tail -5 fort.16
-        fi
-    else
-        echo "WARNING: fort.16 not found"
-    fi
-
-    if [ $err -ne 0 ]; then
-        echo "FATAL: ADCIRC failed for member ${MEMBER_ID} (exit code: ${err})" >&2
-        return $err
-    fi
-
-    return 0
-}
-
-
-#-------------------------------------------------------------------------------
-# ADCIRC: Collect member output to ENSEMBLE_COMOUT
-#
-# Copies ADCIRC NetCDF outputs (station elevation, field elevation,
-# velocity, max fields) to the member's ensemble output directory.
-#-------------------------------------------------------------------------------
-_ensemble_adcirc_collect_output() {
-    echo "Collecting ADCIRC output for member ${MEMBER_ID}"
-
-    mkdir -p ${ENSEMBLE_COMOUT}
-
-    # Station output (elevation timeseries at observation points)
-    if [ -f ${MEMBER_DATA}/fort.61.nc ]; then
-        cp -p ${MEMBER_DATA}/fort.61.nc ${ENSEMBLE_COMOUT}/fort.61.nc
-        echo "  Archived fort.61.nc (station elevation)"
-    fi
-
-    # Station velocity
-    if [ -f ${MEMBER_DATA}/fort.62.nc ]; then
-        cp -p ${MEMBER_DATA}/fort.62.nc ${ENSEMBLE_COMOUT}/fort.62.nc
-        echo "  Archived fort.62.nc (station velocity)"
-    fi
-
-    # Field output (2D elevation on entire grid)
-    if [ -f ${MEMBER_DATA}/fort.63.nc ]; then
-        cp -p ${MEMBER_DATA}/fort.63.nc ${ENSEMBLE_COMOUT}/fort.63.nc
-        echo "  Archived fort.63.nc (field elevation)"
-    fi
-
-    # Field velocity
-    if [ -f ${MEMBER_DATA}/fort.64.nc ]; then
-        cp -p ${MEMBER_DATA}/fort.64.nc ${ENSEMBLE_COMOUT}/fort.64.nc
-        echo "  Archived fort.64.nc (field velocity)"
-    fi
-
-    # Maximum fields (useful for ensemble max envelope)
-    for f in maxele.63.nc maxvel.63.nc maxwvel.63.nc; do
-        if [ -f ${MEMBER_DATA}/${f} ]; then
-            cp -p ${MEMBER_DATA}/${f} ${ENSEMBLE_COMOUT}/${f}
-            echo "  Archived ${f}"
-        fi
-    done
-
-    # Archive the fort.15 used (for provenance/debugging)
-    if [ -f ${MEMBER_DATA}/fort.15 ]; then
-        cp -p ${MEMBER_DATA}/fort.15 ${ENSEMBLE_COMOUT}/fort.15
-        echo "  Archived fort.15 (for provenance)"
-    fi
-
-    local N_ARCHIVED=$(ls ${ENSEMBLE_COMOUT}/*.nc 2>/dev/null | wc -l)
-    echo "Archived ${N_ARCHIVED} NetCDF files to ${ENSEMBLE_COMOUT}/"
 
     return 0
 }

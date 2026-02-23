@@ -148,35 +148,10 @@ case "${OFS_FRAMEWORK}" in
         esac
         ;;
     adcirc)
-        # ADCIRC (STOFS-2D-GLO) post-processing:
-        #   ncrcat (concatenate forcing), ncdiff (swl = cwl - htp),
-        #   anomaly correction, GRIB2 for 8 sub-domains, SHEF bulletins
-
-        # Set ADCIRC-specific path variables (parallel to stofs3d conventions)
-        export EXECstofs2d=${EXECstofs2d:-${HOMEstofs}/exec}
-        export FIXstofs2d=${FIXstofs2d:-${HOMEstofs}/fix/${RUN}}
-        export USHstofs2d=${USHstofs2d:-${HOMEstofs}/ush/${RUN}}
-        export PARMstofs2d=${PARMstofs2d:-${HOMEstofs}/parm/${RUN}}
-
-        # COM directories for rerun forcing and WMO products
-        export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
-        export COMOUTwmo=${COMOUTwmo:-${COMOUT}/wmo}
-        mkdir -p ${COMOUTwmo}
-
-        # DBN alert type for ADCIRC products
-        export DBN_ALERT_TYPE=${DBN_ALERT_TYPE:-STOFS_NETCDF}
-        export SENDDBN_NTC=${SENDDBN_NTC:-NO}
-
-        if [ -f "${SCRIPTSnos}/${RUN}/exnos_ofs_post.sh" ]; then
-            ${SCRIPTSnos}/${RUN}/exnos_ofs_post.sh
-        elif [ -f "${USHstofs2d}/${RUN}_post.sh" ]; then
-            ${USHstofs2d}/${RUN}_post.sh
-        else
-            echo "ERROR: ADCIRC post script not found" >&2
-            echo "  Tried: ${SCRIPTSnos}/${RUN}/exnos_ofs_post.sh" >&2
-            echo "  Tried: ${USHstofs2d}/${RUN}_post.sh" >&2
-            exit 1
-        fi
+        # ADCIRC post-processing is handled inline during execute_model
+        # (outputs archived to $COMOUT in nowcast/forecast sub-phases)
+        echo "INFO: ADCIRC post-processing completed inline during model execution"
+        echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
         ;;
     comf|*)
         # nosofs/COMF single post-processing stage

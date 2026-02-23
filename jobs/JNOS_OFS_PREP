@@ -276,7 +276,7 @@ case "${OFS_FRAMEWORK}" in
             export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
         fi
         # nosofs/COMF prep script
-        $SCRIPTSnos/nosofs/exnos_ofs_prep.sh $OFS
+        $SCRIPTSnos/exnos_ofs_prep.sh $OFS
         ;;
 esac
 

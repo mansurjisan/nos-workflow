@@ -19,13 +19,6 @@ Supports two distribution types:
   - log_uniform: Uniform sampling in log10 space (good for parameters
                  spanning orders of magnitude, e.g., mixing coefficients)
 
-Supports two model types:
-  - SCHISM:  Parameters applied to param.nml (Fortran namelist)
-             Perturbable: rdrg2, zob, akt_bak, akv_bak, scale_hflux
-  - ADCIRC:  Parameters applied to fort.15 (plain text, sed-based)
-             Perturbable: ffactor (friction scaling), eslm (lateral viscosity),
-                          tau0 (GWCE weighting factor)
-
 Usage:
     # From Python
     config = EnsembleConfig.from_yaml("secofs.yaml")
@@ -170,43 +163,12 @@ class GEFSEnsembleConfig:
         )
 
 
-# Default parameter definitions for ADCIRC models.
-# Used as reference when building YAML configs for ADCIRC ensemble runs.
-# The actual parameter ranges come from the YAML ensemble.parameters section.
-ADCIRC_PARAMS = {
-    "ffactor": {
-        "range": [0.8, 1.2],
-        "default": 1.0,
-        "distribution": "uniform",
-        "description": "Friction factor scaling (multiplies CF in fort.15)",
-    },
-    "eslm": {
-        "range": [10.0, 100.0],
-        "default": 50.0,
-        "distribution": "log_uniform",
-        "description": "Lateral eddy viscosity / Smagorinsky coefficient",
-    },
-    "tau0": {
-        "range": [-3.0, -1.0],
-        "default": -3.0,
-        "distribution": "uniform",
-        "description": "GWCE weighting factor (negative = spatially variable)",
-    },
-}
-
-
 @dataclass
 class EnsembleConfig:
-    """Configuration for an ensemble run.
-
-    Supports both SCHISM (param.nml) and ADCIRC (fort.15) model types.
-    The model_type field is read from the OFS YAML and determines how
-    parameter perturbations are applied by the shell-side ensemble library.
-    """
+    """Configuration for an ensemble run."""
     n_members: int
     method: str
     seed: int
-    model_type: str = "schism"
     perturb_physics: bool = True
     parameters: List[ParameterDef] = field(default_factory=list)
     atmospheric: AtmosphericEnsembleConfig = field(
@@ -241,10 +203,6 @@ class EnsembleConfig:
                 "Set ensemble.enabled: true"
             )
 
-        # Detect model type from system section
-        system = data.get("system", {})
-        model_type = system.get("model_type", "schism").lower()
-
         perturb_physics = ens.get("perturb_physics", True)
 
         params = []
@@ -271,7 +229,6 @@ class EnsembleConfig:
             n_members=int(ens.get("n_members", 5)),
             method=ens.get("method", "parameter_perturbation"),
             seed=int(ens.get("seed", 42)),
-            model_type=model_type,
             perturb_physics=perturb_physics,
             parameters=params,
             atmospheric=atmospheric,
@@ -582,7 +539,6 @@ class ParamGenerator:
         lines = []
         lines.append(f"Ensemble: {self.config.n_members} members "
                       f"(1 control + {self.config.n_members - 1} perturbed)")
-        lines.append(f"Model type: {self.config.model_type}")
         lines.append(f"Method: {self.config.method}")
         lines.append(f"Seed: {self.config.seed}")
         lines.append(f"Physics perturbation: {'enabled' if self.config.perturb_physics else 'disabled'}")

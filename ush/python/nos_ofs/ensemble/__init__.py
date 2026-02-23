@@ -22,12 +22,11 @@ Usage:
 
 
 def __getattr__(name):
-    if name in ("EnsembleConfig", "GEFSEnsembleConfig", "ParamGenerator", "ADCIRC_PARAMS"):
-        from .param_generator import EnsembleConfig, GEFSEnsembleConfig, ParamGenerator, ADCIRC_PARAMS
+    if name in ("EnsembleConfig", "GEFSEnsembleConfig", "ParamGenerator"):
+        from .param_generator import EnsembleConfig, GEFSEnsembleConfig, ParamGenerator
         return {"EnsembleConfig": EnsembleConfig,
                 "GEFSEnsembleConfig": GEFSEnsembleConfig,
-                "ParamGenerator": ParamGenerator,
-                "ADCIRC_PARAMS": ADCIRC_PARAMS}[name]
+                "ParamGenerator": ParamGenerator}[name]
     if name == "EnsemblePost":
         from .ensemble_post import EnsemblePost
         return EnsemblePost
@@ -41,7 +40,6 @@ def __getattr__(name):
 
 
 __all__ = [
-    "ADCIRC_PARAMS",
     "EnsembleConfig",
     "GEFSEnsembleConfig",
     "ParamGenerator",
