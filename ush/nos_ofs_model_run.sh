@@ -138,9 +138,11 @@ _stofs_stage_files() {
         [ -f "$FIXstofs3d/${RUN}_${f}" ] && ln -sf "$FIXstofs3d/${RUN}_${f}" "$DATA/$f"
     done
 
-    # Nudging files (different naming convention)
-    [ -f "$FIXstofs3d/${RUN}_tem_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_tem_nudge.gr3" "$DATA/TEM_nudge.gr3"
-    [ -f "$FIXstofs3d/${RUN}_sal_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_sal_nudge.gr3" "$DATA/SAL_nudge.gr3"
+    # Nudging files (different naming convention) — skip for barotropic (no T/S)
+    if [ "${BAROTROPIC:-false}" != "true" ]; then
+        [ -f "$FIXstofs3d/${RUN}_tem_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_tem_nudge.gr3" "$DATA/TEM_nudge.gr3"
+        [ -f "$FIXstofs3d/${RUN}_sal_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_sal_nudge.gr3" "$DATA/SAL_nudge.gr3"
+    fi
     [ -f "$FIXstofs3d/${RUN}_river_source_sink.in" ] && ln -sf "$FIXstofs3d/${RUN}_river_source_sink.in" "$DATA/source_sink.in"
     [ -f "$FIXstofs3d/${RUN}_river_msource.th" ] && ln -sf "$FIXstofs3d/${RUN}_river_msource.th" "$DATA/msource.th"
 
@@ -189,21 +191,28 @@ _stofs_stage_files() {
     [ -s "$FIXstofs3d/${RUN}_sflux_inputs.txt" ] && \
         cp -p "$FIXstofs3d/${RUN}_sflux_inputs.txt" "$DATA/sflux/sflux_inputs.txt"
 
-    # RTOFS OBC 3D time-history files
-    local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
+    # RTOFS OBC time-history files
+    # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
+    if [ "${BAROTROPIC:-false}" = "true" ]; then
+        local obc_pairs=("elev2dth.nc:elev2D.th.nc")
+    else
+        local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
+    fi
     for pair in "${obc_pairs[@]}"; do
         local src="${pair%%:*}" dst="${pair##*:}"
         [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
             cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
     done
 
-    # RTOFS nudging files
-    local nudge_pairs=("temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc")
-    for pair in "${nudge_pairs[@]}"; do
-        local src="${pair%%:*}" dst="${pair##*:}"
-        [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
-            cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
-    done
+    # RTOFS nudging files — skip for barotropic (no T/S)
+    if [ "${BAROTROPIC:-false}" != "true" ]; then
+        local nudge_pairs=("temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc")
+        for pair in "${nudge_pairs[@]}"; do
+            local src="${pair%%:*}" dst="${pair##*:}"
+            [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
+                cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
+        done
+    fi
 
     echo "STOFS file staging complete for ${phase}"
 }
@@ -372,7 +381,10 @@ _stofs_execute_model() {
     # Determine MPI task count and executable
     local nprocs=${TOTAL_TASKS:-${NCPU_PBS:-960}}
     local nscribes=${NSCRIBES:-6}
-    local executable="${EXECstofs3d}/stofs_3d_atl_pschism"
+    local executable="${EXECstofs3d}/${RUN}_pschism"
+    # Fallback: stofs_2d_atl uses the same SCHISM executable as stofs_3d_atl
+    [ ! -x "${executable}" ] && executable="${EXECstofs3d}/stofs_3d_atl_pschism"
+    [ ! -x "${executable}" ] && executable="${EXECstofs3d}/pschism_TVD-VL"
 
     echo "Running SCHISM ${phase}: mpiexec -n ${nprocs} --cpu-bind core ${executable} ${nscribes}"
 
@@ -573,6 +585,99 @@ _comf_stage_files() {
             export BASE_DATE
         fi
     fi
+
+    # Stage UFS-Coastal DATM artifacts from prep job (if USE_DATM is enabled)
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        echo "Staging UFS-Coastal DATM artifacts from $COMOUT"
+        local DATM_DIR=${DATM_INPUT_DIR:-INPUT}
+        mkdir -p ${DATA}/${DATM_DIR}
+        mkdir -p ${DATA}/RESTART
+        mkdir -p ${DATA}/outputs
+
+        # Stage DATM forcing and mesh files
+        local datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+        if [ -d "$datm_dir" ]; then
+            cp -p ${datm_dir}/*.nc ${DATA}/${DATM_DIR}/ 2>/dev/null || true
+            echo "  Staged DATM files to ${DATM_DIR}/ from $datm_dir"
+        else
+            echo "WARNING: DATM input directory not found: $datm_dir"
+        fi
+
+        # Stage UFS config files
+        for f in model_configure datm_in datm.streams ufs.configure; do
+            local src="${COMOUT}/${RUN}.${cycle}.${f}"
+            if [ -s "$src" ]; then
+                cp -p "$src" "${DATA}/${f}"
+                echo "  Staged: ${f}"
+            else
+                echo "WARNING: UFS config not found: $src"
+            fi
+        done
+
+        # Stage fd_ufs.yaml (NUOPC field dictionary) and noahmptable.tbl
+        for f in fd_ufs.yaml noahmptable.tbl; do
+            if [ -s "${FIXofs}/${f}" ]; then
+                cp -p "${FIXofs}/${f}" "${DATA}/${f}"
+                echo "  Staged: ${f}"
+            elif [ -s "${COMOUT}/${RUN}.${cycle}.${f}" ]; then
+                cp -p "${COMOUT}/${RUN}.${cycle}.${f}" "${DATA}/${f}"
+                echo "  Staged: ${f} (from COMOUT)"
+            fi
+        done
+
+        # Stage UFS-Coastal executable to run directory (actual run pattern)
+        local UFS_EXEC_NAME=${UFS_EXEC_NAME:-fv3_coastalS.exe}
+        if [ ! -x "${DATA}/${UFS_EXEC_NAME}" ]; then
+            if [ -x "${EXECnos:-}/${UFS_EXEC_NAME}" ]; then
+                cp -p "${EXECnos}/${UFS_EXEC_NAME}" "${DATA}/${UFS_EXEC_NAME}"
+                echo "  Staged executable: ${UFS_EXEC_NAME}"
+            fi
+        fi
+
+        # Patch UFS configs for nowcast vs forecast
+        # - nhours_fcst / stop_n: simulation length
+        # - start_type: startup (cold/nowcast) vs continue (hotstart/forecast)
+        # - start_year/month/day/hour: actual simulation start time
+        if [ "$phase" = "nowcast" ]; then
+            local nhours=${LEN_NOWCAST:-6}
+            local start_type="startup"
+            # Nowcast starts at time_hotstart (typically cycle - 6h)
+            local sim_start=${time_hotstart:-$($NDATE -6 ${PDY}${cyc})}
+        else
+            local nhours=${LEN_FORECAST:-48}
+            # Forecast uses hotstart from nowcast → start_type=continue
+            local start_type="continue"
+            # Forecast starts at time_nowcastend (= cycle time)
+            local sim_start=${time_nowcastend:-${PDY}${cyc}}
+        fi
+
+        # Extract date components from simulation start time
+        local sim_yyyy=$(echo $sim_start | cut -c1-4)
+        local sim_mm=$(echo $sim_start | cut -c5-6)
+        local sim_dd=$(echo $sim_start | cut -c7-8)
+        local sim_hh=$(echo $sim_start | cut -c9-10)
+
+        echo "  Patching UFS configs for phase=$phase"
+        echo "    nhours=$nhours, start_type=$start_type"
+        echo "    sim_start=$sim_start (${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z)"
+
+        if [ -s "${DATA}/model_configure" ]; then
+            sed -i "s/nhours_fcst:.*/nhours_fcst:             ${nhours}/" ${DATA}/model_configure
+            sed -i "s/start_year:.*/start_year:              ${sim_yyyy}/" ${DATA}/model_configure
+            sed -i "s/start_month:.*/start_month:             ${sim_mm}/" ${DATA}/model_configure
+            sed -i "s/start_day:.*/start_day:               ${sim_dd}/" ${DATA}/model_configure
+            sed -i "s/start_hour:.*/start_hour:              ${sim_hh}/" ${DATA}/model_configure
+        fi
+        if [ -s "${DATA}/ufs.configure" ]; then
+            sed -i "s/stop_n = .*/stop_n = ${nhours}/" ${DATA}/ufs.configure
+            sed -i "s/start_type = .*/start_type = ${start_type}/" ${DATA}/ufs.configure
+            # Update orb_iyear to match simulation year
+            sed -i "s/orb_iyear = .*/orb_iyear = ${sim_yyyy}/" ${DATA}/ufs.configure
+            sed -i "s/orb_iyear_align = .*/orb_iyear_align = ${sim_yyyy}/" ${DATA}/ufs.configure
+        fi
+
+        echo "  UFS-Coastal staging complete"
+    fi
 }
 
 
@@ -586,6 +691,12 @@ _comf_prepare_restart() {
 
 _comf_execute_model() {
     local phase=$1
+
+    # UFS-Coastal: dispatch to coupled DATM+SCHISM execution
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        _comf_execute_ufs_coastal "$phase"
+        return $?
+    fi
 
     # Verify critical time variables exist before running model
     if [ -z "${time_hotstart:-}" ]; then
@@ -624,6 +735,111 @@ _comf_execute_model() {
         postmsg "$jlogfile" "$msg" 2>/dev/null || true
         postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
     fi
+}
+
+
+# =============================================================================
+# UFS-Coastal Execution (DATM + SCHISM coupled via NUOPC/CMEPS)
+# =============================================================================
+_comf_execute_ufs_coastal() {
+    local phase=$1
+
+    echo "============================================"
+    echo "UFS-Coastal Execution ($phase)"
+    echo "============================================"
+
+    # Validate UFS config files
+    for f in model_configure datm_in datm.streams ufs.configure; do
+        if [ ! -s "${DATA}/${f}" ]; then
+            echo "FATAL: Missing UFS config file: ${DATA}/${f}"
+            return 1
+        fi
+    done
+
+    # Validate DATM forcing directory (INPUT/ or era5/ or configurable)
+    local DATM_DIR=${DATM_INPUT_DIR:-INPUT}
+    if [ ! -d "${DATA}/${DATM_DIR}" ] || [ -z "$(ls ${DATA}/${DATM_DIR}/*.nc 2>/dev/null)" ]; then
+        echo "FATAL: No DATM forcing files in ${DATA}/${DATM_DIR}/"
+        return 1
+    fi
+
+    echo "UFS config files:"
+    for f in model_configure datm_in datm.streams ufs.configure; do
+        echo "  $(wc -l < ${DATA}/${f}) lines: ${f}"
+    done
+    echo "DATM forcing files:"
+    ls -lh ${DATA}/${DATM_DIR}/*.nc 2>/dev/null
+
+    # Validate fd_ufs.yaml (NUOPC field dictionary)
+    if [ ! -s "${DATA}/fd_ufs.yaml" ]; then
+        echo "WARNING: fd_ufs.yaml not found in ${DATA}/"
+    fi
+
+    # Determine executable
+    local UFS_EXEC=""
+    if [ -x "${DATA}/fv3_coastalS.exe" ]; then
+        UFS_EXEC="${DATA}/fv3_coastalS.exe"
+    elif [ -x "${EXECnos:-}/fv3_coastalS.exe" ]; then
+        UFS_EXEC="${EXECnos}/fv3_coastalS.exe"
+    elif [ -x "${EXECnos:-}/ufs_coastal" ]; then
+        UFS_EXEC="${EXECnos}/ufs_coastal"
+    elif [ -x "${EXECnos:-}/ufs_model" ]; then
+        UFS_EXEC="${EXECnos}/ufs_model"
+    else
+        echo "FATAL: UFS-Coastal executable not found"
+        echo "  Checked: ${DATA}/fv3_coastalS.exe"
+        echo "  Checked: ${EXECnos:-}/fv3_coastalS.exe"
+        echo "  Checked: ${EXECnos:-}/ufs_coastal"
+        echo "  Checked: ${EXECnos:-}/ufs_model"
+        return 1
+    fi
+
+    # Determine total MPI tasks and PPN
+    local NTASKS=${TOTAL_TASKS:-1200}
+    local PPN=${PPN:-120}
+
+    echo "Executable: $UFS_EXEC"
+    echo "Total MPI tasks: $NTASKS"
+    echo "PPN: $PPN"
+    echo "Phase: $phase"
+
+    # Set UFS-Coastal runtime environment
+    export OMP_STACKSIZE=${OMP_STACKSIZE:-512M}
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+    export OMP_PLACES=${OMP_PLACES:-cores}
+    export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
+    export ESMF_RUNTIME_PROFILE=ON
+    export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
+
+    # Run UFS-Coastal
+    echo "Starting UFS-Coastal at: $(date)"
+    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} -depth 1 ${UFS_EXEC}"
+
+    cd $DATA
+    mpiexec -n ${NTASKS} -ppn ${PPN} -depth 1 ${UFS_EXEC}
+    export err=$?
+
+    echo "UFS-Coastal finished at: $(date) with exit code: $err"
+
+    if [ $err -ne 0 ]; then
+        echo "UFS-Coastal execution FAILED (rc=$err)"
+        echo "UFS-Coastal $phase execution failed" >> $cormslogfile 2>/dev/null || true
+        msg="UFS-Coastal $phase execution failed (rc=$err)"
+        postmsg "${jlogfile:-/dev/null}" "$msg" 2>/dev/null || true
+        return $err
+    fi
+
+    # Verify completion by checking for mirror.out in outputs/
+    if [ -d "${DATA}/outputs" ] && [ -s "${DATA}/outputs/mirror.out" ]; then
+        echo "UFS-Coastal $phase completed successfully (mirror.out found)"
+    else
+        echo "WARNING: mirror.out not found — UFS-Coastal may not have completed properly"
+    fi
+
+    echo "UFS-Coastal $phase execution completed normally"
+    msg="UFS-Coastal $phase execution completed normally"
+    postmsg "${jlogfile:-/dev/null}" "$msg" 2>/dev/null || true
+    return 0
 }
 
 

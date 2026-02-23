@@ -210,6 +210,12 @@ ensemble_prepare_restart() {
 ensemble_execute_model() {
     echo "=== ensemble_execute_model: member ${MEMBER_ID} ==="
 
+    # UFS-Coastal: dispatch to coupled DATM+SCHISM execution
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        _ensemble_execute_ufs_coastal
+        return $?
+    fi
+
     cd ${MEMBER_DATA}
 
     # --- Verify critical input files ---
@@ -274,8 +280,10 @@ ensemble_execute_model() {
     local SCHISM_EXEC=""
     case "${OFS_FRAMEWORK}" in
         stofs)
-            # STOFS naming: stofs_3d_atl_pschism (matches deterministic run)
+            # STOFS naming: ${RUN}_pschism (e.g., stofs_3d_atl_pschism)
+            # stofs_2d_atl falls back to stofs_3d_atl executable (same SCHISM binary)
             SCHISM_EXEC=${EXECstofs3d}/${RUN}_pschism
+            [ ! -x "${SCHISM_EXEC}" ] && SCHISM_EXEC=${EXECstofs3d}/stofs_3d_atl_pschism
             [ ! -x "${SCHISM_EXEC}" ] && SCHISM_EXEC=${EXECstofs3d}/pschism_TVD-VL
             [ ! -x "${SCHISM_EXEC}" ] && SCHISM_EXEC=${EXECstofs3d}/schism_${OFS}
             ;;
@@ -335,6 +343,143 @@ ensemble_execute_model() {
         echo "FATAL: SCHISM failed for member ${MEMBER_ID} (exit code: ${err})" >&2
         return $err
     fi
+}
+
+
+################################################################################
+# UFS-Coastal Ensemble Execution (DATM + SCHISM coupled via NUOPC/CMEPS)
+#
+# Stages UFS config files and DATM INPUT to member working directory,
+# then runs the coupled ufs_coastal binary instead of standalone SCHISM.
+################################################################################
+_ensemble_execute_ufs_coastal() {
+    echo "=== _ensemble_execute_ufs_coastal: member ${MEMBER_ID} ==="
+
+    cd ${MEMBER_DATA}
+
+    # --- Verify critical input files ---
+    local MISSING=0
+    for required in param.nml hotstart.nc bctides.in; do
+        if [ ! -e "${MEMBER_DATA}/${required}" ]; then
+            echo "MISSING: ${required}"
+            MISSING=$((MISSING + 1))
+        else
+            echo "OK: ${required}"
+        fi
+    done
+
+    # Check grid files
+    for grid_file in hgrid.gr3 vgrid.in; do
+        if [ -e "${MEMBER_DATA}/${grid_file}" ]; then
+            echo "OK: ${grid_file}"
+        else
+            echo "MISSING: ${grid_file}"
+            MISSING=$((MISSING + 1))
+        fi
+    done
+
+    if [ $MISSING -gt 0 ]; then
+        echo "FATAL: ${MISSING} required input files missing." >&2
+        return 1
+    fi
+
+    # --- Stage UFS config files from COMOUT ---
+    echo "Staging UFS config files to member directory..."
+    for f in model_configure datm_in datm.streams ufs.configure; do
+        local src="${COMOUT}/${RUN}.${cycle}.${f}"
+        if [ -s "$src" ]; then
+            cp -p "$src" "${MEMBER_DATA}/${f}"
+            echo "  Staged: ${f}"
+        else
+            echo "FATAL: UFS config not found: $src" >&2
+            return 1
+        fi
+    done
+
+    # Stage DATM INPUT directory
+    mkdir -p ${MEMBER_DATA}/INPUT
+    local datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+    if [ -d "$datm_dir" ]; then
+        cp -p ${datm_dir}/*.nc ${MEMBER_DATA}/INPUT/ 2>/dev/null || true
+        echo "Staged DATM INPUT files"
+    else
+        echo "FATAL: DATM input directory not found: $datm_dir" >&2
+        return 1
+    fi
+
+    # Patch stop_n for ensemble phase (typically forecast length)
+    local nhours=${LEN_FORECAST:-48}
+    if [ -s "${MEMBER_DATA}/model_configure" ]; then
+        sed -i "s/nhours_fcst:.*/nhours_fcst: ${nhours}/" ${MEMBER_DATA}/model_configure
+    fi
+    if [ -s "${MEMBER_DATA}/ufs.configure" ]; then
+        sed -i "s/stop_n = .*/stop_n = ${nhours}/" ${MEMBER_DATA}/ufs.configure
+    fi
+
+    # --- Stage fd_ufs.yaml and noahmptable.tbl ---
+    for f in fd_ufs.yaml noahmptable.tbl; do
+        if [ -s "${FIXofs}/${f}" ] && [ ! -s "${MEMBER_DATA}/${f}" ]; then
+            cp -p "${FIXofs}/${f}" "${MEMBER_DATA}/${f}"
+        fi
+    done
+
+    # --- Determine executable ---
+    local UFS_EXEC=""
+    local UFS_EXEC_NAME=${UFS_EXEC_NAME:-fv3_coastalS.exe}
+    if [ -x "${MEMBER_DATA}/${UFS_EXEC_NAME}" ]; then
+        UFS_EXEC="${MEMBER_DATA}/${UFS_EXEC_NAME}"
+    elif [ -x "${EXECnos:-}/${UFS_EXEC_NAME}" ]; then
+        UFS_EXEC="${EXECnos}/${UFS_EXEC_NAME}"
+    elif [ -x "${EXECnos:-}/ufs_coastal" ]; then
+        UFS_EXEC="${EXECnos}/ufs_coastal"
+    else
+        echo "FATAL: UFS-Coastal executable not found" >&2
+        return 1
+    fi
+
+    # --- Determine MPI task count ---
+    local NTASKS=${TOTAL_TASKS:-1200}
+    local PPN=${PPN:-120}
+
+    echo "Executable: ${UFS_EXEC}"
+    echo "TOTAL_TASKS: ${NTASKS}"
+    echo "PPN: ${PPN}"
+    echo "Working dir: ${MEMBER_DATA}"
+    echo "Member ID: ${MEMBER_ID}"
+
+    # --- Set UFS-Coastal runtime environment ---
+    export OMP_STACKSIZE=${OMP_STACKSIZE:-512M}
+    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
+    export OMP_PLACES=${OMP_PLACES:-cores}
+    export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
+    export ESMF_RUNTIME_PROFILE=ON
+    export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
+
+    # --- Run UFS-Coastal ---
+    echo "UFS-Coastal ensemble simulation began at: $(date)"
+    mpiexec -n ${NTASKS} -ppn ${PPN} -depth 1 ${UFS_EXEC} \
+        > ${MEMBER_DATA}/${RUN}.${cycle}.member_${MEMBER_ID}.log 2>&1
+    export err=$?
+    echo "UFS-Coastal ensemble simulation ended at: $(date)"
+
+    # Check for successful completion
+    if [ -s "${MEMBER_DATA}/outputs/mirror.out" ]; then
+        if grep -q "Run completed successfully" ${MEMBER_DATA}/outputs/mirror.out 2>/dev/null; then
+            echo "UFS-Coastal member ${MEMBER_ID} completed successfully"
+        else
+            echo "WARNING: mirror.out exists but no success message"
+            tail -5 ${MEMBER_DATA}/outputs/mirror.out
+        fi
+    else
+        echo "WARNING: mirror.out not found or empty"
+    fi
+
+    if [ $err -ne 0 ]; then
+        echo "FATAL: UFS-Coastal failed for member ${MEMBER_ID} (exit code: ${err})" >&2
+        return $err
+    fi
+
+    return 0
 }
 
 
@@ -442,13 +587,17 @@ _ensemble_stage_static_files() {
         # river_vsink.th -> vsink.th
         [ -e "${MEMBER_DATA}/river_vsink.th" ] && \
             ln -sf "${MEMBER_DATA}/river_vsink.th" ${MEMBER_DATA}/vsink.th
-        # tem_nudge.gr3 -> TEM_nudge.gr3 (SCHISM expects uppercase)
-        [ -e "${MEMBER_DATA}/tem_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/TEM_nudge.gr3" ] && \
-            ln -sf "${MEMBER_DATA}/tem_nudge.gr3" ${MEMBER_DATA}/TEM_nudge.gr3
-        # sal_nudge.gr3 -> SAL_nudge.gr3 (SCHISM expects uppercase)
-        [ -e "${MEMBER_DATA}/sal_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/SAL_nudge.gr3" ] && \
-            ln -sf "${MEMBER_DATA}/sal_nudge.gr3" ${MEMBER_DATA}/SAL_nudge.gr3
-        echo "Created STOFS special name mappings (source_sink.in, msource.th, TEM/SAL_nudge)"
+        # tem_nudge.gr3 -> TEM_nudge.gr3 (SCHISM expects uppercase) — skip for barotropic
+        if [ "${BAROTROPIC:-false}" != "true" ]; then
+            [ -e "${MEMBER_DATA}/tem_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/TEM_nudge.gr3" ] && \
+                ln -sf "${MEMBER_DATA}/tem_nudge.gr3" ${MEMBER_DATA}/TEM_nudge.gr3
+            # sal_nudge.gr3 -> SAL_nudge.gr3 (SCHISM expects uppercase)
+            [ -e "${MEMBER_DATA}/sal_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/SAL_nudge.gr3" ] && \
+                ln -sf "${MEMBER_DATA}/sal_nudge.gr3" ${MEMBER_DATA}/SAL_nudge.gr3
+            echo "Created STOFS special name mappings (source_sink.in, msource.th, TEM/SAL_nudge)"
+        else
+            echo "Created STOFS special name mappings (source_sink.in, msource.th — barotropic, no nudge)"
+        fi
     fi
 
     # --- Create vgrid_nu.in for nudging ---
@@ -939,9 +1088,14 @@ _ensemble_stofs_stage_obc_river() {
 
     export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
 
-    # RTOFS OBC 3D time-history files
-    for pair in "elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" \
-                "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc"; do
+    # RTOFS OBC time-history files
+    # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
+    if [ "${BAROTROPIC:-false}" = "true" ]; then
+        local _obc_pairs="elev2dth.nc:elev2D.th.nc"
+    else
+        local _obc_pairs="elev2dth.nc:elev2D.th.nc tem3dth.nc:TEM_3D.th.nc sal3dth.nc:SAL_3D.th.nc uv3dth.nc:uv3D.th.nc"
+    fi
+    for pair in ${_obc_pairs}; do
         local src_suffix="${pair%%:*}"
         local dst_name="${pair##*:}"
         local src="${COMOUTrerun}/${RUN}.${cycle}.${src_suffix}"
@@ -964,15 +1118,18 @@ _ensemble_stofs_stage_obc_river() {
         cp -p "${COMOUTrerun}/${RUN}.${cycle}.riv.obs.tem_1.th" "${MEMBER_DATA}/TEM_1.th"
 
     # RTOFS nudging files (time-varying, generated by prep's obc_nudge script)
-    for pair in "temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc"; do
-        local src_suffix="${pair%%:*}"
-        local dst_name="${pair##*:}"
-        local src="${COMOUTrerun}/${RUN}.${cycle}.${src_suffix}"
-        if [ -s "${src}" ]; then
-            cp -p "${src}" "${MEMBER_DATA}/${dst_name}"
-            echo "  ${dst_name} <- ${src_suffix}"
-        fi
-    done
+    # Skip for barotropic mode (no T/S nudging)
+    if [ "${BAROTROPIC:-false}" != "true" ]; then
+        for pair in "temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc"; do
+            local src_suffix="${pair%%:*}"
+            local dst_name="${pair##*:}"
+            local src="${COMOUTrerun}/${RUN}.${cycle}.${src_suffix}"
+            if [ -s "${src}" ]; then
+                cp -p "${src}" "${MEMBER_DATA}/${dst_name}"
+                echo "  ${dst_name} <- ${src_suffix}"
+            fi
+        done
+    fi
 
     # Tidal forcing (bctides.in)
     if [ -s "${COMOUTrerun}/${RUN}.${cycle}.bctides.in" ]; then

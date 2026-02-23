@@ -49,7 +49,7 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 # Specify NET and RUN Name and model
 ####################################
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl|stofs_2d_glo)
         export NET=${NET:-stofs}
         ;;
     *)
@@ -95,7 +95,7 @@ export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
 # YAML Configuration Loading
 ####################################
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl)
         export OFS_FRAMEWORK="stofs"
         ;;
     stofs_2d_glo)
