@@ -652,14 +652,26 @@ _comf_archive_outputs() {
     # Archive SCHISM output state files needed for ihot=2 restart in split-job mode.
     # Without real staout/mirror/flux files the forecast (or ensemble) crashes with
     # "end-of-file during read" on the empty placeholders.
-    if [ "$phase" = "nowcast" ] && [ -d "$DATA/outputs" ]; then
-        local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
-        mkdir -p "$restart_dir"
-        for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
-                 staout_5 staout_6 staout_7 staout_8 staout_9; do
-            [ -f "$DATA/outputs/$f" ] && cp -p "$DATA/outputs/$f" "$restart_dir/"
-        done
-        echo "Archived SCHISM restart output files to $restart_dir"
+    # Note: nos_ofs_nowcast_forecast.sh renames $DATA/outputs → $DATA/outputs_nowcast
+    # after the nowcast completes, so check both locations.
+    if [ "$phase" = "nowcast" ]; then
+        local outputs_dir=""
+        if [ -d "$DATA/outputs" ]; then
+            outputs_dir="$DATA/outputs"
+        elif [ -d "$DATA/outputs_nowcast" ]; then
+            outputs_dir="$DATA/outputs_nowcast"
+        fi
+        if [ -n "$outputs_dir" ]; then
+            local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+            mkdir -p "$restart_dir"
+            for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                     staout_5 staout_6 staout_7 staout_8 staout_9; do
+                [ -f "$outputs_dir/$f" ] && cp -p "$outputs_dir/$f" "$restart_dir/"
+            done
+            echo "Archived SCHISM restart output files from $outputs_dir to $restart_dir"
+        else
+            echo "WARNING: Neither $DATA/outputs nor $DATA/outputs_nowcast found, skipping restart_outputs archive"
+        fi
     fi
 }
 
