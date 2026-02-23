@@ -1,0 +1,314 @@
+#!/bin/bash
+
+##############################################################################
+#  Name: exstofs_2d_atl_prep_processing.sh                                  #
+#  This script prepares the files needed by the barotropic (2D) nowcast     #
+#  and forecast simulations: run control, tidal, river, surface forcing,    #
+#  and the initial condition restart files.                                  #
+#                                                                            #
+#  Derived from exstofs_3d_atl_prep_processing.sh with these differences:    #
+#    - BAROTROPIC=true exported for downstream scripts                       #
+#    - No OBC 3D TH generation (no T/S ocean boundaries)                     #
+#    - No OBC dynamic bias adjustment                                        #
+#    - No OBC nudge generation                                               #
+#    - No tem_nudge.gr3/sal_nudge.gr3 symlinks                              #
+#    - USH scripts reused from stofs_3d_atl (domain-identical)               #
+#                                                                            #
+#  Remarks:                                                                  #
+#                                                        February, 2026      #
+##############################################################################
+
+
+  seton='-xa'
+  setoff='+xa'
+  set $setoff
+
+  fn_this_script="exstofs_2d_atl_prep_processing.sh"
+
+  msg="Starting script: STOFS-2D-ATL prepare model control & forcing files (barotropic)"
+  echo "$msg"
+  postmsg "$jlogfile" "$msg"
+
+  # Barotropic mode flag — used by downstream model_run.sh / ensemble_run.sh
+  export BAROTROPIC=true
+
+  # Reuse STOFS-3D-ATL USH forcing scripts (domain-identical)
+  export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/stofs_3d_atl}
+
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading STOFS-2D-ATL prep config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            export OFS_CONFIG_LOADED=1
+            echo "YAML config loaded successfully"
+            echo "  LONMIN=${LONMIN:-not set}, LONMAX=${LONMAX:-not set}"
+            echo "  LATMIN=${LATMIN:-not set}, LATMAX=${LATMAX:-not set}"
+            echo "  N_list_target=${N_list_target:-not set}"
+            echo "  BAROTROPIC=${BAROTROPIC}"
+        else
+            echo "WARNING: Failed to parse YAML config, using defaults"
+        fi
+    else
+        echo "WARNING: yaml_to_env.py not found at ${_yaml_to_env}"
+    fi
+else
+    echo "INFO: OFS_CONFIG not set or file not found, using script defaults"
+fi
+
+  echo "module list in ${fn_this_script}"
+  module list
+  echo; echo
+
+
+  mkdir -p ${DATA}
+  cd $DATA
+
+
+# ----------------------------------------> Static files
+# copy/ln model run static files (same grid as 3D ATL, 2-level vgrid)
+
+ln -sf $FIXstofs3d/${RUN}_windrot_geo2proj.gr3  windrot_geo2proj.gr3
+ln -sf $FIXstofs3d/${RUN}_watertype.gr3  watertype.gr3
+ln -sf $FIXstofs3d/${RUN}_vgrid.in  vgrid.in
+ln -sf $FIXstofs3d/${RUN}_tvd.prop  tvd.prop
+ln -sf $FIXstofs3d/${RUN}_station.in  station.in
+ln -sf $FIXstofs3d/${RUN}_shapiro.gr3  shapiro.gr3
+ln -sf $FIXstofs3d/${RUN}_param.nml_6globaloutput param.nml_template
+ln -sf $FIXstofs3d/${RUN}_river_source_sink.in  source_sink.in
+ln -sf $FIXstofs3d/${RUN}_river_msource.th  msource.th
+ln -sf $FIXstofs3d/${RUN}_hgrid.ll  hgrid.ll
+ln -sf $FIXstofs3d/${RUN}_hgrid.gr3  hgrid.gr3
+ln -sf $FIXstofs3d/${RUN}_estuary.gr3  estuary.gr3
+ln -sf $FIXstofs3d/${RUN}_drag.gr3  drag.gr3
+ln -sf $FIXstofs3d/${RUN}_diffmin.gr3  diffmin.gr3
+ln -sf $FIXstofs3d/${RUN}_diffmax.gr3  diffmax.gr3
+ln -sf $FIXstofs3d/${RUN}_bctides.in_template  bctides.in_template
+ln -sf $FIXstofs3d/${RUN}_albedo.gr3  albedo.gr3
+ln -sf $FIXstofs3d/${RUN}_partition.prop  partition.prop
+
+# NOTE: No TEM_nudge.gr3 or SAL_nudge.gr3 for barotropic mode
+
+
+# ---------------------------------------> create param.nml (nowcast + forecast)
+file_log=log_create_param_nml.${cycle}.log
+
+for _phase in nowcast forecast; do
+  export pgm="${USHstofs3d}/stofs_3d_atl_create_param_nml.sh ${_phase}"
+  ${USHstofs3d}/stofs_3d_atl_create_param_nml.sh ${_phase} >> ${file_log} 2>&1
+
+  export err=$?
+  if [ $err -ne 0 ]; then
+     msg=" Execution of $pgm (${_phase}) did not complete normally - WARNING"
+     postmsg  "$msg"
+     cat ${file_log}
+  else
+     msg=" Execution of $pgm (${_phase}) completed normally"
+     postmsg  "$msg"
+     cat ${file_log}
+  fi
+  echo $msg
+done
+
+echo
+
+# ---------------------------------------> create bctides.in
+file_log=log_create_bctides.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_bctides_in.sh"
+${USHstofs3d}/stofs_3d_atl_create_bctides_in.sh >> ${file_log} 2>&1
+
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+fi
+
+echo $msg
+echo
+
+
+# ---------------------------------------> create nwm/river forcing
+file_log=log_create_river_forcing_nwm.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_river_forcing_nwm.sh"
+${USHstofs3d}/stofs_3d_atl_create_river_forcing_nwm.sh  >> ${file_log} 2>&1
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
+fi
+
+echo $msg
+echo
+
+
+# ---------------------------------------> create sflux/GFS forcing
+file_log=log_create_surface_forcing_gfs.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_surface_forcing_gfs.sh"
+${USHstofs3d}/stofs_3d_atl_create_surface_forcing_gfs.sh  >> ${file_log} 2>&1
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
+fi
+
+echo $msg
+echo
+
+
+# ---------------------------------------> create sflux/HRRR forcing
+file_log=log_create_surface_forcing_hrrr.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_surface_forcing_hrrr.sh"
+${USHstofs3d}/stofs_3d_atl_create_surface_forcing_hrrr.sh  >> ${file_log} 2>&1
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
+fi
+
+echo $msg
+echo
+
+
+# ---------------------------------------> create St. Lawrence River forcing
+file_log=log_create_river_st_lawrence.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh"
+${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh  >> ${file_log} 2>&1
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
+fi
+
+echo $msg
+echo
+
+
+# NOTE: OBC 3D TH, dynamic bias adjustment, and OBC nudge sections are
+# OMITTED for barotropic mode — no T/S ocean boundary conditions needed.
+echo "BAROTROPIC mode: skipping OBC 3D TH, dynamic adjust, and nudge generation"
+
+
+# ---------------------------------------> create restart file
+
+file_log=log_create_restart.${cycle}.log
+
+fn_restart_coldstart_fix=${FIXstofs3d}/${RUN}_restart_coldstart.nc
+fn_restart_rerun=${COMOUTrerun}/${RUN}.${cycle}.restart.nc
+
+mkdir -p ${COMOUTrerun}
+mkdir -p ${DATA_prep_restart}
+
+
+if [[ $COLDSTART = YES ]]; then
+    msg="${msg}\n restart.nc: COLDSTART=${COLDSTART}, restart file from fix/"
+    echo -e ${msg}; echo "${msg}" >> ${file_log}
+
+    # Barotropic hotstart is ~1GB (much smaller than 3D's 20GB)
+    if [ -s ${fn_restart_coldstart_fix} ]; then
+       cpreq -fp ${fn_restart_coldstart_fix} ${fn_restart_rerun}
+       msg="${msg}\n done: copy ${fn_restart_coldstart_fix} \n  ${fn_restart_rerun}"
+       echo -e "${msg}"; echo "${msg}" >> ${file_log}
+    else
+       msg="WARNING: not found - ${fn_restart_coldstart_fix}";
+       echo "${msg}"; echo "${msg}" >> ${file_log}
+    fi
+
+
+else   # COLDSTART=NO
+   msg="COLDSTART=${COLDSTART}"
+
+
+# ------------------------
+  LIST_fn_fnl_hotstart=''
+  days=(0 1 2 3 4)
+
+  cnt_files=0
+  for k in ${days[@]}; do
+      date_k=`date -d "${PDYHH_NCAST_BEGIN:0:8} ${k} days ago" +%Y%m%d`
+
+      fn_hotstart_oper=$COMINstofs/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc
+
+      if [ -s $fn_hotstart_oper ]; then
+        # Barotropic hotstart is ~1GB (skip the 20GB size check used by 3D)
+        LIST_fn_fnl_hotstart+="${fn_hotstart_oper} "
+        echo "OK: $fn_hotstart_oper"
+        cnt_files=$((cnt_files+1))
+        break
+      else
+        echo "WARNING: "  $fn_hotstart_oper " does not exist"
+      fi
+  done
+  echo "cnt_files = " ${cnt_files}
+
+  if [[ $cnt_files -ge 1 ]]; then
+     LIST_fn_fnl_hotstart=(${LIST_fn_fnl_hotstart[@]})
+
+     fn_hotstart_oper_prev=${LIST_fn_fnl_hotstart[0]};
+     echo "found: fn_hotstart_oper_prev = ${fn_hotstart_oper_prev}"
+
+      cpreq -pf ${fn_hotstart_oper_prev} ${fn_restart_rerun}
+
+  else
+     msg="WARNING: not found - ${fn_hotstart_oper_prev}";
+     echo "${msg}"; echo "${msg}" >> ${file_log}
+  fi
+fi  # COLDSTART
+
+
+# ---------------------------------------> Completed preparing param.nml, bctides, forcing files
+
+msg=" Finished creating param.nml, bctides, river/gfs/hrrr forcing files SUCCESSFULLY (barotropic)"
+postmsg  "$msg"
+
+
+
+echo
+echo " Finished running - exstofs_2d_atl_prep_processing.sh at " `date`
+echo
+
+

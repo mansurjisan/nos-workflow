@@ -138,9 +138,11 @@ _stofs_stage_files() {
         [ -f "$FIXstofs3d/${RUN}_${f}" ] && ln -sf "$FIXstofs3d/${RUN}_${f}" "$DATA/$f"
     done
 
-    # Nudging files (different naming convention)
-    [ -f "$FIXstofs3d/${RUN}_tem_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_tem_nudge.gr3" "$DATA/TEM_nudge.gr3"
-    [ -f "$FIXstofs3d/${RUN}_sal_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_sal_nudge.gr3" "$DATA/SAL_nudge.gr3"
+    # Nudging files (different naming convention) — skip for barotropic (no T/S)
+    if [ "${BAROTROPIC:-false}" != "true" ]; then
+        [ -f "$FIXstofs3d/${RUN}_tem_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_tem_nudge.gr3" "$DATA/TEM_nudge.gr3"
+        [ -f "$FIXstofs3d/${RUN}_sal_nudge.gr3" ] && ln -sf "$FIXstofs3d/${RUN}_sal_nudge.gr3" "$DATA/SAL_nudge.gr3"
+    fi
     [ -f "$FIXstofs3d/${RUN}_river_source_sink.in" ] && ln -sf "$FIXstofs3d/${RUN}_river_source_sink.in" "$DATA/source_sink.in"
     [ -f "$FIXstofs3d/${RUN}_river_msource.th" ] && ln -sf "$FIXstofs3d/${RUN}_river_msource.th" "$DATA/msource.th"
 
@@ -189,21 +191,28 @@ _stofs_stage_files() {
     [ -s "$FIXstofs3d/${RUN}_sflux_inputs.txt" ] && \
         cp -p "$FIXstofs3d/${RUN}_sflux_inputs.txt" "$DATA/sflux/sflux_inputs.txt"
 
-    # RTOFS OBC 3D time-history files
-    local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
+    # RTOFS OBC time-history files
+    # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
+    if [ "${BAROTROPIC:-false}" = "true" ]; then
+        local obc_pairs=("elev2dth.nc:elev2D.th.nc")
+    else
+        local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
+    fi
     for pair in "${obc_pairs[@]}"; do
         local src="${pair%%:*}" dst="${pair##*:}"
         [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
             cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
     done
 
-    # RTOFS nudging files
-    local nudge_pairs=("temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc")
-    for pair in "${nudge_pairs[@]}"; do
-        local src="${pair%%:*}" dst="${pair##*:}"
-        [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
-            cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
-    done
+    # RTOFS nudging files — skip for barotropic (no T/S)
+    if [ "${BAROTROPIC:-false}" != "true" ]; then
+        local nudge_pairs=("temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc")
+        for pair in "${nudge_pairs[@]}"; do
+            local src="${pair%%:*}" dst="${pair##*:}"
+            [ -s "${COMOUTrerun}/${RUN}.${cycle}.${src}" ] && \
+                cp -p "${COMOUTrerun}/${RUN}.${cycle}.${src}" "$DATA/${dst}"
+        done
+    fi
 
     echo "STOFS file staging complete for ${phase}"
 }
@@ -372,7 +381,10 @@ _stofs_execute_model() {
     # Determine MPI task count and executable
     local nprocs=${TOTAL_TASKS:-${NCPU_PBS:-960}}
     local nscribes=${NSCRIBES:-6}
-    local executable="${EXECstofs3d}/stofs_3d_atl_pschism"
+    local executable="${EXECstofs3d}/${RUN}_pschism"
+    # Fallback: stofs_2d_atl uses the same SCHISM executable as stofs_3d_atl
+    [ ! -x "${executable}" ] && executable="${EXECstofs3d}/stofs_3d_atl_pschism"
+    [ ! -x "${executable}" ] && executable="${EXECstofs3d}/pschism_TVD-VL"
 
     echo "Running SCHISM ${phase}: mpiexec -n ${nprocs} --cpu-bind core ${executable} ${nscribes}"
 

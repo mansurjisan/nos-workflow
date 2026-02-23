@@ -63,7 +63,7 @@ export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
 # Determine framework and load config
 ####################################
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl)
         export OFS_FRAMEWORK="stofs"
         ;;
     stofs_2d_glo)

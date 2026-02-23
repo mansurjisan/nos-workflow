@@ -1,0 +1,315 @@
+# STOFS 2D Atlantic Configuration
+# Barotropic (2-level) SCHISM ensemble for rapid water level forecasts
+#
+# Uses the same 1.8M-node horizontal grid as STOFS-3D-ATL but only 2 vertical
+# levels (barotropic mode).  No T/S forcing (OBC 3D, nudging) is needed.
+# Ensemble uses GEFS atmospheric-only perturbation (no physics perturbation).
+
+_base: schism
+
+system:
+  name: stofs_2d_atl
+  description: "Storm Surge and Tide Operational Forecast System - 2D Atlantic (Barotropic)"
+  region: atlantic
+  framework: stofs
+  version: "1.0.0"
+  prefix: stofs_2d_atl
+
+# Grid configuration - same horizontal grid as 3D ATL, 2 vertical levels
+grid:
+  type: unstructured
+  n_nodes: 1813443
+  n_elements: 3564104
+  n_sides: 5377546
+  n_levels: 2               # Barotropic: 2 vertical levels only
+  files:
+    horizontal: stofs_2d_atl.hgrid.gr3
+    vertical: stofs_2d_atl.vgrid.in
+    horizontal_ll: stofs_2d_atl.hgrid.ll
+  # Domain bounds - identical to 3D ATL
+  domain:
+    lon_min: -98.5035
+    lon_max: -52.4867
+    lat_min: 7.347
+    lat_max: 52.5904
+
+# Model physics and runtime configuration
+model:
+  executable: pschism_WCOSS2
+  barotropic: true           # Flag for scripts to skip T/S forcing staging
+  physics:
+    dt: 150.0
+    slam0: -77.0
+    sfea0: 35.0
+    nws: 2
+    wtiminc: 3600
+  run:
+    hindcast_days: 1.0
+    forecast_days: 4.5
+    nowcast_hours: 24
+    forecast_hours: 108
+
+# Forcing configuration - same atmospheric/river/tidal as 3D ATL, NO ocean T/S
+forcing:
+  atmospheric:
+    primary: gfs
+    fallback: null
+    gfs:
+      resolution: "0.25"
+      levels: [10, 2]
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - RH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+    hrrr_blend:
+      enabled: true
+      domain: conus
+      resolution: "3km"
+      lon_min: -98.5
+      lon_max: -49.5
+      lat_min: 5.5
+      lat_max: 50.0
+    nam_blend:
+      enabled: false
+      resolution: "12km"
+      lon_min: -89.15
+      lon_max: -58.17
+      lat_min: 14.34
+      lat_max: 42.61
+
+  river:
+    enabled: true
+    primary: nwm
+    n_rivers: 7690
+    version: "v3.0"
+    n_list_target: 121
+    n_list_min: 97
+    files:
+      sources_json: stofs_3d_atl_sources.json
+      sinks_json: stofs_3d_atl_sinks.json
+    st_lawrence:
+      enabled: true
+      source: DCOMROOT
+      clim_file: stofs_3d_atl_st_lawrence_river_clim.nc
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: rtofs
+      ts_source: null          # No T/S OBC for barotropic mode
+      ssh_offset: 0.04
+      obc_mode: non_adjust     # No dynamic bias adjust (requires 3D OBC)
+      n_list_target_2d: 21
+      n_list_target_3d: 0      # No 3D OBC
+      # 2D surface fields (ssh) — same as 3D ATL
+      roi_2ds:
+        x1: 2805
+        x2: 2923
+        y1: 1598
+        y2: 2325
+      # 3D fields not used but kept for yaml_to_env compatibility
+      roi_3dz:
+        x1: 482
+        x2: 600
+        y1: 94
+        y2: 821
+    nudging:
+      enabled: false           # No T/S nudging in barotropic mode
+    adt:
+      enabled: false           # No ADT correction for barotropic
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      bctides_template: bctides.in_template
+      harmonic_constants: stofs_3d_atl.tidal_hc.nc
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: stofs_2d_atl
+  stations:
+    enabled: true
+    interval: 360.0
+    file: stofs_2d_atl.station.in
+  fields_2d:
+    enabled: true
+    interval: 3600.0
+    variables:
+      - elevation
+      - dahv
+      - windSpeedX
+      - windSpeedY
+  fields_3d:
+    enabled: false             # No 3D output for barotropic
+  restart:
+    interval_days: 1.0
+
+# Computational resources — same core count as 3D (same grid = same partition)
+resources:
+  nprocs: 960
+  nscribes: 6
+  memory_gb: 500              # Much less memory than 3D (no tracer arrays)
+  walltime_hours: 2           # Faster than 3D (no tracer transport)
+
+# Workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post_1
+  - post_2
+
+# Ensemble configuration — GEFS atmospheric-only (no physics perturbation)
+ensemble:
+  enabled: true
+  n_members: 6
+  method: gefs
+  seed: 42
+  gefs:
+    enabled: true
+    n_gefs_members: 5
+    resolution: "0p25"
+    product: "pgrb2sp25"
+    control_member: "gec00"
+    perturbation_prefix: "gep"
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GEFS p01"
+        met_source_1: GEFS_01
+        met_source_2: null
+      "002":
+        label: "GEFS p02"
+        met_source_1: GEFS_02
+        met_source_2: null
+      "003":
+        label: "GEFS p03"
+        met_source_1: GEFS_03
+        met_source_2: null
+      "004":
+        label: "GEFS p04"
+        met_source_1: GEFS_04
+        met_source_2: null
+      "005":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
+    extra_sources:
+      - GEFS_01
+      - GEFS_02
+      - GEFS_03
+      - GEFS_04
+      - RRFS
+  rrfs:
+    enabled: true
+    resolution: "3km"
+    domain: "na"
+    max_forecast_hours: 84
+    fallback_source: GFS
+    version: "v1.0"
+    status: "para"
+  # No physics perturbation — GEFS atmospheric-only ensemble
+  perturb_physics: false
+  parameters: {}
+  # Ensemble-specific resources (per member) — shorter walltime than 3D
+  resources:
+    select: "select=34:ncpus=128:mpiprocs=128"
+    walltime: "02:00:00"
+    total_tasks: 4320
+    nscribes: 6
+  post_resources:
+    select: "select=1:ncpus=8:mpiprocs=8"
+    walltime: "01:00:00"
+
+# Legacy shell script execution configuration
+# USH scripts are reused from stofs_3d_atl (domain-identical)
+legacy:
+  enabled: true
+  ush_scripts_dir: stofs_3d_atl
+  ush_dir: ""
+  pysh_dir: ""
+  fix_dir: ""
+  scripts:
+    gfs: true
+    hrrr: true
+    nam: true
+    rrfs: true
+    river: true
+    obc: false                 # No 3D OBC for barotropic
+    tides: true
+  script_names:
+    gfs: stofs_3d_atl_create_surface_forcing_gfs.sh
+    hrrr: stofs_3d_atl_create_surface_forcing_hrrr.sh
+    nam: stofs_3d_atl_create_surface_forcing_nam.sh
+    rrfs: stofs_3d_atl_create_surface_forcing_rrfs.sh
+    river: stofs_3d_atl_create_river_forcing_nwm.sh
+    tides: stofs_3d_atl_create_bctides_in.sh
+
+# Environment variable mappings
+shell_mappings:
+  framework: stofs
+  env_prefix: stofs3d
+  variables:
+    OCEAN_MODEL: model.ocean_model
+    DELT_MODEL: model.physics.dt
+    GRIDFILE: grid.files.horizontal
+    VGRID_CTL: grid.files.vertical
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.lon_min
+    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
+    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
+    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
+    NAM_LONMIN: forcing.atmospheric.nam_blend.lon_min
+    NAM_LONMAX: forcing.atmospheric.nam_blend.lon_max
+    NAM_LATMIN: forcing.atmospheric.nam_blend.lat_min
+    NAM_LATMAX: forcing.atmospheric.nam_blend.lat_max
+    N_RIVERS: forcing.river.n_rivers
+    N_list_target: forcing.river.n_list_target
+    N_list_min: forcing.river.n_list_min
+    N_list_target_2D: forcing.ocean.obc.n_list_target_2d
+    N_list_target_3D: forcing.ocean.obc.n_list_target_3d
+    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
+    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
+    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
+    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
+    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
+    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
+    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
+    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset
+    OBC_MODE: forcing.ocean.obc.obc_mode
+    BAROTROPIC: model.barotropic
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast

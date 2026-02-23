@@ -32,7 +32,7 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 ####################################
 # STOFS uses NET=stofs, nosofs uses NET=nosofs
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac|stofs_2d_glo)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl|stofs_2d_glo)
         export NET=${NET:-stofs}
         ;;
     *)
@@ -86,7 +86,7 @@ export PYstofs3d=${USHstofs3d}/pysh
 ####################################
 # Determine OFS framework type
 case "${OFS,,}" in
-    stofs_3d_atl|stofs_3d_pac)
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl)
         export OFS_FRAMEWORK="stofs"
         ;;
     stofs_2d_glo)
