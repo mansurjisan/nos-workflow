@@ -208,7 +208,7 @@ case "${OFS_FRAMEWORK}" in
         fi
 
         # Execute ensemble member ex-script
-        $SCRIPTSnos/exnos_ofs_ensemble_member.sh $OFS
+        $SCRIPTSnos/nosofs/exnos_ofs_ensemble_member.sh $OFS
         ;;
 esac
 
