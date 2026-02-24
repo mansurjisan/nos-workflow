@@ -275,6 +275,22 @@ fi
 
 echo "Using: $ESMF_SCRIP2UNSTRUCT"
 
+# Setup LD_LIBRARY_PATH for ESMF's HDF5/NetCDF dependencies.
+# ESMF in hpc-stack is compiled against a specific HDF5 version
+# (e.g., 1.14.0) that may differ from the loaded hdf5 module.
+ESMF_DIR=$(cd "$(dirname "$ESMF_SCRIP2UNSTRUCT")/.." 2>/dev/null && pwd)
+MPI_DIR=$(cd "$ESMF_DIR/../.." 2>/dev/null && pwd)
+COMPILER_DIR=$(cd "$MPI_DIR/.." 2>/dev/null && pwd)
+for _lib_pkg in hdf5 netcdf; do
+    for _lib_dir in "$MPI_DIR"/${_lib_pkg}/*/lib "$COMPILER_DIR"/${_lib_pkg}/*/lib; do
+        if [ -d "$_lib_dir" ]; then
+            export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
+            echo "  Added to LD_LIBRARY_PATH: $_lib_dir"
+            break
+        fi
+    done
+done
+
 # Create ESMF mesh (0 = no dual mesh)
 $ESMF_SCRIP2UNSTRUCT $SCRIP_NC $MESH_NC 0
 
