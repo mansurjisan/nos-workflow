@@ -601,8 +601,8 @@ if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
     # Export variables needed by DATM scripts
     export DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
     export DATM_DOMAIN=${DATM_DOMAIN:-SECOFS}
-    export NX_GFS=${NX_GFS:-101}
-    export NY_GFS=${NY_GFS:-93}
+    export BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
+    export BLEND_BUFFER_DEG=${BLEND_BUFFER_DEG:-0.5}
     export NHOURS_FCST=${LEN_FORECAST:-48}
     export DT_ATMOS=${DT_ATMOS:-720}
     export NHOUR=${NHOUR:-nhour}
@@ -610,8 +610,6 @@ if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
     export DATM_INPUT_DIR=${DATM_INPUT_DIR:-INPUT}
     export DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
     export DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
-    export NX_GLOBAL=${NX_GLOBAL:-1721}
-    export NY_GLOBAL=${NY_GLOBAL:-1721}
 
     # Run blended forcing orchestrator
     ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN}
@@ -630,7 +628,7 @@ if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
     fi
 
     # Archive DATM artifacts to COMOUT
-    local DATM_DIR=${DATM_INPUT_DIR:-INPUT}
+    DATM_DIR=${DATM_INPUT_DIR:-INPUT}
     mkdir -p $COMOUT/${RUN}.${cycle}.datm_input
     if [ -d ${DATA}/${DATM_DIR} ]; then
         cp -p ${DATA}/${DATM_DIR}/*.nc $COMOUT/${RUN}.${cycle}.datm_input/ 2>/dev/null || true

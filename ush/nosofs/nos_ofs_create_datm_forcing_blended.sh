@@ -5,15 +5,15 @@
 # Purpose:
 #   Orchestrator for creating blended HRRR+GFS DATM forcing for UFS-Coastal.
 #   This script runs the full pipeline:
-#     1. Extract GFS forcing (0.25 deg global)
-#     2. Extract HRRR forcing (3km CONUS)
-#     3. Generate ESMF meshes for both grids
-#     4. Generate UFS config files from templates
-#     5. Stage all artifacts to $DATA/INPUT for DATM
+#     1. Extract GFS forcing (regridded to common ~3km grid)
+#     2. Extract HRRR forcing (regridded to same common grid)
+#     3. Blend HRRR+GFS (HRRR where CONUS, GFS elsewhere, smooth transition)
+#     4. Generate ESMF mesh for the blended grid
+#     5. Generate UFS config files from templates
+#     6. Stage all artifacts to $DATA/INPUT for DATM
 #
-#   The "blending" is done by DATM itself at runtime through dual streams:
-#     - Stream 01 (GFS): Primary, global coverage
-#     - Stream 02 (HRRR): Secondary, overrides GFS over CONUS
+#   The blending is done offline (pre-computed), producing a single forcing
+#   file on a regular lat/lon grid. DATM uses one stream with bilinear mapping.
 #
 # Usage:
 #   nos_ofs_create_datm_forcing_blended.sh [DOMAIN]
@@ -33,15 +33,14 @@
 #
 # Optional Environment Variables:
 #   DATM_BLEND_HRRR_GFS - Enable HRRR blending (default: true)
-#   NX_GFS, NY_GFS      - GFS grid dimensions (default: 101, 93)
+#   BLEND_RESOLUTION     - Target grid resolution in degrees (default: 0.025)
+#   BLEND_BUFFER_DEG     - Transition zone width in degrees (default: 0.5)
 #   NHOURS_FCST          - Forecast hours (default: 48)
-#   DT_ATMOS             - Atmospheric timestep (default: 120)
+#   DT_ATMOS             - Atmospheric timestep (default: 720)
 #
 # Output:
-#   $DATA/INPUT/gfs_forcing.nc     - GFS forcing NetCDF
-#   $DATA/INPUT/hrrr_forcing.nc    - HRRR forcing NetCDF (if blending)
-#   $DATA/INPUT/gfs_esmf_mesh.nc   - GFS ESMF mesh
-#   $DATA/INPUT/hrrr_esmf_mesh.nc  - HRRR ESMF mesh (if blending)
+#   $DATA/INPUT/datm_forcing.nc     - Blended HRRR+GFS forcing NetCDF
+#   $DATA/INPUT/datm_esmf_mesh.nc   - ESMF mesh for blended grid
 #   $DATA/model_configure           - UFS model config
 #   $DATA/datm_in                   - DATM namelist
 #   $DATA/datm.streams              - DATM stream definitions
@@ -76,11 +75,58 @@ done
 
 # Defaults
 DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
+BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
+BLEND_BUFFER_DEG=${BLEND_BUFFER_DEG:-0.5}
 NHOURS_FCST=${NHOURS_FCST:-48}
-DT_ATMOS=${DT_ATMOS:-120}
-NX_GFS=${NX_GFS:-101}
-NY_GFS=${NY_GFS:-93}
+DT_ATMOS=${DT_ATMOS:-720}
 NHOUR=${NHOUR:-nhour}
+
+# =============================================================================
+# Compute Target Grid from Domain Bounds
+# =============================================================================
+# Domain presets (lon_min, lon_max, lat_min, lat_max)
+case $DOMAIN in
+    SECOFS)
+        DOM_LON_MIN=${MINLON:--88.0}
+        DOM_LON_MAX=${MAXLON:--63.0}
+        DOM_LAT_MIN=${MINLAT:-17.0}
+        DOM_LAT_MAX=${MAXLAT:-40.0}
+        ;;
+    STOFS3D_ATL|ATLANTIC)
+        DOM_LON_MIN=-99.0
+        DOM_LON_MAX=-52.0
+        DOM_LAT_MIN=7.0
+        DOM_LAT_MAX=53.0
+        ;;
+    *)
+        # Use env vars or defaults
+        DOM_LON_MIN=${MINLON:--88.0}
+        DOM_LON_MAX=${MAXLON:--63.0}
+        DOM_LAT_MIN=${MINLAT:-17.0}
+        DOM_LAT_MAX=${MAXLAT:-40.0}
+        ;;
+esac
+
+# Compute grid dimensions: nx = (lon_max - lon_min) / resolution + 1
+# Use Python for float math (bc may not be available on all systems)
+read NX_TARGET NY_TARGET <<< $(python3 -c "
+import math
+dx = $BLEND_RESOLUTION
+nx = int(math.ceil(($DOM_LON_MAX - ($DOM_LON_MIN)) / dx)) + 1
+ny = int(math.ceil(($DOM_LAT_MAX - ($DOM_LAT_MIN)) / dx)) + 1
+print(nx, ny)
+")
+
+# wgrib2 target grid specification: "latlon LON0:NX:DLON LAT0:NY:DLAT"
+export TARGET_GRID="latlon ${DOM_LON_MIN}:${NX_TARGET}:${BLEND_RESOLUTION} ${DOM_LAT_MIN}:${NY_TARGET}:${BLEND_RESOLUTION}"
+
+echo ""
+echo "Target grid:"
+echo "  Domain:     ${DOM_LON_MIN} to ${DOM_LON_MAX} lon, ${DOM_LAT_MIN} to ${DOM_LAT_MAX} lat"
+echo "  Resolution: ${BLEND_RESOLUTION} deg (~$(python3 -c "print(f'{$BLEND_RESOLUTION * 111:.1f}')")km)"
+echo "  Dimensions: ${NX_TARGET} x ${NY_TARGET}"
+echo "  wgrib2:     $TARGET_GRID"
+echo ""
 
 # Compute time range for forcing
 # Start: nowcast start time (6h before cycle)
@@ -99,11 +145,11 @@ mkdir -p $DATM_WORK
 mkdir -p ${DATA}/INPUT
 
 # =============================================================================
-# Step 1: Extract GFS Forcing
+# Step 1: Extract GFS Forcing (regridded to target)
 # =============================================================================
 echo ""
 echo "============================================"
-echo "Step 1/5: Extracting GFS forcing..."
+echo "Step 1/6: Extracting GFS forcing (regridded to ${BLEND_RESOLUTION} deg)..."
 echo "============================================"
 
 GFS_DIR=${DATM_WORK}/gfs
@@ -118,19 +164,19 @@ if [ $rc -ne 0 ] || [ ! -s ${GFS_DIR}/gfs_forcing.nc ]; then
     exit 1
 fi
 
-echo "GFS forcing: ${GFS_DIR}/gfs_forcing.nc"
+echo "GFS forcing: ${GFS_DIR}/gfs_forcing.nc ($(ls -lh ${GFS_DIR}/gfs_forcing.nc | awk '{print $5}'))"
 
 # =============================================================================
-# Step 2: Extract HRRR Forcing (if blending enabled)
+# Step 2: Extract HRRR Forcing (regridded to same target)
 # =============================================================================
 if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
     echo ""
     echo "============================================"
-    echo "Step 2/5: Extracting HRRR forcing..."
+    echo "Step 2/6: Extracting HRRR forcing (regridded to ${BLEND_RESOLUTION} deg)..."
     echo "============================================"
 
     if [ -z "${COMINhrrr:-}" ]; then
-        echo "WARNING: COMINhrrr not set, skipping HRRR extraction"
+        echo "WARNING: COMINhrrr not set, skipping HRRR — will use GFS only"
         DATM_BLEND_HRRR_GFS=false
     else
         HRRR_DIR=${DATM_WORK}/hrrr
@@ -141,96 +187,126 @@ if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; th
         rc=$?
 
         if [ $rc -ne 0 ] || [ ! -s ${HRRR_DIR}/hrrr_forcing.nc ]; then
-            echo "WARNING: HRRR forcing extraction failed - continuing with GFS only"
+            echo "WARNING: HRRR forcing extraction failed — continuing with GFS only"
             DATM_BLEND_HRRR_GFS=false
         else
-            echo "HRRR forcing: ${HRRR_DIR}/hrrr_forcing.nc"
+            echo "HRRR forcing: ${HRRR_DIR}/hrrr_forcing.nc ($(ls -lh ${HRRR_DIR}/hrrr_forcing.nc | awk '{print $5}'))"
         fi
     fi
 else
     echo ""
-    echo "Step 2/5: HRRR blending disabled, skipping..."
+    echo "Step 2/6: HRRR blending disabled, skipping..."
 fi
 
 # =============================================================================
-# Step 3: Generate ESMF Meshes
+# Step 3: Blend HRRR + GFS
+# =============================================================================
+BLEND_DIR=${DATM_WORK}/blended
+mkdir -p $BLEND_DIR
+
+if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
+    echo ""
+    echo "============================================"
+    echo "Step 3/6: Blending HRRR + GFS..."
+    echo "============================================"
+
+    # The blend script also generates SCRIP grid and ESMF mesh
+    ${USHnos}/nosofs/nos_ofs_blend_hrrr_gfs.sh \
+        ${HRRR_DIR}/hrrr_forcing.nc \
+        ${GFS_DIR}/gfs_forcing.nc \
+        ${BLEND_DIR}/datm_forcing.nc \
+        ${BLEND_BUFFER_DEG}
+    rc=$?
+
+    if [ $rc -ne 0 ] || [ ! -s ${BLEND_DIR}/datm_forcing.nc ]; then
+        echo "WARNING: Blending failed — falling back to GFS only"
+        DATM_BLEND_HRRR_GFS=false
+    fi
+fi
+
+# Fallback: use GFS only (no blending)
+if [ "$DATM_BLEND_HRRR_GFS" != "true" ] && [ "$DATM_BLEND_HRRR_GFS" != "1" ]; then
+    echo ""
+    echo "============================================"
+    echo "Step 3/6: Using GFS only (no blending)..."
+    echo "============================================"
+    cp -p ${GFS_DIR}/gfs_forcing.nc ${BLEND_DIR}/datm_forcing.nc
+    echo "Copied GFS as datm_forcing.nc"
+fi
+
+# =============================================================================
+# Step 4: Generate ESMF Mesh (if not already created by blend step)
 # =============================================================================
 echo ""
 echo "============================================"
-echo "Step 3/5: Generating ESMF meshes..."
+echo "Step 4/6: Checking ESMF mesh..."
 echo "============================================"
 
-MESH_DIR=${DATM_WORK}/meshes
-mkdir -p $MESH_DIR
+DATM_MESH_FILE=datm_esmf_mesh.nc
 
-# Check if cached meshes exist in FIXofs
-GFS_MESH_CACHED=${FIXofs}/gfs_esmf_mesh.nc
-HRRR_MESH_CACHED=${FIXofs}/hrrr_esmf_mesh.nc
-
-# GFS mesh
-if [ -s "$GFS_MESH_CACHED" ]; then
-    echo "Using cached GFS ESMF mesh: $GFS_MESH_CACHED"
-    cp $GFS_MESH_CACHED ${MESH_DIR}/gfs_esmf_mesh.nc
+if [ -s "${BLEND_DIR}/datm_forcing_esmf_mesh.nc" ]; then
+    # Blend script created the mesh
+    cp -p ${BLEND_DIR}/datm_forcing_esmf_mesh.nc ${BLEND_DIR}/${DATM_MESH_FILE}
+    echo "Using blended ESMF mesh"
+elif [ -s "${FIXofs}/blended_esmf_mesh.nc" ]; then
+    # Cached mesh in fix directory
+    cp -p ${FIXofs}/blended_esmf_mesh.nc ${BLEND_DIR}/${DATM_MESH_FILE}
+    echo "Using cached ESMF mesh from FIXofs"
 else
-    echo "Generating GFS ESMF mesh..."
-    # Find a representative GFS GRIB2 file for mesh generation
-    GFS_SAMPLE=$(ls ${COMINgfs}/gfs.${PDY}/${cyc}/atmos/gfs.t${cyc}z.pgrb2.0p25.f000 2>/dev/null || true)
-    if [ -z "$GFS_SAMPLE" ] || [ ! -s "$GFS_SAMPLE" ]; then
-        # Try to find any recent GFS file
-        GFS_SAMPLE=$(ls ${COMINgfs}/gfs.*/*/atmos/gfs.t*z.pgrb2.0p25.f000 2>/dev/null | tail -1 || true)
-    fi
-
-    if [ -n "$GFS_SAMPLE" ] && [ -s "$GFS_SAMPLE" ]; then
-        ${USHnos}/nosofs/nos_ofs_create_esmf_mesh.sh GFS25 $GFS_SAMPLE $MESH_DIR
-        rc=$?
-        if [ $rc -ne 0 ] || [ ! -s ${MESH_DIR}/gfs_esmf_mesh.nc ]; then
-            echo "ERROR: GFS ESMF mesh generation failed"
-            exit 1
-        fi
+    # Generate mesh from the forcing file
+    echo "Generating ESMF mesh from forcing file..."
+    ${USHnos}/nosofs/nos_ofs_create_esmf_mesh.sh GFS25 \
+        "$(ls ${COMINgfs}/gfs.${PDY}/${cyc}/atmos/gfs.t${cyc}z.pgrb2.0p25.f000 2>/dev/null || \
+           ls ${COMINgfs}/gfs.*/*/atmos/gfs.t*z.pgrb2.0p25.f000 2>/dev/null | tail -1)" \
+        ${BLEND_DIR}
+    rc=$?
+    if [ $rc -eq 0 ] && [ -s ${BLEND_DIR}/gfs_esmf_mesh.nc ]; then
+        cp -p ${BLEND_DIR}/gfs_esmf_mesh.nc ${BLEND_DIR}/${DATM_MESH_FILE}
+        echo "Generated ESMF mesh from GFS sample"
     else
-        echo "ERROR: No GFS GRIB2 file found for mesh generation"
+        echo "ERROR: Failed to generate ESMF mesh"
         exit 1
     fi
 fi
 
-# HRRR mesh
-if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
-    if [ -s "$HRRR_MESH_CACHED" ]; then
-        echo "Using cached HRRR ESMF mesh: $HRRR_MESH_CACHED"
-        cp $HRRR_MESH_CACHED ${MESH_DIR}/hrrr_esmf_mesh.nc
-    else
-        echo "Generating HRRR ESMF mesh..."
-        HRRR_SAMPLE=$(ls ${COMINhrrr}/hrrr.${PDY}/conus/hrrr.t${cyc}z.wrfsfcf01.grib2 2>/dev/null || true)
-        if [ -z "$HRRR_SAMPLE" ] || [ ! -s "$HRRR_SAMPLE" ]; then
-            HRRR_SAMPLE=$(ls ${COMINhrrr}/hrrr.*/conus/hrrr.t*z.wrfsfcf01.grib2 2>/dev/null | tail -1 || true)
-        fi
-
-        if [ -n "$HRRR_SAMPLE" ] && [ -s "$HRRR_SAMPLE" ]; then
-            ${USHnos}/nosofs/nos_ofs_create_esmf_mesh.sh HRRR $HRRR_SAMPLE $MESH_DIR
-            rc=$?
-            if [ $rc -ne 0 ] || [ ! -s ${MESH_DIR}/hrrr_esmf_mesh.nc ]; then
-                echo "WARNING: HRRR ESMF mesh generation failed - continuing with GFS only"
-                DATM_BLEND_HRRR_GFS=false
-            fi
-        else
-            echo "WARNING: No HRRR GRIB2 file found for mesh generation - continuing with GFS only"
-            DATM_BLEND_HRRR_GFS=false
-        fi
-    fi
-fi
+echo "ESMF mesh: ${BLEND_DIR}/${DATM_MESH_FILE}"
 
 # =============================================================================
-# Step 4: Generate UFS Config Files
+# Step 5: Stage Artifacts to DATM INPUT directory
 # =============================================================================
 echo ""
 echo "============================================"
-echo "Step 4/5: Generating UFS config files..."
+echo "Step 5/6: Staging artifacts to INPUT/..."
 echo "============================================"
 
-# Set up variables for config generation
-export NHOURS=${NHOURS_FCST}
-export USE_HRRR=${DATM_BLEND_HRRR_GFS}
+DATM_DIR=${DATM_INPUT_DIR:-INPUT}
+DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
+mkdir -p ${DATA}/${DATM_DIR}
 
+# Stage blended forcing
+cp -p ${BLEND_DIR}/datm_forcing.nc ${DATA}/${DATM_DIR}/${DATM_FORCING_FILE}
+echo "Staged: ${DATM_DIR}/${DATM_FORCING_FILE} ($(ls -lh ${DATA}/${DATM_DIR}/${DATM_FORCING_FILE} | awk '{print $5}'))"
+
+# Stage ESMF mesh
+cp -p ${BLEND_DIR}/${DATM_MESH_FILE} ${DATA}/${DATM_DIR}/${DATM_MESH_FILE}
+echo "Staged: ${DATM_DIR}/${DATM_MESH_FILE}"
+
+# Export for config generation
+export DATM_INPUT_DIR=${DATM_DIR}
+export DATM_MESH_FILE=${DATM_MESH_FILE}
+export DATM_FORCING_FILE=${DATM_FORCING_FILE}
+export NX_GLOBAL=${NX_TARGET}
+export NY_GLOBAL=${NY_TARGET}
+
+# =============================================================================
+# Step 6: Generate UFS Config Files
+# =============================================================================
+echo ""
+echo "============================================"
+echo "Step 6/6: Generating UFS config files..."
+echo "============================================"
+
+export NHOURS=${NHOURS_FCST}
 ${USHnos}/nosofs/nos_ofs_gen_ufs_config.sh --verbose
 rc=$?
 
@@ -238,44 +314,6 @@ if [ $rc -ne 0 ]; then
     echo "ERROR: UFS config generation failed"
     exit 1
 fi
-
-# =============================================================================
-# Step 5: Stage Artifacts to DATM input directory
-# =============================================================================
-echo ""
-echo "============================================"
-echo "Step 5/5: Staging artifacts..."
-echo "============================================"
-
-DATM_DIR=${DATM_INPUT_DIR:-INPUT}
-DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
-DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
-mkdir -p ${DATA}/${DATM_DIR}
-
-# Stage forcing file (use GFS as primary forcing)
-cp -p ${GFS_DIR}/gfs_forcing.nc ${DATA}/${DATM_DIR}/${DATM_FORCING_FILE}
-echo "Staged: ${DATM_DIR}/${DATM_FORCING_FILE}"
-
-# Stage ESMF mesh
-cp -p ${MESH_DIR}/gfs_esmf_mesh.nc ${DATA}/${DATM_DIR}/${DATM_MESH_FILE}
-echo "Staged: ${DATM_DIR}/${DATM_MESH_FILE}"
-
-# If HRRR is also generated, stage alongside (for future dual-stream use)
-if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
-    if [ -f "${HRRR_DIR}/hrrr_forcing.nc" ]; then
-        cp -p ${HRRR_DIR}/hrrr_forcing.nc ${DATA}/${DATM_DIR}/hrrr_forcing.nc
-        echo "Staged: ${DATM_DIR}/hrrr_forcing.nc"
-    fi
-    if [ -f "${MESH_DIR}/hrrr_esmf_mesh.nc" ]; then
-        cp -p ${MESH_DIR}/hrrr_esmf_mesh.nc ${DATA}/${DATM_DIR}/hrrr_esmf_mesh.nc
-        echo "Staged: ${DATM_DIR}/hrrr_esmf_mesh.nc"
-    fi
-fi
-
-# Export DATM file variables for config generation
-export DATM_INPUT_DIR=${DATM_DIR}
-export DATM_MESH_FILE=${DATM_MESH_FILE}
-export DATM_FORCING_FILE=${DATM_FORCING_FILE}
 
 # =============================================================================
 # Summary
@@ -287,9 +325,17 @@ echo "============================================"
 echo ""
 echo "Domain:        $DOMAIN"
 echo "Time range:    $TIME_START_BUFFERED to $TIME_END"
+echo "Target grid:   ${NX_TARGET} x ${NY_TARGET} at ${BLEND_RESOLUTION} deg"
+if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
+    echo "Blending:      HRRR+GFS (buffer=${BLEND_BUFFER_DEG} deg)"
+else
+    echo "Blending:      GFS only (HRRR unavailable)"
+fi
+echo ""
 echo "DATM dir:      ${DATA}/${DATM_DIR}/"
 echo "Forcing file:  ${DATM_FORCING_FILE}"
 echo "Mesh file:     ${DATM_MESH_FILE}"
+echo "Grid dims:     nx=${NX_GLOBAL}, ny=${NY_GLOBAL}"
 echo ""
 echo "UFS configs:"
 for f in model_configure datm_in datm.streams ufs.configure fd_ufs.yaml noahmptable.tbl; do

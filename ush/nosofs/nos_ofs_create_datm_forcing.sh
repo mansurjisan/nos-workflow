@@ -486,6 +486,14 @@ echo ""
 echo "Step 1: Finding GRIB2 files for time range..."
 echo "============================================"
 
+# Optional: regrid to a common target grid (for blending)
+# TARGET_GRID format: "latlon LON0:NX:DLON LAT0:NY:DLAT"
+# Example: "latlon -88.0:1001:0.025 17.0:921:0.025"
+TARGET_GRID=${TARGET_GRID:-""}
+if [ -n "$TARGET_GRID" ]; then
+    echo "TARGET_GRID set: will regrid each timestep to $TARGET_GRID"
+fi
+
 FILE_COUNT=0
 MISSING_COUNT=0
 CURRENT_TIME=$TIME_START
@@ -505,9 +513,28 @@ while [ "$CURRENT_TIME" -le "$TIME_END" ]; do
     if [ -n "$GRIB2_FILE" ] && [ -s "$GRIB2_FILE" ]; then
         echo "Processing ${TIME_STR}: $GRIB2_FILE"
 
-        $WGRIB2 $GRIB2_FILE \
-            -match "$MATCH_PATTERN" \
-            -netcdf $NC_FILE
+        if [ -n "$TARGET_GRID" ]; then
+            # Three-step pipeline: extract → regrid → convert to NetCDF
+            # This ensures both GFS and HRRR end up on the same regular grid
+            $WGRIB2 $GRIB2_FILE \
+                -match "$MATCH_PATTERN" \
+                -grib ${TEMP_DIR}/extract_${TIME_STR}.grb2
+
+            $WGRIB2 ${TEMP_DIR}/extract_${TIME_STR}.grb2 \
+                -new_grid_winds earth \
+                -new_grid $TARGET_GRID \
+                ${TEMP_DIR}/regridded_${TIME_STR}.grb2
+
+            $WGRIB2 ${TEMP_DIR}/regridded_${TIME_STR}.grb2 \
+                -netcdf $NC_FILE
+
+            rm -f ${TEMP_DIR}/extract_${TIME_STR}.grb2 ${TEMP_DIR}/regridded_${TIME_STR}.grb2
+        else
+            # Direct extraction (no regridding)
+            $WGRIB2 $GRIB2_FILE \
+                -match "$MATCH_PATTERN" \
+                -netcdf $NC_FILE
+        fi
 
         if [ -s "$NC_FILE" ]; then
             FILE_COUNT=$((FILE_COUNT + 1))
