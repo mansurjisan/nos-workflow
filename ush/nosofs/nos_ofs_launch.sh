@@ -152,8 +152,8 @@ echo "=== mmgp $VGRID_NU_CTL =="  $VGRID_NU_CTL
 if [ ${OCEAN_MODEL} == "SCHISM" -o ${OCEAN_MODEL} == "schism" ]; then
     cp -p ${FIXofs}/$VGRID_NU_CTL $DATA/.
     cp -p ${FIXofs}/$VGRID_FAKE_CTL $DATA/$VGRID_CTL  ##  this might need change
-    cp -p ${FIXofs}/secofs.nobc_nudge_index.dat /$DATA/nobc_nudge_index.dat
-    cp -p ${FIXofs}/nudge_point_at_ofs_grid.dat $DATA/.
+    cp -p ${FIXofs}/${PREFIXNOS}.nobc_nudge_index.dat $DATA/nobc_nudge_index.dat
+    cp -p ${FIXofs}/${PREFIXNOS}.nudge_point_at_ofs_grid.dat $DATA/nudge_point_at_ofs_grid.dat
 fi
 
 
