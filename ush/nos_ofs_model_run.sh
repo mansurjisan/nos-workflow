@@ -173,19 +173,19 @@ _stofs_stage_files() {
 
     # GFS atmospheric forcing (sflux stack 1)
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.gfs.air.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.air.nc" "$DATA/sflux/sflux_air_1.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.air.nc" "$DATA/sflux/sflux_air_1.1.nc"
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.gfs.prc.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.prc.nc" "$DATA/sflux/sflux_prc_1.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.prc.nc" "$DATA/sflux/sflux_prc_1.1.nc"
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.gfs.rad.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.rad.nc" "$DATA/sflux/sflux_rad_1.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.gfs.rad.nc" "$DATA/sflux/sflux_rad_1.1.nc"
 
     # HRRR atmospheric forcing (sflux stack 2 — optional)
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.hrrr.air.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.air.nc" "$DATA/sflux/sflux_air_2.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.air.nc" "$DATA/sflux/sflux_air_2.1.nc"
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.hrrr.prc.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.prc.nc" "$DATA/sflux/sflux_prc_2.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.prc.nc" "$DATA/sflux/sflux_prc_2.1.nc"
     [ -s "${COMOUTrerun}/${RUN}.${cycle}.hrrr.rad.nc" ] && \
-        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.rad.nc" "$DATA/sflux/sflux_rad_2.0001.nc"
+        cp -p "${COMOUTrerun}/${RUN}.${cycle}.hrrr.rad.nc" "$DATA/sflux/sflux_rad_2.1.nc"
 
     # sflux_inputs.txt
     [ -s "$FIXstofs3d/${RUN}_sflux_inputs.txt" ] && \
@@ -380,7 +380,7 @@ _stofs_execute_model() {
 
     # Determine MPI task count and executable
     local nprocs=${TOTAL_TASKS:-${NCPU_PBS:-960}}
-    local nscribes=${NSCRIBES:-6}
+    local nscribes=${NSCRIBES:-8}
     local executable="${EXECstofs3d}/${RUN}_pschism"
     # Fallback: stofs_2d_atl uses the same SCHISM executable as stofs_3d_atl
     [ ! -x "${executable}" ] && executable="${EXECstofs3d}/stofs_3d_atl_pschism"
@@ -810,6 +810,11 @@ _comf_execute_ufs_coastal() {
     export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
     export ESMF_RUNTIME_PROFILE=ON
     export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
+
+    # Clear LD_PRELOAD — the COMF J-job sets it for standalone Fortran execs
+    # (libnetcdff.so from system netcdf/4.7.4) but UFS-Coastal uses its own
+    # hpc-stack libraries (netcdf-D/4.9.2) loaded via modules.fv3
+    unset LD_PRELOAD 2>/dev/null || true
 
     # Run UFS-Coastal
     echo "Starting UFS-Coastal at: $(date)"
