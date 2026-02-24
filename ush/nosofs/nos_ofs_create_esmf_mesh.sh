@@ -250,15 +250,33 @@ echo ""
 echo "Step 4: Creating ESMF unstructured mesh..."
 echo "============================================"
 
-# Check for ESMF_Scrip2Unstruct
-if ! command -v ESMF_Scrip2Unstruct &> /dev/null; then
-    echo "ERROR: ESMF_Scrip2Unstruct not found in PATH"
-    echo "Please load ESMF module or add to PATH"
+# Find ESMF_Scrip2Unstruct: check env var, PATH, then known WCOSS2 hpc-stack locations
+ESMF_SCRIP2UNSTRUCT="${ESMF_SCRIP2UNSTRUCT:-}"
+if [ -n "$ESMF_SCRIP2UNSTRUCT" ] && [ -x "$ESMF_SCRIP2UNSTRUCT" ]; then
+    echo "Using ESMF from env var: $ESMF_SCRIP2UNSTRUCT"
+elif command -v ESMF_Scrip2Unstruct &> /dev/null; then
+    ESMF_SCRIP2UNSTRUCT=$(command -v ESMF_Scrip2Unstruct)
+else
+    # Search known WCOSS2 hpc-stack ESMF installations
+    for esmf_dir in /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/esmf/*/bin; do
+        if [ -x "${esmf_dir}/ESMF_Scrip2Unstruct" ]; then
+            ESMF_SCRIP2UNSTRUCT="${esmf_dir}/ESMF_Scrip2Unstruct"
+            echo "Found ESMF in hpc-stack: $ESMF_SCRIP2UNSTRUCT"
+            break
+        fi
+    done
+fi
+
+if [ -z "$ESMF_SCRIP2UNSTRUCT" ]; then
+    echo "ERROR: ESMF_Scrip2Unstruct not found in PATH or hpc-stack"
+    echo "Please load ESMF module, set ESMF_SCRIP2UNSTRUCT env var, or install ESMF"
     exit 1
 fi
 
+echo "Using: $ESMF_SCRIP2UNSTRUCT"
+
 # Create ESMF mesh (0 = no dual mesh)
-ESMF_Scrip2Unstruct $SCRIP_NC $MESH_NC 0
+$ESMF_SCRIP2UNSTRUCT $SCRIP_NC $MESH_NC 0
 
 if [ ! -s $MESH_NC ]; then
     echo "ERROR: Failed to create $MESH_NC"
