@@ -1,333 +1,278 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 """
-Blend HRRR and GFS forcing onto a common regular grid for CDEPS/DATM.
+Blend HRRR and GFS forcing files for CDEPS/DATM.
+Memory-optimized version for WCOSS2.
 
-Both input files must already be on the same regular lat/lon grid
-(regridded by wgrib2 during extraction). This script:
-  - Uses HRRR data where available (CONUS coverage)
-  - Fills gaps with GFS data (Caribbean, open ocean, Puerto Rico)
-  - Applies smooth transition at HRRR boundary edges
-  - Handles variable name differences (HRRR MSLMA -> PRMSL)
-  - Writes CF/CDEPS-compliant output
+- HRRR provides high-res (3km) forcing over CONUS
+- GFS provides global coverage at 0.25 deg
+- GFS is temporally interpolated from 3-hourly to HRRR's hourly timesteps
+- Spatial interpolation: cKDTree for HRRR, RegularGridInterpolator for GFS
+- Output on a regular lat/lon grid at configurable resolution
 
 Usage:
-    python blend_hrrr_gfs.py HRRR_FILE GFS_FILE OUTPUT_FILE [--buffer DEGREES]
+    python blend_hrrr_gfs.py HRRR_FILE GFS_FILE OUTPUT_FILE DOMAIN [RESOLUTION]
 
 Arguments:
-    HRRR_FILE   - HRRR forcing NetCDF (regridded to target grid)
-    GFS_FILE    - GFS forcing NetCDF (regridded to target grid)
-    OUTPUT_FILE - Blended output NetCDF
-    --buffer    - Transition zone width in degrees (default: 0.5)
+    HRRR_FILE   - Input HRRR forcing NetCDF file
+    GFS_FILE    - Input GFS forcing NetCDF file
+    OUTPUT_FILE - Output blended NetCDF file
+    DOMAIN      - Domain preset: ATLANTIC, SECOFS, STOFS3D_ATL
+    RESOLUTION  - Grid resolution in degrees (default: 0.025)
 
-Requires: numpy, netCDF4 (no scipy needed since both files are same-grid)
+Requires: numpy, netCDF4, scipy
 
-Author: NOS-OFS Unified Workflow
-Date: February 2026
+Author: SECOFS UFS-Coastal (from ufs-nos-ofs)
 """
 
-import argparse
-import os
-import sys
 import numpy as np
 from netCDF4 import Dataset
+from scipy.spatial import cKDTree
+from scipy.interpolate import RegularGridInterpolator, interp1d
+from datetime import datetime
+import sys
+import gc
 
+# Parse arguments
+if len(sys.argv) < 5:
+    print("Usage: python blend_hrrr_gfs.py HRRR_FILE GFS_FILE OUTPUT_FILE DOMAIN [RESOLUTION]")
+    sys.exit(1)
 
-# Variable pairs: (GFS name, HRRR name, output name)
-# GFS uses PRMSL, HRRR uses MSLMA for mean sea level pressure
-VAR_PAIRS = [
-    ('UGRD_10maboveground', 'UGRD_10maboveground', 'UGRD_10maboveground'),
-    ('VGRD_10maboveground', 'VGRD_10maboveground', 'VGRD_10maboveground'),
-    ('TMP_2maboveground',   'TMP_2maboveground',   'TMP_2maboveground'),
-    ('SPFH_2maboveground',  'SPFH_2maboveground',  'SPFH_2maboveground'),
-    ('PRMSL_meansealevel',  'MSLMA_meansealevel',   'PRMSL_meansealevel'),
-    ('DSWRF_surface',       'DSWRF_surface',        'DSWRF_surface'),
-    ('DLWRF_surface',       'DLWRF_surface',        'DLWRF_surface'),
-    ('PRATE_surface',       'PRATE_surface',        'PRATE_surface'),
+HRRR_FILE = sys.argv[1]
+GFS_FILE = sys.argv[2]
+OUTPUT_FILE = sys.argv[3]
+DOMAIN = sys.argv[4]
+RESOLUTION = float(sys.argv[5]) if len(sys.argv) > 5 else 0.025
+
+# Domain bounds (lon_min, lon_max, lat_min, lat_max)
+# Each domain should cover the full model grid with some padding
+DOMAINS = {
+    'ATLANTIC': (-98.0, -55.0, 10.0, 53.0),
+    'SECOFS': (-90.0, -61.0, 15.0, 42.0),
+    'STOFS3D_ATL': (-99.0, -52.0, 7.0, 53.0),
+}
+
+if DOMAIN not in DOMAINS:
+    print(f"ERROR: Unknown domain {DOMAIN}. Use: ATLANTIC, SECOFS, STOFS3D_ATL")
+    sys.exit(1)
+
+TARGET_LON_MIN, TARGET_LON_MAX, TARGET_LAT_MIN, TARGET_LAT_MAX = DOMAINS[DOMAIN]
+TARGET_DLON = RESOLUTION
+TARGET_DLAT = RESOLUTION
+BUFFER = 1.0
+
+print("============================================")
+print("HRRR + GFS Blending for CDEPS/DATM")
+print("============================================")
+print(f"HRRR input:   {HRRR_FILE}")
+print(f"GFS input:    {GFS_FILE}")
+print(f"Output:       {OUTPUT_FILE}")
+print(f"Domain:       {DOMAIN}")
+print(f"Resolution:   {RESOLUTION} deg")
+print(f"Bounds:       {TARGET_LAT_MIN}N-{TARGET_LAT_MAX}N, {TARGET_LON_MIN}E-{TARGET_LON_MAX}E")
+print("============================================")
+
+print("Loading HRRR coordinates...")
+hrrr = Dataset(HRRR_FILE, 'r')
+hrrr_lon2d_full = hrrr.variables['longitude'][:]
+hrrr_lat2d_full = hrrr.variables['latitude'][:]
+hrrr_lon2d_full = np.where(hrrr_lon2d_full > 180, hrrr_lon2d_full - 360, hrrr_lon2d_full)
+hrrr_time = np.array(hrrr.variables['time'][:])
+n_times = len(hrrr_time)
+print(f"  HRRR full grid: {hrrr_lon2d_full.shape}, {n_times} times")
+
+# Subset HRRR to target domain + buffer (memory optimization)
+print("Subsetting HRRR to target domain...")
+hrrr_mask = ((hrrr_lon2d_full >= TARGET_LON_MIN - BUFFER) &
+             (hrrr_lon2d_full <= TARGET_LON_MAX + BUFFER) &
+             (hrrr_lat2d_full >= TARGET_LAT_MIN - BUFFER) &
+             (hrrr_lat2d_full <= TARGET_LAT_MAX + BUFFER))
+
+# Find bounding box indices for HRRR subset
+rows_with_data = np.any(hrrr_mask, axis=1)
+cols_with_data = np.any(hrrr_mask, axis=0)
+if np.any(rows_with_data) and np.any(cols_with_data):
+    row_min, row_max = np.where(rows_with_data)[0][[0, -1]]
+    col_min, col_max = np.where(cols_with_data)[0][[0, -1]]
+    hrrr_row_slice = slice(row_min, row_max + 1)
+    hrrr_col_slice = slice(col_min, col_max + 1)
+    hrrr_lon2d = np.array(hrrr_lon2d_full[hrrr_row_slice, hrrr_col_slice], dtype=np.float32)
+    hrrr_lat2d = np.array(hrrr_lat2d_full[hrrr_row_slice, hrrr_col_slice], dtype=np.float32)
+    print(f"  HRRR subset: {hrrr_lon2d.shape} (reduced from {hrrr_lon2d_full.shape})")
+else:
+    print("  WARNING: No HRRR data in target domain, using GFS only")
+    hrrr_lon2d = np.array([[TARGET_LON_MIN]])
+    hrrr_lat2d = np.array([[0.0]])  # Outside domain
+    hrrr_row_slice = slice(0, 1)
+    hrrr_col_slice = slice(0, 1)
+
+# Free full arrays
+del hrrr_lon2d_full, hrrr_lat2d_full, hrrr_mask
+gc.collect()
+
+print("Loading GFS...")
+gfs = Dataset(GFS_FILE, 'r')
+gfs_lat_full = np.array(gfs.variables['latitude'][:], dtype=np.float32)
+gfs_lon_full = np.array(gfs.variables['longitude'][:], dtype=np.float32)
+gfs_time = np.array(gfs.variables['time'][:])
+gfs_lon_180 = np.where(gfs_lon_full > 180, gfs_lon_full - 360, gfs_lon_full)
+
+# Subset GFS to domain
+lat_mask = (gfs_lat_full >= TARGET_LAT_MIN - 1) & (gfs_lat_full <= TARGET_LAT_MAX + 1)
+lon_mask = (gfs_lon_180 >= TARGET_LON_MIN - 1) & (gfs_lon_180 <= TARGET_LON_MAX + 1)
+gfs_lat_idx = np.where(lat_mask)[0]
+gfs_lon_idx = np.where(lon_mask)[0]
+gfs_lat = gfs_lat_full[lat_mask]
+gfs_lon = gfs_lon_180[lon_mask]
+print(f"  GFS subset: {len(gfs_lat)} x {len(gfs_lon)}")
+
+print("Creating target grid...")
+target_lon = np.arange(TARGET_LON_MIN, TARGET_LON_MAX + TARGET_DLON/2, TARGET_DLON, dtype=np.float32)
+target_lat = np.arange(TARGET_LAT_MIN, TARGET_LAT_MAX + TARGET_DLAT/2, TARGET_DLAT, dtype=np.float32)
+target_lon2d, target_lat2d = np.meshgrid(target_lon, target_lat)
+ny, nx = len(target_lat), len(target_lon)
+print(f"  Grid: {ny} x {nx} = {ny*nx:,} points")
+
+print("Building HRRR spatial index (subset only)...")
+hrrr_points = np.column_stack([hrrr_lon2d.ravel(), hrrr_lat2d.ravel()])
+hrrr_tree = cKDTree(hrrr_points)
+target_points_flat = np.column_stack([target_lon2d.ravel(), target_lat2d.ravel()])
+distances, hrrr_indices = hrrr_tree.query(target_points_flat)
+hrrr_indices = hrrr_indices.reshape(ny, nx)
+distances = distances.reshape(ny, nx)
+
+# HRRR valid mask: use HRRR where distance < 0.1 deg and within lat range
+hrrr_lat_min = float(hrrr_lat2d.min())
+hrrr_lat_max = float(hrrr_lat2d.max())
+hrrr_valid_mask = (distances < 0.1) & (target_lat2d >= hrrr_lat_min) & (target_lat2d <= hrrr_lat_max)
+print(f"  HRRR coverage: {100*np.sum(hrrr_valid_mask)/hrrr_valid_mask.size:.1f}%")
+
+# Free memory
+del hrrr_points, target_points_flat, distances
+gc.collect()
+
+print("Setting up GFS temporal interpolation...")
+gfs_time_interp = interp1d(gfs_time, np.arange(len(gfs_time)),
+                            kind='linear', bounds_error=False, fill_value='extrapolate')
+target_to_gfs_idx = gfs_time_interp(hrrr_time)
+
+print("Creating output NetCDF...")
+ncout = Dataset(OUTPUT_FILE, 'w', format='NETCDF4')
+ncout.createDimension('time', None)
+ncout.createDimension('y', ny)
+ncout.createDimension('x', nx)
+
+time_var = ncout.createVariable('time', 'f8', ('time',))
+time_var.units = 'seconds since 1970-01-01 00:00:00'
+time_var.calendar = 'standard'
+time_var.axis = 'T'
+time_var[:] = hrrr_time
+
+lat_var = ncout.createVariable('latitude', 'f4', ('y', 'x'))
+lat_var.units = 'degrees_north'
+lat_var.long_name = 'latitude'
+lat_var.axis = 'Y'
+lat_var.standard_name = 'latitude'
+lat_var[:] = target_lat2d
+
+lon_var = ncout.createVariable('longitude', 'f4', ('y', 'x'))
+lon_var.units = 'degrees_east'
+lon_var.long_name = 'longitude'
+lon_var.axis = 'X'
+lon_var.standard_name = 'longitude'
+lon_var[:] = target_lon2d
+
+source_var = ncout.createVariable('data_source', 'i1', ('y', 'x'))
+source_var.long_name = 'Data source (1=HRRR, 0=GFS)'
+source_var[:] = hrrr_valid_mask.astype(np.int8)
+
+ncout.title = 'Blended HRRR+GFS Forcing for CDEPS/DATM'
+ncout.source = 'HRRR (CONUS) + GFS (gap fill)'
+ncout.history = f'Created {datetime.now().strftime("%Y-%m-%d %H:%M UTC")}'
+ncout.Conventions = 'CF-1.6'
+
+# Variable mapping (HRRR name -> GFS name)
+VARIABLES = [
+    ('UGRD_10maboveground', 'UGRD_10maboveground'),
+    ('VGRD_10maboveground', 'VGRD_10maboveground'),
+    ('TMP_2maboveground', 'TMP_2maboveground'),
+    ('SPFH_2maboveground', 'SPFH_2maboveground'),
+    ('PRATE_surface', 'PRATE_surface'),
+    ('DSWRF_surface', 'DSWRF_surface'),
+    ('DLWRF_surface', 'DLWRF_surface'),
+    ('MSLMA_meansealevel', 'PRMSL_meansealevel'),
 ]
 
+# GFS lat order
+if gfs_lat[0] > gfs_lat[-1]:
+    gfs_lat_asc = gfs_lat[::-1]
+    gfs_flip = True
+else:
+    gfs_lat_asc = gfs_lat
+    gfs_flip = False
 
-def create_blend_weights(hrrr_data_2d, buffer_pixels=20):
-    """
-    Create blending weight mask from HRRR valid data coverage.
+print("Processing variables...")
+for hrrr_name, gfs_name in VARIABLES:
+    if hrrr_name not in hrrr.variables or gfs_name not in gfs.variables:
+        print(f"  Skipping {hrrr_name}")
+        continue
 
-    Parameters
-    ----------
-    hrrr_data_2d : numpy array
-        A single 2D slice of HRRR data (lat x lon).
-        Fill values / NaN indicate no HRRR coverage.
-    buffer_pixels : int
-        Number of grid cells for the smooth transition zone.
+    print(f"  {hrrr_name}...", end='', flush=True)
 
-    Returns
-    -------
-    weights : numpy array (lat x lon)
-        1.0 = use HRRR, 0.0 = use GFS, intermediate = blend
-    """
-    # Identify valid HRRR coverage
-    valid = np.isfinite(hrrr_data_2d) & (np.abs(hrrr_data_2d) < 1e10)
+    hrrr_var = hrrr.variables[hrrr_name]
+    gfs_var = gfs.variables[gfs_name]
 
-    if not np.any(valid):
-        return np.zeros_like(hrrr_data_2d, dtype=np.float32)
+    out_var = ncout.createVariable(hrrr_name, 'f4', ('time', 'y', 'x'), fill_value=9.999e+20)
+    out_var.short_name = hrrr_name
+    out_var.units = hrrr_var.units if hasattr(hrrr_var, 'units') else ''
+    out_var.long_name = hrrr_var.long_name if hasattr(hrrr_var, 'long_name') else hrrr_name
 
-    if np.all(valid):
-        return np.ones_like(hrrr_data_2d, dtype=np.float32)
+    for t in range(n_times):
+        # HRRR data - read only the subset
+        hrrr_data = np.array(hrrr_var[t, hrrr_row_slice, hrrr_col_slice], dtype=np.float32).ravel()
+        hrrr_data = np.where(hrrr_data > 1e10, np.nan, hrrr_data)
+        hrrr_regrid = hrrr_data[hrrr_indices]
 
-    # Start with binary mask
-    weights = valid.astype(np.float32)
+        # GFS data with temporal interpolation
+        gfs_t_idx = target_to_gfs_idx[t]
+        t_low = int(np.floor(gfs_t_idx))
+        t_high = int(np.ceil(gfs_t_idx))
+        t_frac = gfs_t_idx - t_low
+        t_low = max(0, min(t_low, len(gfs_time) - 1))
+        t_high = max(0, min(t_high, len(gfs_time) - 1))
 
-    if buffer_pixels <= 0:
-        return weights
+        gfs_data_low = np.array(gfs_var[t_low, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1], dtype=np.float32)
+        gfs_data_high = np.array(gfs_var[t_high, gfs_lat_idx[0]:gfs_lat_idx[-1]+1, gfs_lon_idx[0]:gfs_lon_idx[-1]+1], dtype=np.float32)
 
-    # Apply iterative box smoothing to create smooth transition
-    # This erodes the HRRR edge and creates a gradient
-    smoothed = weights.copy()
-    for _ in range(buffer_pixels):
-        padded = np.pad(smoothed, 1, mode='constant', constant_values=0)
-        # 3x3 mean filter
-        kernel_sum = (
-            padded[:-2, :-2] + padded[:-2, 1:-1] + padded[:-2, 2:] +
-            padded[1:-1, :-2] + padded[1:-1, 1:-1] + padded[1:-1, 2:] +
-            padded[2:, :-2] + padded[2:, 1:-1] + padded[2:, 2:]
+        if t_low == t_high:
+            gfs_data = gfs_data_low
+        else:
+            gfs_data = (1 - t_frac) * gfs_data_low + t_frac * gfs_data_high
+
+        if gfs_flip:
+            gfs_data = gfs_data[::-1, :]
+
+        gfs_interp = RegularGridInterpolator(
+            (gfs_lat_asc, gfs_lon), gfs_data,
+            method='linear', bounds_error=False, fill_value=np.nan
         )
-        smoothed = kernel_sum / 9.0
+        gfs_regrid = gfs_interp(np.column_stack([target_lat2d.ravel(),
+                                                  target_lon2d.ravel()])).reshape(ny, nx)
 
-    # Ensure core HRRR area stays at 1.0 (only smooth at boundaries)
-    # Erode the valid mask by buffer_pixels to find the core
-    core = valid.astype(np.float32)
-    for _ in range(buffer_pixels):
-        padded = np.pad(core, 1, mode='constant', constant_values=0)
-        # Minimum filter (erosion)
-        core = np.minimum(
-            np.minimum(padded[:-2, :-2], padded[:-2, 1:-1]),
-            np.minimum(padded[:-2, 2:],
-            np.minimum(padded[1:-1, :-2], padded[1:-1, 1:-1]))
-        )
-        core = np.minimum(
-            core,
-            np.minimum(padded[1:-1, 2:],
-            np.minimum(padded[2:, :-2],
-            np.minimum(padded[2:, 1:-1], padded[2:, 2:])))
-        )
+        # Combine: HRRR where valid, GFS elsewhere
+        combined = np.where(hrrr_valid_mask & ~np.isnan(hrrr_regrid), hrrr_regrid, gfs_regrid)
+        out_var[t, :, :] = combined
 
-    # Combine: core = 1.0, transition zone = smoothed, outside = 0.0
-    weights = np.where(core > 0.5, 1.0, smoothed)
-    weights = np.clip(weights, 0.0, 1.0)
+        # Free memory each timestep
+        del hrrr_data, hrrr_regrid, gfs_data_low, gfs_data_high, gfs_data, gfs_regrid, combined
 
-    return weights
+    gc.collect()
+    print(" done")
 
+ncout.close()
+hrrr.close()
+gfs.close()
 
-def blend_forcing(hrrr_file, gfs_file, output_file, buffer_deg=0.5):
-    """
-    Blend HRRR and GFS forcing files.
-
-    Both files must be on the same regular lat/lon grid.
-
-    Parameters
-    ----------
-    hrrr_file : str
-        Path to regridded HRRR forcing NetCDF
-    gfs_file : str
-        Path to regridded GFS forcing NetCDF
-    output_file : str
-        Path to output blended NetCDF
-    buffer_deg : float
-        Transition zone width in degrees
-    """
-    print(f"Opening HRRR: {hrrr_file}")
-    ds_hrrr = Dataset(hrrr_file, 'r')
-
-    print(f"Opening GFS: {gfs_file}")
-    ds_gfs = Dataset(gfs_file, 'r')
-
-    # Find coordinate variables
-    hrrr_coords = _find_coords(ds_hrrr)
-    gfs_coords = _find_coords(ds_gfs)
-
-    # Read coordinates
-    lon = ds_gfs.variables[gfs_coords['lon']][:]
-    lat = ds_gfs.variables[gfs_coords['lat']][:]
-    time_gfs = ds_gfs.variables[gfs_coords['time']][:]
-
-    print(f"Grid: {len(lon)} x {len(lat)} (lon x lat)")
-    print(f"Time steps GFS: {len(time_gfs)}")
-
-    # Determine buffer in pixels
-    if len(lon) > 1:
-        dx = abs(float(lon[1] - lon[0]))
-        buffer_pixels = max(1, int(buffer_deg / dx))
-    else:
-        buffer_pixels = 10
-    print(f"Transition buffer: {buffer_deg} deg = {buffer_pixels} pixels")
-
-    # Check time alignment
-    time_hrrr = ds_hrrr.variables[hrrr_coords['time']][:]
-    nt_gfs = len(time_gfs)
-    nt_hrrr = len(time_hrrr)
-
-    if nt_gfs != nt_hrrr:
-        print(f"WARNING: Time dimension mismatch: GFS={nt_gfs}, HRRR={nt_hrrr}")
-        print(f"Using minimum: {min(nt_gfs, nt_hrrr)} time steps")
-    nt = min(nt_gfs, nt_hrrr)
-
-    # Create output file
-    print(f"Creating output: {output_file}")
-    ds_out = Dataset(output_file, 'w', format='NETCDF4')
-
-    # Global attributes
-    ds_out.Conventions = 'CF-1.6'
-    ds_out.title = 'Blended HRRR+GFS forcing for UFS-Coastal DATM'
-    ds_out.source = 'NCEP HRRR (CONUS 3km) + GFS (global 0.25deg)'
-    ds_out.institution = 'NOAA/NOS/OCS'
-    ds_out.history = f'Blended by blend_hrrr_gfs.py'
-    ds_out.blend_method = ('HRRR where available over CONUS, '
-                           'GFS elsewhere, smooth transition at boundary')
-    ds_out.blend_buffer_deg = buffer_deg
-
-    # Create dimensions
-    ds_out.createDimension('longitude', len(lon))
-    ds_out.createDimension('latitude', len(lat))
-    ds_out.createDimension('time', None)
-
-    # Create coordinate variables
-    lon_out = ds_out.createVariable('longitude', 'f8', ('longitude',))
-    lon_out.units = 'degrees_east'
-    lon_out.axis = 'X'
-    lon_out.long_name = 'longitude'
-    lon_out.standard_name = 'longitude'
-    lon_out[:] = lon[:]
-
-    lat_out = ds_out.createVariable('latitude', 'f8', ('latitude',))
-    lat_out.units = 'degrees_north'
-    lat_out.axis = 'Y'
-    lat_out.long_name = 'latitude'
-    lat_out.standard_name = 'latitude'
-    lat_out[:] = lat[:]
-
-    # Copy time from GFS (reference source)
-    time_var = ds_gfs.variables[gfs_coords['time']]
-    time_out = ds_out.createVariable('time', 'f8', ('time',))
-    time_out.units = getattr(time_var, 'units', 'seconds since 1970-01-01 00:00:00')
-    time_out.calendar = getattr(time_var, 'calendar', 'standard')
-    time_out.axis = 'T'
-    time_out.long_name = 'time'
-    time_out[:nt] = time_gfs[:nt]
-
-    # Compute blend weights from first valid HRRR timestep
-    weights = None
-
-    # Blend each variable pair
-    blend_stats = {}
-    for gfs_name, hrrr_name, out_name in VAR_PAIRS:
-        # Check if variables exist in both files
-        if gfs_name not in ds_gfs.variables:
-            print(f"  SKIP: {gfs_name} not in GFS file")
-            continue
-
-        if hrrr_name not in ds_hrrr.variables:
-            print(f"  WARNING: {hrrr_name} not in HRRR file, using GFS only for {out_name}")
-            # Copy GFS data directly
-            gfs_data = ds_gfs.variables[gfs_name][:nt]
-            var_out = ds_out.createVariable(
-                out_name, 'f4', ('time', 'latitude', 'longitude'),
-                fill_value=9.999e+20
-            )
-            var_out.long_name = getattr(ds_gfs.variables[gfs_name], 'long_name', out_name)
-            var_out.units = getattr(ds_gfs.variables[gfs_name], 'units', 'unknown')
-            var_out.coordinates = 'longitude latitude'
-            var_out[:] = gfs_data
-            blend_stats[out_name] = 'GFS-only'
-            continue
-
-        print(f"  Blending: {gfs_name} + {hrrr_name} -> {out_name}")
-
-        gfs_data = ds_gfs.variables[gfs_name][:nt]
-        hrrr_data = ds_hrrr.variables[hrrr_name][:nt]
-
-        # Compute blend weights once (from first timestep of first variable)
-        if weights is None:
-            weights = create_blend_weights(hrrr_data[0], buffer_pixels)
-            hrrr_pct = np.mean(weights > 0.5) * 100
-            gfs_pct = np.mean(weights < 0.5) * 100
-            trans_pct = 100 - hrrr_pct - gfs_pct
-            print(f"  Blend weights: HRRR={hrrr_pct:.1f}%, GFS={gfs_pct:.1f}%, "
-                  f"transition={trans_pct:.1f}%")
-
-        # Apply blending: out = weight * hrrr + (1-weight) * gfs
-        # Where HRRR has fill values, weight=0 so we get pure GFS
-        blended = np.zeros_like(gfs_data, dtype=np.float32)
-        for t in range(nt):
-            hrrr_slice = hrrr_data[t]
-            gfs_slice = gfs_data[t]
-
-            # Replace HRRR fill values with GFS values before blending
-            hrrr_valid = np.isfinite(hrrr_slice) & (np.abs(hrrr_slice) < 1e10)
-            hrrr_filled = np.where(hrrr_valid, hrrr_slice, gfs_slice)
-
-            blended[t] = weights * hrrr_filled + (1.0 - weights) * gfs_slice
-
-        # Create output variable
-        var_out = ds_out.createVariable(
-            out_name, 'f4', ('time', 'latitude', 'longitude'),
-            fill_value=9.999e+20
-        )
-        var_out.long_name = getattr(ds_gfs.variables[gfs_name], 'long_name', out_name)
-        var_out.units = getattr(ds_gfs.variables[gfs_name], 'units', 'unknown')
-        var_out.coordinates = 'longitude latitude'
-        var_out[:] = blended
-        blend_stats[out_name] = 'blended'
-
-    ds_hrrr.close()
-    ds_gfs.close()
-    ds_out.close()
-
-    # Summary
-    print()
-    print("=" * 50)
-    print("Blending complete!")
-    print("=" * 50)
-    print(f"Output: {output_file}")
-    print(f"Size: {os.path.getsize(output_file) / 1e6:.1f} MB")
-    print(f"Grid: {len(lon)} x {len(lat)}")
-    print(f"Time steps: {nt}")
-    print(f"Variables:")
-    for name, status in blend_stats.items():
-        print(f"  {name}: {status}")
-    print("=" * 50)
-
-
-def _find_coords(ds):
-    """Find coordinate variable names in a NetCDF dataset."""
-    coords = {'lon': None, 'lat': None, 'time': None}
-    for var in ds.variables:
-        vl = var.lower()
-        if vl in ('longitude', 'lon', 'x') and coords['lon'] is None:
-            coords['lon'] = var
-        elif vl in ('latitude', 'lat', 'y') and coords['lat'] is None:
-            coords['lat'] = var
-        elif vl in ('time', 't') and coords['time'] is None:
-            coords['time'] = var
-    return coords
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='Blend HRRR and GFS forcing for UFS-Coastal DATM')
-    parser.add_argument('hrrr_file', help='HRRR forcing NetCDF (regridded)')
-    parser.add_argument('gfs_file', help='GFS forcing NetCDF (regridded)')
-    parser.add_argument('output_file', help='Output blended NetCDF')
-    parser.add_argument('--buffer', type=float, default=0.5,
-                        help='Transition zone width in degrees (default: 0.5)')
-
-    args = parser.parse_args()
-
-    for f in [args.hrrr_file, args.gfs_file]:
-        if not os.path.exists(f):
-            print(f"Error: File not found: {f}")
-            sys.exit(1)
-
-    blend_forcing(args.hrrr_file, args.gfs_file, args.output_file,
-                  buffer_deg=args.buffer)
-
-
-if __name__ == '__main__':
-    main()
+print(f"\nOutput: {OUTPUT_FILE}")
+print(f"Grid: {nx} x {ny}")
+print(f"Time steps: {n_times} (hourly)")
+print("SUCCESS!")

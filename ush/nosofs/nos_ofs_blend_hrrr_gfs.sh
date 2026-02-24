@@ -6,26 +6,30 @@
 #   Blend HRRR and GFS forcing files into a single NetCDF for CDEPS/DATM,
 #   then generate SCRIP grid and ESMF mesh for the blended output.
 #
-#   Both input files must already be regridded to the same regular lat/lon
-#   grid (done by nos_ofs_create_datm_forcing.sh with TARGET_GRID).
+#   Input files are on their NATIVE grids (no pre-regridding needed):
+#     - HRRR: Lambert Conformal ~3km (from nos_ofs_create_datm_forcing.sh)
+#     - GFS: Regular lat/lon 0.25 deg
+#   The Python script handles all spatial + temporal interpolation using
+#   scipy cKDTree and RegularGridInterpolator.
 #
 # Usage:
-#   ./nos_ofs_blend_hrrr_gfs.sh HRRR_FILE GFS_FILE OUTPUT_FILE [BUFFER_DEG]
+#   ./nos_ofs_blend_hrrr_gfs.sh HRRR_FILE GFS_FILE OUTPUT_FILE DOMAIN [RESOLUTION]
 #
 # Arguments:
-#   HRRR_FILE   - Input HRRR forcing NetCDF (regridded to target)
-#   GFS_FILE    - Input GFS forcing NetCDF (regridded to target)
+#   HRRR_FILE   - Input HRRR forcing NetCDF (native grid)
+#   GFS_FILE    - Input GFS forcing NetCDF (native grid)
 #   OUTPUT_FILE - Output blended NetCDF file
-#   BUFFER_DEG  - Transition zone width in degrees (default: 0.5)
+#   DOMAIN      - Domain preset: ATLANTIC, SECOFS, STOFS3D_ATL
+#   RESOLUTION  - Grid resolution in degrees (default: 0.025)
 #
 # Environment Variables:
 #   USHnos   - Path to USH scripts directory
 #   PYnos    - Path to Python modules (default: $USHnos/python/nos_ofs)
 #
 # Output Files:
-#   ${OUTPUT_FILE}                      - Blended forcing
-#   ${OUTPUT_DIR}/${BASENAME}_scrip.nc  - SCRIP grid file
-#   ${OUTPUT_DIR}/${BASENAME}_esmf_mesh.nc - ESMF unstructured mesh
+#   ${OUTPUT_FILE}                           - Blended forcing (hourly)
+#   ${OUTPUT_DIR}/${BASENAME}_scrip.nc       - SCRIP grid file
+#   ${OUTPUT_DIR}/${BASENAME}_esmf_mesh.nc   - ESMF unstructured mesh
 #
 # Author: NOS-OFS Unified Workflow
 # Date: February 2026
@@ -36,13 +40,16 @@ set -eu
 # =============================================================================
 # Parse Arguments
 # =============================================================================
-HRRR_FILE=$1
-GFS_FILE=$2
-OUTPUT_FILE=$3
-BUFFER_DEG=${4:-0.5}
+HRRR_FILE=${1:-""}
+GFS_FILE=${2:-""}
+OUTPUT_FILE=${3:-""}
+DOMAIN=${4:-SECOFS}
+RESOLUTION=${5:-0.025}
 
 if [ -z "$HRRR_FILE" ] || [ -z "$GFS_FILE" ] || [ -z "$OUTPUT_FILE" ]; then
-    echo "Usage: $0 HRRR_FILE GFS_FILE OUTPUT_FILE [BUFFER_DEG]"
+    echo "Usage: $0 HRRR_FILE GFS_FILE OUTPUT_FILE [DOMAIN] [RESOLUTION]"
+    echo ""
+    echo "Domain presets: ATLANTIC, SECOFS, STOFS3D_ATL"
     exit 1
 fi
 
@@ -64,9 +71,12 @@ OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
 BASENAME=$(basename "$OUTPUT_FILE" .nc)
 mkdir -p "$OUTPUT_DIR"
 
-# Save and clear LD_PRELOAD to avoid conflicts with Python's netCDF4
+# Save and clear LD_PRELOAD to avoid conflicts with Python scipy/netCDF4
 ORIG_LD_PRELOAD="${LD_PRELOAD:-}"
 unset LD_PRELOAD 2>/dev/null || true
+
+# Set stack size to unlimited (prevents segfaults in scipy)
+ulimit -s unlimited 2>/dev/null || true
 
 echo "============================================"
 echo "HRRR+GFS Blending"
@@ -74,11 +84,12 @@ echo "============================================"
 echo "HRRR:       $HRRR_FILE"
 echo "GFS:        $GFS_FILE"
 echo "Output:     $OUTPUT_FILE"
-echo "Buffer:     $BUFFER_DEG deg"
+echo "Domain:     $DOMAIN"
+echo "Resolution: $RESOLUTION deg"
 echo "============================================"
 
 # =============================================================================
-# Step 1: Blend HRRR + GFS
+# Step 1: Blend HRRR + GFS (spatial + temporal interpolation)
 # =============================================================================
 echo ""
 echo "Step 1/3: Blending HRRR + GFS..."
@@ -91,7 +102,7 @@ if [ ! -s "$BLEND_PY" ]; then
     exit 1
 fi
 
-python3 "$BLEND_PY" "$HRRR_FILE" "$GFS_FILE" "$OUTPUT_FILE" --buffer "$BUFFER_DEG"
+python3 "$BLEND_PY" "$HRRR_FILE" "$GFS_FILE" "$OUTPUT_FILE" "$DOMAIN" "$RESOLUTION"
 BLEND_STATUS=$?
 
 if [ $BLEND_STATUS -ne 0 ] || [ ! -s "$OUTPUT_FILE" ]; then

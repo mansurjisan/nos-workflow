@@ -5,15 +5,19 @@
 # Purpose:
 #   Orchestrator for creating blended HRRR+GFS DATM forcing for UFS-Coastal.
 #   This script runs the full pipeline:
-#     1. Extract GFS forcing (regridded to common ~3km grid)
-#     2. Extract HRRR forcing (regridded to same common grid)
-#     3. Blend HRRR+GFS (HRRR where CONUS, GFS elsewhere, smooth transition)
+#     1. Extract GFS forcing (native 0.25 deg lat/lon grid)
+#     2. Extract HRRR forcing (native ~3km Lambert Conformal grid)
+#     3. Blend HRRR+GFS via Python (scipy spatial + temporal interpolation)
 #     4. Generate ESMF mesh for the blended grid
 #     5. Generate UFS config files from templates
 #     6. Stage all artifacts to $DATA/INPUT for DATM
 #
-#   The blending is done offline (pre-computed), producing a single forcing
-#   file on a regular lat/lon grid. DATM uses one stream with bilinear mapping.
+#   Input files are on their NATIVE grids (no pre-regridding needed).
+#   The Python blend script (blend_hrrr_gfs.py) handles all interpolation:
+#     - HRRR spatial: scipy cKDTree nearest-neighbor to target grid
+#     - GFS spatial: scipy RegularGridInterpolator bilinear to target grid
+#     - GFS temporal: scipy interp1d from 3-hourly to HRRR's hourly timesteps
+#   Output is a regular lat/lon grid at configurable resolution.
 #
 # Usage:
 #   nos_ofs_create_datm_forcing_blended.sh [DOMAIN]
@@ -34,7 +38,6 @@
 # Optional Environment Variables:
 #   DATM_BLEND_HRRR_GFS - Enable HRRR blending (default: true)
 #   BLEND_RESOLUTION     - Target grid resolution in degrees (default: 0.025)
-#   BLEND_BUFFER_DEG     - Transition zone width in degrees (default: 0.5)
 #   NHOURS_FCST          - Forecast hours (default: 48)
 #   DT_ATMOS             - Atmospheric timestep (default: 720)
 #
@@ -76,7 +79,6 @@ done
 # Defaults
 DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
 BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
-BLEND_BUFFER_DEG=${BLEND_BUFFER_DEG:-0.5}
 NHOURS_FCST=${NHOURS_FCST:-48}
 DT_ATMOS=${DT_ATMOS:-720}
 NHOUR=${NHOUR:-nhour}
@@ -117,15 +119,16 @@ ny = int(math.ceil(($DOM_LAT_MAX - ($DOM_LAT_MIN)) / dx)) + 1
 print(nx, ny)
 ")
 
-# wgrib2 target grid specification: "latlon LON0:NX:DLON LAT0:NY:DLAT"
-export TARGET_GRID="latlon ${DOM_LON_MIN}:${NX_TARGET}:${BLEND_RESOLUTION} ${DOM_LAT_MIN}:${NY_TARGET}:${BLEND_RESOLUTION}"
+# Note: We do NOT export TARGET_GRID here. The extraction scripts produce
+# native-grid files (HRRR Lambert Conformal, GFS 0.25 deg lat/lon).
+# The Python blend script (blend_hrrr_gfs.py) handles all spatial + temporal
+# interpolation internally using scipy cKDTree and RegularGridInterpolator.
 
 echo ""
-echo "Target grid:"
+echo "Target grid (after blending):"
 echo "  Domain:     ${DOM_LON_MIN} to ${DOM_LON_MAX} lon, ${DOM_LAT_MIN} to ${DOM_LAT_MAX} lat"
 echo "  Resolution: ${BLEND_RESOLUTION} deg (~$(python3 -c "print(f'{$BLEND_RESOLUTION * 111:.1f}')")km)"
 echo "  Dimensions: ${NX_TARGET} x ${NY_TARGET}"
-echo "  wgrib2:     $TARGET_GRID"
 echo ""
 
 # Compute time range for forcing
@@ -145,11 +148,11 @@ mkdir -p $DATM_WORK
 mkdir -p ${DATA}/INPUT
 
 # =============================================================================
-# Step 1: Extract GFS Forcing (regridded to target)
+# Step 1: Extract GFS Forcing (native grid)
 # =============================================================================
 echo ""
 echo "============================================"
-echo "Step 1/6: Extracting GFS forcing (regridded to ${BLEND_RESOLUTION} deg)..."
+echo "Step 1/6: Extracting GFS forcing (native 0.25 deg grid)..."
 echo "============================================"
 
 GFS_DIR=${DATM_WORK}/gfs
@@ -167,12 +170,12 @@ fi
 echo "GFS forcing: ${GFS_DIR}/gfs_forcing.nc ($(ls -lh ${GFS_DIR}/gfs_forcing.nc | awk '{print $5}'))"
 
 # =============================================================================
-# Step 2: Extract HRRR Forcing (regridded to same target)
+# Step 2: Extract HRRR Forcing (native grid)
 # =============================================================================
 if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
     echo ""
     echo "============================================"
-    echo "Step 2/6: Extracting HRRR forcing (regridded to ${BLEND_RESOLUTION} deg)..."
+    echo "Step 2/6: Extracting HRRR forcing (native ~3km Lambert Conformal)..."
     echo "============================================"
 
     if [ -z "${COMINhrrr:-}" ]; then
@@ -210,12 +213,19 @@ if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; th
     echo "Step 3/6: Blending HRRR + GFS..."
     echo "============================================"
 
-    # The blend script also generates SCRIP grid and ESMF mesh
+    # The blend script:
+    #   1. Reads native HRRR (Lambert Conformal) and GFS (0.25 deg lat/lon)
+    #   2. Creates a regular lat/lon target grid at BLEND_RESOLUTION
+    #   3. Interpolates HRRR via cKDTree, GFS via RegularGridInterpolator
+    #   4. Temporally interpolates GFS from 3-hourly to HRRR's hourly timesteps
+    #   5. Combines: HRRR where CONUS coverage, GFS elsewhere
+    #   6. Generates SCRIP grid and ESMF mesh for the blended output
     ${USHnos}/nosofs/nos_ofs_blend_hrrr_gfs.sh \
         ${HRRR_DIR}/hrrr_forcing.nc \
         ${GFS_DIR}/gfs_forcing.nc \
         ${BLEND_DIR}/datm_forcing.nc \
-        ${BLEND_BUFFER_DEG}
+        ${DOMAIN} \
+        ${BLEND_RESOLUTION}
     rc=$?
 
     if [ $rc -ne 0 ] || [ ! -s ${BLEND_DIR}/datm_forcing.nc ]; then
@@ -327,7 +337,7 @@ echo "Domain:        $DOMAIN"
 echo "Time range:    $TIME_START_BUFFERED to $TIME_END"
 echo "Target grid:   ${NX_TARGET} x ${NY_TARGET} at ${BLEND_RESOLUTION} deg"
 if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
-    echo "Blending:      HRRR+GFS (buffer=${BLEND_BUFFER_DEG} deg)"
+    echo "Blending:      HRRR+GFS (HRRR over CONUS, GFS global fill)"
 else
     echo "Blending:      GFS only (HRRR unavailable)"
 fi
