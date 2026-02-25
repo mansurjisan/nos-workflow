@@ -838,6 +838,26 @@ _comf_stage_files() {
             mkdir -p ${DATA}/outputs
             [ -s "${DATA}/hgrid.gr3" ] && cp -p ${DATA}/hgrid.gr3 ${DATA}/outputs/
 
+            # Forecast needs restart_outputs from nowcast (ihot=2 requires
+            # flux.out, mirror.out, staout_* in outputs/ directory)
+            if [ "$phase" = "forecast" ]; then
+                local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+                if [ -d "$restart_dir" ]; then
+                    for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                             staout_5 staout_6 staout_7 staout_8 staout_9; do
+                        [ -s "${restart_dir}/${f}" ] && cp -p ${restart_dir}/${f} ${DATA}/outputs/
+                    done
+                    echo "  Staged restart_outputs from ${restart_dir}"
+                else
+                    echo "WARNING: restart_outputs not found: $restart_dir, creating empty files"
+                    touch $DATA/outputs/mirror.out
+                    touch $DATA/outputs/flux.out
+                    for i in $(seq 1 9); do
+                        [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
+                    done
+                fi
+            fi
+
             echo "  SCHISM bare-name file staging complete"
         fi
 
