@@ -799,6 +799,18 @@ _comf_stage_files() {
                 fi
             done
 
+            # OBC forcing from COMOUT (contains TEM_nu.nc, SAL_nu.nc,
+            # TEM_3D.th.nc, SAL_3D.th.nc, elev2D.th.nc, uv3D.th.nc)
+            if [ -n "${OBC_FORCING_FILE:-}" ]; then
+                if [ -s "${COMOUT}/${OBC_FORCING_FILE}" ]; then
+                    cp -p ${COMOUT}/${OBC_FORCING_FILE} ${DATA}/
+                    tar xf ${DATA}/${OBC_FORCING_FILE} -C ${DATA}/
+                    echo "  Staged OBC forcing from ${OBC_FORCING_FILE}"
+                else
+                    echo "WARNING: OBC forcing tar not found: ${COMOUT}/${OBC_FORCING_FILE}"
+                fi
+            fi
+
             # SCHISM river forcing file renames (COMF convention)
             [ -s "${DATA}/schism_temp.th" ] && cp -p ${DATA}/schism_temp.th ${DATA}/TEM_1.th
             [ -s "${DATA}/schism_flux.th" ] && cp -p ${DATA}/schism_flux.th ${DATA}/flux.th
