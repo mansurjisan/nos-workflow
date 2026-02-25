@@ -676,6 +676,30 @@ _comf_stage_files() {
             sed -i "s/orb_iyear_align = .*/orb_iyear_align = ${sim_yyyy}/" ${DATA}/ufs.configure
         fi
 
+        # SCHISM NUOPC cap requires param.nml (exact name) in $DATA.
+        # nos_ofs_launch.sh copies ${RUNTIME_CTL} (e.g. secofs_ufs.param.nml)
+        # to $DATA with its original prefixed name. We must:
+        # 1. Copy it to param.nml
+        # 2. Substitute template placeholders with actual runtime values
+        if [ ! -s "${DATA}/param.nml" ] && [ -s "${DATA}/${RUNTIME_CTL}" ]; then
+            cp -p "${DATA}/${RUNTIME_CTL}" "${DATA}/param.nml"
+            echo "  Copied ${RUNTIME_CTL} -> param.nml"
+        fi
+        if [ -s "${DATA}/param.nml" ]; then
+            local rnday=$(python3 -c "print(${nhours}/24.0)" 2>/dev/null || echo "0.25")
+            local ihot_val=1
+            if [ "$phase" = "forecast" ]; then
+                ihot_val=2
+            fi
+            sed -i "s/rnday_value/${rnday}/" ${DATA}/param.nml
+            sed -i "s/start_year_value/${sim_yyyy}/" ${DATA}/param.nml
+            sed -i "s/start_month_value/${sim_mm#0}/" ${DATA}/param.nml
+            sed -i "s/start_day_value/${sim_dd#0}/" ${DATA}/param.nml
+            sed -i "s/start_hour_value/${sim_hh}/" ${DATA}/param.nml
+            sed -i "s/ihot = [0-9]*/ihot = ${ihot_val}/" ${DATA}/param.nml
+            echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
+        fi
+
         echo "  UFS-Coastal staging complete"
     fi
 }
