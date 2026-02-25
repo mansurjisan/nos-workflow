@@ -93,8 +93,16 @@ DT_ATMOS=${DT_ATMOS:-720}
 DATM_INPUT_DIR=${DATM_INPUT_DIR:-INPUT}
 DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
 DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
-NX_GLOBAL=${NX_GLOBAL:-1721}
-NY_GLOBAL=${NY_GLOBAL:-1721}
+# DATM grid dimensions: must match the blended forcing NetCDF file
+# If not set, compute from domain bounds and blend resolution
+if [ -z "${NX_GLOBAL:-}" ] && [ -n "${MINLON:-}" ] && [ -n "${MAXLON:-}" ] && [ -n "${BLEND_RESOLUTION:-}" ]; then
+    NX_GLOBAL=$(python3 -c "print(int(round((${MAXLON} - (${MINLON}))/${BLEND_RESOLUTION}) + 1))" 2>/dev/null || echo 1001)
+fi
+if [ -z "${NY_GLOBAL:-}" ] && [ -n "${MINLAT:-}" ] && [ -n "${MAXLAT:-}" ] && [ -n "${BLEND_RESOLUTION:-}" ]; then
+    NY_GLOBAL=$(python3 -c "print(int(round((${MAXLAT} - (${MINLAT}))/${BLEND_RESOLUTION}) + 1))" 2>/dev/null || echo 921)
+fi
+NX_GLOBAL=${NX_GLOBAL:-1001}
+NY_GLOBAL=${NY_GLOBAL:-921}
 
 # Extract date components
 YYYY=${PDY:0:4}

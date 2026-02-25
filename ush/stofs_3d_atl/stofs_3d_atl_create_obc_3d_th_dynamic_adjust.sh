@@ -44,7 +44,7 @@ set -x
   # ----------> Prepare required input static files:
  
   # para.nml
-    ln -sf ${COMOUTrerun}/${RUN}.${cycle}.param.nml  param.nml_cycle_today
+    ln -sf ${COMOUTrerun}/stofs_3d_atl.t12z.param.nml  param.nml_cycle_today 
    
 
     # create nml_cycle_yesterday 
@@ -67,7 +67,7 @@ set -x
 
 
   # ----------> non_adj: 
-    fn_rtofs_th_nc_non_adj=${COMOUTrerun}/${RUN}.${cycle}.elev2dth_non_adj.nc
+    fn_rtofs_th_nc_non_adj=${COMOUTrerun}/stofs_3d_atl.t12z.elev2dth_non_adj.nc
 
     cp -fa ${fn_rtofs_th_nc_non_adj}   ./
 
@@ -261,8 +261,8 @@ set -x
     #fn_elev2dth_non_adj=${RUN}.${cycle}.elev2dth_non_adj.nc       # stofs_3d_atl.t12z.elev2dth_non_adj.nc
     #fn_elev2dth_non_adj_fullPath=${COMOUTrerun}/${fn_elev2dth_non_adj}
 
-    fn_avg_bias_prev=${RUN}.${cycle}.avg_bias
-    fn_avg_bias_prev_fullPath=${COMOUT_PREV}/rerun/${RUN}.${cycle}.avg_bias
+    fn_avg_bias_prev=stofs_3d_atl.${cycle}.avg_bias
+    fn_avg_bias_prev_fullPath=${COMOUT_PREV}/rerun/stofs_3d_atl.${cycle}.avg_bias 
 
 
     # adj txt of previous day 

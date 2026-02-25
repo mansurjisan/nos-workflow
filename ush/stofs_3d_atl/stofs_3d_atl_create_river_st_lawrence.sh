@@ -17,32 +17,40 @@ set -x
 
 echo 'The script stofs_3d_atl_create_river_st_lawrence.sh  started at UTC'
 
-
-# ---------------------------> SAFETY CHECK: Validate required environment variables
-# This prevents catastrophic deletion if variables are not set
-if [ -z "${DATA_prep_river_st_lawrence}" ]; then
-    echo "FATAL ERROR: DATA_prep_river_st_lawrence is not set. Exiting to prevent accidental file deletion."
-    echo "Please set DATA_prep_river_st_lawrence to a valid working directory path before running this script."
-    exit 1
+# ---------------------------> Load YAML Configuration (with fallback to defaults)
+if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
+    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
+    if [ -f "${_yaml_to_env}" ]; then
+        echo "Loading St. Lawrence river config from YAML: ${OFS_CONFIG}"
+        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
+        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
+            eval "${_yaml_exports}"
+            echo "YAML config loaded successfully"
+        fi
+    fi
 fi
 
-# Additional safety: ensure path is not root or system directory
+# ---------------------------> directory/file names
+
+# ---------------------------> SAFETY CHECK
+if [ -z "${DATA_prep_river_st_lawrence}" ]; then
+    echo "FATAL ERROR: DATA_prep_river_st_lawrence is not set. Exiting."
+    exit 1
+fi
 case "${DATA_prep_river_st_lawrence}" in
     /|/bin|/boot|/dev|/etc|/home|/lib*|/opt|/proc|/root|/run|/sbin|/sys|/tmp|/usr|/var|/mnt|/media)
-        echo "FATAL ERROR: DATA_prep_river_st_lawrence='${DATA_prep_river_st_lawrence}' appears to be a system directory."
-        echo "Refusing to delete contents of system directories. Exiting."
+        echo "FATAL ERROR: DATA_prep_river_st_lawrence appears to be a system directory. Exiting."
         exit 1
         ;;
 esac
 
-# ---------------------------> directory/file names
   dir_wk=${DATA_prep_river_st_lawrence}
 
   echo dir_wk = ${dir_wk}
 
 
   mkdir -p $dir_wk
-  cd $dir_wk || { echo "ERROR: Cannot cd to $dir_wk"; exit 1; }
+  cd $dir_wk
   rm -rf ${dir_wk}/*
 
   mkdir -p ${COMOUTrerun}
@@ -61,7 +69,10 @@ esac
    yyyymmdd_prev=${PDYHH_NCAST_BEGIN:0:8}
 
    str_yyyy_mm_dd_hr=${PDYHH_NCAST_BEGIN:0:4}-${PDYHH_NCAST_BEGIN:4:2}-${PDYHH_NCAST_BEGIN:6:2}-${cyc}
-   
+  
+   str_yyyy_mm_dd_hr_mm_ss_py_Law="${PDYHH_NCAST_BEGIN:0:4}-${PDYHH_NCAST_BEGIN:4:2}-${PDYHH_NCAST_BEGIN:6:2} ${cyc}:00:00"
+
+
    PDYHH_NCAST_BEGIN_1day_ago=$(finddate.sh ${PDYHH_NCAST_BEGIN:0:8} d-1)
    str_yyyy_mm_dd_hr_prev=${PDYHH_NCAST_BEGIN_1day_ago:0:4}-${PDYHH_NCAST_BEGIN_1day_ago:4:2}-${PDYHH_NCAST_BEGIN_1day_ago:6:2}-${cyc}
 
@@ -75,8 +86,20 @@ esac
 
 #  fn_in_st_law_riv=/lfs/h1/ops/prod/dcom/${yyyymmdd_today}/canadian_water/QC_02OA016_hourly_hydrometric.csv
 #  fn_in_st_law_riv_prev=/lfs/h1/ops/prod/dcom/${yyyymmdd_prev}/canadian_water/QC_02OA016_hourly_hydrometric.csv 
-  fn_in_st_law_riv=${DCOMROOT}/${yyyymmdd_today}/canadian_water/QC_02OA016_hourly_hydrometric.csv
-  fn_in_st_law_riv_prev=${DCOMROOT}/${yyyymmdd_prev}/canadian_water/QC_02OA016_hourly_hydrometric.csv 
+
+  # fn_in_st_law_riv=${DCOMROOT}/${yyyymmdd_today}/canadian_water/QC_02OA016_hourly_hydrometric.csv
+  # fn_in_st_law_riv_prev=${DCOMROOT}/${yyyymmdd_prev}/canadian_water/QC_02OA016_hourly_hydrometric.csv 
+
+  # 2025/12/08: tentative, to be update
+  # /lfs/h1/ops/dev/dcom/20251207/can_streamgauge/02OA016_hydrometric.csv
+  # fn_in_st_law_riv=/lfs/h1/ops/dev/dcom/${yyyymmdd_today}/can_streamgauge/02OA016_hydrometric.csv
+  # fn_in_st_law_riv_prev=/lfs/h1/ops/dev/dcom/${yyyymmdd_prev}/can_streamgauge/02OA016_hydrometric.csv
+
+
+  # 2025/12/22
+  fn_in_st_law_riv=${COMINlaw}/${yyyymmdd_today}/can_streamgauge/02OA016_hydrometric.csv
+  fn_in_st_law_riv_prev=${COMINlaw}/${yyyymmdd_prev}/can_streamgauge/02OA016_hydrometric.csv
+
 
   fn_st_law_riv_flux_th_std=${RUN}.${cycle}.riv.obs.flux.th
 
@@ -86,11 +109,15 @@ esac
   do
 
     if [[ ${k} -eq 1 ]] && [[ -f "$fn_in_st_law_riv" ]];  then
-      ln -sf ${fn_in_st_law_riv} river_st_law_obs.csv
+      #ln -sf ${fn_in_st_law_riv} river_st_law_obs.csv
+       ln -sf ${fn_in_st_law_riv}  .
+
       break
 
     elif [[ ${k} -eq 2 ]] && [[ -f "$fn_in_st_law_riv_prev" ]]; then
-      ln -sf ${fn_in_st_law_riv_prev} river_st_law_obs.csv
+      #ln -sf ${fn_in_st_law_riv_prev} river_st_law_obs.csv
+       ln -sf ${fn_in_st_law_riv_prev}  .
+
       break
     
     fi 
@@ -99,18 +126,22 @@ esac
 
 
   rm -f flux.th
-  if [ -f river_st_law_obs.csv ]; then
+  #if [ -f river_st_law_obs.csv ]; then
+  if [ -f 02OA016_hydrometric.csv ]; then
 
+     # python  ${fn_py_create_river_flux_stLaw}  ${str_yyyy_mm_dd_hr} str_yyyy_mm_dd_hr_mm_ss_py_Law
+     echo "str_yyyy_mm_dd_hr_mm_ss_py_Law (bf python call): ${str_yyyy_mm_dd_hr_mm_ss_py_Law}"
+     python  ${fn_py_create_river_flux_stLaw}  "${str_yyyy_mm_dd_hr_mm_ss_py_Law}"
 
-      python  ${fn_py_create_river_flux_stLaw}  ${str_yyyy_mm_dd_hr}
   fi
 
   if [[ -s flux.th ]] && [[ `wc -l flux.th | awk '{print $1}'` -ge 6 ]]; then
          cp -f flux.th ${COMOUTrerun}/${fn_st_law_riv_flux_th_std}
          flag_flux_success=1
 
-         msg="success: k=${k}: file=`ls -lrt river_st_law_obs.csv`"
-         msg=" ${msg} \n output: `ls -lrt flux.th | awk '{print $9}'`"
+         #msg="success: k=${k}: file=`ls -lrt river_st_law_obs.csv`"
+         msg="success: k=${k}: file=`ls -lrt 02OA016_hydrometric.csv`"
+	 msg=" ${msg} \n output: `ls -lrt flux.th | awk '{print $9}'`"
          echo -e $msg
          echo -e ${msg} >> $pgmout
          echo 
@@ -157,8 +188,13 @@ esac
   fi
 
 
+  # clear fake TEM_1.th
+    rm -f TEM_1.th
 
 # ---------------------------> to create TEM_1.th     
+
+
+
   fn_st_law_riv_tem_1_std=${RUN}.${cycle}.riv.obs.tem_1.th
 
   flag_tem_success=0
@@ -167,7 +203,10 @@ esac
 
   if [ -f ${fn_sflux_nc} ]; then
     ln -sf ${fn_sflux_nc} . 
-    python  ${fn_py_create_river_tem_stLaw}  ${str_yyyy_mm_dd_hr}   
+    
+    echo "str_yyyy_mm_dd_hr_mm_ss_py_Law (bf python call tem): ${str_yyyy_mm_dd_hr_mm_ss_py_Law} "  
+    python  ${fn_py_create_river_tem_stLaw}  ${str_yyyy_mm_dd_hr}  
+
   fi
 
   if [[ -s TEM_1.th ]] && [[ `wc -l TEM_1.th | awk '{print $1}'` -ge 6 ]]; then

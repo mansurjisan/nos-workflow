@@ -63,6 +63,11 @@
   echo "  PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN:-not set}"
   echo "========================================="
 
+  # Step 0: Verify/regenerate partition.prop if PBS nproc differs from fix file (v3.1.1)
+  if [ -f "${USHstofs3d}/stofs_3d_atl_create_partition_prop.sh" ]; then
+    ${USHstofs3d}/stofs_3d_atl_create_partition_prop.sh >> log_create_partition_prop.log 2>&1
+  fi
+
   # Step 1: Stage static files and nowcast forcing to $DATA
   stage_model_files "nowcast"
   export err=$?

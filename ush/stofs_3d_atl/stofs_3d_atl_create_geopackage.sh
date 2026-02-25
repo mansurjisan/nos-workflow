@@ -42,6 +42,8 @@ set -x
 
 
   mkdir -p ${DATA}/dir_geopkg
+  #cp -pa ${DATA}/Dir_backup_2d3d/out2d_*.nc ${DATA}/dir_geopkg
+  #cp -pa ${DATA}/outputs/  ${DATA}/dir_geopkg
   cp -pa  outputs/{horizontalVelX,horizontalVelY,out2d,salinity,temperature,zCoordinates}*.nc  ${DATA}/dir_geopkg
 
   cd ${DATA}/dir_geopkg
@@ -110,7 +112,6 @@ set -x
            echo $msg; echo $msg >> $pgmout
         fi
           
-export err=$?;
 
 echo 
 echo "${fn_this_sh} completed "

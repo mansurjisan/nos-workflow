@@ -11,7 +11,7 @@ system:
   description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic"
   region: atlantic
   framework: stofs
-  version: "2.2.0"
+  version: "3.1.1"
   # Shell prefix for file naming (RUN in nosofs, used as prefix)
   prefix: stofs_3d_atl
 
@@ -85,8 +85,7 @@ forcing:
     n_list_min: 97            # -> N_list_min: minimum files needed (121-24)
     # Files for river forcing
     files:
-      sources_json: stofs_3d_atl_sources.json
-      sinks_json: stofs_3d_atl_sinks.json
+      sources_json: stofs_3d_atl_river_sources_conus.json  # v3.1.1: VIMS v7 simplified (no relocation/scaling)
     # St. Lawrence River from Canadian data
     st_lawrence:
       enabled: true
@@ -196,6 +195,9 @@ output:
       - temperature
       - horizontalVelX
       - horizontalVelY
+      - zCoordinates
+      - verticalVelocity    # v3.1.1: new output variable
+      - diffusivity          # v3.1.1: new output variable
   # Restart/hotstart output
   restart:
     interval_days: 1.0        # Daily restart files -> NRST
@@ -203,7 +205,7 @@ output:
 # Computational resources for STOFS-3D-ATL
 resources:
   nprocs: 960                 # Number of MPI processes
-  nscribes: 6                 # SCHISM I/O server processes (4320 total - 6 scribes = 4314 compute = partition.prop)
+  nscribes: 8                 # SCHISM I/O server processes (v3.1.1: increased from 6 to 8)
   memory_gb: 2000
   walltime_hours: 3
 
@@ -308,8 +310,8 @@ ensemble:
   resources:
     select: "select=34:ncpus=128:mpiprocs=128"
     walltime: "06:00:00"
-    total_tasks: 4320   # 4314 compute + 6 scribes, must match partition.prop
-    nscribes: 6
+    total_tasks: 4320   # 4312 compute + 8 scribes (v3.1.1), must match partition.prop
+    nscribes: 8
   # Ensemble post-processing resources
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"
@@ -333,7 +335,7 @@ legacy:
     nam: true                     # stofs_3d_atl_create_surface_forcing_nam.sh (ensemble only)
     rrfs: true                    # stofs_3d_atl_create_surface_forcing_rrfs.sh (ensemble only)
     river: true                   # stofs_3d_atl_create_river_forcing_nwm.sh
-    obc: true                     # stofs_3d_atl_create_obc_3d_th.sh
+    obc: true                     # stofs_3d_atl_create_obc_3d_th_non_adjust.sh + _dynamic_adjust.sh
     tides: true                   # stofs_3d_atl_create_bctides_in.sh
   # Custom script names (if different from defaults)
   script_names:
@@ -342,7 +344,8 @@ legacy:
     nam: stofs_3d_atl_create_surface_forcing_nam.sh
     rrfs: stofs_3d_atl_create_surface_forcing_rrfs.sh
     river: stofs_3d_atl_create_river_forcing_nwm.sh
-    obc: stofs_3d_atl_create_obc_3d_th.sh
+    obc_non_adjust: stofs_3d_atl_create_obc_3d_th_non_adjust.sh      # v3.1.1: split from obc_3d_th.sh
+    obc_dynamic_adjust: stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh  # v3.1.1: bias correction
     tides: stofs_3d_atl_create_bctides_in.sh
 
 # Environment variable mappings for shell scripts

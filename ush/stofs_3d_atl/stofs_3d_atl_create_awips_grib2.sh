@@ -1,5 +1,6 @@
 #!/bin/bash
 
+
 #################################################################################
 #  Name: stofs_3d_atl_create_awips_grib2.sh                                     #
 #  This is a post-processing script that reads the water level field            #
@@ -16,29 +17,15 @@
 #                                                                               #
 #  Remarks:                                                                     #
 #                                                             September, 2022   #
-#  Synced with STOFS operational v3.1.0                                         #
 #################################################################################
 
 
 # ---------------------------> Begin ...
 set -x
 
-  fn_this_sh="stofs_3d_atl_create_awips_grib2.sh"
+  fn_this_sh="stofs_3d_atl_netcdf2grib.sh"
 
   echo "${fn_this_sh} began at UTC: "
-
-# ---------------------------> Load YAML Configuration (with fallback to defaults)
-if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
-    _yaml_to_env="${USHnos:-${HOMEnos}/ush}/python/nos_ofs/utils/yaml_to_env.py"
-    if [ -f "${_yaml_to_env}" ]; then
-        echo "Loading AWIPS GRIB2 config from YAML: ${OFS_CONFIG}"
-        _yaml_exports=$(python3 "${_yaml_to_env}" "${OFS_CONFIG}" --framework stofs 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "${_yaml_exports}" ]; then
-            eval "${_yaml_exports}"
-            echo "YAML config loaded successfully"
-        fi
-    fi
-fi
 
   echo "module list::"
   module list
@@ -63,19 +50,22 @@ fi
 
   cd ${DATA}/dir_adcirc_nc
 
-  # exclude nowcast period
+  # exclude nowcast period  
+  #  list_adc_files=(schout_adcirc_1.nc schout_adcirc_2.nc schout_adcirc_3.nc schout_adcirc_4.nc schout_adcirc_5.nc \ 
+  #	          schout_adcirc_6.nc schout_adcirc_7.nc schout_adcirc_8.nc schout_adcirc_9.nc schout_adcirc_10.nc)
+  #
      list_adc_files=(schout_adcirc_1.nc schout_adcirc_2.nc schout_adcirc_3.nc schout_adcirc_4.nc schout_adcirc_5.nc)
-
+  
 
   num_missing_files=0
-  for fn_k  in ${list_adc_files[@]};
+  for fn_k  in ${list_adc_files[@]};  
   do
        if [ -s ${fn_k} ]; then
           echo "checked: ${fn_k} exists"
-
+       
        else
           num_missing_files=`expr ${num_missing_files} + 1`
-          echo "checked: ${fn_k} does NOT exist"
+          echo "checked: ${fn_k} does NOT exist" 
        fi
   done
 
@@ -83,10 +73,12 @@ fi
   if [[ ${num_missing_files} -eq 0 ]];  then
      echo "schout_adcirc_1,2,3,4,5 nc: all exist"
 
-     fn_adc_merged=schout_adc_nfcast_days_1_2_3_4_5_merged.nc
-
+     fn_adc_merged=schout_adc_nfcast_days_1_2_3_4_5_merged.nc    
+ 
      rm -f ${fn_adc_merged}
-        ncrcat -C -O schout_adcirc_1.nc schout_adcirc_2.nc schout_adcirc_3.nc schout_adcirc_4.nc schout_adcirc_5.nc ${fn_adc_merged}
+     #     ncrcat -C -O schout_adcirc_1.nc schout_adcirc_2.nc schout_adcirc_3.nc schout_adcirc_4.nc schout_adcirc_5.nc \
+     #	          schout_adcirc_6.nc schout_adcirc_7.nc schout_adcirc_8.nc schout_adcirc_9.nc schout_adcirc_10.nc ${fn_adc_merged}
+        ncrcat -C -O schout_adcirc_1.nc schout_adcirc_2.nc schout_adcirc_3.nc schout_adcirc_4.nc schout_adcirc_5.nc ${fn_adc_merged} 
 
   else
      echo "FATAL error: there are missing files: schout_adcirc_{1,...,5}.nc"
@@ -100,9 +92,9 @@ fi
 
      . prep_step
      ${fn_exe_gen_grib2} conus cwl  ${yyyymmdd_hh_ref} ${fin_mask_conus_east_us} ${fn_adc_merged} 3000
-
-     . prep_step
-     ${fn_exe_gen_grib2} puertori cwl ${yyyymmdd_hh_ref} ${fin_mask_puertorico}  ${fn_adc_merged} 5000
+ 
+     . prep_step 
+     ${fn_exe_gen_grib2} puertori cwl ${yyyymmdd_hh_ref} ${fin_mask_puertorico}  ${fn_adc_merged} 5000   
 
 
      for fhr in $(seq -f "%03g" 0 96); do
@@ -139,7 +131,7 @@ fi
 
        fn_PARMstofs=${PARMstofs3d}/grib2_stofs_3d_atl_conus.east_cwl
        tocgrib2 < $fn_PARMstofs > out_${grid}.txt 2> errfile_${grid}.txt
-
+ 
        echo "right after tocgrib2: checking grib2_xxx.cwl"
        ls grib2_*.cwl
 
@@ -151,7 +143,7 @@ fi
         if [ $err -eq 0 ]; then
            cp -pf *.grib2 ${COMOUT}
 
-           mkdir -p ${COMOUT}/wmo
+           mkdir -p ${COMOUT}/wmo	   
            cp -pf grib2_${RUN}.${cycle}.*.${type} ${COMOUT}/wmo
 
            msg="Creation/Archiving of AWIPS grib2 and wmo files was successfully created/archived"
@@ -164,29 +156,31 @@ fi
                 $DBNROOT/bin/dbn_alert MODEL STOFS_GB2 $job ${COMOUT}/${fn_grb}
                  export err=$?; err_chk
              done
-
+  
              list_puer=`ls ${RUN}.${cycle}.puertori.f???.grib2`
              for fn_grb in ${list_puer}; do
                 $DBNROOT/bin/dbn_alert MODEL STOFS_GB2 $job ${COMOUT}/${fn_grb}
                  export err=$?; err_chk
              done
-
+  
              $DBNROOT/bin/dbn_alert MODEL STOFS_GB2 $job ${COMOUT}/${RUN}.${cycle}.conus.east.cwl.grib2
              export err=$?; err_chk
-
+  
              $DBNROOT/bin/dbn_alert MODEL STOFS_GB2 $job ${COMOUT}/${RUN}.${cycle}.puertori.cwl.grib2
              export err=$?; err_chk
-
+    
            fi
 
         else
-           msg="Creation/Archiving of AWIPS grib2 files failed"
+           mstofs="Creation/Archiving of AWIPS grib2 files  failed"
            echo $msg; echo $msg >> $pgmout
         fi
-
+          
 export err=$?;
 
 
-echo
+echo 
 echo "${fn_this_sh} completed "
-echo
+echo 
+
+

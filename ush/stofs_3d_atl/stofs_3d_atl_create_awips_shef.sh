@@ -32,13 +32,16 @@ set -x
   
   fin_staout_nc_csv=${FIXstofs3d}/stofs_3d_atl_staout_nc.csv
 
-  fn_nco_xg_navd=${FIXstofs3d}/stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco
-  fin_shef_navd88_mllw=${FIXstofs3d}/stofs_3d_atl_sta_awips_shef_navd88_mllw.txt
+  fn_nco_xg_msl=${FIXstofs3d}/stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco
+
+  fin_shef_msl_mllw=${FIXstofs3d}/stofs_3d_atl_sta_awips_shef_msl_mllw.txt
 
   cp -fp ${fin_staout_nc_json}   ${DATA}/dir_shef
   cp -fp ${fin_staout_nc_csv}    ${DATA}/dir_shef
-  cp -fp ${fin_shef_navd88_mllw} ${DATA}/dir_shef
+  cp -fp ${fin_shef_msl_mllw} ${DATA}/dir_shef
 
+  # the following cp is needed? v21 doesn't have this! But my mannual testing expected it (2024/1/17)
+  cp -fp ${fn_nco_xg_msl}       ${DATA}/dir_shef
 
   fn_py_gen_nc=${PYstofs3d}/generate_station_timeseries.py
   fn_exe_gen_nc2shef=${EXECstofs3d}/stofs_3d_atl_netcdf2shef
@@ -89,8 +92,8 @@ set -x
 
 
      # reference to nadv (shifted from xgeoid) 
-     fn_py_out_nc_6min=staout_timeseries_${yyyymmdd_hh_ref}_navd.nc
-     ncap2 -O  -F -S ${fn_nco_xg_navd}  ${fn_py_out_nc_6min_xgeoid}  ${fn_py_out_nc_6min} 
+     fn_py_out_nc_6min=staout_timeseries_${yyyymmdd_hh_ref}_msl.nc
+     ncap2 -O  -F -S ${fn_nco_xg_msl}  ${fn_py_out_nc_6min_xgeoid}  ${fn_py_out_nc_6min} 
      echo fn_py_out_nc_6min_navd = ${fn_py_out_nc_6min}
 
  
@@ -128,7 +131,7 @@ export err=$?;
 
   # (1)  extract SHEF stations from the above 6-min satout_xxx.nc
     fn_py_out_nc_6min_shef_only=${fn_py_out_nc_6min}_shef_only
-    ncks -O -C -d station,0,106,1  ${fn_py_out_nc_6min}  ${fn_py_out_nc_6min_shef_only}  
+    ncks -O -C -d station,0,149,1  ${fn_py_out_nc_6min}  ${fn_py_out_nc_6min_shef_only}  
 
 
     # extract 30-min data for shef ftn
@@ -149,17 +152,17 @@ export err=$?;
 
   echo 1-fin_shef_ftn=${fin_shef_ftn}
   ls -l ${fin_shef_ftn}
-  ls -l ${fin_shef_navd88_mllw}
+  ls -l ${fin_shef_msl_mllw}
 
 
   echo 2-fn_exe_gen_nc2shef= ${fn_exe_gen_nc2shef}
   echo 3-type=$type
   echo 4-YMDH=$YMDH
   echo 5-fin_shef_ftn=${fin_shef_ftn}
-  echo 6-fin_shef_navd88_mllw=${fin_shef_navd88_mllw}
+  echo 6-fin_shef_msl_mllw=${fin_shef_msl_mllw}
   echo
 
-  ${fn_exe_gen_nc2shef} con $type $YMDH ${fin_shef_ftn} ${fin_shef_navd88_mllw}
+  ${fn_exe_gen_nc2shef} con $type $YMDH ${fin_shef_ftn} ${fin_shef_msl_mllw}
 
   fn_shef_merged=${RUN}.${cycle}.points.cwl.shef
   rm -f ${fn_shef_merged}

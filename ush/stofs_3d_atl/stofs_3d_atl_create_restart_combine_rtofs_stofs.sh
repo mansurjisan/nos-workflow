@@ -153,7 +153,7 @@ idx_y2_3dz=815
 
 echo "cnt_2d = $cnt_2d, cnt_3d = $cnt_3d"
 
-# (2025/6/25) relaxed threshold from -gt 1 to -gt 0
+# (2025/6/25) if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
 if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
    LIST_fn_final_2d_qc=`echo ${LIST_fn_final_2d}  | awk -F' ' '{print $1}'`
    LIST_fn_final_3d_qc=`echo ${LIST_fn_final_3d}  | awk -F' ' '{print $1}'`
@@ -165,7 +165,7 @@ if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
 
 fi
 
-# (2025/6/25) relaxed threshold from -gt 1 to -gt 0
+# (2025/6/25) if [[ $cnt_2d -gt 1 ]] && [[ $cnt_3d -gt 1 ]]; then
 if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
   # ----------> Process 
     rm -f rtofs_glo_*nc
@@ -276,7 +276,7 @@ if [[ $cnt_2d -gt 0 ]] && [[ $cnt_3d -gt 0 ]]; then
 
   
 # -------------------------> restart_from_rtofs.nc
-  $fn_exe_gen_hotstart    >> $pgmout 2> errfile
+  $fn_exe_gen_hotstart    >> $pgmout 2> errfile_rtofs
 
   export err=$?;
   pgm=$fn_exe_gen_hotstart
@@ -374,7 +374,7 @@ fi
       ln -sf ${fn_src_hotstart_from_oper_fullPath}   $fn_py_input_hotstart_from_oper
       ln -sf ${fn_restart_rtofs_std} $fn_py_input_hotstart_from_rtofs
 
-      python ${PYstofs3d}/hotstart_proc.py >> $pgmout 2> errfile
+      python ${PYstofs3d}/hotstart_proc.py >> $pgmout 2> errfile_python_combine
   fi
 
   fn_hotstart_cbn=new_hotstart.nc

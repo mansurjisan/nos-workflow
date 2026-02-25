@@ -1,17 +1,13 @@
 #!/bin/bash
 
 ##################################################################################
-#  Name: stofs_3d_atl_create_obc_3d_th_non_adjust.sh                            #
-#  This script reads the NCEP/G-RTOFS data to create the STOFS_3D_ATL open      #
-#  boundary forcing files without dynamic SSH adjustment.                        #
-#  Outputs: stofs_3d_atl.t12z.{elev2dth_non_adj,uv3dth,tem3dth,sal3dth}.nc     #
-#  and nudging files: stofs_3d_atl.t12z.{temnu,salnu}.nc                        #
+#  Name: stofs_3d_atl_create_obc_3d_th_non_adjust.sh                         #
+#  This script reads the NCEP/G-RTOFS data to create the STOFS_3D_ATL open       #
+#  bouary forcing files, stofs_3d_atl.t12z.{elev2dth,uv3dth,tem3dth,sal3dth}.nc  #
+#  and the bundary nudging files, stofs_3d_atl.t12z.{temnu,salnu}.nc.            #
 #                                                                                #
 #  Remarks:                                                                      #
-#  This is the "non-adjust" variant that replaces the older combined OBC script. #
-#  ADT satellite data is used for SSH but without dynamic adjustment.            #
 #                                                              September, 2022   #
-#  Synced with STOFS operational v3.1.0                                          #
 ##################################################################################
 
 
@@ -25,6 +21,7 @@ set -x
   echo "module list in ${fn_this_script}"
   module list
   echo; echo
+
 
 # ---------------------------> Load YAML Configuration (with fallback to defaults)
 if [ -n "${OFS_CONFIG}" ] && [ -f "${OFS_CONFIG}" ]; then
@@ -54,8 +51,8 @@ fi
 
 
 # ---------------------------> Global Variables
-  fn_exe_gen_3Dth=${EXECstofs3d}/${RUN:-stofs_3d_atl}_gen_3Dth_from_hycom
-  fn_exe_gen_nudge=${EXECstofs3d}/${RUN:-stofs_3d_atl}_gen_nudge_from_hycom
+  fn_exe_gen_3Dth=${EXECstofs3d}/stofs_3d_atl_gen_3Dth_from_hycom
+  fn_exe_gen_nudge=${EXECstofs3d}/stofs_3d_atl_gen_nudge_from_hycom
 
   fn_input_gen_3Dth=${FIXstofs3d}/${RUN:-stofs_3d_atl}_obc_3dth_nc.in
   fn_input_gen_nudge=${FIXstofs3d}/${RUN:-stofs_3d_atl}_obc_nudge_nc.in
@@ -67,9 +64,11 @@ fi
 
   fn_nco_tsuv=${FIXstofs3d}/${RUN:-stofs_3d_atl}_obc_3dth_cvt_tsuv.nco
 
-  # From YAML (forcing.ocean.obc.n_list_target_2d/3d) or defaults
-  N_list_target_2D=${N_list_target_2D:-21}
-  N_list_target_3D=${N_list_target_3D:-21}
+  # 96 hr:: N_list_target_2D=14
+  # 96 hr:: N_list_target_3D=14
+  # 96 hr:: FYI: [12:6:+12+24*5] == {12    18    24    30    36    42    48    54    60    66    72    78    84    90    96   102   108   114   120   126   132}, N=21 pnts
+  N_list_target_2D=21
+  N_list_target_3D=21
 
 
 # ---------------------------> file names
@@ -78,7 +77,7 @@ fi
 
   fn_rtofs_obc_TEM_3Dth_ori=TEM_3D.th.nc
   fn_rtofs_obc_TEM_3Dth_std=${RUN}.${cycle}.tem3dth.nc
-
+  
   fn_rtofs_obc_SAL_3Dth_ori=SAL_3D.th.nc
   fn_rtofs_obc_SAL_3Dth_std=${RUN}.${cycle}.sal3dth.nc
 
@@ -93,16 +92,20 @@ fi
 
 
 # ---------------------------> roi: for nudging nc & 3Dth.nc
-# From YAML (forcing.ocean.obc.roi_2ds/roi_3dz) or defaults (ATL domain)
-idx_x1_2ds=${ROI_2DS_X1:-2805}
-idx_x2_2ds=${ROI_2DS_X2:-2923}
-idx_y1_2ds=${ROI_2DS_Y1:-1598}
-idx_y2_2ds=${ROI_2DS_Y2:-2325}
 
-idx_x1_3dz=${ROI_3DZ_X1:-482}
-idx_x2_3dz=${ROI_3DZ_X2:-600}
-idx_y1_3dz=${ROI_3DZ_Y1:-94}
-idx_y2_3dz=${ROI_3DZ_Y2:-821}
+idx_x1_2ds=${idx_x1_2ds:-2805}
+idx_x2_2ds=${idx_x2_2ds:-2923}
+idx_y1_2ds=${idx_y1_2ds:-1598}
+idx_y2_2ds=${idx_y2_2ds:-2325}
+
+idx_x1_3dz=${idx_x1_3dz:-482}
+idx_x2_3dz=${idx_x2_3dz:-600}
+idx_y1_3dz=${idx_y1_3dz:-94}
+idx_y2_3dz=${idx_y2_3dz:-821}
+
+
+# v6 RTOFS-2D, nudge dmn: 2805  2923  1598  2325
+# v6 RTOFS-3D, nudge dmn: [482  600   94  821]
 
 
 # --------------------------> dates
@@ -111,7 +114,8 @@ idx_y2_3dz=${ROI_3DZ_Y2:-821}
 
 # --------------------------> default: create list of RTOFS files
     list_fn_2D_n=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_2ds_{n012,n018}_diag.nc | sort`
-
+    
+    # 96 hr:: list_fn_2D_f=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_2ds_{f000,f006,f012,f018,f024,f030,f036,f042,f048,f054,f060,f066}_diag.nc`
     list_fn_2D_f=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_2ds_{f000,f006,f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090,f096,f102,f108,f114,f120}_diag.nc`
 
 
@@ -119,16 +123,20 @@ idx_y2_3dz=${ROI_3DZ_Y2:-821}
     list_fn_2D_n_f_1+="${list_fn_2D_f[@]}"
 
     list_fn_3D_n=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_3dz_{n012,n018,n024}_6hrly_hvr_US_east.nc | sort`
+    # 96 hr:: list_fn_3D_f=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_3dz_{f006,f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078}_6hrly_hvr_US_east.nc`
     list_fn_3D_f=`ls ${COMINrtofs}/rtofs.${yyyymmdd_today}/rtofs_glo_3dz_{f006,f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090,f096,f102,f108,f114,f120}_6hrly_hvr_US_east.nc`
 
     list_fn_3D_n_f_1="${list_fn_3D_n[@]} "
     list_fn_3D_n_f_1+="${list_fn_3D_f[@]}"
 
 #  --------------------------> backup
-
+ 
+    # 96 hr: list_fn_2D_n_f_2=`ls ${COMINrtofs}/rtofs.${yyyymmdd_prev}/rtofs_glo_2ds_{f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090}_diag.nc`
+    # FYI: [12:6:+12+24*5] == {12    18    24    30    36    42    48    54    60    66    72    78    84    90    96   102   108   114   120   126   132}, N=21 pnts
     list_fn_2D_n_f_2=`ls ${COMINrtofs}/rtofs.${yyyymmdd_prev}/rtofs_glo_2ds_{f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090,f096,f102,f108,f114,f120,f126,f132,f144}_diag.nc`
-
-    list_fn_3D_n_f_2=`ls ${COMINrtofs}/rtofs.${yyyymmdd_prev}/rtofs_glo_3dz_{f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090,f096,f102,f108,f114,f120,f126,f132,f144}_6hrly_hvr_US_east.nc`
+    
+    # 96 hrlist_fn_3D_n_f_2=`ls ${COMINrtofs}/rtofs.${yyyymmdd_prev}/rtofs_glo_3dz_{f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090}_6hrly_hvr_US_east.nc`
+    list_fn_3D_n_f_2=`ls ${COMINrtofs}/rtofs.${yyyymmdd_prev}/rtofs_glo_3dz_{f012,f018,f024,f030,f036,f042,f048,f054,f060,f066,f072,f078,f084,f090,f096,f102,f108,f114,f120,f126,f132,f144}_6hrly_hvr_US_east.nc`    
 
 
 
@@ -156,7 +164,7 @@ for flag_route_no in ${list_route_no[@]}; do
     list_fn_2D_n_f=$list_fn_2D_n_f_2
  fi
  echo "flag_route_no = $flag_route_no";
-
+   
     LIST_fn_final_2d=''
     for fn_2d_k_sz in $list_fn_2D_n_f
     do
@@ -170,12 +178,12 @@ for flag_route_no in ${list_route_no[@]}; do
            LIST_fn_final_2d+="${fn_2d_k_sz} "
         else
            echo "WARNING: " $fn_2d_k_sz ": filesize $filesize less than $FILESIZE"
-           echo "WARNING: " $fn_2d_k_sz ": filesize $filesize less than $FILESIZE"
+           echo "WARNING: " $fn_2d_k_sz ": filesize $filesize less than $FILESIZE"  
         fi
 
       else
         echo "WARNING: "  $fn_2d_k_sz " does not exist"
-        echo "WARNING: "  $fn_2d_k_sz " does not exist"
+        echo "WARNING: "  $fn_2d_k_sz " does not exist"  
       fi
     done
 
@@ -211,9 +219,9 @@ if [[ ${N_list_1} -gt 2 ]]; then
 
     echo "combined: LIST_fn_1 & 2: "
     for a in ${LIST_fn_final_2d[@]}; do echo $a; done
-
+  
   else
-    LIST_fn_final_2d=${A1[@]}
+    LIST_fn_final_2d=${A1[@]}  
   fi
 
 elif [[ ${N_list_2} -gt 2 ]]; then
@@ -226,15 +234,15 @@ fi
 
     # 2D: ln -s files
     rm -f RTOFS_2D_???.nc
-
+ 
     LIST_fn_final_2d=(${LIST_fn_final_2d[@]});
 
-  echo ${LIST_fn_final_2d[@]}; echo
-  echo N_LIST_fn_final_2d = ${#LIST_fn_final_2d[@]}
+  echo ${LIST_fn_final_2d[@]}; echo  
+  echo N_LIST_fn_final_2d = ${#LIST_fn_final_2d[@]} 
   for a in ${LIST_fn_final_2d[@]}; do echo $a; done; echo;
 
 
-  N_min_rtofs_cr=10
+  N_min_rtofs_cr=10  
   if [[ ${#LIST_fn_final_2d[@]} -ge ${N_min_rtofs_cr} ]]; then
     let cnt=-1
     for fn_2D_k in ${LIST_fn_final_2d[@]}
@@ -248,9 +256,9 @@ fi
     done
 
   else
-	  echo "N_LIST_fn_final_2d(${#LIST_fn_final_2d[@]}) < ${N_min_rtofs_cr}"
+	  echo "N_LIST_fn_final_2d(${N_LIST_fn_final_2d}) < ${N_min_rtofs_cr}"
 
-  fi
+  fi	  
 
 
 # ---------> 3D: files: check file sizes
@@ -281,12 +289,12 @@ for flag_route_no in ${list_route_no[@]}; do
            LIST_fn_final_3d+="${fn_3d_k_sz} "
         else
            echo "WARNING: " $fn_3d_k_sz ": filesize $filesize less than $FILESIZE"
-           echo "WARNING: " $fn_3d_k_sz ": filesize $filesize less than $FILESIZE"
+           echo "WARNING: " $fn_3d_k_sz ": filesize $filesize less than $FILESIZE"  
         fi
 
       else
         echo "WARNING: "  $fn_3d_k_sz " does not exist"
-        echo "WARNING: "  $fn_3d_k_sz " does not exist"
+        echo "WARNING: "  $fn_3d_k_sz " does not exist"  
       fi
     done
 
@@ -321,13 +329,14 @@ if [[ ${N_list_1} -gt 2 ]]; then
 
     n_diff_1_2=$((${N_list_2}-${N_list_1}))
 
+    # error   LIST_fn_final_3d=${A1[@]} ${B2[@]:$N_list_1:$n_diff_1_2}
     LIST_fn_final_3d=(${A1[@]} ${B2[@]:$N_list_1:$n_diff_1_2})
 
     echo "combined: LIST_fn_1 & 2: "
     for a in ${LIST_fn_final_3d[@]}; do echo $a; done
 
   else
-    LIST_fn_final_3d=${A1[@]}
+    LIST_fn_final_3d=${A1[@]}	  
 
   fi
 
@@ -335,14 +344,14 @@ elif [[ ${N_list_2} -gt 2 ]]; then
   LIST_fn_final_3d=${B2[@]}
 
 else
-  LIST_fn_final_3d=()
+  LIST_fn_final_3d=()	
 
 fi
 
 
 LIST_fn_final_3d=(${LIST_fn_final_3d[@]})
 
-  N_min_rtofs_cr=10;
+  N_min_rtofs_cr=10;  
   if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]]; then
     let cnt=-1
     for fn_3D_k in ${LIST_fn_final_3d[@]};
@@ -356,14 +365,16 @@ LIST_fn_final_3d=(${LIST_fn_final_3d[@]})
   else
      echo "N_LIST_fn_final_3d < ${N_min_rtofs_cr}"
 
-  fi
+  fi	  
+
+    # 3dz_{non-n000, n006,n024,non-f000,f006,f192}, OK- w/o f000, use n024! w/o n000, use n024 of yesterday
 
 
-# ============================================> Process rtofs data
+# ============================================> Process rotfs data
 
 
 if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d[@]} -ge ${N_min_rtofs_cr} ]]; then
-
+        
 	list_fn_2ds=(); list_fn_2ds=`ls RTOFS_2D_*nc | sort`; list_fn_2ds=(${list_fn_2ds[@]});
 	list_fn_3dz=(); list_fn_3dz=`ls RTOFS_3D_*nc | sort`; list_fn_3dz=(${list_fn_3dz[@]});
 
@@ -384,20 +395,20 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
   for fn_2ds in ${list_fn_2ds_new[@]}
   do
 
-    echo "begin: ${fn_2ds} ..."
+    echo "begin: ${fn_2ds} ..."	  
     fn_in=$fn_2ds
     fn_out=rio_ssh_$fn_in
-    ncks -O -d X,$idx_x1_2ds,$idx_x2_2ds -d Y,$idx_y1_2ds,$idx_y2_2ds -v $list_var_oi  $fn_in  $fn_out
+    ncks -O -d X,$idx_x1_2ds,$idx_x2_2ds -d Y,$idx_y1_2ds,$idx_y2_2ds -v $list_var_oi  $fn_in  $fn_out   
 
   done
 
   list_var_oi='MT,Date,Longitude,Latitude,temperature,salinity,u,v'
   for fn_3dz  in ${list_fn_3dz_new[@]}
   do
-    echo "begin: ${fn_3dz} ..."
+    echo "begin: ${fn_3dz} ..."	  
     fn_in=$fn_3dz
     fn_out=rio_tsuv_$fn_in
-    ncks -O -d X,$idx_x1_3dz,$idx_x2_3dz -d Y,$idx_y1_3dz,$idx_y2_3dz -v $list_var_oi  $fn_in  $fn_out
+    ncks -O -d X,$idx_x1_3dz,$idx_x2_3dz -d Y,$idx_y1_3dz,$idx_y2_3dz -v $list_var_oi  $fn_in  $fn_out   
 
   done
 
@@ -420,7 +431,7 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
   fn_TSUV_1_nc=TSUV_1_${yyyymmdd_today}_${cycle}.nc
 
 
-  # create schism SSH_1.nc & TSUV_1.nc
+  # create schsim SSH_1.nc & TSUV_1.nc
   rm -f test0?_3Dth_nu.nc
 
   rm -f ${fn_SSH_1_nc_rtofs_only}
@@ -430,8 +441,8 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
   ncatted -O -a _FillValue,ssh,a,f,-30000 -a missing_value,ssh,a,f,-30000 test02_3Dth_nu.nc test03_3Dth_nu.nc
   ncrename -d MT,time -d X,xlon -d Y,ylat  test03_3Dth_nu.nc
   ncap2 -O -S $fn_nco_ssh test03_3Dth_nu.nc test04_3Dth_nu.nc
-
-  ncks -CO -x -v Date,MT,X,Y  test04_3Dth_nu.nc  $fn_SSH_1_nc_rtofs_only
+  
+  ncks -CO -x -v Date,MT,X,Y  test04_3Dth_nu.nc  $fn_SSH_1_nc_rtofs_only  
 
   cp -pf $fn_SSH_1_nc_rtofs_only SSH_1_raw_RTOFS.nc
 
@@ -442,36 +453,39 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
   ncks -O -x -v Depth,Date,MT,X,Y tmp02_3Dth_nu.nc  $fn_TSUV_1_nc
 
 
-# --------------------------> SSH_1.nc: combine rtofs_only with ADT
+# --------------------------> SSH_1.nc: combine rtofs_only with ADT 
 
   # -----> prepare ADT data
 
+    # zy-2024-12-06: to be removed after testing run
+    #COMINadt=/lfs/h1/nos/estofs/save/Zizang.Yang/ADT_weight_nc_0125deg_reso_adt_sorce_cactus_save_Dir/ADT_weight_nc_0125deg_reso_adt/DIR_Brian_cactus;
+    #fn_adt_today=${COMINadt}/nrt_global_allsat_phy_l4_${yyyymmdd_today}_${yyyymmdd_today}.nc;
+    #fn_adt_prev=${COMINadt}/nrt_global_allsat_phy_l4_${yyyymmdd_prev}_${yyyymmdd_prev}.nc;
+
+
+    # Brian's tentative, 2024/12/06
+    # COMINadt=/lfs/h1/ops/dev/dcom
+    
     fn_adt_today=${COMINadt}/${yyyymmdd_today}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_today}_${yyyymmdd_today}.nc;
     fn_adt_prev=${COMINadt}/${yyyymmdd_prev}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${yyyymmdd_prev}_${yyyymmdd_prev}.nc;
 
-  rm -f adt_roi_today.nc
+  rm -f adt_roi_today.nc  
   rm -f adt_roi_prev.nc
   rm -f adt_roi_fnl.nc
-
-  # ADT domain bounds (from YAML or defaults for ATL)
-  ADT_LONMIN=${ADT_LONMIN:--62.5}
-  ADT_LONMAX=${ADT_LONMAX:--51.5}
-  ADT_LATMIN=${ADT_LATMIN:-7.0}
-  ADT_LATMAX=${ADT_LATMAX:-54.0}
-
+ 
   #
   if [[ -f ${fn_adt_today}  &&  -f ${fn_adt_prev} ]]; then
        flag_ADT=3
        echo "Both exist: ${fn_adt_today} and ${fn_adt_prev}"
 
-       ncks -O -d longitude,${ADT_LONMIN},${ADT_LONMAX} -dlatitude,${ADT_LATMIN},${ADT_LATMAX} -v adt,sla,err_sla   ${fn_adt_today} adt_roi_today.nc
-       ncks -O -d longitude,${ADT_LONMIN},${ADT_LONMAX} -dlatitude,${ADT_LATMIN},${ADT_LATMAX} -v adt,sla,err_sla   ${fn_adt_prev}  adt_roi_prev.nc
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_today} adt_roi_today.nc
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_prev}  adt_roi_prev.nc
 
        ncks -O --mk_rec_dmn time  adt_roi_today.nc -o adt_roi_rec_dim_T.nc
        ncks -O --mk_rec_dmn time  adt_roi_prev.nc  -o adt_roi_rec_dim_P.nc
 
        ncpdq -O -U adt_roi_rec_dim_T.nc  adt_roi_rec_dim_T.nc
-       ncpdq -O -U adt_roi_rec_dim_P.nc  adt_roi_rec_dim_P.nc
+       ncpdq -O -U adt_roi_rec_dim_P.nc  adt_roi_rec_dim_P.nc       
 
 
        ncremap -i adt_roi_rec_dim_T.nc -m ${fn_adt_weight}  -o adt_aft_wt_T.nc
@@ -484,17 +498,17 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
        ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_T.nc adt_aft_cvtz_cln_T.nc
        ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz_P.nc adt_aft_cvtz_cln_P.nc
 
-       ncra adt_aft_cvtz_cln_T.nc  adt_aft_cvtz_cln_P.nc -O adt_aft_cvtz_cln.nc
+       ncra adt_aft_cvtz_cln_T.nc  adt_aft_cvtz_cln_P.nc -O adt_aft_cvtz_cln.nc 
 
        ncrename -d longitude,xlon -d latitude,ylat  -O adt_aft_cvtz_cln.nc
 
 
   elif [ -f ${fn_adt_today} ]; then
        flag_ADT=2
-       ncks -O -d longitude,${ADT_LONMIN},${ADT_LONMAX} -dlatitude,${ADT_LATMIN},${ADT_LATMAX} -v adt,sla,err_sla   ${fn_adt_today} adt_roi_fnl.nc
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_today} adt_roi_fnl.nc
 
        ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
-
+       
        ncpdq -O -U adt_roi_rec_dim.nc  adt_roi_rec_dim.nc
        ncremap -i adt_roi_rec_dim.nc -m ${fn_adt_weight}  -o adt_aft_wt.nc
        ncap2 -O -S ${fn_adt_cvtz_nco}  adt_aft_wt.nc adt_aft_cvtz.nc
@@ -506,7 +520,7 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
   elif [  -f ${fn_adt_prev}  ]; then
        flag_ADT=1
-       ncks -O -d longitude,${ADT_LONMIN},${ADT_LONMAX} -dlatitude,${ADT_LATMIN},${ADT_LATMAX} -v adt,sla,err_sla   ${fn_adt_prev} adt_roi_fnl.nc
+       ncks -O -d longitude,-62.5,-51.5 -dlatitude,7.0,54.0 -v adt,sla,err_sla   ${fn_adt_prev} adt_roi_fnl.nc
 
        ncks -O --mk_rec_dmn time adt_roi_fnl.nc -o adt_roi_rec_dim.nc
 
@@ -517,11 +531,11 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
        ncrename -d longitude,xlon -d latitude,ylat adt_aft_cvtz.nc
        ncks -O -v xlon -v ylat -v surf_el adt_aft_cvtz.nc adt_aft_cvtz_cln.nc
 
-       echo "Using: ${fn_adt_prev}"
+       echo "Using: ${fn_adt_prev}" 
 
   fi
 
-
+  
   sz_adt_aft_cvtz_cln=0
   if [[ -f adt_aft_cvtz_cln.nc ]]; then
       sz_adt_aft_cvtz_cln=`wc -c adt_aft_cvtz_cln.nc | awk '{print $1}'`
@@ -531,12 +545,12 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
   fi
 
-  if [[ $sz_adt_aft_cvtz_cln  -lt  5000000 ]]; then
+  if [[ $sz_adt_aft_cvtz_cln  -lt  5000000 ]]; then 
        flag_ADT=0
        echo "Neither exits: ${fn_adt_today} or  ${fn_adt_prev}; to use previous day rerun file"
-
+             
        cpreq  -pf ${COMOUT_PREV}/rerun/adt_aft_cvtz_cln.nc ./
-  fi
+  fi  
 
 
   cpreq -pf adt_aft_cvtz_cln.nc ${COMOUTrerun}
@@ -545,10 +559,10 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
   ncap2 -O -F -s 'surf_el_t1_adt=surf_el(1,:,:)' adt_aft_cvtz_cln.nc adt_surf_el_t1.nc
   ncatted -O -a  _FillValue,surf_el_t1_adt,o,f,-30000 -a missing_value,surf_el_t1_adt,o,f,-30000 -a scale_factor,surf_el_t1_adt,o,f,1.0 adt_surf_el_t1.nc adt_fnl.nc
 
+  
+  # -----> merge nc: ADT & RTOFS 
 
-  # -----> merge nc: ADT & RTOFS
-
-  # merge rtofs & adt:
+  # merge rotfs & adt:
 
      rm -f ${fn_SSH_1_nc}
 
@@ -560,22 +574,22 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
      ncap2 -A -s  'where(abs(SSH_t1_Fill_0)>1000) SSH_t1_Fill_0=0.0' SSH_1_wk_A.nc  SSH_1_wk_B.nc
 
-
+     
      ncap2 -A -F -s 'SSH_ssh1[time,ylat,xlon]=ssh-SSH_t1_Fill_0'  SSH_1_wk_B.nc  SSH_1_ssh0Fill_C.nc
 
      ncrename -v surf_el,surf_el_rtofs  SSH_1_ssh0Fill_C.nc
 
      ncap2 -A -F -s 'SSH_ssh1_adt=ssh-SSH_t1_Fill_0+ADT_t1' SSH_1_ssh0Fill_C.nc SSH_1_rtofs_adt_D.nc
-
+         
      ncap2 -A -F -s 'surf_el=SSH_ssh1_adt*float(1000.)' SSH_1_rtofs_adt_D.nc SSH_1_rtofs_adt_D.nc
-     ncap2 -A -s  'where(abs(SSH_ssh1_adt)>1000) surf_el=float(-3000.)' SSH_1_rtofs_adt_D.nc SSH_1_rtofs_adt_D.nc
+     ncap2 -A -s  'where(abs(SSH_ssh1_adt)>1000) surf_el=float(-3000.)' SSH_1_rtofs_adt_D.nc SSH_1_rtofs_adt_D.nc  
 
-
+      
      ncatted -O -a scale_factor,surf_el,o,f,0.001 SSH_1_rtofs_adt_D.nc SSH_1_rtofs_adt_E.nc
-
-     rm -f ${fn_SSH_1_nc}
-     ncks -O -v xlon -v ylat -v surf_el  SSH_1_rtofs_adt_E.nc  ${fn_SSH_1_nc}
-
+    
+     rm -f ${fn_SSH_1_nc} 
+     ncks -O -v xlon -v ylat -v surf_el  SSH_1_rtofs_adt_E.nc  ${fn_SSH_1_nc} 
+  
 
 
 # --------------------------> prepare input files
@@ -584,7 +598,7 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
  ln -sf ${fn_SSH_1_nc}  SSH_1.nc
 
-
+ 
  ln -sf ${fn_TSUV_1_nc} TS_1.nc
 
 
@@ -604,13 +618,16 @@ if [[ ${#LIST_fn_final_3d[@]} -ge ${N_min_rtofs_cr} ]] && [[ ${#LIST_fn_final_2d
 
   $fn_exe_gen_3Dth    >> $pgmout 2> errfile
 
-  # add SSH offset on zeta.th.nc (from YAML forcing.ocean.obc.ssh_offset or default)
+  # add SSH_OFFSET m on zeta.th.nc
   SSH_OFFSET=${SSH_OFFSET:-0.04}
 
      mv elev2D.th.nc elev2D.th.nc_ORI
 
      ncap2 -s  "time_series=time_series+float(${SSH_OFFSET})" elev2D.th.nc_ORI -O A1.nc
+     ## # ncap2 -s  'time_series=time_series+float(0.14)' elev2D.th.nc_ORI -O A1.nc
      ncap2 -s "time_series[time,nOpenBndNodes,nLevels,nComponents]=time_series(0,:,:,:)" A1.nc -O  elev2D.th.nc
+     
+     # off: 2025/2/19  ncap2 -s  'time_series=time_series+float(0.04)' elev2D.th.nc_ORI -O elev2D.th.nc
 
 
   export err=$?;
@@ -632,12 +649,12 @@ else   # if [[ ${#LIST_fn_final_3[@]} -ge ${N_min_rtofs_cr} ]]
   msg="${msg}; N_min_rtofs_2d/3d LT ${N_min_rtofs_cr}"
   echo -e ${msg}
 
-fi
+fi	
 
 
 # ---------------------------------> QC & archive
 list_var_ori=(elev2D.th TEM_3D.th SAL_3D.th uv3D.th TEM_nu SAL_nu)
-list_var_std=(elev2dth_non_adj tem3dth sal3dth uv3dth temnu salnu)
+list_var_std=(elev2dth_non_adj tem3dth sal3dth uv3dth temnu salnu) 
 
 # upgrade
   list_end_time_step=(475200.0 475200.0 475200.0 475200.0 5.5 5.5)
@@ -665,20 +682,20 @@ echo $k, $fn_ori, $fn_std
 
    sz_k=$((0))
    dim_k=$((0))
-   if [[ -s ${fn_ori} ]]; then
-       sz_k=$((`wc -c ${fn_ori} | awk '{print $1}'`))
-
-       if [[ ${sz_k} -gt ${list_fn_sz_cr[$k]} ]]; then
-            dim_k=`ncdump -h  ${fn_ori}  | grep "time = UNLIMITED" | awk -F'(' '{print $2}' | awk -F' ' '{print $1}'`;
+   if [[ -s ${fn_ori} ]]; then 
+       sz_k=$((`wc -c ${fn_ori} | awk '{print $1}'`)) 
+       
+       if [[ ${sz_k} -gt ${list_fn_sz_cr[$k]} ]]; then 
+            dim_k=`ncdump -h  ${fn_ori}  | grep "time = UNLIMITED" | awk -F'(' '{print $2}' | awk -F' ' '{print $1}'`; 
 
        else
             sz_k=$((0))
             dim_k=$((0))
        fi
    fi
-   echo "dim=${dim_k}, sz_k-bytes=${sz_k}, sz_cr=${list_fn_sz_cr[$k]}"
+   echo "dim=${dim_k}, sz_k-bytes=${sz_k}, sz_cr=${list_fn_sz_cr[$k]}"  
 
-
+ 
    flag_success=0
    time_end_step=${list_end_time_step[$k]}
    time_offset=${list_offset_time[$k]}
@@ -686,19 +703,19 @@ echo $k, $fn_ori, $fn_std
    if [[ ${dim_k} -ge ${N_dim_cr_max} ]]; then
       cpreq -pf ${fn_ori} ${COMOUTrerun}/${fn_std}
       echo "done: method - non-backup"
-      flag_success=1
+      flag_success=1  
 
-   else
-      if [[ -f  ${COMOUT_PREV}/rerun/${fn_std} ]]; then
+   else 
+      if [[ -f  ${COMOUT_PREV}/rerun/${fn_std} ]]; then 
          rm -f tmp*.nc
 
 	 fn_prev=prev_${fn_std}
          cpreq -pf ${COMOUT_PREV}/rerun/${fn_std} ${fn_prev}
 
          cpreq -pf ${fn_prev} ${COMOUTrerun}/${fn_std}
-         echo "done: method - backup 2"
-         flag_success=1
-
+         echo "done: method - backup 2"   
+         flag_success=1 
+      
       else
          msg="Warning: failed of (non-backup, backup 2) \n ${fn_std} Not created"
          echo -e ${msg}
@@ -710,6 +727,8 @@ done # for files
 
 
 
-  echo
-  echo "${fn_this_script} completed "
-  echo
+  echo 
+  echo "stofs_3d_atl_create_obc_forcing_rtofs.sh completed "  
+  echo 
+
+

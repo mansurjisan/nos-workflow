@@ -220,12 +220,14 @@ case "${OFS_FRAMEWORK}" in
         export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
 
         # STOFS COM paths — use COMOUTroot to stay consistent with compath.py
-        export stofs_ver=${stofs_ver:-v2.1.0}
+        export stofs_ver=${stofs_ver:-v3.1.1}
         export COMINstofs=${COMINstofs:-${COMOUTroot}}
         export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
         export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+        # v3.1.1: DCOM paths for ADT satellite, CO-OPS water level obs, St. Lawrence river
         export COMINadt=${COMINadt:-${DCOMROOT:-}}
-        export OBC_MODE=${OBC_MODE:-non_adjust}
+        export COMINwl=${COMINwl:-${DCOMROOT:-}}
+        export COMINlaw=${COMINlaw:-${DCOMROOT:-}}
         mkdir -p ${COMOUTrerun}
 
         # Prevent user site-packages from interfering with STOFS Python scripts

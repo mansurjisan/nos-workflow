@@ -4,12 +4,11 @@
 #  Name: stofs_3d_atl_add_attr_2d_3d_nc.sh                                      #
 #  This script adds the meta data attributes the NetCDF variables in SCHISM     #
 #  output files with their names containing any strings in {out2d,temperature,  #
-#  salinity,horizontalVelX,horizontalVelY,zCoordinates,verticalVelocity,        #
+#  salinity,horizontalVelX,horizontalVelY,zCoordinates,verticalVelocity,        # 
 #  diffusivity                                                                  #
 #                                                                               #
 #  Remarks:                                                                     #
 #                                              May, 2023; February, 2025        #
-#  Synced with STOFS operational v3.1.0                                         #
 #################################################################################
 
 
@@ -44,6 +43,9 @@
 
 cd ${DATA}; pwd
 
+#fn_src_nml=${COMOUTrerun}/${RUN}.${cycle}.param.nml
+#ln -sf ${fn_src_nml} param.nml
+
 
 myr=`cat param.nml | grep start_year | cut -d'=' -f2 | awk '{print $1}'`
 mmon=`cat param.nml | grep start_month | cut -d'=' -f2 | awk '{print $1}'`
@@ -53,8 +55,6 @@ utchr=`cat param.nml | grep utc_start | cut -d'=' -f2 | cut -d'!' -f1 | awk '{pr
 echo "Adding time attribute:" $myr $mmon $mday $mhr $utchr
 
  outfn=("out2d" "temperature" "salinity" "horizontalVelX" "horizontalVelY" "zCoordinates" "verticalVelocity" "diffusivity")
-
-
 
 
 ict=${i_cnt_file}
@@ -82,13 +82,20 @@ ict=${i_cnt_file}
               ncatted  -a units,windSpeedY,o,c,"m/s" -a data_horizontal_center,windSpeedY,o,c,"node" -a data_vertical_center,windSpeedY,o,c,"full" -a mesh,windSpeedY,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
 
 
+              #ncap2 -s 'defdim("nSCHISM_vgrid_layers",49);' ./outputs/${str}_${ict}.nc  -O ./outputs/${str}_${ict}.nc
+
+
               fn_with_mask=./outputs/${str}_${ict}.nc
               fn_non_mask=./outputs/${str}_${ict}.nc_non_mask
               mv ${fn_with_mask}  ${fn_non_mask}
 
+	      
 	      ncks -A -v idmask ${fn_mask_land_bnd} ${fn_non_mask}
 
-              ncap2 -s 'where(idmask==1) elevation=float(-99999.);defdim("nSCHISM_vgrid_layers",49);vgrid_dummy[nSCHISM_vgrid_layers]=0.' ${fn_non_mask} ${fn_with_mask}
+
+	      # ncap2 -s 'where(idmask==1) elevation=float(-99999.)' ${fn_non_mask} ${fn_with_mask}
+              ncap2 -s 'where(idmask==1) elevation=float(-99999.);defdim("nSCHISM_vgrid_layers",49);vgrid_dummy[nSCHISM_vgrid_layers]=0.' ${fn_non_mask} ${fn_with_mask}              
+
               ncatted -O -a missing_value,elevation,a,f,-99999. ${fn_with_mask} 
 
            fi
@@ -121,7 +128,7 @@ ict=${i_cnt_file}
 
            #Add verticalVelocity
 	   if [ $str == "verticalVelocity" ]
-	      then
+	      then	   
               ncatted  -a units,$str,o,c,"m/s" -a data_horizontal_center,$str,o,c,"node" -a data_vertical_center,$str,o,c,"full" -a mesh,$str,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
 	   fi
 
@@ -129,7 +136,7 @@ ict=${i_cnt_file}
 	   if [ $str == "diffusivity" ]
               then
 	      ncatted  -a units,$str,o,c,"m2/s" -a data_horizontal_center,$str,o,c,"node" -a data_vertical_center,$str,o,c,"full" -a mesh,$str,o,c,"SCHISM_hgrid" ./outputs/${str}_${ict}.nc
-           fi
+           fi		   
 
 	fi
      done

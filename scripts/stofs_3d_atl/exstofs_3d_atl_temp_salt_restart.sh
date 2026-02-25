@@ -5,7 +5,7 @@
 #  This script is a postprocessor to create the hotstart file, namely        #
 #  stofs_3d_atl.t12z.hotstart.stofs3d.nc and copies the files to the com     #
 #  directory. If the current model run date is April 5, the T/S fields in #
-#  hotstart file would be a combined STOFS-3D-atl outpus and G-RTOFS results.#
+#  hotstart file would be a combined STOFS-3D-atl outputs and G-RTOFS results.#
 #                                                                            #
 #  Remarks:                                                                  #
 #                                                        September, 2022     #
@@ -33,7 +33,7 @@
 
 
   # ----------> define rtofs rst date
-   MMDD_ANNUAL_UPDATE_RESTART_FILE=0405
+   MMDD_ANNUAL_UPDATE_RESTART_FILE=0415
 
    MMDD_FCAST_BEGIN=${PDYHH_FCAST_BEGIN:4:4} 
     

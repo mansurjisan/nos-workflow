@@ -72,10 +72,10 @@ ln -sf $FIXstofs3d/${RUN}_vgrid.in  vgrid.in
 ln -sf $FIXstofs3d/${RUN}_tvd.prop  tvd.prop
 ln -sf $FIXstofs3d/${RUN}_tem_nudge.gr3  TEM_nudge.gr3
 ln -sf $FIXstofs3d/${RUN}_station.in  station.in
-ln -sf $FIXstofs3d/${RUN}_river_source_sink.in  source_sink.in
+#ln -sf $FIXstofs3d/${RUN}_river_source_sink.in  source_sink.in
 ln -sf $FIXstofs3d/${RUN}_shapiro.gr3  shapiro.gr3
 ln -sf $FIXstofs3d/${RUN}_sal_nudge.gr3  SAL_nudge.gr3
-ln -sf $FIXstofs3d/${RUN}_param.nml_6globaloutput param.nml_template 
+ln -sf $FIXstofs3d/${RUN}_param.nml_8globaloutput param.nml_template
 ln -sf $FIXstofs3d/${RUN}_river_msource.th  msource.th
 ln -sf $FIXstofs3d/${RUN}_hgrid.ll  hgrid.ll
 ln -sf $FIXstofs3d/${RUN}_hgrid.gr3  hgrid.gr3
@@ -208,37 +208,12 @@ echo $msg
 echo
 
 
-# ---------------------------------------> create St. Lawrence River forcing
-# ---------------------------------------> create St. Lawrence River forcing
+# ---------------------------------------> create rtofs/obc_3dth forcing (non-adjust)
+# v3.1.1: Split into non_adjust (base) + dynamic_adjust (bias correction)
+file_log=log_stofs_3d_atl_create_obc_3d_th_non_adjust.${cycle}.log
 
-file_log=log_create_river_st_lawrence.${cycle}.log
-
-export pgm="${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh"
-${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh  >> ${file_log} 2>&1
-
-export err=$? 
-if [ $err -ne 0 ]
-then
-   msg=" Execution of $pgm did not complete normally - WARNING"
-   postmsg  "$msg"
-   cat ${file_log}
-   err_chk
-else
-   msg=" Execution of $pgm completed normally"
-   postmsg  "$msg"
-   cat ${file_log}
-fi
-
-echo $msg
-echo
-
-
-# ---------------------------------------> create rtofs/obc_3dth forcing
-# ---------------------------------------> create rtofs/obc_3dth forcing
-file_log=log_stofs_3d_atl_create_obc_3d_th.${cycle}.log
-
-export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_3d_th.sh"
-${USHstofs3d}/stofs_3d_atl_create_obc_3d_th.sh  >> ${file_log} 2>&1
+export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_non_adjust.sh"
+${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_non_adjust.sh  >> ${file_log} 2>&1
 
 export err=$?
 if [ $err -ne 0 ]
@@ -257,34 +232,28 @@ echo $msg
 echo
 
 
-# ---------------------------------------> OBC dynamic bias adjustment (optional)
-# If OBC_MODE=dynamic_adjust, apply time-varying bias correction from CO-OPS obs
-OBC_MODE=${OBC_MODE:-non_adjust}
-echo "OBC mode: ${OBC_MODE}"
+# ---------------------------------------> OBC dynamic bias adjustment
+# v3.1.1: Always run dynamic_adjust after non_adjust (applies CO-OPS obs bias correction)
+file_log=log_stofs_3d_atl_create_obc_3d_th_dynamic_adjust.${cycle}.log
 
-if [[ "${OBC_MODE}" == "dynamic_adjust" ]]; then
-  file_log=log_stofs_3d_atl_create_obc_3d_th_dynamic_adjust.${cycle}.log
+export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh"
+${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh >> ${file_log} 2>&1
 
-  export pgm="${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh"
-  ${USHstofs3d}/stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh >> ${file_log} 2>&1
-
-  export err=$?
-  if [ $err -ne 0 ]
-  then
-     msg=" Execution of $pgm did not complete normally - WARNING"
-     postmsg  "$msg"
-     cat ${file_log}
-     # Dynamic adjust failure is non-fatal; non_adj version is already archived
-     echo "WARNING: dynamic_adjust failed, using non_adj elev2dth"
-  else
-     msg=" Execution of $pgm completed normally"
-     postmsg  "$msg"
-     cat ${file_log}
-  fi
-
-  echo $msg
-  echo
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
 fi
+
+echo $msg
+echo
 
 
 # ---------------------------------------> create rtofs/obc_nudge forcing
@@ -302,10 +271,35 @@ then
    cat ${file_log}
    err_chk
 else
-   msg=" Execution of $pgm completed normally"  
+   msg=" Execution of $pgm completed normally"
    postmsg  "$msg"
    cat ${file_log}
-fi 
+fi
+
+echo $msg
+echo
+
+
+# ---------------------------------------> create St. Lawrence River forcing (v3.1.1: moved after OBC)
+# ---------------------------------------> create St. Lawrence River forcing
+
+file_log=log_create_river_st_lawrence.${cycle}.log
+
+export pgm="${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh"
+${USHstofs3d}/stofs_3d_atl_create_river_st_lawrence.sh  >> ${file_log} 2>&1
+
+export err=$?
+if [ $err -ne 0 ]
+then
+   msg=" Execution of $pgm did not complete normally - WARNING"
+   postmsg  "$msg"
+   cat ${file_log}
+   err_chk
+else
+   msg=" Execution of $pgm completed normally"
+   postmsg  "$msg"
+   cat ${file_log}
+fi
 
 echo $msg
 echo
@@ -323,18 +317,18 @@ mkdir -p ${DATA_prep_restart}
 
 
 if [[ $COLDSTART = YES ]]; then
-    msg="${msg}\n restart.nc: COLDSTART=${COLDSTART}, restart file from fix/"
-    echo -e ${msg}; echo "${msg}" >> ${file_log}
 
-    if [[ $(find ${fn_restart_coldstart_fix} -type f -size  +20G 2>/dev/null) ]]; then
-       cpreq -fp ${fn_restart_coldstart_fix} ${fn_restart_rerun}
-       msg="${msg}\n done: copy ${fn_restart_coldstart_fix} \n  ${fn_restart_rerun}"
-       echo -e "${msg}"; echo "${msg}" >> ${file_log} 
+  # stofs v3.1.1: COLDSTART is forbidden for stofs-3d-atl
+  # As a baroclinic 3-D system, using climatological T/S from a cold start file
+  # would greatly deteriorate performance skill.
+    msg=''
+    msg="${msg}\n Attention: COLDSTART=YES is forbidden for stofs-3d-atl."
+    msg="${msg}\n stofs-3d-atl is a baroclinic 3-D system. The initial T/S fields"
+    msg="${msg}\n must be initialized with conditions close to the current day."
+    msg="${msg}\n Please set COLDSTART=NO and provide a valid restart file."
 
-    else
-       msg="WARNING: not found - ${{fn_restart_coldstart_fix}";
-       echo "${msg}"; echo "${msg}" >> ${file_log}
-    fi	    
+    echo -e "${msg}"; echo -e "${msg}" >> ${file_log}
+    err_exit "COLDSTART=YES is forbidden for stofs-3d-atl."
 
 
 else   # COLDSTART=NO
@@ -343,6 +337,7 @@ else   # COLDSTART=NO
 
 # ------------------------
   LIST_fn_fnl_hotstart=''
+  LIST_fn_fnl_hotstart_all_to_be_searched=''
   days=(0 1 2 3 4)
 
   cnt_files=0
@@ -350,6 +345,8 @@ else   # COLDSTART=NO
       date_k=`date -d "${PDYHH_NCAST_BEGIN:0:8} ${k} days ago" +%Y%m%d`
 
       fn_hotstart_oper=$COMINstofs/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc
+
+      LIST_fn_fnl_hotstart_all_to_be_searched+="${fn_hotstart_oper} \n "
 
       if [ -s $fn_hotstart_oper ]; then
         if [[ $(find ${fn_hotstart_oper} -type f -size  +20G 2>/dev/null) ]];
@@ -372,14 +369,21 @@ else   # COLDSTART=NO
 
      fn_hotstart_oper_prev=${LIST_fn_fnl_hotstart[0]};
      echo "found: fn_hotstart_oper_prev = ${fn_hotstart_oper_prev}"
-   
-      cpreq -pf ${fn_hotstart_oper_prev} ${fn_restart_rerun}
+
+     cpreq -pf ${fn_hotstart_oper_prev} ${fn_restart_rerun}
 
   else
-     msg="WARNING: not found - ${fn_hotstart_oper_prev}"; 
-     echo "${msg}"; echo "${msg}" >> ${file_log}
-  fi	
-fi  # COLDSTART
+     # v3.1.1: Improved error logging with list of all searched files
+     msg=" WARNING: The RESTART file is NOT found."
+     msg="${msg}\n This script checked for the following files and NONE was found:\n"
+     msg="${msg}\n ${LIST_fn_fnl_hotstart_all_to_be_searched}"
+     msg="${msg}\n If WCOSS2 recently switched machines, data mirroring may be delayed."
+     msg="${msg}\n Please ensure data mirroring is complete before re-running.\n"
+
+     echo -e "${msg}"; echo -e "${msg}" >> ${file_log}
+     err_exit "RESTART FILE NOT FOUND. See above message for details."
+  fi
+fi  # COLDSTART == YES
 
 
 # ---------------------------------------> Completed preparing param.nml, bctides, forcing files

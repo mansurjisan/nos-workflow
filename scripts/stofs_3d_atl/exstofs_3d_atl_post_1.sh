@@ -1,20 +1,23 @@
 #!/bin/bash
 
 #####################################################################################
-#  Name: exstofs_3d_atl_post_1.sh                                                     #
+#  Name: exstofs_3d_atl_post_1.sh                                                   #
 #  This script is a postprocessor to create combined hotstart nc file, and          #
 #  all the post-model files (that are listed in the STOFS Transition Release        #
-#  forms), execpt the 2-D field nc files (which are created exstofs_3d_atl_post_2.sh  #
+#  forms), execpt the 2-D field nc files (which are created exstofs_3d_atl_post_2.sh#
 #                                                                                   #
 #  Remarks:                                                                         #
-#                                                               September, 2022     #
+#                                                            September, 2022,2025   #
 #####################################################################################
 
-# exstofs_3d_atl_post_processing.sh 
+# exstofs_3d_atl_post_processing.sh
 
-  seton='-xa'
+#  seton='-xa'
   setoff='+xa'
-  set $seton
+#  set $seton
+
+
+  cd ${DATA}
 
 
 # ----------------------->
@@ -36,46 +39,32 @@
 
   pgmout=${fn_this_sh}.$$
 
+  msg=" Bgein  ${fn_this_sh}.sh "
+  postmsg  "$msg"
+
+
 
 # -----------------------> static files
   fn_station_in=$FIXstofs3d/${RUN}_station.in
-  
+
   cd ${DATA}
+
   cpreq --remove-destination -f ${fn_station_in} station.in
 
+  fn_src_nml=${COMOUTrerun}/${RUN}.${cycle}.param.nml
+  ln -sf ${fn_src_nml} param.nml
 
-# -----------------------> check & wait for model run complete 
-fn_mirror=outputs/mirror.out
+
+# -----------------------> check & wait for model run complete
+ fn_mirror=${DATA}/outputs/mirror.out
+
 str_model_run_status="Run completed successfully"
 
-time_sleep_s=600
-
-flag_run_status=1
-
-cnt=0
-while [[ $cnt -le 30 ]]; do
-
-  flag_run_status=`grep "${str_model_run_status}" ${fn_mirror} >/dev/null; echo $?`
-
-    time_elapsed=$(( ${cnt} * ${time_sleep_s} ))
-
-    echo "Elapsed time (sec) =  ${time_elapsed} "
-    echo "flag_run_status=${flag_run_status} (0:suceecess)"; echo
-
-
-    if [[ ${flag_run_status} == 0 ]]; then
-        msg="Model run completed. Proceed to post-processing ..."
-        echo -e ${msg};  
-        echo -e  ${msg} >> $pgmout
-        break
-    else
-        echo "Wait for ${time_sleep_s} more seconds"; echo
-        sleep ${time_sleep_s}    # 10min=600s
-	cnt=$(( ${cnt} + 1 ))
-    fi
-done
 
 # ----------------------->
+
+flag_run_status=1
+flag_run_status=`grep "${str_model_run_status}" ${fn_mirror} >/dev/null; echo $?`
 
 if [[ ${flag_run_status} == 0 ]]; then
     msg=`echo checked mirror.out: SCHISM model run was completed SUCCESSFULLY`
@@ -83,19 +72,15 @@ if [[ ${flag_run_status} == 0 ]]; then
     echo $msg >> $pgmout
 
 
-    #sleep 180s     # wait for stofs_3d_atl_create_geopackage.sh
 
+     dir_outputs_local=${DATA}/outputs
 
-    # ---------------> cp'ed from NCO: prod package (2023/03/16)
-    cd ${DATA}
-    if [  ! -s done_cp_nc ]; then
-        mkdir -p Dir_backup_2d3d
-        cpreq -fpa  outputs/{horizontalVelX,horizontalVelY,out2d,salinity,temperature,zCoordinates}*.nc Dir_backup_2d3d
-
-    fi
+     mkdir -p ${dir_outputs_local}
+     cd ${DATA}
 
 
     # ---------> Update 2d & 3d nc: adding variable attributes
+    cd ${DATA}; pwd
     file_log_attr=log_add_attribute_2d_3d_nc.${cycle}.log
     fn_ush_script_attr=stofs_3d_atl_add_attr_2d_3d_nc.sh
 
@@ -137,6 +122,8 @@ if [[ ${flag_run_status} == 0 ]]; then
 
 
     # ---------> create staout 6-min nc & SHEF file
+    cd ${DATA}; pwd
+
     file_log_awips=log_create_awips_shef.${cycle}.log
     fn_ush_script_awips=stofs_3d_atl_create_awips_shef.sh
     export pgm="${USHstofs3d}/${fn_ush_script_awips}"
@@ -158,6 +145,8 @@ if [[ ${flag_run_status} == 0 ]]; then
 
 
     # ---------> create AWS/EC2 auto nc files
+    cd ${DATA}; pwd
+
     file_log_autoval=log_stofs_3d_atl_create_AWS_autoval_nc.${cycle}.log
     fn_ush_script_autoval=stofs_3d_atl_create_AWS_autoval_nc.sh
     export pgm="${USHstofs3d}/${fn_ush_script_autoval}"
@@ -209,6 +198,7 @@ if [[ ${flag_run_status} == 0 ]]; then
       postmsg "profile: done ncast python, `date`"
 
     # fcast (stacks 3-10)
+    # vgrid.npz from ncast
       postmsg "profile: begin fcast python, `date`"
 
       file_mpmd_prof_fcast=mpmdscript_sta_prof_fcast
@@ -298,6 +288,8 @@ if [[ ${flag_run_status} == 0 ]]; then
 
    
    # ----------> Create AWIPS grib2 files: conus_east_us & puertori masks
+    cd ${DATA}; pwd
+
     file_log_grib2=log_create_awips_grib2_${cycle}.log
     fn_ush_script_grib2=stofs_3d_atl_create_awips_grib2.sh
 
@@ -334,10 +326,16 @@ if [[ ${flag_run_status} == 0 ]]; then
 
 
 else
-    
-     msg=`echo SCHISM model run did NOT finish successfully: Not Found \"${str_model_run_status}\" in ${fn_mirror}`
-     echo -e $msg
-     echo -e $msg >> $pgmout
+
+     msg=`echo FATAL ERROR: SCHISM model run did NOT finish successfully: Not Found \"${str_model_run_status}\" in ${fn_mirror}.`
+
+     #echo -e $msg
+     #echo -e $msg >> $pgmout
+
+     postmsg $msg
+     postmsg $pgmout $msg
+
+     err_exit $msg
 
 # if [ -s ${fn_mirror} ] && [ -n "${str_model_run_status}" ]; then
 fi

@@ -1,19 +1,22 @@
 #!/bin/bash
 
 ##############################################################################
-#  Name: exstofs_3d_atl_post_2.sh                                              #
+#  Name: exstofs_3d_atl_post_2.sh                                            #
 #  This script is a postprocessor to create the 2-D field nc files, namely,  #
-#  stofs_3d_atl.t12z.????_???.field2d.nc and copies the files to the com     #
-#  directory                                                                 #
+#  stofs_3d_atl.t12z.????_???.field2d.nc, GeoPackage files and to generate   #
+#  the restart file for the Nowcast run of the tomorrow's N/F cycle. The     #
+#  The script copies the files to the com directory.                         #
 #                                                                            #
 #  Remarks:                                                                  #
-#                                                        September, 2022     #
+#                                                        September, 2025     #
 ##############################################################################
 
   seton='-xa'
   setoff='+xa'
   set $seton
 
+
+  cd ${DATA}
 
 # ----------------------->
   fn_this_script=exstofs_3d_atl_post_2
@@ -27,50 +30,73 @@
 
   pgmout=${fn_this_script}.$$
 
-  cd ${DATA}
-
 
 # -----------------------> static files
-  fn_station_in=$FIXstofs3d/${RUN}_station.in
-  cpreq --remove-destination -f ${fn_station_in} station.in
+  cd ${DATA}
+
+  fn_src_nml=${COMOUTrerun:-${COMOUT}}/${RUN}.${cycle}.param.nml
+  if [ -f "${fn_src_nml}" ]; then
+    ln -sf ${fn_src_nml} param.nml
+  fi
 
 
-# -----------------------> check & wait for model run complete
+# -----------------------> check for model run complete
 fn_mirror=outputs/mirror.out
 str_model_run_status="Run completed successfully"
 
-time_sleep_s=600
+
+# ----------------------->
 
 flag_run_status=1
-
-cnt=0
-while [[ $cnt -le 30 ]]; do
-
-  flag_run_status=`grep "${str_model_run_status}" ${fn_mirror} >/dev/null; echo $?`
-
-    time_elapsed=$(( ${cnt} * ${time_sleep_s} ))
-
-    echo "Elapsed time (sec) =  ${time_elapsed} "
-    echo "flag_run_status=${flag_run_status} (0:suceecess)"; echo
+flag_run_status=`grep "${str_model_run_status}" ${fn_mirror} >/dev/null; echo $?`
 
 
-    if [[ ${flag_run_status} == 0 ]]; then
-        msg="Model run completed. Proceed to post-processing ..."
-        echo -e ${msg};
-        echo -e  ${msg} >> $pgmout
-        break
-    else
-        echo "Wait for ${time_sleep_s} more seconds"; echo
-        sleep ${time_sleep_s}    # 10min=600s
-        cnt=$(( ${cnt} + 1 ))
-    fi
-done
-
-
-if [[ ${flag_run_status} == 0 ]]; then    
+if [[ ${flag_run_status} == 0 ]]; then
     msg=`echo checked mirror.out: SCHISM model run was completed SUCCESSFULLY`
     echo $msg
     echo $msg >> $pgmout
+
+    # ---------> Update 2d & 3d nc: adding variable attributes
+    cd ${DATA}; pwd
+
+    file_log_attr=log_add_attribute_2d_3d_nc.${cycle}.log
+    fn_ush_script_attr=stofs_3d_atl_add_attr_2d_3d_nc.sh
+
+    export pgm="${USHstofs3d}/${fn_ush_script_attr}"
+
+    file_log=add_attribute_2d_3d_nc.${cycle}
+
+    rm -f $DATA/mpmdscript_add_attr
+
+    echo "${USHstofs3d}/${fn_ush_script_attr} 1 > $DATA/${file_log}_1 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 2 > $DATA/${file_log}_2 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 3 > $DATA/${file_log}_3 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 4 > $DATA/${file_log}_4 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 5 > $DATA/${file_log}_5 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 6 > $DATA/${file_log}_6 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 7 > $DATA/${file_log}_7 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 8 > $DATA/${file_log}_8 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 9 > $DATA/${file_log}_9 " >> $DATA/mpmdscript_add_attr
+    echo "${USHstofs3d}/${fn_ush_script_attr} 10 > $DATA/${file_log}_10 " >> $DATA/mpmdscript_add_attr
+
+    chmod 775 $DATA/mpmdscript_add_attr
+    export MP_PGMMODEL=mpmd
+
+    mpiexec -l -np 10 --cpu-bind verbose,core cfp $DATA/mpmdscript_add_attr
+
+    export err=$?
+    if [ $err -ne 0 ];
+    then
+       msg=" Execution of $pgm did not complete normally, WARNING"
+       postmsg  "$msg"
+       #err_chk
+    else
+       msg=" Execution of $pgm completed normally"
+       postmsg  "$msg"
+    fi
+
+    echo $msg
+    echo
 
 
   # Combined MPI run: merge hotstart (1 task) + create 2D field files (10 tasks) = 11 tasks
@@ -134,17 +160,18 @@ if [[ ${flag_run_status} == 0 ]]; then
     then
        msg=" Execution of $pgm did not complete normally, WARNING"
        postmsg  "$msg"
-       cat ${DATA}/${file_log_geo}
+       ## cat ${DATA}/${file_log_geo}
        #err_chk
     else
        msg=" Execution of $pgm completed normally"
        postmsg  "$msg"
-       cat ${DATA}/${file_log_geo}
+       ## cat ${DATA}/${file_log_geo}
     fi
 
     echo $msg
     echo
- 
+
+
 
   # ---------------------------------------> Completed post processing
 
@@ -156,14 +183,18 @@ if [[ ${flag_run_status} == 0 ]]; then
 
 
   echo
-  echo $msg 
+  echo $msg
   echo
 
 
 else
-     msg=`echo SCHISM model run did NOT finish successfully: Not Found \"${str_model_run_status}\" in ${fn_mirror}`
-     echo $msg
-     echo $msg >> $pgmout
+     msg=`echo FATAL ERROR: SCHISM model run did NOT finish successfully: Not Found \"${str_model_run_status}\" in ${fn_mirror}.`
+
+     postmsg $msg
+     postmsg $pgmout $msg
+
+     err_exit $msg
+
 
 # if [ -s ${fn_mirror} ] && [ -n "${str_model_run_status}" ]; then
 fi

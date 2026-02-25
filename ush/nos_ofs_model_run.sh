@@ -804,9 +804,11 @@ _comf_execute_ufs_coastal() {
     echo "Phase: $phase"
 
     # Set UFS-Coastal runtime environment
-    export OMP_STACKSIZE=${OMP_STACKSIZE:-512M}
-    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-    export OMP_PLACES=${OMP_PLACES:-cores}
+    # Force OMP_NUM_THREADS=1 — Cray PBS can set it to ncpus (128) which
+    # causes massive oversubscription with 120 MPI ranks per node
+    export OMP_STACKSIZE=512M
+    export OMP_NUM_THREADS=1
+    export OMP_PLACES=cores
     export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
     export ESMF_RUNTIME_PROFILE=ON
     export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
@@ -818,10 +820,10 @@ _comf_execute_ufs_coastal() {
 
     # Run UFS-Coastal
     echo "Starting UFS-Coastal at: $(date)"
-    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} -depth 1 ${UFS_EXEC}"
+    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
 
     cd $DATA
-    mpiexec -n ${NTASKS} -ppn ${PPN} -depth 1 ${UFS_EXEC}
+    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
     export err=$?
 
     echo "UFS-Coastal finished at: $(date) with exit code: $err"

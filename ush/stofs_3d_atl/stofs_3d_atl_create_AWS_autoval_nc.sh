@@ -29,7 +29,7 @@ set -x
   
   cd ${DATA}/outputs
   
-  msg="Found nc files: `ls out2d_?.nc`"
+  msg="Found nc files: `ls out2d_{?,??}.nc`"
   echo ${msg}; echo $msg >> $pgmout   
   echo 
 
