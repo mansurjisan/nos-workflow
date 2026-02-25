@@ -700,6 +700,92 @@ _comf_stage_files() {
             echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
         fi
 
+        # SCHISM expects bare-name input files (hgrid.gr3, vgrid.in, etc.)
+        # but nos_ofs_launch.sh copies them with prefixed names (e.g., secofs_ufs.hgrid.gr3).
+        # The old COMF pathway (nos_ofs_nowcast_forecast.sh) re-copies from FIXofs with bare names.
+        # For UFS-Coastal, we bypass that script, so we must create the bare-name copies here.
+        if [ "${OCEAN_MODEL:-}" = "SCHISM" ] || [ "${OCEAN_MODEL:-}" = "schism" ]; then
+            echo "  Staging SCHISM bare-name input files..."
+
+            # Grid files: copy from FIXofs with bare SCHISM names
+            [ -s "${FIXofs}/${PREFIXNOS}.hgrid.gr3" ] && \
+                cp -p ${FIXofs}/${PREFIXNOS}.hgrid.gr3 ${DATA}/hgrid.gr3
+            [ -s "${FIXofs}/${VGRID_CTL}" ] && \
+                cp -p ${FIXofs}/${VGRID_CTL} ${DATA}/vgrid.in
+            [ -s "${FIXofs}/${VGRID_NU_CTL:-${PREFIXNOS}.vgrid.nu.in}" ] && \
+                cp -p ${FIXofs}/${VGRID_NU_CTL:-${PREFIXNOS}.vgrid.nu.in} ${DATA}/vgrid_nu.in
+            [ -s "${FIXofs}/${STA_OUT_CTL}" ] && \
+                cp -p ${FIXofs}/${STA_OUT_CTL} ${DATA}/station.in
+
+            # Optional grid property files
+            for bare in shapiro.gr3 diffmax.gr3 diffmin.gr3 watertype.gr3 \
+                        windrot_geo2proj.gr3 albedo.gr3 rough.gr3 \
+                        SAL_nudge.gr3 TEM_nudge.gr3 elev.ic; do
+                if [ -s "${FIXofs}/${PREFIXNOS}.${bare}" ]; then
+                    cp -p ${FIXofs}/${PREFIXNOS}.${bare} ${DATA}/${bare}
+                fi
+            done
+
+            # bctides.in from COMOUT (prep-generated with correct nodal factors)
+            if [ "$phase" = "nowcast" ]; then
+                local bctides_file="${BCTIDES_IN:-${PREFIXNOS}.bctides.in}.nowcast"
+            else
+                local bctides_file="${BCTIDES_IN:-${PREFIXNOS}.bctides.in}.forecast"
+            fi
+            if [ -s "${COMOUT}/${bctides_file}" ]; then
+                cp -p ${COMOUT}/${bctides_file} ${DATA}/bctides.in
+                echo "  Staged bctides.in from ${bctides_file}"
+            elif [ -s "${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in}" ]; then
+                cp -p ${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in} ${DATA}/bctides.in
+                echo "  WARNING: Using FIXofs bctides.in (prep-generated not found)"
+            fi
+
+            # Hotstart/initial condition file
+            if [ "$phase" = "nowcast" ]; then
+                if [ -n "${INI_FILE_NOWCAST:-}" ] && [ -s "${COMOUT}/${INI_FILE_NOWCAST}" ]; then
+                    cp -p ${COMOUT}/${INI_FILE_NOWCAST} ${DATA}/hotstart.nc
+                    echo "  Staged hotstart.nc from ${INI_FILE_NOWCAST}"
+                elif [ -n "${INI_FILE:-}" ] && [ -s "${INI_FILE}" ]; then
+                    cp -p ${INI_FILE} ${DATA}/hotstart.nc
+                    echo "  Staged hotstart.nc from ${INI_FILE}"
+                else
+                    echo "  WARNING: No hotstart.nc found (ihot=${ihot_val})"
+                fi
+            fi
+
+            # NWM river forcing from COMOUT
+            if [ -n "${NWM_SOURCE_SINK_NOW:-}" ] && [ "$phase" = "nowcast" ]; then
+                if [ -s "${COMOUT}/${NWM_SOURCE_SINK_NOW}" ]; then
+                    cp -p ${COMOUT}/${NWM_SOURCE_SINK_NOW} ${DATA}/
+                    tar xf ${DATA}/${NWM_SOURCE_SINK_NOW} -C ${DATA}/ 2>/dev/null || true
+                    echo "  Staged NWM river forcing (nowcast)"
+                fi
+            elif [ -n "${NWM_SOURCE_SINK_FORE:-}" ] && [ "$phase" = "forecast" ]; then
+                if [ -s "${COMOUT}/${NWM_SOURCE_SINK_FORE}" ]; then
+                    cp -p ${COMOUT}/${NWM_SOURCE_SINK_FORE} ${DATA}/
+                    tar xf ${DATA}/${NWM_SOURCE_SINK_FORE} -C ${DATA}/ 2>/dev/null || true
+                    echo "  Staged NWM river forcing (forecast)"
+                fi
+            fi
+
+            # SCHISM river forcing file renames (COMF convention)
+            [ -s "${DATA}/schism_temp.th" ] && cp -p ${DATA}/schism_temp.th ${DATA}/TEM_1.th
+            [ -s "${DATA}/schism_flux.th" ] && cp -p ${DATA}/schism_flux.th ${DATA}/flux.th
+            [ -s "${DATA}/schism_salt.th" ] && cp -p ${DATA}/schism_salt.th ${DATA}/salt.th
+
+            # sflux_inputs.txt (not needed for DATM, but SCHISM may check)
+            if [ -s "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
+                mkdir -p ${DATA}/sflux
+                cp -p ${FIXofs}/${PREFIXNOS}.sflux_inputs.txt ${DATA}/sflux/sflux_inputs.txt
+            fi
+
+            # hgrid.gr3 must also be in outputs/ directory
+            mkdir -p ${DATA}/outputs
+            [ -s "${DATA}/hgrid.gr3" ] && cp -p ${DATA}/hgrid.gr3 ${DATA}/outputs/
+
+            echo "  SCHISM bare-name file staging complete"
+        fi
+
         echo "  UFS-Coastal staging complete"
     fi
 }
