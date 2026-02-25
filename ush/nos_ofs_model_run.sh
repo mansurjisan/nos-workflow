@@ -845,17 +845,18 @@ _comf_stage_files() {
                 if [ -d "$restart_dir" ]; then
                     for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
                              staout_5 staout_6 staout_7 staout_8 staout_9; do
-                        [ -s "${restart_dir}/${f}" ] && cp -p ${restart_dir}/${f} ${DATA}/outputs/
+                        [ -f "${restart_dir}/${f}" ] && cp -p ${restart_dir}/${f} ${DATA}/outputs/
                     done
                     echo "  Staged restart_outputs from ${restart_dir}"
-                else
-                    echo "WARNING: restart_outputs not found: $restart_dir, creating empty files"
-                    touch $DATA/outputs/mirror.out
-                    touch $DATA/outputs/flux.out
-                    for i in $(seq 1 9); do
-                        [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
-                    done
                 fi
+                # Ensure all required output files exist (even if empty)
+                # SCHISM ihot=2 opens these files regardless of content
+                for f in mirror.out flux.out; do
+                    [ ! -f "${DATA}/outputs/${f}" ] && touch "${DATA}/outputs/${f}"
+                done
+                for i in $(seq 1 9); do
+                    [ ! -f "$DATA/outputs/staout_${i}" ] && touch "$DATA/outputs/staout_${i}"
+                done
             fi
 
             echo "  SCHISM bare-name file staging complete"
