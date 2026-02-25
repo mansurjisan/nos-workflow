@@ -811,6 +811,18 @@ _comf_stage_files() {
                 fi
             fi
 
+            # River forcing tar from COMOUT (contains schism_flux.th,
+            # schism_temp.th, schism_salt.th for boundary flux forcing)
+            if [ -n "${RIVER_FORCING_FILE:-}" ]; then
+                if [ -s "${COMOUT}/${RIVER_FORCING_FILE}" ]; then
+                    cp -p ${COMOUT}/${RIVER_FORCING_FILE} ${DATA}/
+                    tar xf ${DATA}/${RIVER_FORCING_FILE} -C ${DATA}/
+                    echo "  Staged river forcing from ${RIVER_FORCING_FILE}"
+                else
+                    echo "WARNING: River forcing tar not found: ${COMOUT}/${RIVER_FORCING_FILE}"
+                fi
+            fi
+
             # SCHISM river forcing file renames (COMF convention)
             [ -s "${DATA}/schism_temp.th" ] && cp -p ${DATA}/schism_temp.th ${DATA}/TEM_1.th
             [ -s "${DATA}/schism_flux.th" ] && cp -p ${DATA}/schism_flux.th ${DATA}/flux.th
