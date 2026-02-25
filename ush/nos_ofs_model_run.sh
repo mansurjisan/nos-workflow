@@ -720,9 +720,19 @@ _comf_stage_files() {
             # Optional grid property files
             for bare in shapiro.gr3 diffmax.gr3 diffmin.gr3 watertype.gr3 \
                         windrot_geo2proj.gr3 albedo.gr3 rough.gr3 \
-                        SAL_nudge.gr3 TEM_nudge.gr3 elev.ic; do
+                        SAL_nudge.gr3 TEM_nudge.gr3 elev.ic hgrid.ll; do
                 if [ -s "${FIXofs}/${PREFIXNOS}.${bare}" ]; then
                     cp -p ${FIXofs}/${PREFIXNOS}.${bare} ${DATA}/${bare}
+                fi
+            done
+
+            # SCHISM property files (tvd.prop, fluxflag.prop)
+            # NOTE: partition.prop is NOT copied because UFS-Coastal uses a different
+            # SCHISM PET count (1080) than standalone (1200). SCHISM will use METIS
+            # for internal partitioning if partition.prop is not present.
+            for prop in tvd.prop fluxflag.prop; do
+                if [ -s "${FIXofs}/${PREFIXNOS}.${prop}" ]; then
+                    cp -p ${FIXofs}/${PREFIXNOS}.${prop} ${DATA}/${prop}
                 fi
             done
 
