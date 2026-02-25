@@ -778,6 +778,27 @@ _comf_stage_files() {
                 fi
             fi
 
+            # Validate NWM river files exist (if_source=1 in param.nml requires these)
+            if [ ! -s "${DATA}/source_sink.in" ]; then
+                echo "WARNING: source_sink.in not found after NWM tar extraction"
+                echo "  NWM tar may be empty — check prep job river forcing generation"
+                echo "  SCHISM will abort if param.nml has if_source=1"
+                # Fallback: try to get source_sink.in from FIX directory
+                if [ -s "${FIXofs}/${PREFIXNOS}.source_sink.in" ]; then
+                    cp -p ${FIXofs}/${PREFIXNOS}.source_sink.in ${DATA}/source_sink.in
+                    echo "  Fallback: staged source_sink.in from FIXofs"
+                fi
+            fi
+            for rivf in vsource.th vsink.th msource.th; do
+                if [ ! -s "${DATA}/${rivf}" ]; then
+                    echo "WARNING: ${rivf} not found after NWM tar extraction"
+                    if [ -s "${FIXofs}/${PREFIXNOS}.${rivf}" ]; then
+                        cp -p ${FIXofs}/${PREFIXNOS}.${rivf} ${DATA}/${rivf}
+                        echo "  Fallback: staged ${rivf} from FIXofs"
+                    fi
+                fi
+            done
+
             # SCHISM river forcing file renames (COMF convention)
             [ -s "${DATA}/schism_temp.th" ] && cp -p ${DATA}/schism_temp.th ${DATA}/TEM_1.th
             [ -s "${DATA}/schism_flux.th" ] && cp -p ${DATA}/schism_flux.th ${DATA}/flux.th

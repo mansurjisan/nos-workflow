@@ -514,7 +514,7 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 86400. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
+  step_nu_tr = 10800. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients
@@ -531,8 +531,8 @@
 ! If error occurs like 'bktrk_subs: overflow' or 'MAIN: nbtrk > mxnbt'
 ! gradually increasing these will solve the problem
 !-----------------------------------------------------------------------
-  s1_mxnbt = 0.5
-  s2_mxnbt = 3.5
+  s1_mxnbt = 5.0
+  s2_mxnbt = 15.0
 
 !-----------------------------------------------------------------------
 ! Flag for harmonic analysis for elevation. If used , need to turn on cpp flags
@@ -635,19 +635,18 @@
 ! Option to enforce strict mass conservation for each tracer model (only works with itr_met=3,4)
 ! At moment the scheme has not accounted for bottom 'leaking' (e.g. in SED),
 ! so iadjust_mass_consv0(5) must =0
-! NOTE: Commented out — not supported by UFS-Coastal SCHISM build (older version)
 !-----------------------------------------------------------------------
-!  iadjust_mass_consv0(1)=0 !T
-!  iadjust_mass_consv0(2)=0 !S
-!  iadjust_mass_consv0(3)=0 !GEN
-!  iadjust_mass_consv0(4)=0 !AGE
-!  iadjust_mass_consv0(5)=0 !SED3D (code won't allow non-0 for this module)
-!  iadjust_mass_consv0(6)=0 !EcoSim
-!  iadjust_mass_consv0(7)=0 !ICM
-!  iadjust_mass_consv0(8)=0 !CoSiNE
-!  iadjust_mass_consv0(9)=0 !Feco
-!  iadjust_mass_consv0(10)=0 !TIMOR
-!  iadjust_mass_consv0(11)=0 !FABM
+  iadjust_mass_consv0(1)=0 !T
+  iadjust_mass_consv0(2)=0 !S
+  iadjust_mass_consv0(3)=0 !GEN
+  iadjust_mass_consv0(4)=0 !AGE
+  iadjust_mass_consv0(5)=0 !SED3D (code won't allow non-0 for this module)
+  iadjust_mass_consv0(6)=0 !EcoSim
+  iadjust_mass_consv0(7)=0 !ICM
+  iadjust_mass_consv0(8)=0 !CoSiNE
+  iadjust_mass_consv0(9)=0 !Feco
+  iadjust_mass_consv0(10)=0 !TIMOR
+  iadjust_mass_consv0(11)=0 !FABM
 /
 
 &SCHOUT
