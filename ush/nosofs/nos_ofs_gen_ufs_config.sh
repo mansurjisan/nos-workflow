@@ -101,8 +101,8 @@ fi
 if [ -z "${NY_GLOBAL:-}" ] && [ -n "${MINLAT:-}" ] && [ -n "${MAXLAT:-}" ] && [ -n "${BLEND_RESOLUTION:-}" ]; then
     NY_GLOBAL=$(python3 -c "print(int(round((${MAXLAT} - (${MINLAT}))/${BLEND_RESOLUTION}) + 1))" 2>/dev/null || echo 921)
 fi
-NX_GLOBAL=${NX_GLOBAL:-1001}
-NY_GLOBAL=${NY_GLOBAL:-921}
+NX_GLOBAL=${NX_GLOBAL:-1161}
+NY_GLOBAL=${NY_GLOBAL:-1081}
 
 # Extract date components
 YYYY=${PDY:0:4}

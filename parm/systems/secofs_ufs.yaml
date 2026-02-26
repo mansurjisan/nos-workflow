@@ -181,12 +181,12 @@ ufs_coastal:
   nhours_fcst: 48
   # Atmospheric coupling timestep (seconds) — matches actual run
   dt_atmos: 720
-  # DATM grid dimensions (must match blended forcing NetCDF)
-  # Computed from domain bounds and blend_resolution:
-  #   nx = (MAXLON - MINLON) / blend_resolution + 1 = (88-63)/0.025+1 = 1001
-  #   ny = (MAXLAT - MINLAT) / blend_resolution + 1 = (40-17)/0.025+1 = 921
-  nx_global: 1001
-  ny_global: 921
+  # DATM grid dimensions — fallback values only.
+  # The orchestrator reads actual dims from the forcing file after blending,
+  # so these are only used if the dimension extraction fails.
+  # Python blend uses padded domain: (-90,-61,15,42) → 1161x1081
+  nx_global: 1161
+  ny_global: 1081
   # Template files (in FIXofs)
   templates:
     model_configure: model_configure.template

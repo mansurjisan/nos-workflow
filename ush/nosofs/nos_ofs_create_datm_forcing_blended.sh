@@ -305,8 +305,28 @@ echo "Staged: ${DATM_DIR}/${DATM_MESH_FILE}"
 export DATM_INPUT_DIR=${DATM_DIR}
 export DATM_MESH_FILE=${DATM_MESH_FILE}
 export DATM_FORCING_FILE=${DATM_FORCING_FILE}
-export NX_GLOBAL=${NX_TARGET}
-export NY_GLOBAL=${NY_TARGET}
+
+# Read actual grid dimensions from the forcing file (Python blend may use
+# padded domain bounds that differ from the shell-computed NX/NY_TARGET)
+FORCING_PATH=${DATA}/${DATM_DIR}/${DATM_FORCING_FILE}
+ACTUAL_DIMS=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${FORCING_PATH}', 'r')
+print(len(ds.dimensions['x']), len(ds.dimensions['y']))
+ds.close()
+" 2>/dev/null) && {
+    read NX_ACTUAL NY_ACTUAL <<< "$ACTUAL_DIMS"
+    if [ "${NX_ACTUAL}" != "${NX_TARGET}" ] || [ "${NY_ACTUAL}" != "${NY_TARGET}" ]; then
+        echo "NOTE: Forcing file dims (${NX_ACTUAL}x${NY_ACTUAL}) differ from shell-computed (${NX_TARGET}x${NY_TARGET})"
+        echo "      Using actual file dimensions for datm_in"
+    fi
+    export NX_GLOBAL=${NX_ACTUAL}
+    export NY_GLOBAL=${NY_ACTUAL}
+} || {
+    echo "WARNING: Could not read forcing file dims, using computed values"
+    export NX_GLOBAL=${NX_TARGET}
+    export NY_GLOBAL=${NY_TARGET}
+}
 
 # =============================================================================
 # Step 6: Generate UFS Config Files
