@@ -5,7 +5,11 @@ Memory-optimized version for WCOSS2.
 
 - HRRR provides high-res (3km) forcing over CONUS
 - GFS provides global coverage at 0.25 deg
-- GFS is temporally interpolated from 3-hourly to HRRR's hourly timesteps
+- Output time grid covers the FULL GFS range at hourly resolution
+  - Within HRRR time range: blended HRRR+GFS (HRRR over CONUS, GFS elsewhere)
+  - Beyond HRRR time range: GFS-only (interpolated from 3-hourly to hourly)
+  This ensures the forcing file always covers the full forecast window,
+  even when HRRR extended forecasts (F19+) are unavailable.
 - Spatial interpolation: cKDTree for HRRR, RegularGridInterpolator for GFS
 - Output on a regular lat/lon grid at configurable resolution
 
@@ -76,9 +80,9 @@ hrrr = Dataset(HRRR_FILE, 'r')
 hrrr_lon2d_full = hrrr.variables['longitude'][:]
 hrrr_lat2d_full = hrrr.variables['latitude'][:]
 hrrr_lon2d_full = np.where(hrrr_lon2d_full > 180, hrrr_lon2d_full - 360, hrrr_lon2d_full)
-hrrr_time = np.array(hrrr.variables['time'][:])
-n_times = len(hrrr_time)
-print(f"  HRRR full grid: {hrrr_lon2d_full.shape}, {n_times} times")
+hrrr_time_raw = np.array(hrrr.variables['time'][:])
+n_hrrr_times = len(hrrr_time_raw)
+print(f"  HRRR full grid: {hrrr_lon2d_full.shape}, {n_hrrr_times} times")
 
 # Subset HRRR to target domain + buffer (memory optimization)
 print("Subsetting HRRR to target domain...")
@@ -150,10 +154,50 @@ print(f"  HRRR coverage: {100*np.sum(hrrr_valid_mask)/hrrr_valid_mask.size:.1f}%
 del hrrr_points, target_points_flat, distances
 gc.collect()
 
+# =========================================================================
+# Build unified hourly time grid covering the FULL GFS range
+# HRRR may not cover the entire forecast period (e.g., extended forecasts
+# F19+ unavailable), so we use GFS's time range as the master and fill
+# with GFS-only data where HRRR is missing.
+# =========================================================================
+print("Building unified time grid...")
+# Determine hourly interval from HRRR (typically 3600 seconds)
+if n_hrrr_times >= 2:
+    hrrr_dt = hrrr_time_raw[1] - hrrr_time_raw[0]
+else:
+    hrrr_dt = 3600.0
+
+# The output time grid covers the union of HRRR and GFS, at hourly resolution
+# Use the earliest start and latest end from both sources
+t_start = min(hrrr_time_raw[0], gfs_time[0])
+t_end = max(hrrr_time_raw[-1], gfs_time[-1])
+out_time = np.arange(t_start, t_end + hrrr_dt / 2, hrrr_dt)
+n_times = len(out_time)
+
+# Determine which output timesteps have HRRR coverage
+# (within half a timestep of any HRRR time record)
+hrrr_t_set = set(hrrr_time_raw.tolist())
+hrrr_time_has = np.array([
+    any(abs(ot - ht) < hrrr_dt / 2 for ht in hrrr_time_raw) for ot in out_time
+])
+n_hrrr_covered = int(np.sum(hrrr_time_has))
+n_gfs_only = n_times - n_hrrr_covered
+
+if n_gfs_only > 0:
+    print(f"  HRRR covers {n_hrrr_covered}/{n_times} timesteps")
+    print(f"  GFS-only fill for {n_gfs_only} timesteps (beyond HRRR range)")
+else:
+    print(f"  HRRR covers all {n_times} timesteps")
+
+# Map output timesteps to HRRR time indices (for blended timesteps)
+hrrr_time_to_idx = {}
+for i, ht in enumerate(hrrr_time_raw):
+    hrrr_time_to_idx[ht] = i
+
 print("Setting up GFS temporal interpolation...")
 gfs_time_interp = interp1d(gfs_time, np.arange(len(gfs_time)),
                             kind='linear', bounds_error=False, fill_value='extrapolate')
-target_to_gfs_idx = gfs_time_interp(hrrr_time)
+target_to_gfs_idx = gfs_time_interp(out_time)
 
 print("Creating output NetCDF...")
 ncout = Dataset(OUTPUT_FILE, 'w', format='NETCDF4')
@@ -165,7 +209,7 @@ time_var = ncout.createVariable('time', 'f8', ('time',))
 time_var.units = 'seconds since 1970-01-01 00:00:00'
 time_var.calendar = 'standard'
 time_var.axis = 'T'
-time_var[:] = hrrr_time
+time_var[:] = out_time
 
 lat_var = ncout.createVariable('latitude', 'f4', ('y', 'x'))
 lat_var.units = 'degrees_north'
@@ -212,27 +256,35 @@ else:
 
 print("Processing variables...")
 for hrrr_name, gfs_name in VARIABLES:
-    if hrrr_name not in hrrr.variables or gfs_name not in gfs.variables:
-        print(f"  Skipping {hrrr_name}")
+    # Need at least GFS; HRRR is optional for GFS-only timesteps
+    if gfs_name not in gfs.variables:
+        print(f"  Skipping {hrrr_name} (not in GFS)")
         continue
+    hrrr_has_var = hrrr_name in hrrr.variables
 
     print(f"  {hrrr_name}...", end='', flush=True)
 
-    hrrr_var = hrrr.variables[hrrr_name]
+    hrrr_var = hrrr.variables[hrrr_name] if hrrr_has_var else None
     gfs_var = gfs.variables[gfs_name]
+
+    # Get units/long_name from whichever source is available
+    if hrrr_has_var:
+        var_units = hrrr_var.units if hasattr(hrrr_var, 'units') else ''
+        var_long_name = hrrr_var.long_name if hasattr(hrrr_var, 'long_name') else hrrr_name
+    else:
+        var_units = gfs_var.units if hasattr(gfs_var, 'units') else ''
+        var_long_name = gfs_var.long_name if hasattr(gfs_var, 'long_name') else gfs_name
 
     out_var = ncout.createVariable(hrrr_name, 'f4', ('time', 'y', 'x'), fill_value=9.999e+20)
     out_var.short_name = hrrr_name
-    out_var.units = hrrr_var.units if hasattr(hrrr_var, 'units') else ''
-    out_var.long_name = hrrr_var.long_name if hasattr(hrrr_var, 'long_name') else hrrr_name
+    out_var.units = var_units
+    out_var.long_name = var_long_name
 
     for t in range(n_times):
-        # HRRR data - read only the subset
-        hrrr_data = np.array(hrrr_var[t, hrrr_row_slice, hrrr_col_slice], dtype=np.float32).ravel()
-        hrrr_data = np.where(hrrr_data > 1e10, np.nan, hrrr_data)
-        hrrr_regrid = hrrr_data[hrrr_indices]
+        cur_time = out_time[t]
+        use_hrrr = hrrr_time_has[t] and hrrr_has_var
 
-        # GFS data with temporal interpolation
+        # --- GFS data with temporal interpolation (always needed) ---
         gfs_t_idx = target_to_gfs_idx[t]
         t_low = int(np.floor(gfs_t_idx))
         t_high = int(np.ceil(gfs_t_idx))
@@ -258,12 +310,32 @@ for hrrr_name, gfs_name in VARIABLES:
         gfs_regrid = gfs_interp(np.column_stack([target_lat2d.ravel(),
                                                   target_lon2d.ravel()])).reshape(ny, nx)
 
-        # Combine: HRRR where valid, GFS elsewhere
-        combined = np.where(hrrr_valid_mask & ~np.isnan(hrrr_regrid), hrrr_regrid, gfs_regrid)
+        if use_hrrr:
+            # --- Blended: HRRR over CONUS + GFS gap fill ---
+            # Find matching HRRR time index
+            hrrr_t = None
+            for ht, hi in hrrr_time_to_idx.items():
+                if abs(cur_time - ht) < hrrr_dt / 2:
+                    hrrr_t = hi
+                    break
+
+            if hrrr_t is not None:
+                hrrr_data = np.array(hrrr_var[hrrr_t, hrrr_row_slice, hrrr_col_slice], dtype=np.float32).ravel()
+                hrrr_data = np.where(hrrr_data > 1e10, np.nan, hrrr_data)
+                hrrr_regrid = hrrr_data[hrrr_indices]
+                combined = np.where(hrrr_valid_mask & ~np.isnan(hrrr_regrid), hrrr_regrid, gfs_regrid)
+                del hrrr_data, hrrr_regrid
+            else:
+                # Fallback: GFS only (shouldn't happen if hrrr_time_has is correct)
+                combined = gfs_regrid
+        else:
+            # --- GFS-only timestep (beyond HRRR range) ---
+            combined = gfs_regrid
+
         out_var[t, :, :] = combined
 
         # Free memory each timestep
-        del hrrr_data, hrrr_regrid, gfs_data_low, gfs_data_high, gfs_data, gfs_regrid, combined
+        del gfs_data_low, gfs_data_high, gfs_data, gfs_regrid, combined
 
     gc.collect()
     print(" done")
@@ -275,4 +347,7 @@ gfs.close()
 print(f"\nOutput: {OUTPUT_FILE}")
 print(f"Grid: {nx} x {ny}")
 print(f"Time steps: {n_times} (hourly)")
+if n_gfs_only > 0:
+    print(f"  Blended (HRRR+GFS): {n_hrrr_covered} timesteps")
+    print(f"  GFS-only extension: {n_gfs_only} timesteps")
 print("SUCCESS!")
