@@ -645,8 +645,9 @@ _comf_stage_files() {
             local sim_start=${time_hotstart:-$($NDATE -6 ${PDY}${cyc})}
         else
             local nhours=${LEN_FORECAST:-48}
-            # Forecast uses hotstart from nowcast → start_type=continue
-            local start_type="continue"
+            # DATM must use start_type=startup (no DATM restart files).
+            # SCHISM hot restart is controlled by ihot=2 in param.nml, not start_type.
+            local start_type="startup"
             # Forecast starts at time_nowcastend (= cycle time)
             local sim_start=${time_nowcastend:-${PDY}${cyc}}
         fi
