@@ -155,6 +155,30 @@ del hrrr_points, target_points_flat, distances
 gc.collect()
 
 # =========================================================================
+# Lambert Conformal wind rotation pre-computation
+# HRRR uses Lambert Conformal projection — U/V winds in GRIB2 are
+# grid-relative and must be rotated to earth-relative for DATM.
+# Parameters from HRRR GRIB2 metadata (Grid 227, 3km CONUS):
+#   LoV (central meridian)  = 262.5° = -97.5°
+#   LaD (true latitude)     = 38.5° (tangent cone, Latin1 = Latin2)
+# Rotation formula (matches nos_ofs_create_forcing_met.f lines 1998-2018):
+#   angle = sin(LaD) * (lon - LoV) * D2R
+#   U_earth =  cos(angle) * U_grid + sin(angle) * V_grid
+#   V_earth = -sin(angle) * U_grid + cos(angle) * V_grid
+# =========================================================================
+HRRR_LOV = -97.5   # longitude of vertical (central meridian), degrees
+HRRR_LAD = 38.5    # latitude at which projection is true, degrees
+D2R = np.pi / 180.0
+ROTCON = np.sin(HRRR_LAD * D2R)
+
+rot_angle = ROTCON * (target_lon2d - HRRR_LOV) * D2R
+cos_rot = np.cos(rot_angle).astype(np.float32)
+sin_rot = np.sin(rot_angle).astype(np.float32)
+print(f"  LCC wind rotation: LoV={HRRR_LOV}°, LaD={HRRR_LAD}°")
+print(f"  Rotation angle range: {np.degrees(rot_angle.min()):.1f}° to {np.degrees(rot_angle.max()):.1f}°")
+del rot_angle
+
+# =========================================================================
 # Build unified hourly time grid covering the FULL GFS range
 # HRRR may not cover the entire forecast period (e.g., extended forecasts
 # F19+ unavailable), so we use GFS's time range as the master and fill
@@ -339,6 +363,38 @@ for hrrr_name, gfs_name in VARIABLES:
 
     gc.collect()
     print(" done")
+
+# =========================================================================
+# Apply Lambert Conformal wind rotation to HRRR-sourced wind data.
+# HRRR U/V are grid-relative; rotate to earth-relative where HRRR was used.
+# GFS-only timesteps and GFS-filled grid cells are already earth-relative.
+# =========================================================================
+if 'UGRD_10maboveground' in ncout.variables and 'VGRD_10maboveground' in ncout.variables:
+    print("Applying Lambert Conformal wind rotation to HRRR wind data...")
+    u_var = ncout.variables['UGRD_10maboveground']
+    v_var = ncout.variables['VGRD_10maboveground']
+    n_rotated = 0
+
+    for t in range(n_times):
+        if not hrrr_time_has[t]:
+            continue  # GFS-only timestep — winds already earth-relative
+
+        u_data = np.array(u_var[t, :, :], dtype=np.float32)
+        v_data = np.array(v_var[t, :, :], dtype=np.float32)
+
+        # Rotate only where HRRR data was used (hrrr_valid_mask)
+        u_rot = np.where(hrrr_valid_mask,
+                         cos_rot * u_data + sin_rot * v_data, u_data)
+        v_rot = np.where(hrrr_valid_mask,
+                         -sin_rot * u_data + cos_rot * v_data, v_data)
+
+        u_var[t, :, :] = u_rot
+        v_var[t, :, :] = v_rot
+        n_rotated += 1
+
+    print(f"  Rotated {n_rotated} blended timesteps ({n_times - n_rotated} GFS-only, skipped)")
+    del cos_rot, sin_rot
+    gc.collect()
 
 ncout.close()
 hrrr.close()
