@@ -639,21 +639,23 @@ _comf_stage_files() {
         # - start_type: always startup (DATM has no restart files)
         # - start_year/month/day/hour: actual simulation start time
         #
-        # CRITICAL: For forecast with ihot=2, the start time MUST match the
-        # nowcast start time (time_hotstart). The hotstart step number is
-        # relative to the original start time. If we change start_hour from
-        # 06Z to 12Z, SCHISM interprets step 180 as 12Z+6h=18Z instead of
-        # the correct 06Z+6h=12Z, causing a time mismatch with DATM forcing
-        # and immediate CFL violation.
+        # UFS-Coastal timing: With start_type=startup, the NUOPC clock starts
+        # at the configured start time. ALL components must be synchronized to
+        # this clock. For forecast:
+        #   - Use ihot=1 (NOT ihot=2): loads hotstart ocean state but resets
+        #     SCHISM internal clock to step 0, matching the NUOPC clock
+        #   - Start at time_nowcastend (12Z), not time_hotstart (06Z)
+        #   - nhours = LEN_FORECAST (48h), duration from 12Z
+        # ihot=2 is incompatible with start_type=startup when the hotstart is
+        # not at step 0, because NUOPC clock starts at configured time while
+        # SCHISM continues from the hotstart step, creating a clock mismatch.
         local start_type="startup"
-        # Both nowcast and forecast use the same start time (time_hotstart)
-        local sim_start=${time_hotstart:-$($NDATE -${LEN_NOWCAST:-6} ${PDY}${cyc})}
         if [ "$phase" = "nowcast" ]; then
             local nhours=${LEN_NOWCAST:-6}
+            local sim_start=${time_hotstart:-$($NDATE -${LEN_NOWCAST:-6} ${PDY}${cyc})}
         else
-            # Forecast total duration = nowcast + forecast hours from the
-            # original start time, because ihot=2 resumes at the hotstart step
-            local nhours=$(( ${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48} ))
+            local nhours=${LEN_FORECAST:-48}
+            local sim_start=${time_nowcastend:-${PDY}${cyc}}
         fi
 
         # Extract date components from simulation start time
@@ -692,10 +694,11 @@ _comf_stage_files() {
         fi
         if [ -s "${DATA}/param.nml" ]; then
             local rnday=$(python3 -c "print(${nhours}/24.0)" 2>/dev/null || echo "0.25")
+            # ihot=1: hotstart with time reset to 0 (loads ocean state, resets clock)
+            # Used for BOTH nowcast and forecast in UFS-Coastal because
+            # start_type=startup requires SCHISM clock to match NUOPC clock.
+            # ihot=2 (continue) would desync SCHISM's step counter from NUOPC.
             local ihot_val=1
-            if [ "$phase" = "forecast" ]; then
-                ihot_val=2
-            fi
             sed -i "s/rnday_value/${rnday}/" ${DATA}/param.nml
             # Also handle case where rnday already has a numeric value
             sed -i "s/^\(\s*rnday\s*=\s*\)[0-9.]*\(.*\)/\1${rnday}\2/" ${DATA}/param.nml
