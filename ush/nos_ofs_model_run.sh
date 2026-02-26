@@ -784,10 +784,17 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No forecast hotstart.nc found"
                 fi
-                # Set ihot=2 for hot restart from nowcast
+                # Set ihot for hot restart from nowcast
+                # UFS-Coastal (USE_DATM): must use ihot=1 (time reset) because
+                # start_type=startup requires SCHISM clock to match NUOPC clock.
+                # Standalone SCHISM: uses ihot=2 (continue from step).
                 if [ -s "${DATA}/param.nml" ]; then
-                    sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
-                    echo "  Set ihot=2 in param.nml for forecast"
+                    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+                        echo "  UFS-Coastal: keeping ihot=1 in param.nml for forecast"
+                    else
+                        sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
+                        echo "  Set ihot=2 in param.nml for forecast"
+                    fi
                 fi
             fi
 
