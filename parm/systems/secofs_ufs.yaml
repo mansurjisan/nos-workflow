@@ -160,7 +160,7 @@ model:
 ufs_coastal:
   enabled: true
   # DATM domain label (used by blending scripts)
-  datm_domain: SECOFS
+  datm_domain: ATLANTIC
   # Coupling interval in seconds (must match runSeq @120 in ufs.configure and dt in param.nml)
   coupling_interval: 120
   # MED+ATM share PETs 0-119 (120 PETs)
@@ -184,9 +184,9 @@ ufs_coastal:
   # DATM grid dimensions — fallback values only.
   # The orchestrator reads actual dims from the forcing file after blending,
   # so these are only used if the dimension extraction fails.
-  # Python blend uses padded domain: (-90,-61,15,42) → 1161x1081
-  nx_global: 1161
-  ny_global: 1081
+  # ATLANTIC domain: (-98,-55,10,53) at 0.025° → 1721x1721
+  nx_global: 1721
+  ny_global: 1721
   # Template files (in FIXofs)
   templates:
     model_configure: model_configure.template
