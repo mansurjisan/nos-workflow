@@ -761,6 +761,22 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No hotstart.nc found (ihot=${ihot_val})"
                 fi
+            elif [ "$phase" = "forecast" ]; then
+                # Forecast uses nowcast restart as hotstart (ihot=2)
+                if [ -n "${INI_FILE_FORECAST:-}" ] && [ -s "${COMOUT}/${INI_FILE_FORECAST}" ]; then
+                    cp -p ${COMOUT}/${INI_FILE_FORECAST} ${DATA}/hotstart.nc
+                    echo "  Staged hotstart.nc from ${INI_FILE_FORECAST}"
+                elif [ -n "${RST_OUT_NOWCAST:-}" ] && [ -s "${COMOUT}/${RST_OUT_NOWCAST}" ]; then
+                    cp -p ${COMOUT}/${RST_OUT_NOWCAST} ${DATA}/hotstart.nc
+                    echo "  Staged hotstart.nc from ${RST_OUT_NOWCAST}"
+                else
+                    echo "  WARNING: No forecast hotstart.nc found"
+                fi
+                # Set ihot=2 for hot restart from nowcast
+                if [ -s "${DATA}/param.nml" ]; then
+                    sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
+                    echo "  Set ihot=2 in param.nml for forecast"
+                fi
             fi
 
             # NWM river forcing from COMOUT
