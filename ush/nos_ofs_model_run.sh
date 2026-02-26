@@ -636,20 +636,24 @@ _comf_stage_files() {
 
         # Patch UFS configs for nowcast vs forecast
         # - nhours_fcst / stop_n: simulation length
-        # - start_type: startup (cold/nowcast) vs continue (hotstart/forecast)
+        # - start_type: always startup (DATM has no restart files)
         # - start_year/month/day/hour: actual simulation start time
+        #
+        # CRITICAL: For forecast with ihot=2, the start time MUST match the
+        # nowcast start time (time_hotstart). The hotstart step number is
+        # relative to the original start time. If we change start_hour from
+        # 06Z to 12Z, SCHISM interprets step 180 as 12Z+6h=18Z instead of
+        # the correct 06Z+6h=12Z, causing a time mismatch with DATM forcing
+        # and immediate CFL violation.
+        local start_type="startup"
+        # Both nowcast and forecast use the same start time (time_hotstart)
+        local sim_start=${time_hotstart:-$($NDATE -${LEN_NOWCAST:-6} ${PDY}${cyc})}
         if [ "$phase" = "nowcast" ]; then
             local nhours=${LEN_NOWCAST:-6}
-            local start_type="startup"
-            # Nowcast starts at time_hotstart (typically cycle - 6h)
-            local sim_start=${time_hotstart:-$($NDATE -6 ${PDY}${cyc})}
         else
-            local nhours=${LEN_FORECAST:-48}
-            # DATM must use start_type=startup (no DATM restart files).
-            # SCHISM hot restart is controlled by ihot=2 in param.nml, not start_type.
-            local start_type="startup"
-            # Forecast starts at time_nowcastend (= cycle time)
-            local sim_start=${time_nowcastend:-${PDY}${cyc}}
+            # Forecast total duration = nowcast + forecast hours from the
+            # original start time, because ihot=2 resumes at the hotstart step
+            local nhours=$(( ${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48} ))
         fi
 
         # Extract date components from simulation start time
@@ -693,10 +697,14 @@ _comf_stage_files() {
                 ihot_val=2
             fi
             sed -i "s/rnday_value/${rnday}/" ${DATA}/param.nml
+            # Also handle case where rnday already has a numeric value
+            sed -i "s/^\(\s*rnday\s*=\s*\)[0-9.]*\(.*\)/\1${rnday}\2/" ${DATA}/param.nml
             sed -i "s/start_year_value/${sim_yyyy}/" ${DATA}/param.nml
             sed -i "s/start_month_value/${sim_mm#0}/" ${DATA}/param.nml
             sed -i "s/start_day_value/${sim_dd#0}/" ${DATA}/param.nml
             sed -i "s/start_hour_value/${sim_hh}/" ${DATA}/param.nml
+            # Also handle case where start_hour already has a numeric value
+            sed -i "s/^\(\s*start_hour\s*=\s*\)[0-9]*\(.*\)/\1${sim_hh#0}\2/" ${DATA}/param.nml
             sed -i "s/ihot = [0-9]*/ihot = ${ihot_val}/" ${DATA}/param.nml
             echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
         fi
