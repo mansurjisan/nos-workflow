@@ -1045,6 +1045,41 @@ _comf_execute_ufs_coastal() {
         echo "WARNING: mirror.out not found — UFS-Coastal may not have completed properly"
     fi
 
+    # After nowcast: combine distributed hotstart files and archive for forecast
+    if [ "$phase" = "nowcast" ] && [ -d "${DATA}/outputs" ]; then
+        echo "Combining distributed hotstart files..."
+        cd ${DATA}/outputs
+
+        # Calculate the hotstart timestep (total nowcast steps)
+        local dt_val=$(grep -m1 '^\s*dt\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9.]//g')
+        local nhot_write_val=$(grep -m1 '^\s*nhot_write\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9]//g')
+        local nsteps=${nhot_write_val:-180}
+        echo "  Hotstart timestep: $nsteps (dt=${dt_val:-unknown})"
+
+        # Run combine_hotstart7 executable
+        local COMBINE_EXE="${EXECnos:-}/schism_combine_hotstart7.exe"
+        if [ -x "$COMBINE_EXE" ]; then
+            $COMBINE_EXE -i $nsteps
+            local combine_err=$?
+            if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
+                echo "  Hotstart combined successfully: hotstart_it=${nsteps}.nc"
+                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
+                echo "  Archived to ${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
+            else
+                echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
+            fi
+        else
+            echo "WARNING: schism_combine_hotstart7.exe not found at $COMBINE_EXE"
+            # Fallback: check if a combined hotstart already exists
+            local combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
+            if [ -n "$combined" ] && [ -s "$combined" ]; then
+                cp -p "$combined" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
+                echo "  Found pre-combined hotstart: $combined, archived to COMOUT"
+            fi
+        fi
+        cd ${DATA}
+    fi
+
     echo "UFS-Coastal $phase execution completed normally"
     msg="UFS-Coastal $phase execution completed normally"
     postmsg "${jlogfile:-/dev/null}" "$msg" 2>/dev/null || true
