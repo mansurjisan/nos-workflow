@@ -10,7 +10,7 @@ Memory-optimized version for WCOSS2.
   - Beyond HRRR time range: GFS-only (interpolated from 3-hourly to hourly)
   This ensures the forcing file always covers the full forecast window,
   even when HRRR extended forecasts (F19+) are unavailable.
-- Spatial interpolation: cKDTree for HRRR, RegularGridInterpolator for GFS
+- Spatial interpolation: Delaunay bilinear for HRRR, RegularGridInterpolator for GFS
 - Output on a regular lat/lon grid at configurable resolution
 
 Usage:
@@ -30,7 +30,7 @@ Author: SECOFS UFS-Coastal (from ufs-nos-ofs)
 
 import numpy as np
 from netCDF4 import Dataset
-from scipy.spatial import cKDTree
+from scipy.spatial import Delaunay
 from scipy.interpolate import RegularGridInterpolator, interp1d
 from datetime import datetime
 import sys
@@ -136,22 +136,50 @@ target_lon2d, target_lat2d = np.meshgrid(target_lon, target_lat)
 ny, nx = len(target_lat), len(target_lon)
 print(f"  Grid: {ny} x {nx} = {ny*nx:,} points")
 
-print("Building HRRR spatial index (subset only)...")
+print("Building HRRR Delaunay triangulation (bilinear interpolation)...")
 hrrr_points = np.column_stack([hrrr_lon2d.ravel(), hrrr_lat2d.ravel()])
-hrrr_tree = cKDTree(hrrr_points)
-target_points_flat = np.column_stack([target_lon2d.ravel(), target_lat2d.ravel()])
-distances, hrrr_indices = hrrr_tree.query(target_points_flat)
-hrrr_indices = hrrr_indices.reshape(ny, nx)
-distances = distances.reshape(ny, nx)
+tri = Delaunay(hrrr_points)
 
-# HRRR valid mask: use HRRR where distance < 0.1 deg and within lat range
-hrrr_lat_min = float(hrrr_lat2d.min())
-hrrr_lat_max = float(hrrr_lat2d.max())
-hrrr_valid_mask = (distances < 0.1) & (target_lat2d >= hrrr_lat_min) & (target_lat2d <= hrrr_lat_max)
+# Find which triangle each target point falls in
+target_points_flat = np.column_stack([target_lon2d.ravel(), target_lat2d.ravel()])
+simplices = tri.find_simplex(target_points_flat)
+
+# HRRR valid mask: target points inside the HRRR triangulation convex hull
+hrrr_valid_mask = (simplices >= 0).reshape(ny, nx)
 print(f"  HRRR coverage: {100*np.sum(hrrr_valid_mask)/hrrr_valid_mask.size:.1f}%")
 
-# Free memory
-del hrrr_points, target_points_flat, distances
+# Precompute barycentric coordinates for bilinear interpolation
+# Only for points inside the triangulation (simplex >= 0)
+valid_flat = simplices >= 0
+n_valid = int(np.sum(valid_flat))
+print(f"  Valid points for bilinear: {n_valid:,}")
+
+valid_simplices = simplices[valid_flat]
+valid_targets = target_points_flat[valid_flat]  # (n_valid, 2)
+
+# Triangle vertex indices into hrrr_points array
+tri_vert_idx = tri.simplices[valid_simplices]  # (n_valid, 3)
+
+# Vertex coordinates
+v0 = hrrr_points[tri_vert_idx[:, 0]]  # (n_valid, 2)
+v1 = hrrr_points[tri_vert_idx[:, 1]]
+v2 = hrrr_points[tri_vert_idx[:, 2]]
+
+# Barycentric coordinates: for triangle (v0,v1,v2) and point p
+det = (v1[:, 1] - v2[:, 1]) * (v0[:, 0] - v2[:, 0]) + \
+      (v2[:, 0] - v1[:, 0]) * (v0[:, 1] - v2[:, 1])
+lam0 = ((v1[:, 1] - v2[:, 1]) * (valid_targets[:, 0] - v2[:, 0]) +
+        (v2[:, 0] - v1[:, 0]) * (valid_targets[:, 1] - v2[:, 1])) / det
+lam1 = ((v2[:, 1] - v0[:, 1]) * (valid_targets[:, 0] - v2[:, 0]) +
+        (v0[:, 0] - v2[:, 0]) * (valid_targets[:, 1] - v2[:, 1])) / det
+lam2 = 1.0 - lam0 - lam1
+
+bary_coords = np.column_stack([lam0, lam1, lam2]).astype(np.float32)  # (n_valid, 3)
+valid_flat_indices = np.where(valid_flat)[0]  # indices into flattened target grid
+
+# Free intermediate arrays
+del hrrr_points, target_points_flat, simplices, valid_targets
+del v0, v1, v2, det, lam0, lam1, lam2, valid_simplices, valid_flat, tri
 gc.collect()
 
 # =========================================================================
@@ -346,9 +374,14 @@ for hrrr_name, gfs_name in VARIABLES:
             if hrrr_t is not None:
                 hrrr_data = np.array(hrrr_var[hrrr_t, hrrr_row_slice, hrrr_col_slice], dtype=np.float32).ravel()
                 hrrr_data = np.where(hrrr_data > 1e10, np.nan, hrrr_data)
-                hrrr_regrid = hrrr_data[hrrr_indices]
+                # Bilinear interpolation via precomputed Delaunay barycentric coords
+                vals_at_verts = hrrr_data[tri_vert_idx]  # (n_valid, 3)
+                hrrr_interp_valid = np.sum(vals_at_verts * bary_coords, axis=1)
+                hrrr_regrid = np.full(ny * nx, np.nan, dtype=np.float32)
+                hrrr_regrid[valid_flat_indices] = hrrr_interp_valid
+                hrrr_regrid = hrrr_regrid.reshape(ny, nx)
                 combined = np.where(hrrr_valid_mask & ~np.isnan(hrrr_regrid), hrrr_regrid, gfs_regrid)
-                del hrrr_data, hrrr_regrid
+                del hrrr_data, vals_at_verts, hrrr_interp_valid, hrrr_regrid
             else:
                 # Fallback: GFS only (shouldn't happen if hrrr_time_has is correct)
                 combined = gfs_regrid
