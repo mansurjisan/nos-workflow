@@ -288,6 +288,20 @@ find_hrrr_files_fortran() {
 
         # Phase A: Detection loop (matches COMF lines 255-278)
         # Loop through dates and cycles, checking f01 existence
+        #
+        # IMPORTANT: In operational COMF, the forecast sflux is generated AFTER
+        # the nowcast model run completes. At that time, future HRRR hourly
+        # cycles (t13z, t14z, ...) don't exist yet. The Fortran is forced to
+        # use longer leads (f02-f48) from EXIST_CYCLE because f01 from later
+        # cycles simply isn't available.
+        #
+        # In DATM prep, we generate ALL forcing upfront. If we add f01 from
+        # every available hourly cycle, the Fortran will pick them (shortest
+        # lead) and we'll get different results than COMF.
+        #
+        # Fix: For FORECAST, only add f01 from cycles that also have f48
+        # (i.e., 00z/06z/12z/18z). This ensures the Fortran must use longer
+        # leads from EXIST_CYCLE for most valid times, matching COMF behavior.
         local TMPDATE=$SEARCH_DATE
         while [ "$TMPDATE" -le "$END_DATE" ]; do
             local N=0
@@ -296,16 +310,19 @@ find_hrrr_files_fortran() {
                 local TMPFILE="${COMIN}/hrrr.${TMPDATE}/conus/hrrr.t${CYCLE}z.wrfsfcf01.grib2"
 
                 if [ -s "${TMPFILE}.idx" ] || [ -s "$TMPFILE" ]; then
-                    echo "$TMPFILE" >> $OUTPUT_LIST
-
                     if [ "$RUNTYPE_LOCAL" == "nowcast" ]; then
-                        # Nowcast: any cycle with f01 qualifies
+                        # Nowcast: add f01 from every detected cycle
+                        echo "$TMPFILE" >> $OUTPUT_LIST
                         EXIST_CYCLE=$CYCLE
                         EXIST_DATE=$TMPDATE
                     elif [ "$RUNTYPE_LOCAL" == "forecast" ]; then
-                        # Forecast: require f48 to also exist
+                        # Forecast: only add f01 from cycles that also have f48
+                        # This prevents the Fortran from picking short-lead f01
+                        # files from hourly cycles that wouldn't exist in
+                        # operational COMF's forecast sflux timing
                         local TMPFILE48="${COMIN}/hrrr.${TMPDATE}/conus/hrrr.t${CYCLE}z.wrfsfcf48.grib2"
                         if [ -s "${TMPFILE48}.idx" ] || [ -s "$TMPFILE48" ]; then
+                            echo "$TMPFILE" >> $OUTPUT_LIST
                             EXIST_CYCLE=$CYCLE
                             EXIST_DATE=$TMPDATE
                         fi
