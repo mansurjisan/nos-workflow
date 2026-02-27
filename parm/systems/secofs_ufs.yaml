@@ -171,6 +171,11 @@ ufs_coastal:
   total_tasks: 1200
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
+  # Source for DATM atmospheric forcing:
+  #   grib2: Extract from raw GRIB2 files (default, wgrib2+Python blend pipeline)
+  #   sflux: Run COMF sflux generation first, then convert to DATM format
+  #          (strict validation — identical forcing as standalone SCHISM)
+  datm_forcing_source: grib2
   # Blended HRRR+GFS atmospheric forcing
   blend_hrrr_gfs: true
   # Blended grid resolution in degrees (~3km, matches HRRR native resolution)
@@ -352,6 +357,7 @@ shell_mappings:
 
     # UFS-Coastal specific variables
     USE_DATM: ufs_coastal.enabled
+    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
     DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
     DATM_DOMAIN: ufs_coastal.datm_domain
     DATM_TASKS: ufs_coastal.datm_tasks

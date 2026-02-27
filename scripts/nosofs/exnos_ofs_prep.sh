@@ -210,23 +210,149 @@ if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
     export DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
     export DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
 
-    # Run blended forcing orchestrator
-    ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN}
-    export err=$?
-    if [ $err -ne 0 ]; then
-        echo "DATM forcing generation failed, FATAL ERROR!"
-        echo "DATM forcing generation failed, FATAL ERROR!" >> $cormslogfile
-        msg="DATM forcing generation failed, FATAL ERROR!"
-        postmsg "$jlogfile" "$msg"
-        err_chk
+    # -----------------------------------------------------------------------
+    # Two paths for DATM forcing:
+    #   grib2 (default): Extract from raw GRIB2 via wgrib2+Python blend
+    #   sflux (backup):  Run COMF sflux generation, convert to DATM format
+    #                    (strict validation — identical to standalone SCHISM)
+    # -----------------------------------------------------------------------
+    export DATM_FORCING_SOURCE=${DATM_FORCING_SOURCE:-grib2}
+
+    if [ "${DATM_FORCING_SOURCE}" == "sflux" ]; then
+        echo "DATM_FORCING_SOURCE=sflux: generating sflux first, then converting to DATM"
+
+        # --- Step 1: Run sflux NOWCAST generation (same as non-DATM path) ---
+        export metnum=1
+        echo "Running sflux nowcast for DATM conversion..."
+        DBASE=$DBASE_MET_NOW
+        TIME_START_TMP=${time_hotstart}
+        TIME_END_TMP=$time_nowcastend
+        $USHnos/nos_ofs_create_forcing_met.sh nowcast $DBASE $TIME_START_TMP $TIME_END_TMP
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "sflux nowcast generation failed, FATAL ERROR!" >> $cormslogfile
+            msg="sflux nowcast generation for DATM failed"
+            postmsg "$jlogfile" "$msg"
+            err_chk
+        fi
+        echo "sflux nowcast completed" >> $cormslogfile
+
+        # Second met source (HRRR) for nowcast
+        if [ ${MET_NUM:-1} -eq 2 ]; then
+            export metnum=2
+            DBASE=$DBASE_MET_NOW2
+            $USHnos/nos_ofs_create_forcing_met.sh nowcast $DBASE $TIME_START_TMP $TIME_END_TMP
+            export err=$?
+            if [ $err -ne 0 ]; then
+                msg="sflux nowcast (met2) for DATM failed"
+                postmsg "$jlogfile" "$msg"
+                err_chk
+            fi
+        fi
+
+        # --- Step 2: Run sflux FORECAST generation ---
+        export metnum=1
+        if [ ${LEN_FORECAST:-0} -gt 0 ]; then
+            echo "Running sflux forecast for DATM conversion..."
+            DBASE=${DBASE_MET_FOR%:*}
+            TIME_START_TMP=${time_nowcastend}
+            TIME_END_TMP=$time_forecastend
+            $USHnos/nos_ofs_create_forcing_met.sh forecast $DBASE $TIME_START_TMP $TIME_END_TMP
+            export err=$?
+            if [ $err -ne 0 ]; then
+                msg="sflux forecast generation for DATM failed"
+                postmsg "$jlogfile" "$msg"
+                err_chk
+            fi
+            echo "sflux forecast completed" >> $cormslogfile
+
+            if [ ${MET_NUM:-1} -eq 2 ]; then
+                export metnum=2
+                DBASE=$DBASE_MET_FOR2
+                $USHnos/nos_ofs_create_forcing_met.sh forecast $DBASE $TIME_START_TMP $TIME_END_TMP
+                export err=$?
+                if [ $err -ne 0 ]; then
+                    msg="sflux forecast (met2) for DATM failed"
+                    postmsg "$jlogfile" "$msg"
+                    err_chk
+                fi
+            fi
+        fi
+
+        # --- Step 3: Convert sflux to DATM format ---
+        echo "Converting sflux to DATM forcing format..."
+        SFLUX_DIR="${DATA}"
+        DATM_OUTPUT="${DATA}/${DATM_INPUT_DIR}/${DATM_FORCING_FILE}"
+        mkdir -p ${DATA}/${DATM_INPUT_DIR}
+
+        # Unset LD_PRELOAD to avoid conflicts with Python/scipy
+        _saved_LD_PRELOAD="${LD_PRELOAD:-}"
+        unset LD_PRELOAD
+
+        python3 ${USHnos}/python/nos_ofs/datm/sflux_to_datm.py \
+            --sflux-dir "${SFLUX_DIR}" \
+            --output "${DATM_OUTPUT}" \
+            --pdy "${PDY}" --cyc "${cyc}" \
+            --lat-min ${MINLAT} --lat-max ${MAXLAT} \
+            --lon-min ${MINLON} --lon-max ${MAXLON} \
+            --dx ${BLEND_RESOLUTION} \
+            --scrip "${DATA}/${DATM_INPUT_DIR}/datm_scrip.nc"
+        export err=$?
+
+        # Restore LD_PRELOAD
+        if [ -n "$_saved_LD_PRELOAD" ]; then
+            export LD_PRELOAD="$_saved_LD_PRELOAD"
+        fi
+
+        if [ $err -ne 0 ]; then
+            echo "sflux-to-DATM conversion failed, FATAL ERROR!" >> $cormslogfile
+            msg="sflux-to-DATM conversion failed"
+            postmsg "$jlogfile" "$msg"
+            err_chk
+        fi
+        echo "sflux-to-DATM conversion completed" >> $cormslogfile
+
+        # --- Step 4: Generate ESMF mesh from SCRIP ---
+        if command -v ESMF_Scrip2Unstruct &> /dev/null; then
+            echo "Generating ESMF mesh from SCRIP..."
+            ESMF_Scrip2Unstruct \
+                ${DATA}/${DATM_INPUT_DIR}/datm_scrip.nc \
+                ${DATA}/${DATM_INPUT_DIR}/${DATM_MESH_FILE} 0
+        else
+            echo "WARNING: ESMF_Scrip2Unstruct not available, skipping mesh generation"
+        fi
+
+        # --- Step 5: Generate UFS config files ---
+        ${USHnos}/nosofs/nos_ofs_gen_ufs_config.sh
+        export err=$?
+        if [ $err -ne 0 ]; then
+            msg="UFS config generation failed"
+            postmsg "$jlogfile" "$msg"
+            err_chk
+        fi
+
     else
-        echo "DATM forcing generation completed normally"
-        echo "DATM forcing generation completed normally" >> $cormslogfile
-        msg="DATM forcing generation completed normally"
-        postmsg "$jlogfile" "$msg"
+        # Default path: GRIB2 pipeline
+        echo "DATM_FORCING_SOURCE=grib2: extracting from raw GRIB2 files"
+
+        # Run blended forcing orchestrator
+        ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN}
+        export err=$?
+        if [ $err -ne 0 ]; then
+            echo "DATM forcing generation failed, FATAL ERROR!"
+            echo "DATM forcing generation failed, FATAL ERROR!" >> $cormslogfile
+            msg="DATM forcing generation failed, FATAL ERROR!"
+            postmsg "$jlogfile" "$msg"
+            err_chk
+        else
+            echo "DATM forcing generation completed normally"
+            echo "DATM forcing generation completed normally" >> $cormslogfile
+            msg="DATM forcing generation completed normally"
+            postmsg "$jlogfile" "$msg"
+        fi
     fi
 
-    # Archive DATM artifacts to COMOUT
+    # Archive DATM artifacts to COMOUT (both paths)
     DATM_DIR=${DATM_INPUT_DIR:-INPUT}
     mkdir -p $COMOUT/${RUN}.${cycle}.datm_input
     if [ -d ${DATA}/${DATM_DIR} ]; then
