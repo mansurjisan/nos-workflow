@@ -1,0 +1,127 @@
+#!/bin/bash
+#PBS  -N secofs_ufs_rerun
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_rerun.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_rerun.err
+#PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
+#PBS  -l walltime=01:30:00
+
+#==========================================================================
+# Standalone PBS script to rerun UFS-Coastal SECOFS in an existing $DATA
+# directory. Only param.nml needs to be updated before submitting.
+#
+# Usage:
+#   1. Set RUNDIR below to point to your existing working directory
+#   2. Update param.nml in that directory (e.g., dramp, nramp_elev)
+#   3. qsub run_secofs_ufs.pbs
+#==========================================================================
+
+# --- USER SETTINGS ---
+# Point to existing working directory (with all input files already staged)
+RUNDIR=/lfs/h1/nos/ptmp/mansur.jisan/work/v3.7.0/secofs_ufs/secofs_ufs_nc_00_dev.97829204.dbqs01
+
+# Phase: nowcast or forecast
+PHASE=nowcast
+#==========================================================================
+
+set -eu
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+nosofs_ver=v3.7.0
+
+# ----------------------------------------------------------------
+# Module setup: UFS-Coastal hpc-stack libraries
+# ----------------------------------------------------------------
+module purge
+module reset
+unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
+module use ${PACKAGEROOT}/nosofs.${nosofs_ver}/modulefiles
+module load modules.fv3
+module load cray-pals
+module load python/3.12.0
+module list
+
+# ----------------------------------------------------------------
+# Validate run directory
+# ----------------------------------------------------------------
+if [ ! -d "$RUNDIR" ]; then
+    echo "FATAL: RUNDIR does not exist: $RUNDIR"
+    exit 1
+fi
+
+cd $RUNDIR
+echo "Working directory: $(pwd)"
+echo "Phase: $PHASE"
+echo "Date: $(date -u)"
+
+# Verify critical files exist
+for f in param.nml fv3_coastalS.exe model_configure datm_in datm.streams ufs.configure; do
+    if [ ! -f "$f" ]; then
+        echo "FATAL: Missing required file: $f"
+        exit 1
+    fi
+done
+
+if [ ! -d INPUT ]; then
+    echo "FATAL: Missing INPUT directory (DATM forcing)"
+    exit 1
+fi
+
+# Show param.nml changes
+echo ""
+echo "=== Key param.nml settings ==="
+grep -E 'dramp|nramp_elev|ihot|nws|rnday' param.nml | head -10
+echo ""
+
+# ----------------------------------------------------------------
+# Clean previous output (keep inputs)
+# ----------------------------------------------------------------
+echo "Cleaning previous outputs..."
+rm -rf outputs/
+rm -f mirror.out fatal.error
+rm -f staout_* flux.out
+rm -f PET*.ESMF_LogFile datm.log mediator.log JCG.out
+mkdir -p outputs
+
+# ----------------------------------------------------------------
+# Run UFS-Coastal
+# ----------------------------------------------------------------
+TOTAL_TASKS=1200
+PPN=120
+EXE=./fv3_coastalS.exe
+
+echo ""
+echo "============================================"
+echo "UFS-Coastal Execution ($PHASE)"
+echo "============================================"
+echo "Executable: $EXE"
+echo "Total MPI tasks: $TOTAL_TASKS"
+echo "PPN: $PPN"
+echo "Starting at: $(date -u)"
+echo "  mpiexec -n $TOTAL_TASKS -ppn $PPN --cpu-bind core $EXE"
+echo ""
+
+mpiexec -n $TOTAL_TASKS -ppn $PPN --cpu-bind core $EXE
+rc=$?
+
+echo ""
+echo "UFS-Coastal finished at: $(date -u) with exit code: $rc"
+
+# ----------------------------------------------------------------
+# Check completion
+# ----------------------------------------------------------------
+if [ -f mirror.out ] && [ $rc -eq 0 ]; then
+    echo "SUCCESS: UFS-Coastal $PHASE completed (mirror.out found, rc=0)"
+    echo ""
+    echo "Output files:"
+    ls -lh staout_* 2>/dev/null | head -10
+    ls -lh outputs/ 2>/dev/null | head -5
+else
+    echo "FAILED: UFS-Coastal $PHASE (rc=$rc)"
+    [ -f fatal.error ] && echo "=== fatal.error ===" && cat fatal.error
+    [ -f PET0000.ESMF_LogFile ] && echo "=== Last 20 lines PET0000 ===" && tail -20 PET0000.ESMF_LogFile
+    exit 1
+fi
+
+echo "Done!"
