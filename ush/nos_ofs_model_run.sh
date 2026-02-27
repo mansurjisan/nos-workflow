@@ -784,16 +784,31 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No forecast hotstart.nc found"
                 fi
-                # Set ihot for hot restart from nowcast
-                # UFS-Coastal (USE_DATM): must use ihot=1 (time reset) because
-                # start_type=startup requires SCHISM clock to match NUOPC clock.
-                # Standalone SCHISM: uses ihot=2 (continue from step).
+                # Set ihot=2 for forecast hot restart from nowcast.
+                # Both standalone SCHISM and UFS-Coastal now use ihot=2.
+                # The NUOPC cap's SetClock/ModelAdvance have been modified to
+                # handle ihot=2: SetClock inherits driver clock start/stop
+                # (from model_configure) and ModelAdvance initializes the step
+                # counter from iths (hotstart step) instead of 1.
                 if [ -s "${DATA}/param.nml" ]; then
+                    sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
+                    echo "  Set ihot=2 in param.nml for forecast"
+
+                    # For UFS-Coastal ihot=2: keep param.nml start_hour at the
+                    # ORIGINAL simulation start (nowcast start) so tidal face
+                    # values remain correct. model_configure has the forecast
+                    # start time for the ESMF/DATM clock.
                     if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-                        echo "  UFS-Coastal: keeping ihot=1 in param.nml for forecast"
-                    else
-                        sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
-                        echo "  Set ihot=2 in param.nml for forecast"
+                        echo "  UFS-Coastal ihot=2: param.nml start_hour stays at original start"
+                        echo "  ESMF clock uses model_configure start_hour for DATM alignment"
+
+                        # Create empty output files for ihot=2 (status='old' in schism_init)
+                        mkdir -p ${DATA}/outputs
+                        for i in 1 2 3 4 5 6 7 8 9; do
+                            touch ${DATA}/outputs/staout_${i}
+                        done
+                        touch ${DATA}/outputs/flux.out
+                        echo "  Created empty staout/flux.out for ihot=2 status='old'"
                     fi
                 fi
             fi

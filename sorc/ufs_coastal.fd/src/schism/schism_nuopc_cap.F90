@@ -866,7 +866,7 @@ end subroutine
 !> the parent's it needs to be set here.
 subroutine SetClock(comp, rc)
 
-  use schism_glbl, only : start_year, start_month, start_day, start_hour, rnday
+  use schism_glbl, only : start_year, start_month, start_day, start_hour, rnday, ihot
   use schism_glbl, only : wtiminc, wtime1, wtime2, nws
 
   type(ESMF_GridComp)  :: comp
@@ -874,7 +874,7 @@ subroutine SetClock(comp, rc)
 
   type(ESMF_Clock)           :: driverClock, modelClock
   type(ESMF_TimeInterval)    :: runDur, timeStep
-  type(ESMF_Time)            :: startTime, stopTime
+  type(ESMF_Time)            :: startTime, stopTime, driverStartTime
   integer                    :: localrc, d, h, m
   real(ESMF_KIND_R8)         :: seconds
   character(len=ESMF_MAXSTR) :: message
@@ -884,18 +884,38 @@ subroutine SetClock(comp, rc)
   call NUOPC_ModelGet(comp, driverClock=driverClock, rc=localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
-  !> Set start time
-  call ESMF_TimeSet(startTime, yy=start_year, mm=start_month, dd=start_day, h=int(start_hour), rc=localrc)
-  _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
+  !------------------------------------------------------------------------
+  ! FIX: For ihot=2 (forecast continuation), decouple ESMF clock from
+  ! param.nml start time. SCHISM's param.nml start_hour must match the
+  ! ORIGINAL simulation start (for correct tidal face values), but the
+  ! ESMF/DATM clock must match the ACTUAL run start from model_configure.
+  !
+  ! Solution: Use the driver clock's start/stop times (from model_configure)
+  ! instead of computing from param.nml start_year/month/day/hour + rnday.
+  ! This is also the standard NUOPC pattern for component clock setup.
+  !------------------------------------------------------------------------
+  if (ihot == 2) then
+    ! ihot=2: inherit start/stop from driver clock (model_configure times)
+    call ESMF_ClockGet(driverClock, startTime=startTime, stopTime=stopTime, &
+      timeStep=timeStep, rc=localrc)
+    _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
-  !> Set stop time
-  d = int(rnday)
-  h = int((rnday-d)*24)
-  m = int((rnday-d)*24*60-h*60)
-  call ESMF_TimeIntervalSet(runDur, d=d, h=h, m=m, rc=localrc)
-  _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
-  
-  stopTime = startTime+runDur
+    write(message, '(A)') 'SetClock: ihot=2, using driver clock start/stop times'
+    call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
+  else
+    ! ihot=0,1: use param.nml start time (original behavior)
+    call ESMF_TimeSet(startTime, yy=start_year, mm=start_month, dd=start_day, &
+      h=int(start_hour), rc=localrc)
+    _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
+
+    d = int(rnday)
+    h = int((rnday-d)*24)
+    m = int((rnday-d)*24*60-h*60)
+    call ESMF_TimeIntervalSet(runDur, d=d, h=h, m=m, rc=localrc)
+    _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
+
+    stopTime = startTime+runDur
+  endif
 
   !> Time step must be same with the driver
   call ESMF_ClockGet(driverClock, timeStep=timeStep, rc=localrc)
@@ -1010,7 +1030,7 @@ end subroutine DataInitialize
 !> Because the import/export states and the clock do not come in through the parameter list, they must be accessed via a call to NUOPC_ModelGet
 subroutine ModelAdvance(comp, rc)
 
-  use schism_glbl, only: dt, nws, npa, &
+  use schism_glbl, only: dt, nws, npa, iths, &
     windx, windy, windx1, windx2, windy1, windy2, &
     pr, pr1, pr2, airt1, airt2, shum1, shum2, &
     wtime1, wtime2, wtiminc
@@ -1021,14 +1041,14 @@ subroutine ModelAdvance(comp, rc)
   type(ESMF_GridComp)  :: comp
   integer, intent(out) :: rc
 
-  !> Local variables 
+  !> Local variables
   type(ESMF_Clock)        :: clock
   type(ESMF_State)        :: importState, exportState
   type(ESMF_Time)         :: currTime
   type(ESMF_TimeInterval) :: timeStep
   character(len=160)      :: message
   integer(ESMF_KIND_I4)   :: localrc
-  integer, save           :: it = 1
+  integer, save           :: it = -1
   integer                 :: i, num_schism_steps
   real(ESMF_KIND_R8)      :: seconds
   character(len=*), parameter :: subname = '(ModelAdvance): '
@@ -1040,6 +1060,20 @@ subroutine ModelAdvance(comp, rc)
 
   rc = ESMF_SUCCESS
   call ESMF_LogWrite(trim(subname)//' called', ESMF_LOGMSG_INFO)
+
+  !------------------------------------------------------------------------
+  ! FIX: Initialize timestep counter from hotstart step (iths).
+  ! For ihot=1: iths=0 after reset, so it starts at 1 (same as before).
+  ! For ihot=2: iths=N from hotstart.nc, so it starts at N+1, giving
+  !   time = (N+1)*dt which preserves correct elapsed time from original
+  !   start. This ensures tidal phase calculations are correct.
+  !------------------------------------------------------------------------
+  if (it < 0) then
+    it = iths + 1
+    write(message, '(A,I8,A,I8)') &
+      'ModelAdvance: initialized it=', it, ' from iths=', iths
+    call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
+  endif
 
   !> Query component for its clock, import and export states
   call NUOPC_ModelGet(comp, modelClock=clock, importState=importState, &
