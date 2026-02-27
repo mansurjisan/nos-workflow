@@ -287,26 +287,46 @@ find_hrrr_files_fortran() {
         local EXIST_DATE=""
 
         # Phase A: Detection loop (matches COMF lines 255-278)
-        # Loop through dates and cycles, checking f01 existence
         #
-        # IMPORTANT: In operational COMF, the forecast sflux is generated AFTER
-        # the nowcast model run completes. At that time, future HRRR hourly
-        # cycles (t13z, t14z, ...) don't exist yet. The Fortran is forced to
-        # use longer leads (f02-f48) from EXIST_CYCLE because f01 from later
-        # cycles simply isn't available.
+        # In operational COMF, the forecast sflux is generated AFTER the
+        # nowcast model run completes (~1h after cycle time). At that time:
+        #   - Only HRRR cycles up to ~NOWCASTEND are available
+        #   - Future hourly cycles don't exist yet
+        #   - The Fortran is forced to use longer leads from EXIST_CYCLE
         #
-        # In DATM prep, we generate ALL forcing upfront. If we add f01 from
-        # every available hourly cycle, the Fortran will pick them (shortest
-        # lead) and we'll get different results than COMF.
+        # In DATM prep, ALL forcing is generated upfront when more cycles
+        # are available. To match COMF behavior:
+        #   1. Only scan up to NOWCASTEND date/cycle (not future dates)
+        #   2. Only add f01 from cycles that also have f48 (00z/06z/12z/18z)
         #
-        # Fix: For FORECAST, only add f01 from cycles that also have f48
-        # (i.e., 00z/06z/12z/18z). This ensures the Fortran must use longer
-        # leads from EXIST_CYCLE for most valid times, matching COMF behavior.
+        # This ensures EXIST_CYCLE is set to the latest 6-hourly cycle at
+        # or before NOWCASTEND, and the Fortran must use longer leads from
+        # that cycle for the entire forecast period.
+
+        # For forecast: cap detection at NOWCASTEND to match COMF timing
+        local DETECT_END_DATE
+        local DETECT_END_CYCLE
+        if [ "$RUNTYPE_LOCAL" == "forecast" ]; then
+            DETECT_END_DATE=$(echo $NOWCASTEND | cut -c1-8)
+            DETECT_END_CYCLE=$(echo $NOWCASTEND | cut -c9-10)
+        else
+            DETECT_END_DATE=$END_DATE
+            DETECT_END_CYCLE="23"
+        fi
+
         local TMPDATE=$SEARCH_DATE
-        while [ "$TMPDATE" -le "$END_DATE" ]; do
+        while [ "$TMPDATE" -le "$DETECT_END_DATE" ]; do
             local N=0
             while (( N < 24 )); do
                 local CYCLE=$(printf "%02d" $N)
+
+                # For forecast: stop scanning at NOWCASTEND cycle
+                if [ "$RUNTYPE_LOCAL" == "forecast" ] && \
+                   [ "$TMPDATE" == "$DETECT_END_DATE" ] && \
+                   [ "$((10#$CYCLE))" -gt "$((10#$DETECT_END_CYCLE))" ]; then
+                    break
+                fi
+
                 local TMPFILE="${COMIN}/hrrr.${TMPDATE}/conus/hrrr.t${CYCLE}z.wrfsfcf01.grib2"
 
                 if [ -s "${TMPFILE}.idx" ] || [ -s "$TMPFILE" ]; then
@@ -316,10 +336,7 @@ find_hrrr_files_fortran() {
                         EXIST_CYCLE=$CYCLE
                         EXIST_DATE=$TMPDATE
                     elif [ "$RUNTYPE_LOCAL" == "forecast" ]; then
-                        # Forecast: only add f01 from cycles that also have f48
-                        # This prevents the Fortran from picking short-lead f01
-                        # files from hourly cycles that wouldn't exist in
-                        # operational COMF's forecast sflux timing
+                        # Forecast: only add f01 from cycles with f48
                         local TMPFILE48="${COMIN}/hrrr.${TMPDATE}/conus/hrrr.t${CYCLE}z.wrfsfcf48.grib2"
                         if [ -s "${TMPFILE48}.idx" ] || [ -s "$TMPFILE48" ]; then
                             echo "$TMPFILE" >> $OUTPUT_LIST
