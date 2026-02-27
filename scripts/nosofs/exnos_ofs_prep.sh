@@ -98,7 +98,7 @@ fi
 # =============================================================================
 # Meteorological Forcing (sflux) Generation — Nowcast
 # Skip for UFS-Coastal (USE_DATM): atmospheric forcing is handled by DATM
-# via the DATM forcing generation step at the end of this script.
+# via the DATM forcing generation step below.
 # =============================================================================
 if [ "${USE_DATM:-false}" != "true" ] && [ "${USE_DATM:-0}" != "1" ]; then
 
@@ -185,7 +185,58 @@ else
   echo "Skipping sflux nowcast generation (USE_DATM=true)" >> $cormslogfile
 fi
 
+# =============================================================================
+# UFS-Coastal DATM Forcing Generation (run early, before OBC/river)
+# When USE_DATM is enabled, generate DATM blended HRRR+GFS forcing,
+# ESMF meshes, and UFS config files (model_configure, datm_in,
+# datm.streams, ufs.configure).
+# No dependency on river, OBC, or model config steps.
+# =============================================================================
+if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+    echo "============================================"
+    echo "Generating UFS-Coastal DATM forcing..."
+    echo "============================================"
 
+    # Export variables needed by DATM scripts
+    export DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
+    export DATM_DOMAIN=${DATM_DOMAIN:-SECOFS}
+    export BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
+    export BLEND_BUFFER_DEG=${BLEND_BUFFER_DEG:-0.5}
+    export NHOURS_FCST=${LEN_FORECAST:-48}
+    export DT_ATMOS=${DT_ATMOS:-720}
+    export NHOUR=${NHOUR:-nhour}
+    # DATM input directory and file naming
+    export DATM_INPUT_DIR=${DATM_INPUT_DIR:-INPUT}
+    export DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
+    export DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
+
+    # Run blended forcing orchestrator
+    ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN}
+    export err=$?
+    if [ $err -ne 0 ]; then
+        echo "DATM forcing generation failed, FATAL ERROR!"
+        echo "DATM forcing generation failed, FATAL ERROR!" >> $cormslogfile
+        msg="DATM forcing generation failed, FATAL ERROR!"
+        postmsg "$jlogfile" "$msg"
+        err_chk
+    else
+        echo "DATM forcing generation completed normally"
+        echo "DATM forcing generation completed normally" >> $cormslogfile
+        msg="DATM forcing generation completed normally"
+        postmsg "$jlogfile" "$msg"
+    fi
+
+    # Archive DATM artifacts to COMOUT
+    DATM_DIR=${DATM_INPUT_DIR:-INPUT}
+    mkdir -p $COMOUT/${RUN}.${cycle}.datm_input
+    if [ -d ${DATA}/${DATM_DIR} ]; then
+        cp -p ${DATA}/${DATM_DIR}/*.nc $COMOUT/${RUN}.${cycle}.datm_input/ 2>/dev/null || true
+    fi
+    for f in model_configure datm_in datm.streams ufs.configure fd_ufs.yaml noahmptable.tbl; do
+        [ -s "${DATA}/${f}" ] && cp -p "${DATA}/${f}" "$COMOUT/${RUN}.${cycle}.${f}"
+    done
+    echo "DATM artifacts archived to $COMOUT"
+fi
 
 echo "The script nos_ofs_create_forcing_river.sh starts at time: " `date `
 echo "Generating the river forcing"
@@ -585,58 +636,6 @@ cp ${NWM_SOURCE_SINK_FORE} ${COMOUT}/${NWM_SOURCE_SINK_FORE}
   postmsg "$jlogfile" "$msg"
  fi
  fi
-fi
-
-# =============================================================================
-# UFS-Coastal DATM Forcing Generation
-# When USE_DATM is enabled, generate DATM blended HRRR+GFS forcing,
-# ESMF meshes, and UFS config files (model_configure, datm_in,
-# datm.streams, ufs.configure).
-# =============================================================================
-if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-    echo "============================================"
-    echo "Generating UFS-Coastal DATM forcing..."
-    echo "============================================"
-
-    # Export variables needed by DATM scripts
-    export DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
-    export DATM_DOMAIN=${DATM_DOMAIN:-SECOFS}
-    export BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
-    export BLEND_BUFFER_DEG=${BLEND_BUFFER_DEG:-0.5}
-    export NHOURS_FCST=${LEN_FORECAST:-48}
-    export DT_ATMOS=${DT_ATMOS:-720}
-    export NHOUR=${NHOUR:-nhour}
-    # DATM input directory and file naming
-    export DATM_INPUT_DIR=${DATM_INPUT_DIR:-INPUT}
-    export DATM_MESH_FILE=${DATM_MESH_FILE:-datm_esmf_mesh.nc}
-    export DATM_FORCING_FILE=${DATM_FORCING_FILE:-datm_forcing.nc}
-
-    # Run blended forcing orchestrator
-    ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN}
-    export err=$?
-    if [ $err -ne 0 ]; then
-        echo "DATM forcing generation failed, FATAL ERROR!"
-        echo "DATM forcing generation failed, FATAL ERROR!" >> $cormslogfile
-        msg="DATM forcing generation failed, FATAL ERROR!"
-        postmsg "$jlogfile" "$msg"
-        err_chk
-    else
-        echo "DATM forcing generation completed normally"
-        echo "DATM forcing generation completed normally" >> $cormslogfile
-        msg="DATM forcing generation completed normally"
-        postmsg "$jlogfile" "$msg"
-    fi
-
-    # Archive DATM artifacts to COMOUT
-    DATM_DIR=${DATM_INPUT_DIR:-INPUT}
-    mkdir -p $COMOUT/${RUN}.${cycle}.datm_input
-    if [ -d ${DATA}/${DATM_DIR} ]; then
-        cp -p ${DATA}/${DATM_DIR}/*.nc $COMOUT/${RUN}.${cycle}.datm_input/ 2>/dev/null || true
-    fi
-    for f in model_configure datm_in datm.streams ufs.configure fd_ufs.yaml noahmptable.tbl; do
-        [ -s "${DATA}/${f}" ] && cp -p "${DATA}/${f}" "$COMOUT/${RUN}.${cycle}.${f}"
-    done
-    echo "DATM artifacts archived to $COMOUT"
 fi
 
 cp -p $jlogfile $COMOUT
