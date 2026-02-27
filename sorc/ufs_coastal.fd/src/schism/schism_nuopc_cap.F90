@@ -1011,11 +1011,11 @@ end subroutine DataInitialize
 !> Because the import/export states and the clock do not come in through the parameter list, they must be accessed via a call to NUOPC_ModelGet
 subroutine ModelAdvance(comp, rc)
 
-  use schism_glbl, only: dt, nws, npa, &
+  use schism_glbl, only: dt, nws, npa, np, &
     windx, windy, windx1, windx2, windy1, windy2, &
     pr, pr1, pr2, airt1, airt2, shum1, shum2, &
     wtime1, wtime2, wtiminc, &
-    eta2, eta1
+    eta2, eta1, dp, h0
 
   implicit none
 
@@ -1031,7 +1031,7 @@ subroutine ModelAdvance(comp, rc)
   character(len=160)      :: message
   integer(ESMF_KIND_I4)   :: localrc
   integer, save           :: it = 1
-  integer                 :: i, num_schism_steps
+  integer                 :: i, j, num_schism_steps
   real(ESMF_KIND_R8)      :: seconds
   character(len=*), parameter :: subname = '(ModelAdvance): '
 
@@ -1162,7 +1162,12 @@ subroutine ModelAdvance(comp, rc)
        eta_relax_count = eta_relax_count + 1
        decay = exp(-dble(eta_relax_count) * dt / ETA_RELAX_TAU_SEC)
        nudge_frac = (dt / ETA_RELAX_TAU_SEC) * decay
-       eta2(1:npa) = eta2(1:npa) + nudge_frac * (eta2_hotstart(1:npa) - eta2(1:npa))
+       ! Only nudge nodes with sufficient water depth (>1m) to avoid drying
+       do j = 1, np
+         if (eta2(j) + dp(j) > 1.0d0) then
+           eta2(j) = eta2(j) + nudge_frac * (eta2_hotstart(j) - eta2(j))
+         endif
+       enddo
 
        if (eta_relax_count <= 3 .or. eta_relax_count == ETA_RELAX_NSTEPS) then
          write(message, '(A,I4,A,F8.5,A,F8.5,A,F10.6)') &
