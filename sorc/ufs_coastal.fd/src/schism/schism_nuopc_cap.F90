@@ -1038,14 +1038,14 @@ subroutine ModelAdvance(comp, rc)
   ! Flag for first-call wind initialization fix
   logical, save :: first_call = .true.
 
-  ! Eta2 relaxation fix: nudge elevation toward hotstart values
+  ! Eta2 relaxation fix: gentle Newtonian nudging toward hotstart values
   ! to suppress gravity wave transient caused by ihot=1 time reset.
-  ! Relaxation decays as exp(-step/tau) over ETA_RELAX_NSTEPS steps.
+  ! Uses nudge_frac = dt/tau_seconds per step, decaying over the window.
   real(ESMF_KIND_R8), save, allocatable :: eta2_hotstart(:)
   integer, save :: eta_relax_count = 0
-  integer, parameter :: ETA_RELAX_NSTEPS = 15   ! relaxation window (~30 min at dt=120s)
-  real(ESMF_KIND_R8), parameter :: ETA_RELAX_TAU = 5.0d0  ! e-folding scale (in steps)
-  real(ESMF_KIND_R8) :: alpha
+  integer, parameter :: ETA_RELAX_NSTEPS = 15       ! relaxation window (~30 min at dt=120s)
+  real(ESMF_KIND_R8), parameter :: ETA_RELAX_TAU_SEC = 1800.0d0  ! e-folding timescale (seconds)
+  real(ESMF_KIND_R8) :: nudge_frac, decay
   !--------------------------------
 
   rc = ESMF_SUCCESS
@@ -1113,8 +1113,9 @@ subroutine ModelAdvance(comp, rc)
     eta2_hotstart(1:npa) = eta2(1:npa)
     eta_relax_count = 0
 
-    write(message, '(A,I4,A,F6.1)') &
-      'Eta2 relaxation: nsteps=', ETA_RELAX_NSTEPS, ' tau=', ETA_RELAX_TAU
+    write(message, '(A,I4,A,F8.1,A)') &
+      'Eta2 relaxation: nsteps=', ETA_RELAX_NSTEPS, &
+      ' tau_sec=', ETA_RELAX_TAU_SEC, ' (Newtonian nudging)'
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
 
     first_call = .false.
@@ -1150,19 +1151,23 @@ subroutine ModelAdvance(comp, rc)
      it = it + 1
 
      !------------------------------------------------------------------
-     ! Post-step eta2 relaxation: nudge toward hotstart values
-     ! alpha = exp(-step/tau) decays from ~0.82 to ~0.05 over 15 steps
+     ! Post-step eta2 Newtonian nudging toward hotstart values.
+     ! Adds a gentle increment: eta2 += nudge_frac * (eta2_hot - eta2)
+     ! where nudge_frac = (dt/tau) * decay, decay = exp(-step*dt/tau).
+     ! At dt=120s, tau=1800s: nudge_frac starts at ~0.057 per step
+     ! (5.7% correction) and decays to ~0.002 by step 15.
+     ! Does NOT touch eta1 — preserves solver time-derivative state.
      !------------------------------------------------------------------
      if (allocated(eta2_hotstart) .and. eta_relax_count < ETA_RELAX_NSTEPS) then
        eta_relax_count = eta_relax_count + 1
-       alpha = exp(-dble(eta_relax_count) / ETA_RELAX_TAU)
-       eta2(1:npa) = (1.0d0 - alpha) * eta2(1:npa) + alpha * eta2_hotstart(1:npa)
-       eta1(1:npa) = eta2(1:npa)
+       decay = exp(-dble(eta_relax_count) * dt / ETA_RELAX_TAU_SEC)
+       nudge_frac = (dt / ETA_RELAX_TAU_SEC) * decay
+       eta2(1:npa) = eta2(1:npa) + nudge_frac * (eta2_hotstart(1:npa) - eta2(1:npa))
 
        if (eta_relax_count <= 3 .or. eta_relax_count == ETA_RELAX_NSTEPS) then
-         write(message, '(A,I4,A,F8.5,A,F10.6)') &
-           'Eta relax step ', eta_relax_count, ' alpha=', alpha, &
-           ' eta2(1)=', eta2(1)
+         write(message, '(A,I4,A,F8.5,A,F8.5,A,F10.6)') &
+           'Eta relax step ', eta_relax_count, ' decay=', decay, &
+           ' nudge=', nudge_frac, ' eta2(1)=', eta2(1)
          call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
        endif
 
