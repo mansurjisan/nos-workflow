@@ -9,7 +9,6 @@
 ! @author Joseph Y. Zhang >jzhang@vims.edu>
 !
 ! MODIFIED: 2026-01-11 - Added first-import wind initialization fix
-! MODIFIED: 2026-02-27 - Added eta2 relaxation fix for ihot=1 startup transient
 !
 ! @license Apache License, Version 2.0 (the "License");
 ! you may not use this file except in compliance with the License.
@@ -1011,11 +1010,10 @@ end subroutine DataInitialize
 !> Because the import/export states and the clock do not come in through the parameter list, they must be accessed via a call to NUOPC_ModelGet
 subroutine ModelAdvance(comp, rc)
 
-  use schism_glbl, only: dt, nws, npa, np, &
+  use schism_glbl, only: dt, nws, npa, &
     windx, windy, windx1, windx2, windy1, windy2, &
     pr, pr1, pr2, airt1, airt2, shum1, shum2, &
-    wtime1, wtime2, wtiminc, &
-    eta2, eta1, dp, h0
+    wtime1, wtime2, wtiminc
 
   implicit none
 
@@ -1031,21 +1029,13 @@ subroutine ModelAdvance(comp, rc)
   character(len=160)      :: message
   integer(ESMF_KIND_I4)   :: localrc
   integer, save           :: it = 1
-  integer                 :: i, j, num_schism_steps
+  integer                 :: i, num_schism_steps
   real(ESMF_KIND_R8)      :: seconds
   character(len=*), parameter :: subname = '(ModelAdvance): '
 
   ! Flag for first-call wind initialization fix
   logical, save :: first_call = .true.
 
-  ! Eta2 relaxation fix: gentle Newtonian nudging toward hotstart values
-  ! to suppress gravity wave transient caused by ihot=1 time reset.
-  ! Uses nudge_frac = dt/tau_seconds per step, decaying over the window.
-  real(ESMF_KIND_R8), save, allocatable :: eta2_hotstart(:)
-  integer, save :: eta_relax_count = 0
-  integer, parameter :: ETA_RELAX_NSTEPS = 15       ! relaxation window (~30 min at dt=120s)
-  real(ESMF_KIND_R8), parameter :: ETA_RELAX_TAU_SEC = 1800.0d0  ! e-folding timescale (seconds)
-  real(ESMF_KIND_R8) :: nudge_frac, decay
   !--------------------------------
 
   rc = ESMF_SUCCESS
@@ -1095,29 +1085,6 @@ subroutine ModelAdvance(comp, rc)
       'First-call fix applied: wtime1=', wtime1, ' wtime2=', wtime2
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
 
-    !--------------------------------------------------------------------
-    ! FIX: Save hotstart eta2 for post-step relaxation
-    !
-    ! Problem: ihot=1 resets SCHISM's internal clock to time=0, but the
-    ! interior elevation field (eta2) comes from a hotstart at a later
-    ! tidal phase. The barotropic solver computes tidal boundary forcing
-    ! at time~0 which doesn't match the interior state, generating
-    ! spurious gravity waves that oscillate ~0.2m at the first timesteps.
-    !
-    ! Solution: Save the hotstart eta2 and nudge the solver's eta2 back
-    ! toward it for the first ~30 minutes with exponentially decaying
-    ! weight. This damps the transient while allowing the solver to
-    ! gradually take over.
-    !--------------------------------------------------------------------
-    allocate(eta2_hotstart(npa))
-    eta2_hotstart(1:npa) = eta2(1:npa)
-    eta_relax_count = 0
-
-    write(message, '(A,I4,A,F8.1,A)') &
-      'Eta2 relaxation: nsteps=', ETA_RELAX_NSTEPS, &
-      ' tau_sec=', ETA_RELAX_TAU_SEC, ' (Newtonian nudging)'
-    call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
-
     first_call = .false.
   endif
 
@@ -1149,40 +1116,6 @@ subroutine ModelAdvance(comp, rc)
   do i = it, it+num_schism_steps-1
      call schism_step(i)
      it = it + 1
-
-     !------------------------------------------------------------------
-     ! Post-step eta2 Newtonian nudging toward hotstart values.
-     ! Adds a gentle increment: eta2 += nudge_frac * (eta2_hot - eta2)
-     ! where nudge_frac = (dt/tau) * decay, decay = exp(-step*dt/tau).
-     ! At dt=120s, tau=1800s: nudge_frac starts at ~0.057 per step
-     ! (5.7% correction) and decays to ~0.002 by step 15.
-     ! Does NOT touch eta1 — preserves solver time-derivative state.
-     !------------------------------------------------------------------
-     if (allocated(eta2_hotstart) .and. eta_relax_count < ETA_RELAX_NSTEPS) then
-       eta_relax_count = eta_relax_count + 1
-       decay = exp(-dble(eta_relax_count) * dt / ETA_RELAX_TAU_SEC)
-       nudge_frac = (dt / ETA_RELAX_TAU_SEC) * decay
-       ! Only nudge nodes with sufficient water depth (>1m) to avoid drying
-       do j = 1, np
-         if (eta2(j) + dp(j) > 1.0d0) then
-           eta2(j) = eta2(j) + nudge_frac * (eta2_hotstart(j) - eta2(j))
-         endif
-       enddo
-
-       if (eta_relax_count <= 3 .or. eta_relax_count == ETA_RELAX_NSTEPS) then
-         write(message, '(A,I4,A,F8.5,A,F8.5,A,F10.6)') &
-           'Eta relax step ', eta_relax_count, ' decay=', decay, &
-           ' nudge=', nudge_frac, ' eta2(1)=', eta2(1)
-         call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
-       endif
-
-       ! Deallocate when done to free memory
-       if (eta_relax_count >= ETA_RELAX_NSTEPS) then
-         deallocate(eta2_hotstart)
-         call ESMF_LogWrite('Eta2 relaxation complete, array freed', &
-           ESMF_LOGMSG_INFO)
-       endif
-     endif
   end do
 
   !> Update fields on export state
