@@ -22,7 +22,7 @@
 RUNDIR=/lfs/h1/nos/ptmp/mansur.jisan/work/v3.7.0/secofs_ufs/secofs_ufs_nc_00_dev.97829204.dbqs01
 
 # Phase: nowcast or forecast
-PHASE=nowcast
+PHASE=forecast
 #==========================================================================
 
 set -eu
@@ -83,6 +83,14 @@ rm -f mirror.out fatal.error
 rm -f staout_* flux.out
 rm -f PET*.ESMF_LogFile datm.log mediator.log JCG.out
 mkdir -p outputs
+
+# For ihot=2: create empty output files (schism_init opens with status='old')
+IHOT=$(grep -oP 'ihot\s*=\s*\K[0-9]+' param.nml)
+if [ "${IHOT:-0}" == "2" ]; then
+    echo "ihot=2 detected: creating empty staout/flux.out for status='old'"
+    for i in 1 2 3 4 5 6 7 8 9; do touch outputs/staout_${i}; done
+    touch outputs/flux.out
+fi
 
 # ----------------------------------------------------------------
 # Run UFS-Coastal
