@@ -51,6 +51,10 @@ module schism_nuopc_cap
   private
   public SetServices
 
+  ! Module-level saved variable: hotstart step counter from schism_init.
+  ! Set in InitializeP2, used in ModelAdvance for ihot=2 time continuity.
+  integer, save :: iths_save = 0
+
 contains
 
 #undef ESMF_METHOD
@@ -345,7 +349,8 @@ subroutine InitializeAdvertise(comp, importState, exportState, clock, rc)
 
   ! init schism
   call schism_init(0, './', iths, ntime)
-  write(message, '(A)') trim(compName)//' initialized science model'
+  iths_save = iths  ! Save for ModelAdvance (ihot=2 step counter init)
+  write(message, '(A,I8)') trim(compName)//' initialized science model, iths=', iths
   call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
 
   ! Deal with setting up the Field dictionary here and advertising the
@@ -1030,7 +1035,7 @@ end subroutine DataInitialize
 !> Because the import/export states and the clock do not come in through the parameter list, they must be accessed via a call to NUOPC_ModelGet
 subroutine ModelAdvance(comp, rc)
 
-  use schism_glbl, only: dt, nws, npa, iths, &
+  use schism_glbl, only: dt, nws, npa, &
     windx, windy, windx1, windx2, windy1, windy2, &
     pr, pr1, pr2, airt1, airt2, shum1, shum2, &
     wtime1, wtime2, wtiminc
@@ -1062,16 +1067,17 @@ subroutine ModelAdvance(comp, rc)
   call ESMF_LogWrite(trim(subname)//' called', ESMF_LOGMSG_INFO)
 
   !------------------------------------------------------------------------
-  ! FIX: Initialize timestep counter from hotstart step (iths).
-  ! For ihot=1: iths=0 after reset, so it starts at 1 (same as before).
-  ! For ihot=2: iths=N from hotstart.nc, so it starts at N+1, giving
+  ! FIX: Initialize timestep counter from hotstart step (iths_save).
+  ! iths_save is set in InitializeP2 from schism_init's output.
+  ! For ihot=1: iths_save=0 after reset, so it starts at 1 (same as before).
+  ! For ihot=2: iths_save=N from hotstart.nc, so it starts at N+1, giving
   !   time = (N+1)*dt which preserves correct elapsed time from original
   !   start. This ensures tidal phase calculations are correct.
   !------------------------------------------------------------------------
   if (it < 0) then
-    it = iths + 1
+    it = iths_save + 1
     write(message, '(A,I8,A,I8)') &
-      'ModelAdvance: initialized it=', it, ' from iths=', iths
+      'ModelAdvance: initialized it=', it, ' from iths_save=', iths_save
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
   endif
 
