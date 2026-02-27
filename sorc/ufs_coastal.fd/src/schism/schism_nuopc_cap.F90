@@ -350,6 +350,7 @@ subroutine InitializeAdvertise(comp, importState, exportState, clock, rc)
   ! init schism
   call schism_init(0, './', iths, ntime)
   iths_save = iths  ! Save for ModelAdvance (ihot=2 step counter init)
+  write(0,*) 'IHOT2_DEBUG: schism_init done, iths=', iths, ' ntime=', ntime
   write(message, '(A,I8)') trim(compName)//' initialized science model, iths=', iths
   call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
 
@@ -569,6 +570,8 @@ subroutine InitializeAdvertise(comp, importState, exportState, clock, rc)
   call NUOPC_FieldAdvertise(exportState, "ocean_mask", "1", localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
+  write(0,*) 'IHOT2_DEBUG: InitializeAdvertise done (all fields advertised)'
+
 end subroutine
 
 #undef ESMF_METHOD
@@ -621,6 +624,8 @@ subroutine InitializeRealize(comp, importState, exportState, clock, rc)
   rc = ESMF_SUCCESS
   localrc= ESMF_SUCCESS
 
+  write(0,*) 'IHOT2_DEBUG: InitializeRealize starting, creating mesh...'
+
   if (meshloc == ESMF_MESHLOC_NODE) then
     call SCHISM_MeshCreateNode(comp, rc=localrc)
     _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
@@ -628,6 +633,8 @@ subroutine InitializeRealize(comp, importState, exportState, clock, rc)
     call SCHISM_MeshCreateElement(comp, rc=localrc)
     _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
   end if
+
+  write(0,*) 'IHOT2_DEBUG: InitializeRealize mesh created OK'
 
   call ESMF_GridCompGet(comp, mesh=mesh2d, name=compName, rc=localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
@@ -860,7 +867,9 @@ subroutine InitializeRealize(comp, importState, exportState, clock, rc)
 
   call SCHISM_RemoveUnconnectedFields(exportState, rc=localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
-  
+
+  write(0,*) 'IHOT2_DEBUG: InitializeRealize done (fields realized, unconnected removed)'
+
   !@TODO: should we destroy field & array vars?
 end subroutine
 
@@ -886,8 +895,12 @@ subroutine SetClock(comp, rc)
 
   rc = ESMF_SUCCESS
 
+  write(0,*) 'IHOT2_DEBUG: SetClock starting, ihot=', ihot
+
   call NUOPC_ModelGet(comp, driverClock=driverClock, rc=localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
+
+  write(0,*) 'IHOT2_DEBUG: SetClock got driverClock OK'
 
   !------------------------------------------------------------------------
   ! FIX: For ihot=2 (forecast continuation), decouple ESMF clock from
@@ -900,11 +913,13 @@ subroutine SetClock(comp, rc)
   ! This is also the standard NUOPC pattern for component clock setup.
   !------------------------------------------------------------------------
   if (ihot == 2) then
+    write(0,*) 'IHOT2_DEBUG: SetClock entering ihot=2 branch'
     ! ihot=2: inherit start/stop from driver clock (model_configure times)
     call ESMF_ClockGet(driverClock, startTime=startTime, stopTime=stopTime, &
       timeStep=timeStep, rc=localrc)
     _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
+    write(0,*) 'IHOT2_DEBUG: SetClock got driver start/stop/step OK'
     write(message, '(A)') 'SetClock: ihot=2, using driver clock start/stop times'
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
   else
@@ -927,8 +942,11 @@ subroutine SetClock(comp, rc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
   !> Create component clock
+  write(0,*) 'IHOT2_DEBUG: SetClock creating modelClock...'
   modelClock = ESMF_ClockCreate(timeStep, startTime, stopTime=stopTime, rc=localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
+
+  write(0,*) 'IHOT2_DEBUG: SetClock modelClock created OK'
 
   !> Update component clock
   call ESMF_GridCompSet(comp, clock=modelClock, rc=localrc)
@@ -962,6 +980,8 @@ subroutine SetClock(comp, rc)
   else
     wtime2 = wtiminc
   endif
+
+  write(0,*) 'IHOT2_DEBUG: SetClock done, nws=', nws, ' wtiminc=', wtiminc
 
 end subroutine
 
@@ -1015,6 +1035,7 @@ subroutine DataInitialize(comp, rc)
   !--------------------------------
 
   rc = ESMF_SUCCESS
+  write(0,*) 'IHOT2_DEBUG: DataInitialize starting'
   call ESMF_LogWrite(trim(subname)//' called', ESMF_LOGMSG_INFO)
 
   !> Query component for its clock, import and export states
@@ -1022,9 +1043,11 @@ subroutine DataInitialize(comp, rc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
   !> Update fields on export state
+  write(0,*) 'IHOT2_DEBUG: DataInitialize calling SCHISM_Export'
   call SCHISM_Export(comp, exportState, clock, localrc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
+  write(0,*) 'IHOT2_DEBUG: DataInitialize done'
   call ESMF_LogWrite(trim(subname)//' done', ESMF_LOGMSG_INFO)
 
 end subroutine DataInitialize
@@ -1064,6 +1087,7 @@ subroutine ModelAdvance(comp, rc)
   !--------------------------------
 
   rc = ESMF_SUCCESS
+  write(0,*) 'IHOT2_DEBUG: ModelAdvance called, it=', it
   call ESMF_LogWrite(trim(subname)//' called', ESMF_LOGMSG_INFO)
 
   !------------------------------------------------------------------------
@@ -1076,6 +1100,7 @@ subroutine ModelAdvance(comp, rc)
   !------------------------------------------------------------------------
   if (it < 0) then
     it = iths_save + 1
+    write(0,*) 'IHOT2_DEBUG: ModelAdvance initialized it=', it, ' from iths_save=', iths_save
     write(message, '(A,I8,A,I8)') &
       'ModelAdvance: initialized it=', it, ' from iths_save=', iths_save
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
