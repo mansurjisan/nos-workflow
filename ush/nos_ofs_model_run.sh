@@ -784,21 +784,25 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No forecast hotstart.nc found"
                 fi
-                # ihot for forecast: use ihot=1 for UFS-Coastal (DATM) until
-                # the NUOPC cap is recompiled with ihot=2 support.
-                # Standalone SCHISM can use ihot=2 (no NUOPC cap involved).
+                # Set ihot=2 for forecast hot restart from nowcast.
+                # For UFS-Coastal: the NUOPC cap's SetClock uses the driver
+                # clock (from model_configure) for ihot=2 instead of param.nml,
+                # and ModelAdvance initializes it = iths_save + 1 (hotstart
+                # step) so SCHISM time stays in sync with nudging/outputs.
+                # Requires fv3_coastal rebuilt with modified schism_nuopc_cap.F90.
                 if [ -s "${DATA}/param.nml" ]; then
+                    sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
+                    echo "  Set ihot=2 in param.nml for forecast"
+
                     if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-                        # UFS-Coastal: keep ihot=1 — the original exe doesn't
-                        # have the SetClock/ModelAdvance ihot=2 fixes yet.
-                        # TODO: switch to ihot=2 once fv3_coastal is rebuilt
-                        # with the modified schism_nuopc_cap.F90.
-                        echo "  UFS-Coastal: keeping ihot=1 in param.nml for forecast"
+                        # For UFS-Coastal ihot=2: keep param.nml start_hour at
+                        # the ORIGINAL simulation start (nowcast start) so
+                        # bctides tidal nodal factors remain correct.
+                        # model_configure has the forecast start time for the
+                        # ESMF/DATM clock.
+                        echo "  UFS-Coastal ihot=2: param.nml start_hour stays at original start"
+                        echo "  ESMF clock uses model_configure start_hour for DATM alignment"
                         mkdir -p ${DATA}/outputs
-                    else
-                        # Standalone SCHISM: ihot=2 for hot restart
-                        sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
-                        echo "  Set ihot=2 in param.nml for forecast"
                     fi
                 fi
             fi
