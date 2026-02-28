@@ -92,8 +92,9 @@ ensemble_stage_files() {
 ################################################################################
 # Step 3: Configure param.nml for this member
 #
-# Copies the forecast param.nml, sets ihot=1, updates start_year/month/day/hour
-# and rnday to match the forecast window, then applies LHS perturbations.
+# Copies the forecast param.nml, sets ihot (1 for UFS, 2 for standalone),
+# enforces nws/nscribes for UFS, updates start time and rnday, then applies
+# LHS perturbations.
 ################################################################################
 ensemble_configure_runtime() {
     echo "=== ensemble_configure_runtime: member ${MEMBER_ID} ==="
@@ -105,14 +106,25 @@ ensemble_configure_runtime() {
     local rc=$?
     if [ $rc -ne 0 ]; then return $rc; fi
 
-    # 3b: Set ihot=2 for hot restart with continued output
-    # ihot=1: reads hotstart.nc but starts output from scratch (forecast-only staout)
-    # ihot=2: reads hotstart.nc AND continues output (appends forecast to nowcast staout)
-    # ihot=2 gives continuous nowcast+forecast timeseries in staout files.
-    # Requires real staout/mirror/flux files from the deterministic nowcast
-    # (restored in ensemble_prepare_restart).
-    sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
-    echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
+    # 3b: Set ihot for hot restart
+    # Standalone SCHISM: ihot=2 (continue from hotstart time, appends staout)
+    # UFS-Coastal: ihot=1 (NUOPC start_type=startup resets ESMF clock to t=0;
+    #   ihot=2 causes SCHISM/ESMF clock desync → ghost node pressure transient)
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
+        echo "Set ihot=1 for UFS-Coastal (NUOPC clock sync requires reset)"
+    else
+        sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
+        echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
+    fi
+
+    # 3b2: Force UFS-Coastal param.nml overrides
+    # If param.nml came from standalone SCHISM (nws=2, nscribes>0), fix for NUOPC.
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        sed -i 's/nws *= *[0-9]*/nws = 4/' ${MEMBER_DATA}/param.nml
+        sed -i 's/nscribes *= *[0-9]*/nscribes = 0/' ${MEMBER_DATA}/param.nml
+        echo "Forced nws=4 (NUOPC coupling) and nscribes=0 (CMEPS I/O) for UFS-Coastal"
+    fi
 
     # 3c: Update start time and rnday for forecast period
     _ensemble_update_start_time
@@ -457,10 +469,26 @@ ds.close()
         fi
     fi
 
-    # Patch stop_n for ensemble phase (typically forecast length)
+    # Patch model_configure for ensemble forecast: start time + duration
     local nhours=${LEN_FORECAST:-48}
+
+    # Derive forecast start time from time_nowcastend (= nowcast end = forecast begin)
+    local _time_ncend=""
+    [ -f "${COMOUT}/time_nowcastend.${cycle}" ] && read _time_ncend < "${COMOUT}/time_nowcastend.${cycle}"
+    _time_ncend=${_time_ncend:-${PDY}$(printf '%02d' "${cyc}")}
+
+    local sim_yyyy=${_time_ncend:0:4}
+    local sim_mm=${_time_ncend:4:2}
+    local sim_dd=${_time_ncend:6:2}
+    local sim_hh=${_time_ncend:8:2}
+
     if [ -s "${MEMBER_DATA}/model_configure" ]; then
-        sed -i "s/nhours_fcst:.*/nhours_fcst: ${nhours}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/nhours_fcst:.*/nhours_fcst:             ${nhours}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_year:.*/start_year:              ${sim_yyyy}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_month:.*/start_month:             ${sim_mm}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_day:.*/start_day:               ${sim_dd}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_hour:.*/start_hour:              ${sim_hh}/" ${MEMBER_DATA}/model_configure
+        echo "Patched model_configure: start=${sim_yyyy}-${sim_mm}-${sim_dd}T${sim_hh}Z, nhours_fcst=${nhours}"
     fi
     if [ -s "${MEMBER_DATA}/ufs.configure" ]; then
         sed -i "s/stop_n = .*/stop_n = ${nhours}/" ${MEMBER_DATA}/ufs.configure
