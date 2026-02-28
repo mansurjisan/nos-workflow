@@ -784,31 +784,21 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No forecast hotstart.nc found"
                 fi
-                # Set ihot=2 for forecast hot restart from nowcast.
-                # Both standalone SCHISM and UFS-Coastal now use ihot=2.
-                # The NUOPC cap's SetClock/ModelAdvance have been modified to
-                # handle ihot=2: SetClock inherits driver clock start/stop
-                # (from model_configure) and ModelAdvance initializes the step
-                # counter from iths (hotstart step) instead of 1.
+                # ihot for forecast: use ihot=1 for UFS-Coastal (DATM) until
+                # the NUOPC cap is recompiled with ihot=2 support.
+                # Standalone SCHISM can use ihot=2 (no NUOPC cap involved).
                 if [ -s "${DATA}/param.nml" ]; then
-                    sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
-                    echo "  Set ihot=2 in param.nml for forecast"
-
-                    # For UFS-Coastal ihot=2: keep param.nml start_hour at the
-                    # ORIGINAL simulation start (nowcast start) so tidal face
-                    # values remain correct. model_configure has the forecast
-                    # start time for the ESMF/DATM clock.
                     if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-                        echo "  UFS-Coastal ihot=2: param.nml start_hour stays at original start"
-                        echo "  ESMF clock uses model_configure start_hour for DATM alignment"
-
-                        # Create empty output files for ihot=2 (status='old' in schism_init)
+                        # UFS-Coastal: keep ihot=1 — the original exe doesn't
+                        # have the SetClock/ModelAdvance ihot=2 fixes yet.
+                        # TODO: switch to ihot=2 once fv3_coastal is rebuilt
+                        # with the modified schism_nuopc_cap.F90.
+                        echo "  UFS-Coastal: keeping ihot=1 in param.nml for forecast"
                         mkdir -p ${DATA}/outputs
-                        for i in 1 2 3 4 5 6 7 8 9; do
-                            touch ${DATA}/outputs/staout_${i}
-                        done
-                        touch ${DATA}/outputs/flux.out
-                        echo "  Created empty staout/flux.out for ihot=2 status='old'"
+                    else
+                        # Standalone SCHISM: ihot=2 for hot restart
+                        sed -i "s/ihot = 1/ihot = 2/" ${DATA}/param.nml
+                        echo "  Set ihot=2 in param.nml for forecast"
                     fi
                 fi
             fi
@@ -888,8 +878,10 @@ _comf_stage_files() {
             mkdir -p ${DATA}/outputs
             [ -s "${DATA}/hgrid.gr3" ] && cp -p ${DATA}/hgrid.gr3 ${DATA}/outputs/
 
-            # Forecast needs restart_outputs from nowcast (ihot=2 requires
-            # flux.out, mirror.out, staout_* in outputs/ directory)
+            # Forecast needs restart_outputs from nowcast.  ihot=2 requires
+            # REAL staout_*/flux.out in outputs/ — SCHISM's other_hot_init()
+            # fast-forwards through them by reading nint(time/dt) records.
+            # Empty files cause an immediate EOF crash.
             if [ "$phase" = "forecast" ]; then
                 local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
                 if [ -d "$restart_dir" ]; then
@@ -898,9 +890,21 @@ _comf_stage_files() {
                         [ -f "${restart_dir}/${f}" ] && cp -p ${restart_dir}/${f} ${DATA}/outputs/
                     done
                     echo "  Staged restart_outputs from ${restart_dir}"
+                    # Verify staout files have real data
+                    if [ -s "${DATA}/outputs/staout_1" ]; then
+                        echo "  staout_1: $(wc -l < ${DATA}/outputs/staout_1) lines"
+                    else
+                        echo "  WARNING: staout_1 empty after staging — ihot=2 may crash"
+                    fi
+                else
+                    echo "  WARNING: restart_outputs not found: ${restart_dir}"
+                    echo "  ihot=2 forecast requires real staout files from nowcast"
                 fi
-                # Ensure all required output files exist (even if empty)
-                # SCHISM ihot=2 opens these files regardless of content
+                # Ensure files exist so SCHISM can open with status='old'.
+                # If restart_outputs was staged, these are no-ops (files exist).
+                # If not, these empty files will let SCHISM open() succeed but
+                # the subsequent read() in other_hot_init will crash — this is
+                # expected and unavoidable without real nowcast output data.
                 for f in mirror.out flux.out; do
                     [ ! -f "${DATA}/outputs/${f}" ] && touch "${DATA}/outputs/${f}"
                 done

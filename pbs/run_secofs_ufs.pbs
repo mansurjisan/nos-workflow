@@ -78,21 +78,38 @@ echo ""
 # Clean previous output (keep inputs)
 # ----------------------------------------------------------------
 echo "Cleaning previous outputs..."
-rm -rf outputs/
-rm -f mirror.out fatal.error
-rm -f staout_* flux.out
-rm -f PET*.ESMF_LogFile datm.log mediator.log JCG.out
-mkdir -p outputs
-
-# For ihot=2: create empty output files (schism_init opens with status='old')
 IHOT=$(awk '/^\s*ihot\s*=/{print $3}' param.nml)
 echo "Detected ihot=${IHOT:-not found}"
+
 if [ "${IHOT:-0}" == "2" ]; then
-    echo "ihot=2: creating empty staout/flux.out for status='old'"
-    for i in 1 2 3 4 5 6 7 8 9; do touch outputs/staout_${i}; done
-    touch outputs/flux.out
-    ls -la outputs/staout_1 outputs/flux.out
+    # ihot=2: SCHISM's other_hot_init() fast-forwards through staout_* and
+    # flux.out by READING records up to the hotstart time.  Empty files
+    # cause an immediate EOF crash.  Preserve the real files from the
+    # nowcast run; only delete the large NetCDF output files.
+    echo "ihot=2: preserving staout_*/flux.out/mirror.out from nowcast"
+    rm -f outputs/schout_*.nc 2>/dev/null
+    rm -f outputs/out2d_*.nc 2>/dev/null
+    rm -f outputs/horizontalVel*.nc 2>/dev/null
+    rm -f outputs/salinity_*.nc 2>/dev/null
+    rm -f outputs/temperature_*.nc 2>/dev/null
+    rm -f outputs/zCoordinates_*.nc 2>/dev/null
+    rm -f outputs/verticalVel*.nc 2>/dev/null
+    rm -f outputs/diffusivity_*.nc 2>/dev/null
+    # Verify staout files have real data (not empty)
+    if [ -s outputs/staout_1 ]; then
+        echo "  staout_1 has $(wc -l < outputs/staout_1) lines (good)"
+    else
+        echo "  WARNING: staout_1 is empty or missing — ihot=2 will crash!"
+        echo "  You need real staout files from the completed nowcast run."
+    fi
+else
+    # ihot=0/1: clean start, empty files are fine
+    rm -rf outputs/
+    mkdir -p outputs
 fi
+
+rm -f mirror.out fatal.error
+rm -f PET*.ESMF_LogFile datm.log mediator.log JCG.out
 
 # ----------------------------------------------------------------
 # Run UFS-Coastal
