@@ -14,7 +14,7 @@
 #   ./nos_ofs_create_datm_forcing.sh DBASE OUTPUT_DIR [TIME_START] [TIME_END]
 #
 # Arguments:
-#   DBASE      - Data source: GFS25 or HRRR
+#   DBASE      - Data source: GFS25, HRRR, or GEFS_NN (e.g., GEFS_01)
 #   OUTPUT_DIR - Directory for output files
 #   TIME_START - Start time YYYYMMDDHH (optional, default: time_hotstart - 3h)
 #   TIME_END   - End time YYYYMMDDHH (optional, default: time_forecastend)
@@ -161,9 +161,27 @@ elif [ "$DBASE_UPPER" == "HRRR" ]; then
     # HRRR uses MSLMA instead of PRMSL
     MATCH_PATTERN=":(UGRD|VGRD):10 m above ground:|:(TMP|SPFH):2 m above ground:|:MSLMA:mean sea level:|:(DSWRF|DLWRF|PRATE):surface:"
     OUTPUT_FILE=${OUTPUT_DIR}/hrrr_forcing.nc
+
+elif [[ "$DBASE_UPPER" == GEFS* ]]; then
+    # GEFS pgrb2sp25 at 0.25 deg — structurally identical to GFS 0.25 deg
+    # (same variables, same regular lat/lon grid, 3-hourly)
+    INTERVAL=3
+    COMIN=${COMINgefs:-/lfs/h1/ops/prod/com/gefs/v12.3}
+    # Same variables as GFS 0.25
+    MATCH_PATTERN=":(UGRD|VGRD):10 m above ground:|:(TMP|SPFH):2 m above ground:|:PRMSL:mean sea level:|:(DSWRF|DLWRF|PRATE):surface:"
+    # Parse member ID: GEFS_01 -> 01, GEFS_02 -> 02, etc.
+    GEFS_MEM_NUM=$(echo "$DBASE_UPPER" | sed 's/GEFS_*//' | sed 's/^0*//' )
+    GEFS_MEM_ID=$(printf '%02d' "${GEFS_MEM_NUM:-1}")
+    GEFS_PREFIX="gep${GEFS_MEM_ID}"
+    GEFS_PRODUCT=${GEFS_PRODUCT:-pgrb2sp25}
+    OUTPUT_FILE=${OUTPUT_DIR}/gefs_${GEFS_MEM_ID}_forcing.nc
+    echo "GEFS member: ${GEFS_PREFIX} (product: ${GEFS_PRODUCT})"
+    # Override DBASE_LOWER for intermediate file naming
+    DBASE_LOWER="gefs_${GEFS_MEM_ID}"
+
 else
     echo "ERROR: Unknown DBASE: $DBASE"
-    echo "Supported values: GFS, GFS25, HRRR"
+    echo "Supported values: GFS, GFS25, HRRR, GEFS_NN"
     exit 1
 fi
 
@@ -202,6 +220,50 @@ find_gfs_file() {
         fi
 
         # Try previous cycle (6 hours earlier)
+        CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
+        CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
+        CYCLE_HH=$(echo $CYCLE_TIME | cut -c9-10)
+    done
+
+    echo ""
+    return 1
+}
+
+# =============================================================================
+# Function: Find GEFS pgrb2sp25 file for a valid time
+# GEFS path: ${COMINgefs}/gefs.YYYYMMDD/HH/atmos/pgrb2sp25/gepNN.tHHz.pgrb2s.0p25.fFFF
+# Strategy: Same as GFS — use base cycle with extended forecasts
+# =============================================================================
+find_gefs_file() {
+    local VALID_TIME=$1
+    local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
+    local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
+
+    # Calculate initial cycle (6 hours before valid time, rounded down to 00/06/12/18)
+    local INIT_CYCLE_TIME=$($NDATE -6 $VALID_TIME)
+    local INIT_DATE=$(echo $INIT_CYCLE_TIME | cut -c1-8)
+    local INIT_HH=$(echo $INIT_CYCLE_TIME | cut -c9-10)
+    local INIT_HH_NUM=$((10#$INIT_HH))
+
+    local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
+    local CYCLE_DATE=$INIT_DATE
+    local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+
+    # Try up to 12 cycles (going back 72 hours)
+    for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        local FHR=$($NHOUR $VALID_TIME $CYCLE_TIME 2>/dev/null || echo "-1")
+        local FHR_DEC=$((10#$FHR))
+        if [ "$FHR_DEC" -ge 0 ] && [ "$FHR_DEC" -le 384 ]; then
+            local FHR_STR=$(printf "%03d" $FHR_DEC)
+            local GRIB2_FILE="${COMIN}/gefs.${CYCLE_DATE}/${CYCLE_HH}/atmos/${GEFS_PRODUCT}/${GEFS_PREFIX}.t${CYCLE_HH}z.pgrb2s.0p25.f${FHR_STR}"
+
+            if [ -s "$GRIB2_FILE" ]; then
+                echo "$GRIB2_FILE"
+                return 0
+            fi
+        fi
+
+        # Try previous cycle
         CYCLE_TIME=$($NDATE -6 $CYCLE_TIME)
         CYCLE_DATE=$(echo $CYCLE_TIME | cut -c1-8)
         CYCLE_HH=$(echo $CYCLE_TIME | cut -c9-10)
@@ -636,6 +698,8 @@ while [ "$CURRENT_TIME" -le "$TIME_END" ]; do
     # Find the appropriate GRIB2 file
     if [ "$DBASE_UPPER" == "GFS" ] || [ "$DBASE_UPPER" == "GFS25" ]; then
         GRIB2_FILE=$(find_gfs_file $CURRENT_TIME)
+    elif [[ "$DBASE_UPPER" == GEFS* ]]; then
+        GRIB2_FILE=$(find_gefs_file $CURRENT_TIME)
     else
         GRIB2_FILE=$(find_hrrr_file $CURRENT_TIME)
     fi

@@ -78,6 +78,8 @@ done
 
 # Defaults
 DATM_BLEND_HRRR_GFS=${DATM_BLEND_HRRR_GFS:-true}
+DATM_PRIMARY_SOURCE=${DATM_PRIMARY_SOURCE:-GFS25}
+DATM_OUTPUT_SUFFIX=${DATM_OUTPUT_SUFFIX:-}
 BLEND_RESOLUTION=${BLEND_RESOLUTION:-0.025}
 NHOURS_FCST=${NHOURS_FCST:-48}
 DT_ATMOS=${DT_ATMOS:-720}
@@ -140,7 +142,11 @@ TIME_START_BUFFERED=$($NDATE -3 $TIME_START)
 TIME_END=$($NDATE ${NHOURS_FCST} ${PDY}${cyc})
 
 echo "Forcing time range: $TIME_START_BUFFERED to $TIME_END"
+echo "Primary source: $DATM_PRIMARY_SOURCE"
 echo "HRRR blending: $DATM_BLEND_HRRR_GFS"
+if [ -n "$DATM_OUTPUT_SUFFIX" ]; then
+    echo "Output suffix: $DATM_OUTPUT_SUFFIX"
+fi
 
 # Create work directories
 DATM_WORK=${DATA}/datm_forcing
@@ -152,22 +158,31 @@ mkdir -p ${DATA}/INPUT
 # =============================================================================
 echo ""
 echo "============================================"
-echo "Step 1/6: Extracting GFS forcing (native 0.25 deg grid)..."
+echo "Step 1/6: Extracting primary forcing (${DATM_PRIMARY_SOURCE})..."
 echo "============================================"
 
-GFS_DIR=${DATM_WORK}/gfs
-mkdir -p $GFS_DIR
+PRIMARY_DIR=${DATM_WORK}/primary
+mkdir -p $PRIMARY_DIR
 
-${USHnos}/nosofs/nos_ofs_create_datm_forcing.sh GFS25 $GFS_DIR \
+${USHnos}/nosofs/nos_ofs_create_datm_forcing.sh ${DATM_PRIMARY_SOURCE} $PRIMARY_DIR \
     $TIME_START_BUFFERED $TIME_END
 rc=$?
 
-if [ $rc -ne 0 ] || [ ! -s ${GFS_DIR}/gfs_forcing.nc ]; then
-    echo "ERROR: GFS forcing extraction failed (rc=$rc)"
+# Determine the output filename based on source type
+PRIMARY_FORCING_FILE=""
+for candidate in ${PRIMARY_DIR}/gfs_forcing.nc ${PRIMARY_DIR}/gefs_*_forcing.nc; do
+    if [ -s "$candidate" ]; then
+        PRIMARY_FORCING_FILE="$candidate"
+        break
+    fi
+done
+
+if [ $rc -ne 0 ] || [ -z "$PRIMARY_FORCING_FILE" ]; then
+    echo "ERROR: Primary forcing extraction failed (rc=$rc, source=${DATM_PRIMARY_SOURCE})"
     exit 1
 fi
 
-echo "GFS forcing: ${GFS_DIR}/gfs_forcing.nc ($(ls -lh ${GFS_DIR}/gfs_forcing.nc | awk '{print $5}'))"
+echo "Primary forcing: ${PRIMARY_FORCING_FILE} ($(ls -lh ${PRIMARY_FORCING_FILE} | awk '{print $5}'))"
 
 # =============================================================================
 # Step 2: Extract HRRR Forcing (native grid)
@@ -222,7 +237,7 @@ if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; th
     #   6. Generates SCRIP grid and ESMF mesh for the blended output
     ${USHnos}/nosofs/nos_ofs_blend_hrrr_gfs.sh \
         ${HRRR_DIR}/hrrr_forcing.nc \
-        ${GFS_DIR}/gfs_forcing.nc \
+        ${PRIMARY_FORCING_FILE} \
         ${BLEND_DIR}/datm_forcing.nc \
         ${DOMAIN} \
         ${BLEND_RESOLUTION}
@@ -234,14 +249,14 @@ if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; th
     fi
 fi
 
-# Fallback: use GFS only (no blending)
+# Fallback: use primary source only (no blending)
 if [ "$DATM_BLEND_HRRR_GFS" != "true" ] && [ "$DATM_BLEND_HRRR_GFS" != "1" ]; then
     echo ""
     echo "============================================"
-    echo "Step 3/6: Using GFS only (no blending)..."
+    echo "Step 3/6: Using ${DATM_PRIMARY_SOURCE} only (no blending)..."
     echo "============================================"
-    cp -p ${GFS_DIR}/gfs_forcing.nc ${BLEND_DIR}/datm_forcing.nc
-    echo "Copied GFS as datm_forcing.nc"
+    cp -p ${PRIMARY_FORCING_FILE} ${BLEND_DIR}/datm_forcing.nc
+    echo "Copied ${DATM_PRIMARY_SOURCE} as datm_forcing.nc"
 fi
 
 # =============================================================================
@@ -330,19 +345,26 @@ ds.close()
 
 # =============================================================================
 # Step 6: Generate UFS Config Files
+# Skip when DATM_SKIP_UFS_CONFIG=true (e.g., ensemble atmos prep — config
+# files are generated once by the control prep job, not per member)
 # =============================================================================
-echo ""
-echo "============================================"
-echo "Step 6/6: Generating UFS config files..."
-echo "============================================"
+if [ "${DATM_SKIP_UFS_CONFIG:-false}" != "true" ]; then
+    echo ""
+    echo "============================================"
+    echo "Step 6/6: Generating UFS config files..."
+    echo "============================================"
 
-export NHOURS=${NHOURS_FCST}
-${USHnos}/nosofs/nos_ofs_gen_ufs_config.sh --verbose
-rc=$?
+    export NHOURS=${NHOURS_FCST}
+    ${USHnos}/nosofs/nos_ofs_gen_ufs_config.sh --verbose
+    rc=$?
 
-if [ $rc -ne 0 ]; then
-    echo "ERROR: UFS config generation failed"
-    exit 1
+    if [ $rc -ne 0 ]; then
+        echo "ERROR: UFS config generation failed"
+        exit 1
+    fi
+else
+    echo ""
+    echo "Step 6/6: Skipping UFS config generation (DATM_SKIP_UFS_CONFIG=true)"
 fi
 
 # =============================================================================
@@ -356,10 +378,11 @@ echo ""
 echo "Domain:        $DOMAIN"
 echo "Time range:    $TIME_START_BUFFERED to $TIME_END"
 echo "Target grid:   ${NX_TARGET} x ${NY_TARGET} at ${BLEND_RESOLUTION} deg"
+echo "Primary src:   ${DATM_PRIMARY_SOURCE}"
 if [ "$DATM_BLEND_HRRR_GFS" == "true" ] || [ "$DATM_BLEND_HRRR_GFS" == "1" ]; then
-    echo "Blending:      HRRR+GFS (HRRR over CONUS, GFS global fill)"
+    echo "Blending:      HRRR+${DATM_PRIMARY_SOURCE} (HRRR over CONUS, primary global fill)"
 else
-    echo "Blending:      GFS only (HRRR unavailable)"
+    echo "Blending:      ${DATM_PRIMARY_SOURCE} only (no HRRR blend)"
 fi
 echo ""
 echo "DATM dir:      ${DATA}/${DATM_DIR}/"

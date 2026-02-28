@@ -397,14 +397,64 @@ _ensemble_execute_ufs_coastal() {
     done
 
     # Stage DATM INPUT directory
+    # Determine member-specific DATM input based on met_source_1 from params.json
     mkdir -p ${MEMBER_DATA}/INPUT
-    local datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+    local datm_dir=""
+    local met_source=""
+
+    if [ -f "${PARAM_FILE:-}" ]; then
+        met_source=$(python3 -c "
+import json, sys
+with open('${PARAM_FILE}') as f:
+    p = json.load(f)
+print(p.get('met_source_1', ''))
+" 2>/dev/null || echo "")
+    fi
+
+    case "${met_source}" in
+        GEFS_*)
+            local gefs_id=$(echo "${met_source}" | sed 's/GEFS_//')
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input_gefs_${gefs_id}"
+            ;;
+        RRFS)
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input_rrfs"
+            ;;
+        *)
+            # Control member (GFS+HRRR) uses the standard prep output
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+            ;;
+    esac
+
+    echo "Met source: ${met_source:-GFS (control)}"
+    echo "DATM input dir: ${datm_dir}"
+
     if [ -d "$datm_dir" ]; then
         cp -p ${datm_dir}/*.nc ${MEMBER_DATA}/INPUT/ 2>/dev/null || true
-        echo "Staged DATM INPUT files"
+        echo "Staged DATM INPUT files from ${datm_dir}"
     else
         echo "FATAL: DATM input directory not found: $datm_dir" >&2
         return 1
+    fi
+
+    # Patch datm_in nx_global/ny_global if member forcing has different grid dims
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ] && [ -s "${MEMBER_DATA}/datm_in" ]; then
+        local mem_dims=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
+# Try 'x'/'y' dims first (blended output), then 'longitude'/'latitude' (raw GFS/GEFS)
+try:
+    print(len(ds.dimensions['x']), len(ds.dimensions['y']))
+except:
+    print(len(ds.dimensions['longitude']), len(ds.dimensions['latitude']))
+ds.close()
+" 2>/dev/null || echo "")
+        if [ -n "$mem_dims" ]; then
+            local mem_nx=$(echo $mem_dims | awk '{print $1}')
+            local mem_ny=$(echo $mem_dims | awk '{print $2}')
+            sed -i "s/nx_global[[:space:]]*=.*/nx_global = ${mem_nx}/" ${MEMBER_DATA}/datm_in
+            sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${mem_ny}/" ${MEMBER_DATA}/datm_in
+            echo "Patched datm_in: nx_global=${mem_nx}, ny_global=${mem_ny}"
+        fi
     fi
 
     # Patch stop_n for ensemble phase (typically forecast length)
