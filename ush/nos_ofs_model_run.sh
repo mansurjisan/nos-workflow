@@ -784,15 +784,15 @@ _comf_stage_files() {
                 else
                     echo "  WARNING: No forecast hotstart.nc found"
                 fi
-                # ihot for forecast: use ihot=1 for UFS-Coastal (DATM) until
-                # the NUOPC cap is recompiled with ihot=2 support.
-                # Standalone SCHISM can use ihot=2 (no NUOPC cap involved).
+                # ihot for forecast:
+                # UFS-Coastal: ihot=1 (resets clock, syncs with NUOPC startup)
+                # Standalone SCHISM: ihot=2 (continues from hotstart time)
                 if [ -s "${DATA}/param.nml" ]; then
                     if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-                        # UFS-Coastal: keep ihot=1 — the original exe doesn't
-                        # have the SetClock/ModelAdvance ihot=2 fixes yet.
-                        # TODO: switch to ihot=2 once fv3_coastal is rebuilt
-                        # with the modified schism_nuopc_cap.F90.
+                        # UFS-Coastal: ihot=1 is correct for forecast.
+                        # ihot=1 resets SCHISM clock to 0, matching NUOPC
+                        # start_type=startup. The rebuilt exe (fv3_coastalS.exe)
+                        # has exchange_p2d fix eliminating ghost node transients.
                         echo "  UFS-Coastal: keeping ihot=1 in param.nml for forecast"
                         mkdir -p ${DATA}/outputs
                     else
@@ -878,10 +878,10 @@ _comf_stage_files() {
             mkdir -p ${DATA}/outputs
             [ -s "${DATA}/hgrid.gr3" ] && cp -p ${DATA}/hgrid.gr3 ${DATA}/outputs/
 
-            # Forecast needs restart_outputs from nowcast.  ihot=2 requires
-            # REAL staout_*/flux.out in outputs/ — SCHISM's other_hot_init()
-            # fast-forwards through them by reading nint(time/dt) records.
-            # Empty files cause an immediate EOF crash.
+            # Standalone SCHISM forecast (ihot=2) needs REAL staout_*/flux.out
+            # in outputs/ — other_hot_init() reads nint(time/dt) records.
+            # UFS-Coastal (ihot=1) does NOT read these, but we stage them
+            # anyway for consistency and debugging.
             if [ "$phase" = "forecast" ]; then
                 local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
                 if [ -d "$restart_dir" ]; then
