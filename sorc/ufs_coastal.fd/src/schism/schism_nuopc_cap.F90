@@ -967,9 +967,10 @@ subroutine SetClock(comp, rc)
 
   !------------------------------------------------------------------------
   ! FIX: Initialize wtime1/wtime2 for coupled atmospheric forcing (nws=4)
-  ! Set wtime2 = -wtiminc so that time > wtime2 is TRUE at t=0
-  ! This ensures the first import data is properly used in schism_step
-  ! NOTE: Removed #ifdef USE_ATMOS guard due to CMake not propagating define
+  ! For both ihot=1 and ihot=2: set wtime1=wtime2=-wtiminc so that
+  ! time > wtime2 is TRUE on the first schism_step, triggering the
+  ! bracket advance in the nws=4 block. The first-call fix in
+  ! ModelAdvance will then set the proper values after ghost exchange.
   !------------------------------------------------------------------------
   if (nws == 4) then
     wtime1 = -wtiminc
@@ -1058,10 +1059,12 @@ end subroutine DataInitialize
 !> Because the import/export states and the clock do not come in through the parameter list, they must be accessed via a call to NUOPC_ModelGet
 subroutine ModelAdvance(comp, rc)
 
-  use schism_glbl, only: dt, nws, npa, &
+  use schism_glbl, only: dt, nws, npa, ihot, &
     windx, windy, windx1, windx2, windy1, windy2, &
     pr, pr1, pr2, airt1, airt2, shum1, shum2, &
+    srad, hradd, fluxprc, &
     wtime1, wtime2, wtiminc
+  use schism_msgp, only: exchange_p2d
 
   implicit none
 
@@ -1116,21 +1119,45 @@ subroutine ModelAdvance(comp, rc)
   _SCHISM_LOG_AND_FINALIZE_ON_ERROR_(rc)
 
   !------------------------------------------------------------------------
-  ! FIX: First-call wind initialization for coupled atmospheric forcing
+  ! FIX: First-call wind/pressure initialization for coupled ATM forcing
   !
-  ! Problem: At the first timestep, windx1/windy1/pr1 are zero even though
-  ! SCHISM_Import has populated windx2/windy2/pr2 with ATM data.
-  ! The schism_step interpolation uses windx1 which causes wrong values.
+  ! Problem 1: ESMF Import (SCHISM_StateUpdate) fills only OWNED nodes.
+  !   Ghost nodes keep their misc_subs init values (pr2=1e5, windx2=0).
+  !   After Import: pr2(owned)~101325, pr2(ghost)=100000 (1325 Pa gap).
   !
-  ! Solution: On first call, copy the imported ATM data from "2" arrays
-  ! to "1" arrays and output arrays. This ensures proper initialization.
-  ! NOTE: Removed #ifdef USE_ATMOS guard due to CMake not propagating define
+  ! Problem 2: wtime1=0, wtime2=wtiminc, but with ihot=2 SCHISM time
+  !   starts at iths_save*dt (e.g. 21720). The schism_step nws=4 block
+  !   computes wtratio=(time-wtime1)/wtiminc which yields ~5, amplifying
+  !   the ghost-vs-owned pressure difference:
+  !     pr(ghost) = 100000 + 5*(101325-100000) = 106669 Pa
+  !   This 5344 Pa gradient at every MPI ghost boundary (~86K elements)
+  !   drives ~1.25 m/s barotropic velocity -> ~3m mesh-scale perturbation
+  !   -> nonlinear amplification to 27m water level spike.
+  !
+  ! Solution:
+  !   1. Exchange ghost nodes in "2" arrays BEFORE copying to "1" arrays
+  !   2. Set wtime1/wtime2 to match SCHISM's current time for ihot=2
+  !      so wtratio is near 0 instead of ~5
   !------------------------------------------------------------------------
   if (first_call .and. nws == 4) then
-    call ESMF_LogWrite(trim(subname)//' Applying first-call wind fix', &
+    call ESMF_LogWrite(trim(subname)//' Applying first-call ATM fix', &
       ESMF_LOGMSG_INFO)
 
-    ! Copy imported ATM data to "previous" time slot
+    ! Step 1: Exchange ghost nodes BEFORE copying.
+    ! ESMF Import fills only owned nodes; ghost nodes retain init values
+    ! (pr2=1e5 Pa, windx2=0 from misc_subs). exchange_p2d propagates
+    ! correct owned values to neighboring ranks' ghost copies.
+    call exchange_p2d(windx2)
+    call exchange_p2d(windy2)
+    call exchange_p2d(pr2)
+    call exchange_p2d(airt2)
+    call exchange_p2d(shum2)
+    call exchange_p2d(srad)
+    call exchange_p2d(hradd)
+    call exchange_p2d(fluxprc)
+
+    ! Step 2: Copy imported ATM data (now with correct ghost values)
+    ! to "previous" time slot and output arrays
     windx1 = windx2
     windy1 = windy2
     pr1 = pr2
@@ -1142,13 +1169,20 @@ subroutine ModelAdvance(comp, rc)
     windy = windy2
     pr = pr2
 
-    ! Reset time brackets for proper interpolation in schism_step
-    wtime1 = 0.d0
-    wtime2 = wtiminc
+    ! Step 3: Set time brackets to match SCHISM's internal time.
+    ! For ihot=2: time starts at (iths_save+1)*dt, so set wtime1 to
+    ! iths_save*dt. This gives wtratio=(time-wtime1)/wtiminc near 0,
+    ! preventing catastrophic extrapolation.
+    ! For ihot=0,1: time starts at dt (iths_save=0), so wtime1=0 as before.
+    wtime1 = real(iths_save, 8) * dt
+    wtime2 = wtime1 + wtiminc
 
-    write(message, '(A,E12.4,A,E12.4)') &
-      'First-call fix applied: wtime1=', wtime1, ' wtime2=', wtime2
+    write(message, '(A,E12.4,A,E12.4,A,I8)') &
+      'First-call ATM fix: wtime1=', wtime1, ' wtime2=', wtime2, &
+      ' iths_save=', iths_save
     call ESMF_LogWrite(trim(message), ESMF_LOGMSG_INFO)
+    write(0,*) 'IHOT2_DEBUG: first-call fix wtime1=', wtime1, &
+      ' wtime2=', wtime2, ' iths_save=', iths_save
 
     first_call = .false.
   endif
