@@ -419,7 +419,10 @@ _ensemble_execute_ufs_coastal() {
 import json, sys
 with open('${PARAM_FILE}') as f:
     p = json.load(f)
-print(p.get('met_source_1', ''))
+# met_source_1 is nested under atmospheric_source in params.json
+atm = p.get('atmospheric_source', {})
+ms = atm.get('met_source_1', '') or p.get('met_source_1', '')
+print(ms)
 " 2>/dev/null || echo "")
     fi
 
