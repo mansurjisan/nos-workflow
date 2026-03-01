@@ -269,7 +269,11 @@ echo "============================================"
 
 DATM_MESH_FILE=datm_esmf_mesh.nc
 
-if [ -s "${BLEND_DIR}/datm_forcing_esmf_mesh.nc" ]; then
+if [ -s "${DATM_ESMF_MESH:-}" ]; then
+    # Pre-generated mesh passed via env var (e.g., ensemble atmos prep)
+    cp -p ${DATM_ESMF_MESH} ${BLEND_DIR}/${DATM_MESH_FILE}
+    echo "Using pre-generated ESMF mesh: ${DATM_ESMF_MESH}"
+elif [ -s "${BLEND_DIR}/datm_forcing_esmf_mesh.nc" ]; then
     # Blend script created the mesh
     cp -p ${BLEND_DIR}/datm_forcing_esmf_mesh.nc ${BLEND_DIR}/${DATM_MESH_FILE}
     echo "Using blended ESMF mesh"
