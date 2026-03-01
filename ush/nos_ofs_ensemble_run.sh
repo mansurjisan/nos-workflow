@@ -546,6 +546,9 @@ elemConn[:] = conn
 numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
 numElemConn[:] = 4
 
+elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
+elementMask[:] = np.zeros(n_elems, dtype=np.int32)
+
 centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
 centerCoords.units = 'degrees'
 clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
