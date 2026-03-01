@@ -41,6 +41,9 @@ if [ ! -r $WORKDIR ]; then
 fi
 cd ${WORKDIR}
 
+# Save PACKAGEROOT before module loads (prod_envir overrides it)
+_SAVED_PACKAGEROOT=${PACKAGEROOT}
+
 module purge
 module load envvar/${envvars_ver}
 
@@ -66,6 +69,10 @@ module load nco/${nco_ver}
 module load wgrib2/${wgrib2_ver}
 
 module list
+
+# Restore PACKAGEROOT (prod_envir sets it to /lfs/h1/ops/prod/packages)
+PACKAGEROOT=${_SAVED_PACKAGEROOT}
+unset _SAVED_PACKAGEROOT
 
 # EXPORT list
 set +x

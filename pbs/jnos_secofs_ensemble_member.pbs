@@ -53,7 +53,10 @@ cd ${WORKDIR}
 # ----------------------------------------------------------------
 # Module setup: UFS-Coastal requires hpc-stack libraries, standalone
 # SCHISM uses standard WCOSS2 modules.
+# Save PACKAGEROOT before module loads (prod_envir overrides it)
 # ----------------------------------------------------------------
+_SAVED_PACKAGEROOT=${PACKAGEROOT}
+
 if [[ "${OFS}" == *_ufs* ]]; then
     # UFS-Coastal: hpc-stack modules (hdf5-D/1.14.0, netcdf-D/4.9.2, esmf-D/8.8.0)
     module purge
@@ -91,6 +94,10 @@ else
 fi
 
 module list
+
+# Restore PACKAGEROOT (prod_envir sets it to /lfs/h1/ops/prod/packages)
+PACKAGEROOT=${_SAVED_PACKAGEROOT}
+unset _SAVED_PACKAGEROOT
 
 # MPI tuning for large-core SCHISM runs on Cray
 export MPICH_OFI_STARTUP_CONNECT=1
