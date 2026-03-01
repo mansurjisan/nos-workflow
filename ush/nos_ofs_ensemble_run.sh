@@ -501,8 +501,20 @@ ds.close()
 " 2>/dev/null || echo "0")
             fi
 
-            if [ "${mesh_nodes}" != "${mem_total}" ]; then
-                echo "ESMF mesh mismatch: mesh=${mesh_nodes} nodes, forcing=${mem_total} (${mem_nx}x${mem_ny})"
+            # Also check elementMask exists — meshes generated before the
+            # elementMask fix will pass the nodeCount check but still crash.
+            local has_emask="false"
+            if [ -s "$staged_mesh" ] && [ "${mesh_nodes}" = "${mem_total}" ]; then
+                has_emask=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${staged_mesh}', 'r')
+print('true' if 'elementMask' in ds.variables else 'false')
+ds.close()
+" 2>/dev/null || echo "false")
+            fi
+
+            if [ "${mesh_nodes}" != "${mem_total}" ] || [ "${has_emask}" != "true" ]; then
+                echo "ESMF mesh needs regeneration: nodes=${mesh_nodes}/${mem_total}, elementMask=${has_emask}"
                 echo "Regenerating ESMF mesh (vectorized)..."
                 python3 -c "
 from netCDF4 import Dataset
