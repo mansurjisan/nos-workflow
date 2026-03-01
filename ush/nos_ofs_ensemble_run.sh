@@ -598,42 +598,54 @@ print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
         fi
     fi
 
-    # Patch datm.streams to match actual forcing file variables.
-    # The template may reference variables (MSLMA, SPFH, PRATE) that
-    # don't exist in GEFS pgrb2sp25 forcing, or use MSLMA where the
-    # forcing has PRMSL. Build the stream_data_variables line from
-    # actual file contents.
-    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ] && [ -s "${MEMBER_DATA}/datm.streams" ]; then
-        echo "Patching datm.streams to match forcing variables..."
-        local new_vars=$(python3 -c "
+    # Ensure forcing NetCDF has all 8 variables expected by datm.streams.
+    # GEFS pgrb2sp25 lacks SPFH_2maboveground, PRATE_surface, and uses
+    # PRMSL_meansealevel instead of MSLMA_meansealevel.  Rather than
+    # stripping variables from datm.streams (which breaks SCHISM's
+    # atmospheric coupling), add missing variables as zeros and rename
+    # PRMSL→MSLMA so the config matches the working deterministic exactly.
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ]; then
+        echo "Checking forcing NetCDF for required variables..."
+        python3 -c "
 from netCDF4 import Dataset
-ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
-# Map forcing variable names to CMEPS field names
-var_map = {
-    'UGRD_10maboveground': 'Sa_u10m',
-    'VGRD_10maboveground': 'Sa_v10m',
-    'MSLMA_meansealevel':  'Sa_pslv',
-    'PRMSL_meansealevel':  'Sa_pslv',
-    'TMP_2maboveground':   'Sa_tbot',
-    'SPFH_2maboveground':  'Sa_shum',
-    'DSWRF_surface':       'Faxa_swdn',
-    'DLWRF_surface':       'Faxa_lwdn',
-    'PRATE_surface':       'Faxa_rain',
-}
-parts = []
-for vname in ds.variables:
-    if vname in var_map:
-        parts.append('\"{}  {}\"'.format(vname, var_map[vname]))
+import numpy as np
+
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'a')
+vnames = list(ds.variables.keys())
+time_dim = 'time'
+lat_dim = [d for d in ds.dimensions if d in ('latitude','lat')][0]
+lon_dim = [d for d in ds.dimensions if d in ('longitude','lon')][0]
+shape_3d = (len(ds.dimensions[time_dim]), len(ds.dimensions[lat_dim]), len(ds.dimensions[lon_dim]))
+changed = False
+
+# Rename PRMSL → MSLMA if needed
+if 'PRMSL_meansealevel' in vnames and 'MSLMA_meansealevel' not in vnames:
+    ds.renameVariable('PRMSL_meansealevel', 'MSLMA_meansealevel')
+    print('Renamed PRMSL_meansealevel → MSLMA_meansealevel')
+    changed = True
+
+# Add missing SPFH as zeros
+if 'SPFH_2maboveground' not in vnames:
+    v = ds.createVariable('SPFH_2maboveground', 'f4', (time_dim, lat_dim, lon_dim))
+    v.long_name = '2m specific humidity'
+    v.units = 'kg/kg'
+    v[:] = np.zeros(shape_3d, dtype=np.float32)
+    print('Added SPFH_2maboveground (zeros) — GEFS pgrb2sp25 lacks this field')
+    changed = True
+
+# Add missing PRATE as zeros
+if 'PRATE_surface' not in vnames:
+    v = ds.createVariable('PRATE_surface', 'f4', (time_dim, lat_dim, lon_dim))
+    v.long_name = 'surface precipitation rate'
+    v.units = 'kg/m2/s'
+    v[:] = np.zeros(shape_3d, dtype=np.float32)
+    print('Added PRATE_surface (zeros) — GEFS pgrb2sp25 lacks this field')
+    changed = True
+
 ds.close()
-print(' '.join(parts))
-" 2>/dev/null || echo "")
-        if [ -n "$new_vars" ]; then
-            # Replace the stream_data_variables01 line
-            sed -i "s|^stream_data_variables01:.*|stream_data_variables01:   ${new_vars}|" ${MEMBER_DATA}/datm.streams
-            echo "Patched datm.streams variables: ${new_vars}"
-        else
-            echo "WARNING: Could not read forcing variables — datm.streams unchanged"
-        fi
+if not changed:
+    print('All 8 required variables present — no changes needed')
+" 2>&1
     fi
 
     # Patch model_configure for ensemble forecast: start time + duration
