@@ -560,7 +560,7 @@ numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
 numElemConn[:] = 4
 
 elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
-elementMask[:] = np.zeros(n_elems, dtype=np.int32)
+elementMask[:] = np.ones(n_elems, dtype=np.int32)
 
 centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
 centerCoords.units = 'degrees'
@@ -585,7 +585,7 @@ import numpy as np
 ds = Dataset('${staged_mesh}', 'a')
 n_elems = len(ds.dimensions['elementCount'])
 em = ds.createVariable('elementMask', 'i4', ('elementCount',))
-em[:] = np.zeros(n_elems, dtype=np.int32)
+em[:] = np.ones(n_elems, dtype=np.int32)
 ds.close()
 print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
 " 2>&1
