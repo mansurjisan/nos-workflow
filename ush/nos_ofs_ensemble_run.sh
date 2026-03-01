@@ -513,8 +513,9 @@ ds.close()
 " 2>/dev/null || echo "false")
             fi
 
-            if [ "${mesh_nodes}" != "${mem_total}" ] || [ "${has_emask}" != "true" ]; then
-                echo "ESMF mesh needs regeneration: nodes=${mesh_nodes}/${mem_total}, elementMask=${has_emask}"
+            if [ "${mesh_nodes}" != "${mem_total}" ]; then
+                # Node count mismatch — full regeneration needed
+                echo "ESMF mesh node mismatch: mesh=${mesh_nodes}, forcing=${mem_total} (${mem_nx}x${mem_ny})"
                 echo "Regenerating ESMF mesh (vectorized)..."
                 python3 -c "
 from netCDF4 import Dataset
@@ -574,6 +575,22 @@ print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(
 " 2>&1
                 if [ $? -ne 0 ]; then
                     echo "WARNING: ESMF mesh regeneration failed — model may crash" >&2
+                fi
+            elif [ "${has_emask}" != "true" ]; then
+                # Node count OK but elementMask missing — lightweight in-place patch
+                echo "ESMF mesh missing elementMask — patching in-place..."
+                python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+ds = Dataset('${staged_mesh}', 'a')
+n_elems = len(ds.dimensions['elementCount'])
+em = ds.createVariable('elementMask', 'i4', ('elementCount',))
+em[:] = np.zeros(n_elems, dtype=np.int32)
+ds.close()
+print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
+" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "WARNING: elementMask patch failed — model may crash" >&2
                 fi
             else
                 echo "ESMF mesh OK: ${mesh_nodes} nodes matches forcing ${mem_nx}x${mem_ny}"
