@@ -566,6 +566,44 @@ print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(
         fi
     fi
 
+    # Patch datm.streams to match actual forcing file variables.
+    # The template may reference variables (MSLMA, SPFH, PRATE) that
+    # don't exist in GEFS pgrb2sp25 forcing, or use MSLMA where the
+    # forcing has PRMSL. Build the stream_data_variables line from
+    # actual file contents.
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ] && [ -s "${MEMBER_DATA}/datm.streams" ]; then
+        echo "Patching datm.streams to match forcing variables..."
+        local new_vars=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
+# Map forcing variable names to CMEPS field names
+var_map = {
+    'UGRD_10maboveground': 'Sa_u10m',
+    'VGRD_10maboveground': 'Sa_v10m',
+    'MSLMA_meansealevel':  'Sa_pslv',
+    'PRMSL_meansealevel':  'Sa_pslv',
+    'TMP_2maboveground':   'Sa_t2m',
+    'SPFH_2maboveground':  'Sa_q2m',
+    'DSWRF_surface':       'Faxa_swnet',
+    'DLWRF_surface':       'Faxa_lwdn',
+    'PRATE_surface':       'Faxa_rain',
+}
+parts = []
+for vname in ds.variables:
+    if vname in var_map:
+        parts.append('\"{}  {}\"'.format(vname, var_map[vname]))
+ds.close()
+print(' '.join(parts))
+" 2>/dev/null || echo "")
+        if [ -n "$new_vars" ]; then
+            # Replace the stream_data_variables01 line
+            sed -i "s|^stream_data_variables01:.*|stream_data_variables01:   ${new_vars}|" ${MEMBER_DATA}/datm.streams
+            echo "Patched datm.streams variables: ${new_vars}"
+        else
+            echo "WARNING: Could not read forcing variables — datm.streams unchanged"
+        fi
+    fi
+
     # Patch model_configure for ensemble forecast: start time + duration
     local nhours=${LEN_FORECAST:-48}
 
