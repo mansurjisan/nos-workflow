@@ -622,9 +622,15 @@ export DATM_SKIP_UFS_CONFIG=true
 mkdir -p \${DATA}/INPUT
 ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN:-SECOFS}
 rc=\$?
-if [ \$rc -eq 0 ] && [ -d \${DATA}/INPUT ]; then
-    cp -p \${DATA}/INPUT/*.nc ${MEM_OUTDIR}/ 2>/dev/null
-    echo "Archived DATM input to ${MEM_OUTDIR}"
+if [ \$rc -eq 0 ]; then
+    for f in datm_forcing.nc datm_esmf_mesh.nc; do
+        if [ -s "\${DATA}/INPUT/\${f}" ]; then
+            cp -p \${DATA}/INPUT/\${f} ${MEM_OUTDIR}/
+            echo "Archived \${f} to ${MEM_OUTDIR}"
+        else
+            echo "WARNING: \${f} not found in \${DATA}/INPUT/" >&2
+        fi
+    done
 fi
 exit \$rc
 WRAPEOF
@@ -658,9 +664,15 @@ export DATM_SKIP_UFS_CONFIG=true
 mkdir -p \${DATA}/INPUT
 ${USHnos}/nosofs/nos_ofs_create_datm_forcing_blended.sh ${DATM_DOMAIN:-SECOFS}
 rc=\$?
-if [ \$rc -eq 0 ] && [ -d \${DATA}/INPUT ]; then
-    cp -p \${DATA}/INPUT/*.nc ${RRFS_OUTDIR}/ 2>/dev/null
-    echo "Archived DATM input to ${RRFS_OUTDIR}"
+if [ \$rc -eq 0 ]; then
+    for f in datm_forcing.nc datm_esmf_mesh.nc; do
+        if [ -s "\${DATA}/INPUT/\${f}" ]; then
+            cp -p \${DATA}/INPUT/\${f} ${RRFS_OUTDIR}/
+            echo "Archived \${f} to ${RRFS_OUTDIR}"
+        else
+            echo "WARNING: \${f} not found in \${DATA}/INPUT/" >&2
+        fi
+    done
 fi
 exit \$rc
 WRAPEOF
