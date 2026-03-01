@@ -614,9 +614,9 @@ var_map = {
     'VGRD_10maboveground': 'Sa_v10m',
     'MSLMA_meansealevel':  'Sa_pslv',
     'PRMSL_meansealevel':  'Sa_pslv',
-    'TMP_2maboveground':   'Sa_t2m',
-    'SPFH_2maboveground':  'Sa_q2m',
-    'DSWRF_surface':       'Faxa_swnet',
+    'TMP_2maboveground':   'Sa_tbot',
+    'SPFH_2maboveground':  'Sa_shum',
+    'DSWRF_surface':       'Faxa_swdn',
     'DLWRF_surface':       'Faxa_lwdn',
     'PRATE_surface':       'Faxa_rain',
 }
