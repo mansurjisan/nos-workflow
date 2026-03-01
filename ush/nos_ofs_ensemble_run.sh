@@ -624,8 +624,10 @@ print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(
 
     # --- Set UFS-Coastal runtime environment ---
     export OMP_STACKSIZE=${OMP_STACKSIZE:-512M}
-    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-    export OMP_PLACES=${OMP_PLACES:-cores}
+    # Force OMP_NUM_THREADS=1 — Cray PBS sets it to ncpus (128) which
+    # causes massive oversubscription with 120 MPI ranks per node
+    export OMP_NUM_THREADS=1
+    export OMP_PLACES=cores
     export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
     export ESMF_RUNTIME_PROFILE=ON
     export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
