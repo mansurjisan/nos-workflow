@@ -486,24 +486,25 @@ ds.close()
             sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${mem_ny}/" ${MEMBER_DATA}/datm_in
             echo "Patched datm_in: nx_global=${mem_nx}, ny_global=${mem_ny}"
 
-            # If grid dims differ from control, regenerate ESMF mesh
-            # Control mesh is built for blended grid (e.g., 1721x1721)
-            # GEFS raw forcing is on global 0.25 deg grid (1440x721)
-            local ctrl_mesh="${COMOUT}/${RUN}.${cycle}.datm_input/datm_esmf_mesh.nc"
-            if [ -s "$ctrl_mesh" ]; then
-                local ctrl_dims=$(python3 -c "
+            # Verify ESMF mesh matches forcing dims. If the member's
+            # datm_input dir already had a matching mesh (e.g., from gefs_prep),
+            # no regeneration needed. Only regenerate if mesh node count != nx*ny.
+            local mem_total=$((mem_nx * mem_ny))
+            local staged_mesh="${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+            local mesh_nodes="0"
+            if [ -s "$staged_mesh" ]; then
+                mesh_nodes=$(python3 -c "
 from netCDF4 import Dataset
-ds = Dataset('${ctrl_mesh}', 'r')
-# ESMF mesh nodeCount should match nx*ny
-nc = len(ds.dimensions.get('nodeCount', ds.dimensions.get('node_count', [])))
-print(nc)
+ds = Dataset('${staged_mesh}', 'r')
+print(len(ds.dimensions.get('nodeCount', ds.dimensions.get('node_count', []))))
 ds.close()
 " 2>/dev/null || echo "0")
-                local mem_total=$((mem_nx * mem_ny))
-                if [ "${ctrl_dims}" != "${mem_total}" ] && [ "${ctrl_dims}" != "0" ]; then
-                    echo "ESMF mesh mismatch: control=${ctrl_dims} nodes, member=${mem_total} (${mem_nx}x${mem_ny})"
-                    echo "Regenerating ESMF mesh from member forcing file..."
-                    python3 -c "
+            fi
+
+            if [ "${mesh_nodes}" != "${mem_total}" ]; then
+                echo "ESMF mesh mismatch: mesh=${mesh_nodes} nodes, forcing=${mem_total} (${mem_nx}x${mem_ny})"
+                echo "Regenerating ESMF mesh (vectorized)..."
+                python3 -c "
 from netCDF4 import Dataset
 import numpy as np
 
@@ -511,7 +512,6 @@ ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
 try:
     lons = ds.variables['longitude'][:]
     lats = ds.variables['latitude'][:]
-    # 1D coordinate arrays -> 2D meshgrid
     lon2d, lat2d = np.meshgrid(lons, lats)
 except:
     lon2d = ds.variables['longitude'][:]
@@ -533,16 +533,14 @@ nodeCoords.units = 'degrees'
 coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
 nodeCoords[:] = coords
 
+# Vectorized element connectivity (no Python for-loop)
+j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
+n0 = (j_idx * nx + i_idx + 1).ravel()
+conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
+
 elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
 elemConn.long_name = 'Node indices that define the element connectivity'
 elemConn.start_index = 1
-conn = np.zeros((n_elems, 4), dtype=np.int32)
-idx = 0
-for j in range(ny - 1):
-    for i in range(nx - 1):
-        n0 = j * nx + i + 1
-        conn[idx] = [n0, n0 + 1, n0 + nx + 1, n0 + nx]
-        idx += 1
 elemConn[:] = conn
 
 numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
@@ -550,8 +548,8 @@ numElemConn[:] = 4
 
 centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
 centerCoords.units = 'degrees'
-clon = 0.25 * (coords[conn[:, 0]-1, 0] + coords[conn[:, 1]-1, 0] + coords[conn[:, 2]-1, 0] + coords[conn[:, 3]-1, 0])
-clat = 0.25 * (coords[conn[:, 0]-1, 1] + coords[conn[:, 1]-1, 1] + coords[conn[:, 2]-1, 1] + coords[conn[:, 3]-1, 1])
+clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
+clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
 centerCoords[:] = np.column_stack([clon, clat])
 
 out.title = 'ESMF unstructured mesh for DATM forcing'
@@ -559,10 +557,11 @@ out.gridType = 'unstructured mesh'
 out.close()
 print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(n_nodes, n_elems))
 " 2>&1
-                    if [ $? -ne 0 ]; then
-                        echo "WARNING: ESMF mesh regeneration failed — model may crash" >&2
-                    fi
+                if [ $? -ne 0 ]; then
+                    echo "WARNING: ESMF mesh regeneration failed — model may crash" >&2
                 fi
+            else
+                echo "ESMF mesh OK: ${mesh_nodes} nodes matches forcing ${mem_nx}x${mem_ny}"
             fi
         fi
     fi
