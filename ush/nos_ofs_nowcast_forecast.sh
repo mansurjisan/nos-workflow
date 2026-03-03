@@ -1694,8 +1694,10 @@ fi
 
     rm -rf $DATA/outputs/*    ##  machuan
 
-    # Restore restart output files required by ihot=2 (flux.out, mirror.out, staout_*)
-    # In split-job mode, forecast has a fresh $DATA so these must come from $COMOUT
+    # Restore restart output files (flux.out, mirror.out, staout_*)
+    # In split-job mode, forecast has a fresh $DATA so these must come from $COMOUT.
+    # With ihot=1, SCHISM does not read previous staout records, but mirror.out
+    # and flux.out must exist for open(status='old').
     restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
     if [ -d "$restart_dir" ]; then
       echo "Restoring SCHISM restart output files from $restart_dir to $DATA/outputs/"
@@ -1708,7 +1710,7 @@ fi
       done
     else
       echo "WARNING: restart_outputs directory not found: $restart_dir"
-      echo "  SCHISM ihot=2 forecast may fail without flux.out/mirror.out/staout_*"
+      echo "  SCHISM forecast needs mirror.out/flux.out in outputs/"
     fi
 
     mpiexec -n ${TOTAL_TASKS}  $EXECnos/schism_${RUN} 7 > ${MODEL_LOG_FORECAST}

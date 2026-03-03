@@ -105,14 +105,14 @@ ensemble_configure_runtime() {
     local rc=$?
     if [ $rc -ne 0 ]; then return $rc; fi
 
-    # 3b: Set ihot=2 for hot restart with continued output
-    # ihot=1: reads hotstart.nc but starts output from scratch (forecast-only staout)
-    # ihot=2: reads hotstart.nc AND continues output (appends forecast to nowcast staout)
-    # ihot=2 gives continuous nowcast+forecast timeseries in staout files.
-    # Requires real staout/mirror/flux files from the deterministic nowcast
-    # (restored in ensemble_prepare_restart).
+    # 3b: Ensemble uses ihot=2 for continuous nowcast+forecast timeseries.
+    # NOTE: Deterministic nowcast/forecast uses ihot=1 (time reset, rnday = stage duration).
+    # Ensemble intentionally uses ihot=2 so staout files contain the full timeseries
+    # (nowcast + forecast appended) for ensemble post-processing verification.
+    # ihot=2 requires real staout/mirror/flux files from the deterministic nowcast
+    # (restored in ensemble_prepare_restart). rnday must be cumulative (hindcast + forecast).
     sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
-    echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
+    echo "Set ihot=2 for ensemble hot restart with continuous timeseries"
 
     # 3c: Update start time and rnday for forecast period
     _ensemble_update_start_time
