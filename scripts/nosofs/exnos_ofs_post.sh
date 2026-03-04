@@ -106,9 +106,17 @@
       err_chk
   fi
 
-  # Verify key files exist
+  # Verify key files exist.
+  # For UFS-Coastal: if distributed schout files are present but out2d is missing,
+  # the combine step in the model job may have failed. Try combining here as fallback.
   if [ ! -s "out2d_1.nc" ]; then
-      msg="FATAL: out2d_1.nc not found after extraction"
+      if ls schout_*_*.nc >/dev/null 2>&1; then
+          echo "out2d_1.nc not found but schout files present — running distributed combiner..."
+          python3 $USHnos/nosofs/schism_combine_distributed.py "$(pwd)" "$DATA" || true
+      fi
+  fi
+  if [ ! -s "out2d_1.nc" ]; then
+      msg="FATAL: out2d_1.nc not found after extraction (check if schout combine ran)"
       echo "$msg"; postmsg "$msg"
       export err=1; err_chk
   fi

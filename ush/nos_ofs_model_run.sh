@@ -1169,8 +1169,9 @@ _comf_archive_outputs() {
     fi
 
     # Archive raw SCHISM outputs for separate post-processing job (JNOS_OFS_POST).
-    # Both standalone SCHISM and UFS-Coastal produce the same raw output files
-    # in $DATA/outputs/. The post job extracts the tar and runs the Python combiner.
+    # Standalone SCHISM uses new I/O (out2d_*.nc, temperature_*.nc, etc.).
+    # UFS-Coastal SCHISM uses old I/O (schout_RRRRRR_N.nc per MPI rank).
+    # For UFS-Coastal, combine distributed files to new I/O format before tarring.
     if [ "${OCEAN_MODEL,,}" = "schism" ] || [ "${OCEAN_MODEL,,}" = "selfe" ]; then
         local raw_outputs_dir=""
         if [ "$phase" = "nowcast" ]; then
@@ -1183,6 +1184,24 @@ _comf_archive_outputs() {
             [ -d "$DATA/outputs" ] && raw_outputs_dir="$DATA/outputs"
         fi
         if [ -n "$raw_outputs_dir" ]; then
+            # UFS-Coastal: combine distributed schout files to new I/O format
+            # so that the post-processing job can use them directly.
+            if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+                if ls "$raw_outputs_dir"/schout_*_*.nc >/dev/null 2>&1 && \
+                   ! ls "$raw_outputs_dir"/out2d_*.nc >/dev/null 2>&1; then
+                    echo "UFS-Coastal: Combining distributed schout files to new I/O format..."
+                    python3 $USHnos/nosofs/schism_combine_distributed.py \
+                        "$raw_outputs_dir" "$DATA"
+                    local combine_rc=$?
+                    if [ $combine_rc -ne 0 ]; then
+                        echo "WARNING: schism_combine_distributed.py failed (rc=$combine_rc)"
+                        echo "Post-processing may not produce field products"
+                    else
+                        echo "Successfully combined distributed schout files"
+                    fi
+                fi
+            fi
+
             local raw_tar="${COMOUT}/${RUN}.${cycle}.raw_outputs.${phase}.tar"
             echo "Archiving raw SCHISM outputs from $raw_outputs_dir to $raw_tar"
             cd "$raw_outputs_dir"
