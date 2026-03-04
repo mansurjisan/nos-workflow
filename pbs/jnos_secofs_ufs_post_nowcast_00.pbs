@@ -14,6 +14,11 @@ PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs_ufs
 mkdir -p -m 755 $RPTDIR $WORKDIR
+
+# Overwrite previous job reports (PBS appends by default)
+> $RPTDIR/secofs_ufs_post_nc_00.out
+> $RPTDIR/secofs_ufs_post_nc_00.err
+
 cd ${WORKDIR}
 
 # Module setup — post-processing only needs Python + NCO, not UFS hpc-stack

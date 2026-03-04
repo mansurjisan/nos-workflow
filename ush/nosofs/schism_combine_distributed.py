@@ -51,6 +51,51 @@ VAR_MAP_STATIC = {
 }
 
 
+def read_hgrid(outputs_dir, run_dir=None):
+    """Read node coordinates and depth from hgrid.gr3.
+
+    Searches for hgrid.gr3 (or *.hgrid.gr3) in outputs_dir, run_dir, and
+    parent directory. Returns (x, y, depth) as numpy arrays, or None if not found.
+    """
+    candidates = [outputs_dir]
+    if run_dir:
+        candidates.append(run_dir)
+    candidates.append(os.path.dirname(outputs_dir))
+
+    hgrid_path = None
+    for d in candidates:
+        if not d or not os.path.isdir(d):
+            continue
+        # Try exact name first
+        p = os.path.join(d, 'hgrid.gr3')
+        if os.path.exists(p):
+            hgrid_path = p
+            break
+        # Try prefixed names (e.g., secofs.hgrid.gr3, secofs_ufs.hgrid.gr3)
+        matches = glob.glob(os.path.join(d, '*.hgrid.gr3'))
+        if matches:
+            hgrid_path = matches[0]
+            break
+
+    if hgrid_path is None:
+        return None
+
+    print(f"  Reading grid from: {hgrid_path}")
+    with open(hgrid_path, 'r') as f:
+        f.readline()  # comment line
+        ne, np_global = map(int, f.readline().split())
+        x = np.empty(np_global, dtype=np.float64)
+        y = np.empty(np_global, dtype=np.float64)
+        depth = np.empty(np_global, dtype=np.float64)
+        for i in range(np_global):
+            parts = f.readline().split()
+            x[i] = float(parts[1])
+            y[i] = float(parts[2])
+            depth[i] = float(parts[3])
+
+    return x.astype(np.float32), y.astype(np.float32), depth.astype(np.float32)
+
+
 def detect_rank_format(search_dir):
     """Detect local_to_global rank number format (4 or 6 digits)."""
     if os.path.exists(os.path.join(search_dir, 'local_to_global_000000')):
@@ -155,7 +200,8 @@ def classify_variables(ds):
     return result
 
 
-def combine_stack(outputs_dir, stack, nproc, np_global, nvrt, rank_fmt, mappings, var_cls):
+def combine_stack(outputs_dir, stack, nproc, np_global, nvrt, rank_fmt,
+                  mappings, var_cls, hgrid_data=None):
     """Combine all ranks for one output stack into new I/O format files.
 
     Args:
@@ -167,6 +213,7 @@ def combine_stack(outputs_dir, stack, nproc, np_global, nvrt, rank_fmt, mappings
         rank_fmt: Rank string width (4 or 6)
         mappings: Dict of rank -> (iplg, ielg) arrays
         var_cls: Variable classification from classify_variables()
+        hgrid_data: Optional (x, y, depth) from hgrid.gr3 for static vars
     """
     print(f"\n  Stack {stack}:")
 
@@ -227,6 +274,19 @@ def combine_stack(outputs_dir, stack, nproc, np_global, nvrt, rank_fmt, mappings
                 gstat[new_name][iplg] = ds.variables[old_name][:]
 
         ds.close()
+
+    # Inject static grid variables from hgrid.gr3 if not in schout files
+    if hgrid_data is not None:
+        hx, hy, hdepth = hgrid_data
+        if 'SCHISM_hgrid_node_x' not in gstat or np.all(np.isnan(gstat.get('SCHISM_hgrid_node_x', np.nan))):
+            gstat['SCHISM_hgrid_node_x'] = hx
+            print(f"    Injected SCHISM_hgrid_node_x from hgrid.gr3")
+        if 'SCHISM_hgrid_node_y' not in gstat or np.all(np.isnan(gstat.get('SCHISM_hgrid_node_y', np.nan))):
+            gstat['SCHISM_hgrid_node_y'] = hy
+            print(f"    Injected SCHISM_hgrid_node_y from hgrid.gr3")
+        if 'depth' not in gstat or np.all(np.isnan(gstat.get('depth', np.nan))):
+            gstat['depth'] = hdepth
+            print(f"    Injected depth from hgrid.gr3")
 
     # Write output files
     print(f"    Writing combined output files...")
@@ -359,11 +419,20 @@ def main():
         print("  Available variables:", list(ds0.variables.keys()))
         sys.exit(1)
 
+    # --- Read hgrid.gr3 for static variables (depth, coordinates) ---
+    # Old I/O schout files often lack these; hgrid.gr3 always has them.
+    hgrid_data = read_hgrid(outputs_dir, run_dir)
+    if hgrid_data is not None:
+        print(f"  hgrid.gr3:   {len(hgrid_data[0])} nodes (for static vars fallback)")
+    elif not var_cls['static']:
+        print("  WARNING: No static vars in schout and no hgrid.gr3 found")
+        print("           out2d files will lack depth/coordinates")
+
     # --- Combine each stack ---
     total_timesteps = 0
     for stack in stacks:
         nt = combine_stack(outputs_dir, stack, nproc, np_global, nvrt,
-                           rank_fmt, mappings, var_cls)
+                           rank_fmt, mappings, var_cls, hgrid_data)
         total_timesteps += nt
 
     print(f"\n{'=' * 60}")
