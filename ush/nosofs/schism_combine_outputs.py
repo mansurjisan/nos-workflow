@@ -28,7 +28,43 @@ from netCDF4 import Dataset
 import subprocess
 import os
 import sys
+import glob
 import numpy as np
+
+
+def read_hgrid_gr3(prefixnos):
+    """Read node coordinates and depth from hgrid.gr3.
+
+    Searches for {prefixnos}.hgrid.gr3 or hgrid.gr3 in current directory.
+    Returns (x, y, depth) as float32 arrays, or (None, None, None).
+    """
+    candidates = [f"{prefixnos}.hgrid.gr3", "hgrid.gr3"]
+    # Also try any *.hgrid.gr3
+    candidates.extend(glob.glob("*.hgrid.gr3"))
+
+    hgrid_path = None
+    for c in candidates:
+        if os.path.exists(c):
+            hgrid_path = c
+            break
+
+    if hgrid_path is None:
+        return None, None, None
+
+    print(f"  Reading static grid from: {hgrid_path}")
+    with open(hgrid_path, 'r') as f:
+        f.readline()  # comment
+        ne, np_global = map(int, f.readline().split())
+        x = np.empty(np_global, dtype=np.float64)
+        y = np.empty(np_global, dtype=np.float64)
+        depth = np.empty(np_global, dtype=np.float64)
+        for i in range(np_global):
+            parts = f.readline().split()
+            x[i] = float(parts[1])
+            y[i] = float(parts[2])
+            depth[i] = float(parts[3])
+
+    return x.astype(np.float32), y.astype(np.float32), depth.astype(np.float32)
 
 
 def read_control_file(cfile="schism_standard_output.ctl"):
@@ -120,11 +156,30 @@ def process_field_files(ctl, dims):
         time1 = ds_grid.variables["time"][:]
         zeta1 = ds_grid.variables["elevation"][:]
         nstep = len(time1)
-        h1 = ds_grid.variables["depth"][:]
-        lon1 = ds_grid.variables["SCHISM_hgrid_node_x"][:]
-        lat1 = ds_grid.variables["SCHISM_hgrid_node_y"][:]
-        uwind1 = ds_grid.variables["windSpeedX"][:]
-        vwind1 = ds_grid.variables["windSpeedY"][:]
+
+        # Static variables: try out2d first, fall back to hgrid.gr3
+        if "depth" in ds_grid.variables:
+            h1 = ds_grid.variables["depth"][:]
+            lon1 = ds_grid.variables["SCHISM_hgrid_node_x"][:]
+            lat1 = ds_grid.variables["SCHISM_hgrid_node_y"][:]
+        else:
+            if i == 1:
+                print("  depth/coordinates not in out2d, reading from hgrid.gr3...")
+            hlon, hlat, hdepth = read_hgrid_gr3(PREFIXNOS)
+            if hdepth is None:
+                print("ERROR: No depth in out2d and no hgrid.gr3 found")
+                sys.exit(1)
+            lon1, lat1, h1 = hlon, hlat, hdepth
+
+        # Wind variables: optional (may not exist in UFS-Coastal outputs)
+        if "windSpeedX" in ds_grid.variables:
+            uwind1 = ds_grid.variables["windSpeedX"][:]
+            vwind1 = ds_grid.variables["windSpeedY"][:]
+        else:
+            uwind1 = np.zeros((nstep, n_nodes), dtype=np.float32)
+            vwind1 = np.zeros((nstep, n_nodes), dtype=np.float32)
+            if i == 1:
+                print("  WARNING: windSpeedX/Y not in out2d, using zeros")
 
         temp1 = ds_temp.variables["temperature"][:]
         salt1 = ds_salt.variables["salinity"][:]
