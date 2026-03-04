@@ -1116,23 +1116,31 @@ _comf_execute_ufs_coastal() {
 _comf_archive_outputs() {
     local phase=$1
 
-    export pgm="$USHnos/nos_ofs_archive.sh $phase"
-    $USHnos/nos_ofs_archive.sh $phase
-    export err=$?
-
-    if [ $err -ne 0 ]; then
-        echo "Execution of $pgm did not complete normally, FATAL ERROR!"
-        echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile 2>/dev/null || true
-        msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
-        postmsg "$jlogfile" "$msg" 2>/dev/null || true
-        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
-        return $err
+    # Run legacy COMF archive script (handles DBN alerts and file copies).
+    # For UFS-Coastal, this may partially fail since file naming conventions differ,
+    # but we continue regardless to ensure the raw output tar is always created.
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        # UFS-Coastal: skip nos_ofs_archive.sh (expects COMF file naming)
+        echo "Skipping nos_ofs_archive.sh for UFS-Coastal (file naming differs)"
     else
-        echo "Execution of $pgm completed normally" >> $cormslogfile 2>/dev/null || true
-        echo "Execution of $pgm completed normally"
-        msg=" Execution of $pgm completed normally"
-        postmsg "$jlogfile" "$msg" 2>/dev/null || true
-        postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
+        export pgm="$USHnos/nos_ofs_archive.sh $phase"
+        $USHnos/nos_ofs_archive.sh $phase
+        export err=$?
+
+        if [ $err -ne 0 ]; then
+            echo "Execution of $pgm did not complete normally, FATAL ERROR!"
+            echo "Execution of $pgm did not complete normally, FATAL ERROR!" >> $cormslogfile 2>/dev/null || true
+            msg=" Execution of $pgm did not complete normally, FATAL ERROR!"
+            postmsg "$jlogfile" "$msg" 2>/dev/null || true
+            postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
+            return $err
+        else
+            echo "Execution of $pgm completed normally" >> $cormslogfile 2>/dev/null || true
+            echo "Execution of $pgm completed normally"
+            msg=" Execution of $pgm completed normally"
+            postmsg "$jlogfile" "$msg" 2>/dev/null || true
+            postmsg "$nosjlogfile" "$msg" 2>/dev/null || true
+        fi
     fi
 
     # Archive SCHISM output state files for forecast/ensemble restart in split-job mode.
@@ -1157,6 +1165,35 @@ _comf_archive_outputs() {
             echo "Archived SCHISM restart output files from $outputs_dir to $restart_dir"
         else
             echo "WARNING: Neither $DATA/outputs nor $DATA/outputs_nowcast found, skipping restart_outputs archive"
+        fi
+    fi
+
+    # Archive raw SCHISM outputs for separate post-processing job (JNOS_OFS_POST).
+    # Both standalone SCHISM and UFS-Coastal produce the same raw output files
+    # in $DATA/outputs/. The post job extracts the tar and runs the Python combiner.
+    if [ "${OCEAN_MODEL,,}" = "schism" ] || [ "${OCEAN_MODEL,,}" = "selfe" ]; then
+        local raw_outputs_dir=""
+        if [ "$phase" = "nowcast" ]; then
+            if [ -d "$DATA/outputs_nowcast" ]; then
+                raw_outputs_dir="$DATA/outputs_nowcast"
+            elif [ -d "$DATA/outputs" ]; then
+                raw_outputs_dir="$DATA/outputs"
+            fi
+        else
+            [ -d "$DATA/outputs" ] && raw_outputs_dir="$DATA/outputs"
+        fi
+        if [ -n "$raw_outputs_dir" ]; then
+            local raw_tar="${COMOUT}/${RUN}.${cycle}.raw_outputs.${phase}.tar"
+            echo "Archiving raw SCHISM outputs from $raw_outputs_dir to $raw_tar"
+            cd "$raw_outputs_dir"
+            tar cf "$raw_tar" \
+                out2d_*.nc temperature_*.nc salinity_*.nc \
+                horizontalVelX_*.nc horizontalVelY_*.nc zCoordinates_*.nc \
+                staout_* mirror.out 2>/dev/null || true
+            echo "Archived raw SCHISM outputs to $raw_tar ($(du -sh "$raw_tar" 2>/dev/null | cut -f1))"
+            cd $DATA
+        else
+            echo "WARNING: No SCHISM outputs directory found, skipping raw output archive"
         fi
     fi
 }
