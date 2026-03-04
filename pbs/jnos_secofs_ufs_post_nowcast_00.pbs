@@ -1,0 +1,72 @@
+#!/bin/bash
+#PBS  -N secofs_ufs_post_nc_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_post_nc_00.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_post_nc_00.err
+#PBS  -l place=vscatter,select=1:ncpus=8
+#PBS  -l walltime=01:00:00
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+
+# Working directory
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs_ufs
+mkdir -p -m 755 $RPTDIR $WORKDIR
+cd ${WORKDIR}
+
+# Module setup — post-processing only needs Python + NCO, not UFS hpc-stack
+module purge
+module load envvar/${envvars_ver}
+module load PrgEnv-intel/${PrgEnv_intel_ver}
+module load craype/${craype_ver}
+module load intel/${intel_ver}
+module load cray-mpich/${cray_mpich_ver}
+module load cray-pals/${cray_pals_ver}
+module load netcdf/${netcdf_ver}
+module load hdf5/${hdf5_ver}
+module load python/${python_ver}
+module load prod_envir/${prod_envir_ver}
+module load prod_util/${prod_util_ver}
+module load nco/${nco_ver}
+
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=secofs_ufs
+export cyc=00
+export job=secofs_ufs_post_nc_00_$envir
+export platform=ptmp
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+# Post-processing type
+export RUNTYPE=nowcast
+
+export nosofs_ver=v3.7.0
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMPATH=/lfs/h1/ops/prod/com/nos
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
+
+# YAML configuration for secofs_ufs
+export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+${HOMEnos}/jobs/JNOS_OFS_POST
