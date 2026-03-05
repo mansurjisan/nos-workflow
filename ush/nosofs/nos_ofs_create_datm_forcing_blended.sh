@@ -136,8 +136,11 @@ echo ""
 TIME_START=${time_hotstart:-$($NDATE -6 ${PDY}${cyc})}
 # Add 3h buffer before start
 TIME_START_BUFFERED=$($NDATE -3 $TIME_START)
-# End: cycle + forecast hours
-TIME_END=$($NDATE ${NHOURS_FCST} ${PDY}${cyc})
+# End: cycle + forecast hours + 3h buffer
+# The buffer ensures DATM/CDEPS can interpolate at the exact forecast end time.
+# Without it, taxMode=limit causes shr_stream_findBounds to error with
+# "rDateIn gt rDategvd" when the model clock reaches the last forcing record.
+TIME_END=$($NDATE $((NHOURS_FCST + 3)) ${PDY}${cyc})
 
 echo "Forcing time range: $TIME_START_BUFFERED to $TIME_END"
 echo "HRRR blending: $DATM_BLEND_HRRR_GFS"
