@@ -276,20 +276,49 @@ fi
 echo "Using: $ESMF_SCRIP2UNSTRUCT"
 
 # Setup LD_LIBRARY_PATH for ESMF's HDF5/NetCDF dependencies.
-# ESMF in hpc-stack is compiled against a specific HDF5 version
-# (e.g., 1.14.0) that may differ from the loaded hdf5 module.
-ESMF_DIR=$(cd "$(dirname "$ESMF_SCRIP2UNSTRUCT")/.." 2>/dev/null && pwd)
-MPI_DIR=$(cd "$ESMF_DIR/../.." 2>/dev/null && pwd)
-COMPILER_DIR=$(cd "$MPI_DIR/.." 2>/dev/null && pwd)
-for _lib_pkg in hdf5 netcdf; do
-    for _lib_dir in "$MPI_DIR"/${_lib_pkg}/*/lib "$COMPILER_DIR"/${_lib_pkg}/*/lib; do
-        if [ -d "$_lib_dir" ]; then
-            export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
-            echo "  Added to LD_LIBRARY_PATH: $_lib_dir"
-            break
-        fi
+# ESMF in hpc-stack is compiled against specific library versions that may
+# differ from the loaded modules. The hpc-stack top-level directory encodes
+# versions: e.g., "h-1.14.0" = HDF5 1.14.0, "n-4.9.2" = NetCDF 4.9.2.
+# We parse these and prepend matching lib directories to LD_LIBRARY_PATH.
+_esmf_setup_libs() {
+    local esmf_bin="$1"
+    local esmf_dir mpi_dir compiler_dir hpc_hash
+
+    esmf_dir=$(cd "$(dirname "$esmf_bin")/.." 2>/dev/null && pwd)
+    mpi_dir=$(cd "$esmf_dir/../.." 2>/dev/null && pwd)
+    compiler_dir=$(cd "$mpi_dir/.." 2>/dev/null && pwd)
+    hpc_hash=$(cd "$compiler_dir/.." 2>/dev/null && basename "$(pwd)")
+
+    # Parse hpc-stack hash for library versions:
+    #   "i-19.1.3.304__m-8.1.12__h-1.14.0__n-4.9.2__p-2.5.10__e-8.4.2"
+    #   h-X.Y.Z = HDF5, n-X.Y.Z = NetCDF
+    local hdf5_ver netcdf_ver
+    hdf5_ver=$(echo "$hpc_hash" | sed -n 's/.*__h-\([0-9.]*\)__.*/\1/p')
+    netcdf_ver=$(echo "$hpc_hash" | sed -n 's/.*__n-\([0-9.]*\)__.*/\1/p')
+
+    echo "  hpc-stack hash: $hpc_hash"
+    [ -n "$hdf5_ver" ] && echo "  HDF5 version (from hash): $hdf5_ver"
+    [ -n "$netcdf_ver" ] && echo "  NetCDF version (from hash): $netcdf_ver"
+
+    # Search for matching library directories
+    local _pkg _ver _lib_dir
+    for _pkg in hdf5 netcdf; do
+        eval "_ver=\${${_pkg}_ver}"
+        # Try exact version under MPI dir, compiler dir, then wildcard
+        for _lib_dir in \
+            "$mpi_dir/${_pkg}/${_ver}/lib" \
+            "$compiler_dir/${_pkg}/${_ver}/lib" \
+            "$mpi_dir/${_pkg}"/*/lib \
+            "$compiler_dir/${_pkg}"/*/lib; do
+            if [ -d "$_lib_dir" ]; then
+                export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
+                echo "  Added to LD_LIBRARY_PATH: $_lib_dir"
+                break
+            fi
+        done
     done
-done
+}
+_esmf_setup_libs "$ESMF_SCRIP2UNSTRUCT"
 
 # Create ESMF mesh (0 = no dual mesh)
 $ESMF_SCRIP2UNSTRUCT $SCRIP_NC $MESH_NC 0

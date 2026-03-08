@@ -164,13 +164,22 @@ if [ -n "$ESMF_SCRIP2UNSTRUCT" ] && [ -x "$ESMF_SCRIP2UNSTRUCT" ]; then
         echo "Using: $ESMF_SCRIP2UNSTRUCT"
 
         # Setup LD_LIBRARY_PATH for ESMF's HDF5/NetCDF dependencies.
-        # ESMF in hpc-stack is compiled against a specific HDF5 version
-        # (e.g., 1.14.0) that may differ from the loaded hdf5 module.
-        ESMF_DIR=$(cd "$(dirname "$ESMF_SCRIP2UNSTRUCT")/.." 2>/dev/null && pwd)
-        MPI_DIR=$(cd "$ESMF_DIR/../.." 2>/dev/null && pwd)
-        COMPILER_DIR=$(cd "$MPI_DIR/.." 2>/dev/null && pwd)
-        for _lib_pkg in hdf5 netcdf; do
-            for _lib_dir in "$MPI_DIR"/${_lib_pkg}/*/lib "$COMPILER_DIR"/${_lib_pkg}/*/lib; do
+        # ESMF in hpc-stack is compiled against specific library versions
+        # that may differ from the loaded modules. Parse versions from the
+        # hpc-stack path hash (e.g., "h-1.14.0" = HDF5 1.14.0).
+        _esmf_dir=$(cd "$(dirname "$ESMF_SCRIP2UNSTRUCT")/.." 2>/dev/null && pwd)
+        _mpi_dir=$(cd "$_esmf_dir/../.." 2>/dev/null && pwd)
+        _compiler_dir=$(cd "$_mpi_dir/.." 2>/dev/null && pwd)
+        _hpc_hash=$(cd "$_compiler_dir/.." 2>/dev/null && basename "$(pwd)")
+        _hdf5_ver=$(echo "$_hpc_hash" | sed -n 's/.*__h-\([0-9.]*\)__.*/\1/p')
+        _netcdf_ver=$(echo "$_hpc_hash" | sed -n 's/.*__n-\([0-9.]*\)__.*/\1/p')
+        for _pkg in hdf5 netcdf; do
+            eval "_ver=\${_${_pkg}_ver}"
+            for _lib_dir in \
+                "$_mpi_dir/${_pkg}/${_ver}/lib" \
+                "$_compiler_dir/${_pkg}/${_ver}/lib" \
+                "$_mpi_dir/${_pkg}"/*/lib \
+                "$_compiler_dir/${_pkg}"/*/lib; do
                 if [ -d "$_lib_dir" ]; then
                     export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
                     echo "  Added to LD_LIBRARY_PATH: $_lib_dir"
