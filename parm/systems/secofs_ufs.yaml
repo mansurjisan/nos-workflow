@@ -372,13 +372,13 @@ shell_mappings:
     NY_GLOBAL: ufs_coastal.ny_global
 
 # GEFS atmospheric ensemble for UFS-Coastal (DATM forcing)
-# 6-member atmospheric-only ensemble (no physics perturbation).
+# 7-member atmospheric-only ensemble (no physics perturbation).
 # Member 000 is the control run (GFS+HRRR blended DATM forcing + default params)
-# Members 001-004 use GEFS perturbation members (GEFS-only DATM, no HRRR blend)
-# Member 005 uses RRFS (3km regridded to regular lat/lon)
+# Members 001-005 use GEFS perturbation members (GEFS-only DATM, no HRRR blend)
+# Member 006 uses RRFS (3km regridded to regular lat/lon)
 ensemble:
   enabled: true
-  n_members: 6
+  n_members: 7
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
@@ -387,7 +387,7 @@ ensemble:
   # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
   gefs:
     enabled: true
-    n_gefs_members: 4
+    n_gefs_members: 5
     resolution: "0p25"
     product: "pgrb2sp25"
     control_member: "gec00"
@@ -414,6 +414,10 @@ ensemble:
         met_source_1: GEFS_04
         met_source_2: null
       "005":
+        label: "GEFS p05"
+        met_source_1: GEFS_05
+        met_source_2: null
+      "006":
         label: "RRFS"
         met_source_1: RRFS
         met_source_2: null
@@ -422,6 +426,7 @@ ensemble:
       - GEFS_02
       - GEFS_03
       - GEFS_04
+      - GEFS_05
       - RRFS
   # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
   # 3km resolution, North America domain, available on WCOSS2 at para status

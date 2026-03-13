@@ -99,9 +99,9 @@ if [ "${UFS_MODE}" = true ]; then
     OFS=secofs_ufs
 fi
 
-# GEFS defaults: 6 members for SECOFS (4 GEFS + 1 RRFS + 1 control)
+# GEFS defaults: 7 members for SECOFS (5 GEFS + 1 RRFS + 1 control)
 if [ "${GEFS_ENSEMBLE}" = true ] && [ "${_USER_SET_MEMBERS}" = false ]; then
-    N_MEMBERS=6
+    N_MEMBERS=7
 fi
 unset _USER_SET_MEMBERS
 
