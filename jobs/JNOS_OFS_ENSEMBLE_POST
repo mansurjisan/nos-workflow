@@ -144,9 +144,13 @@ echo "${MEMBER_DIRS}" | tr ' ' '\n'
 ########################################################
 # Step 1: Per-member SCHISM output combining
 #
-# Converts raw SCHISM split outputs (out2d_*.nc, temperature_*.nc, etc.)
-# into CO-OPS standard per-timestep field files and station timeseries,
-# matching the deterministic output format:
+# Same approach as nos_ofs_nowcast_forecast.sh inline combining:
+#   1. Copy FIX files to outputs directory
+#   2. Create schism_standard_output.ctl (5-line control file)
+#   3. Run python schism_combine_outputs.py
+#   4. Move products to member COMOUT
+#
+# Produces deterministic-format outputs per member:
 #   {PREFIXNOS}.t{cyc}z.{PDY}.fields.fNNN.nc
 #   {PREFIXNOS}.t{cyc}z.{PDY}.stations.forecast.nc
 ########################################################
@@ -187,15 +191,17 @@ else
         fi
 
         echo "  Combining outputs for member ${MID}..."
+        cd ${OUTPUTS_DIR}
 
-        # Stage FIX files (handle UFS-Coastal prefix variants:
-        # secofs_ufs uses same grid as secofs, so FIX files may
-        # be named secofs.* rather than secofs_ufs.*)
-        for _ext in nv.nc sigma.dat station.lat.lon; do
-            _target="${OUTPUTS_DIR}/${PREFIXNOS}.${_ext}"
+        # Step 1a: Copy FIX files to outputs dir
+        # (same as nos_ofs_nowcast_forecast.sh lines 1097-1101)
+        # Handle UFS-Coastal prefix variants: secofs_ufs grid files
+        # may be named secofs.* in FIXofs
+        for _ext in nv.nc hgrid.gr3 station.lat.lon sigma.dat; do
+            _target="${PREFIXNOS}.${_ext}"
             if [ ! -f "${_target}" ]; then
                 if [ -f "${FIXofs}/${PREFIXNOS}.${_ext}" ]; then
-                    cp -p "${FIXofs}/${PREFIXNOS}.${_ext}" "${_target}"
+                    cp -p "${FIXofs}/${PREFIXNOS}.${_ext}" .
                 else
                     _base=${PREFIXNOS%_ufs}
                     if [ "${_base}" != "${PREFIXNOS}" ] && \
@@ -206,23 +212,30 @@ else
             fi
         done
 
-        python3 ${COMBINE_SCRIPT} \
-            --prefix ${PREFIXNOS} \
-            --cyc $(printf '%02d' "${cyc}") \
-            --pdy ${PDY} \
-            --mode f \
-            --timestart ${TIMESTART} \
-            --workdir ${OUTPUTS_DIR}
+        # Step 1b: Create 5-line control file
+        # (same as nos_ofs_nowcast_forecast.sh lines 1103-1108)
+        rm -f schism_standard_output.ctl
+        echo ${PREFIXNOS}  >> schism_standard_output.ctl
+        echo $(printf '%02d' "${cyc}")  >> schism_standard_output.ctl
+        echo ${PDY}         >> schism_standard_output.ctl
+        echo "f"            >> schism_standard_output.ctl
+        echo ${TIMESTART}   >> schism_standard_output.ctl
+
+        # Step 1c: Run combining script
+        python3 ${COMBINE_SCRIPT}
         combine_err=$?
 
         if [ $combine_err -ne 0 ]; then
             echo "WARNING: Combining failed for member ${MID} (rc=${combine_err})"
+            cd ${DATA}
             continue
         fi
 
-        # Move products from outputs/ to member directory
-        mv ${OUTPUTS_DIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc ${MDIR}/ 2>/dev/null
-        mv ${OUTPUTS_DIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc ${MDIR}/ 2>/dev/null
+        # Step 1d: Move products from outputs/ to member directory
+        mv ${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc ${MDIR}/ 2>/dev/null
+        mv ${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc ${MDIR}/ 2>/dev/null
+
+        cd ${DATA}
 
         N_FIELDS=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 2>/dev/null | wc -l)
         echo "  Member ${MID}: ${N_FIELDS} field files + station file created"
