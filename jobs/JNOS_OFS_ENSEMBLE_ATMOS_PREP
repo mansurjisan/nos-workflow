@@ -755,6 +755,13 @@ else:
         if [ $rc -ne 0 ]; then
             echo "WARNING: Control ESMF mesh check/fix failed (rc=$rc)" >&2
         fi
+
+        # Update GEFS_MESH to use the corrected control mesh so all cfp
+        # wrappers get the right one (same SECOFS subdomain grid for all members)
+        if [ -s "${CTRL_DATM_DIR}/datm_esmf_mesh.nc" ]; then
+            cp -p ${CTRL_DATM_DIR}/datm_esmf_mesh.nc ${GEFS_MESH}
+            echo "Updated GEFS_MESH from corrected control mesh ($(python3 -c "from netCDF4 import Dataset; ds=Dataset('${GEFS_MESH}'); print(len(ds.dimensions['nodeCount'])); ds.close()" 2>/dev/null || echo '?') nodes)"
+        fi
     else
         echo "WARNING: Control datm_forcing.nc not found at ${CTRL_DATM_DIR} — mesh not checked"
     fi
