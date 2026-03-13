@@ -6,14 +6,17 @@
 #PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_enspost_00.err
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=01:00:00
+#PBS  -l walltime=02:00:00
 
 # ------------------------------------------------------------------
 # SECOFS Ensemble Post-Processing PBS Job
 #
-# Computes ensemble statistics (mean, spread, percentiles) from all
-# member outputs. Submit via launch_secofs_ensemble.sh or manually:
-#   qsub -v N_MEMBERS=5,CYC=00 jnos_secofs_ensemble_post.pbs
+# Combines per-member SCHISM outputs into field/station products
+# (same format as deterministic), then computes ensemble statistics
+# (mean, spread, percentiles).
+#
+# Submit via launch_secofs_ensemble.sh or manually:
+#   qsub -v N_MEMBERS=5,CYC=00,OFS=secofs jnos_secofs_ensemble_post.pbs
 # ------------------------------------------------------------------
 
 CYC=${CYC:-00}
@@ -22,13 +25,16 @@ N_MEMBERS=${N_MEMBERS:-5}
 # PDY: accept from qsub -v, fall back to today
 export PDY=${PDY:-$(date +%Y%m%d)}
 
+# OFS: accept from qsub -v (launcher passes this), fall back to secofs
+export OFS=${OFS:-secofs}
+
 # Source version file
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
 
 # Working directory
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs/ensemble
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}/ensemble
 mkdir -p -m 755 $RPTDIR $WORKDIR
 cd ${WORKDIR}
 
@@ -45,6 +51,7 @@ module load netcdf/${netcdf_ver:-4.7.4}
 module load python/${python_ver:-3.8.6}
 module load prod_envir/${prod_envir_ver:-2.0.6}
 module load prod_util/${prod_util_ver:-2.0.17}
+module load udunits/${udunits_ver:-2.2.28}
 module load nco/${nco_ver:-5.0.6}
 
 module list
@@ -52,12 +59,11 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export OFS=secofs
 export cyc=${CYC}
 export NET=nosofs
 export model=nosofs
 export N_MEMBERS=${N_MEMBERS}
-export job=secofs_enspost_${CYC}_$envir
+export job=${OFS}_enspost_${CYC}_$envir
 export platform=ptmp
 
 export KEEPDATA=YES

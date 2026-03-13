@@ -115,6 +115,11 @@ export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
 export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 ##############################################
+# FIX directory
+##############################################
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+
+##############################################
 # Build member directory list
 ##############################################
 MEMBER_DIRS=""
@@ -137,11 +142,97 @@ echo "Found member directories:"
 echo "${MEMBER_DIRS}" | tr ' ' '\n'
 
 ########################################################
-# Run ensemble post-processing
+# Step 1: Per-member SCHISM output combining
+#
+# Converts raw SCHISM split outputs (out2d_*.nc, temperature_*.nc, etc.)
+# into CO-OPS standard per-timestep field files and station timeseries,
+# matching the deterministic output format:
+#   {PREFIXNOS}.t{cyc}z.{PDY}.fields.fNNN.nc
+#   {PREFIXNOS}.t{cyc}z.{PDY}.stations.forecast.nc
 ########################################################
-echo "=== Computing ensemble statistics ==="
+echo "=== Per-member SCHISM output combining ==="
 
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Determine forecast start time (= nowcast end)
+TIMESTART=${PDY}$(printf '%02d' "${cyc}")
+if [ -f "${COMOUT}/time_nowcastend.${cycle}" ]; then
+    read TIMESTART < "${COMOUT}/time_nowcastend.${cycle}"
+    echo "  Forecast start time from nowcast: ${TIMESTART}"
+fi
+
+COMBINE_SCRIPT="${USHnos}/nosofs/schism_combine_outputs.py"
+if [ ! -f "${COMBINE_SCRIPT}" ]; then
+    echo "WARNING: ${COMBINE_SCRIPT} not found — skipping per-member combining"
+else
+    for MDIR in ${MEMBER_DIRS}; do
+        MID=$(basename ${MDIR} | sed 's/member_//')
+        OUTPUTS_DIR="${MDIR}/outputs"
+
+        if [ ! -d "${OUTPUTS_DIR}" ]; then
+            echo "  Member ${MID}: no outputs/ directory, skipping"
+            continue
+        fi
+
+        # Skip if already combined
+        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1; then
+            echo "  Member ${MID}: already combined, skipping"
+            continue
+        fi
+
+        # Check for SCHISM combined outputs
+        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
+            echo "  Member ${MID}: no out2d_1.nc, skipping"
+            continue
+        fi
+
+        echo "  Combining outputs for member ${MID}..."
+
+        # Stage FIX files (handle UFS-Coastal prefix variants:
+        # secofs_ufs uses same grid as secofs, so FIX files may
+        # be named secofs.* rather than secofs_ufs.*)
+        for _ext in nv.nc sigma.dat station.lat.lon; do
+            _target="${OUTPUTS_DIR}/${PREFIXNOS}.${_ext}"
+            if [ ! -f "${_target}" ]; then
+                if [ -f "${FIXofs}/${PREFIXNOS}.${_ext}" ]; then
+                    cp -p "${FIXofs}/${PREFIXNOS}.${_ext}" "${_target}"
+                else
+                    _base=${PREFIXNOS%_ufs}
+                    if [ "${_base}" != "${PREFIXNOS}" ] && \
+                       [ -f "${FIXofs}/${_base}.${_ext}" ]; then
+                        cp -p "${FIXofs}/${_base}.${_ext}" "${_target}"
+                    fi
+                fi
+            fi
+        done
+
+        python3 ${COMBINE_SCRIPT} \
+            --prefix ${PREFIXNOS} \
+            --cyc $(printf '%02d' "${cyc}") \
+            --pdy ${PDY} \
+            --mode f \
+            --timestart ${TIMESTART} \
+            --workdir ${OUTPUTS_DIR}
+        combine_err=$?
+
+        if [ $combine_err -ne 0 ]; then
+            echo "WARNING: Combining failed for member ${MID} (rc=${combine_err})"
+            continue
+        fi
+
+        # Move products from outputs/ to member directory
+        mv ${OUTPUTS_DIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc ${MDIR}/ 2>/dev/null
+        mv ${OUTPUTS_DIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc ${MDIR}/ 2>/dev/null
+
+        N_FIELDS=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 2>/dev/null | wc -l)
+        echo "  Member ${MID}: ${N_FIELDS} field files + station file created"
+    done
+fi
+
+########################################################
+# Step 2: Ensemble statistics (mean, spread, percentiles)
+########################################################
+echo "=== Computing ensemble statistics ==="
 
 STATS_DIR="${COMOUT}/ensemble/stats"
 
@@ -159,11 +250,14 @@ python3 -m nos_ofs.ensemble.ensemble_post \
 export err=$?
 
 if [ $err -ne 0 ]; then
-    echo "ERROR: Ensemble post-processing failed (exit code: ${err})" >&2
-    exit $err
+    echo "WARNING: Ensemble statistics failed (exit code: ${err})" >&2
+    echo "Per-member combined outputs may still be valid."
 fi
 
-echo "Ensemble statistics written to ${STATS_DIR}"
+echo "Ensemble post-processing complete"
+if [ -d "${STATS_DIR}" ]; then
+    echo "Statistics written to ${STATS_DIR}"
+fi
 
 ########################################################
 # Post-processing
