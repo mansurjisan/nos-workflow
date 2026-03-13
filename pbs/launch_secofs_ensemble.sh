@@ -243,14 +243,14 @@ if [ "${ATMOS_ENSEMBLE}" = true ]; then
         # YAML correctly distinguishes GEFS members from RRFS/other sources.
         ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true,OFS=${OFS}" \
                           -N "${OFS}_gefs_prep_${CYC}" \
-                          -o "${RPTDIR}/${OFS}_gefs_prep_${CYC}.out" \
-                          -e "${RPTDIR}/${OFS}_gefs_prep_${CYC}.err")
+                          -o "${RPTDIR}/${OFS}_gefs_prep_${CYC}.${PDY}.out" \
+                          -e "${RPTDIR}/${OFS}_gefs_prep_${CYC}.${PDY}.err")
     else
         echo ">>> Submitting atmospheric ensemble prep job..."
         ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},OFS=${OFS}" \
                           -N "${OFS}_atmos_prep_${CYC}" \
-                          -o "${RPTDIR}/${OFS}_atmos_prep_${CYC}.out" \
-                          -e "${RPTDIR}/${OFS}_atmos_prep_${CYC}.err")
+                          -o "${RPTDIR}/${OFS}_atmos_prep_${CYC}.${PDY}.out" \
+                          -e "${RPTDIR}/${OFS}_atmos_prep_${CYC}.${PDY}.err")
     fi
     if [ -n "${PREP_JOBID_SHORT}" ]; then
         ATMOS_QSUB_ARGS+=(-W "depend=afterok:${PREP_JOBID_SHORT}")
@@ -340,10 +340,11 @@ for i in $(seq 0 $((N_MEMBERS - 1))); do
         GEFS_MEM_ID=$(printf '%02d' $i)
         MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=${GEFS_MEM_ID}"
     fi
+    _PBSID_TAG=".${PDY}"  # PDY tag to distinguish runs on different dates
     QSUB_ARGS=(-v "${MEMBER_VARS}" \
                -N "${OFS}_ens${MID}_${CYC}" \
-               -o "${RPTDIR}/${OFS}_ens${MID}_${CYC}.out" \
-               -e "${RPTDIR}/${OFS}_ens${MID}_${CYC}.err")
+               -o "${RPTDIR}/${OFS}_ens${MID}_${CYC}${_PBSID_TAG}.out" \
+               -e "${RPTDIR}/${OFS}_ens${MID}_${CYC}${_PBSID_TAG}.err")
     if [ -n "${MEMBER_DEP_STR}" ]; then
         QSUB_ARGS+=(-W "depend=${MEMBER_DEP_STR}")
     fi
@@ -370,6 +371,8 @@ done
 ENSPOST_JOBID=$(qsub \
     -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY},OFS=${OFS}" \
     -N "${OFS}_enspost_${CYC}" \
+    -o "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.out" \
+    -e "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.err" \
     -W depend=${DEP_STR} \
     "${POST_PBS}")
 echo "    Ensemble post: ${ENSPOST_JOBID}"
