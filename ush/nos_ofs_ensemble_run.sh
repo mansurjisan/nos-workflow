@@ -613,8 +613,14 @@ import numpy as np
 ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'a')
 vnames = list(ds.variables.keys())
 time_dim = 'time'
-lat_dim = [d for d in ds.dimensions if d in ('latitude','lat')][0]
-lon_dim = [d for d in ds.dimensions if d in ('longitude','lon')][0]
+lat_dims = [d for d in ds.dimensions if d in ('latitude','lat','y')]
+lon_dims = [d for d in ds.dimensions if d in ('longitude','lon','x')]
+if not lat_dims or not lon_dims:
+    print('Forcing dims not recognized: {} — skipping variable check'.format(list(ds.dimensions.keys())))
+    ds.close()
+    import sys; sys.exit(0)
+lat_dim = lat_dims[0]
+lon_dim = lon_dims[0]
 shape_3d = (len(ds.dimensions[time_dim]), len(ds.dimensions[lat_dim]), len(ds.dimensions[lon_dim]))
 changed = False
 
