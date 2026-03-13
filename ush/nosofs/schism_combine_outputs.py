@@ -83,19 +83,29 @@ def read_control_file(cfile="schism_standard_output.ctl"):
     }
 
 
-def get_grid_dimensions(prefixnos):
-    """Read grid dimensions dynamically from output files and FIX files."""
-    # Node and element counts from out2d_1.nc
-    ds = nc.Dataset("out2d_1.nc")
-    n_nodes = len(ds.dimensions['nSCHISM_hgrid_node'])
-    ds.close()
+def get_grid_dimensions(prefixnos, fields_available=True):
+    """Read grid dimensions dynamically from output files and FIX files.
 
-    # Element count from nv.nc
-    nvfile = f"{prefixnos}.nv.nc"
-    ds_nv = nc.Dataset(nvfile)
-    nv = ds_nv.variables["nv"][:]
-    n_elements = nv.shape[1]  # nv is (nface, nele)
-    ds_nv.close()
+    If fields_available=False, skip reading out2d_1.nc and nv.nc (needed
+    only for field file creation). Station processing needs only station
+    count and sigma levels from FIX files.
+    """
+    n_nodes = 0
+    n_elements = 0
+    nv = None
+
+    if fields_available:
+        # Node and element counts from out2d_1.nc
+        ds = nc.Dataset("out2d_1.nc")
+        n_nodes = len(ds.dimensions['nSCHISM_hgrid_node'])
+        ds.close()
+
+        # Element count from nv.nc
+        nvfile = f"{prefixnos}.nv.nc"
+        ds_nv = nc.Dataset(nvfile)
+        nv = ds_nv.variables["nv"][:]
+        n_elements = nv.shape[1]  # nv is (nface, nele)
+        ds_nv.close()
 
     # Station count from station.lat.lon
     sta_file = f"{prefixnos}.station.lat.lon"
@@ -453,21 +463,44 @@ def main():
     print(f"  Mode:      {ctl['mode']} ({'nowcast' if ctl['mode'] == 'n' else 'forecast'})")
     print(f"  TimeStart: {ctl['timestart']}")
 
+    # Check what output files are available
+    has_fields = os.path.exists("out2d_1.nc")
+    has_stations = os.path.exists("staout_1")
+
+    if not has_fields and not has_stations:
+        print("ERROR: No output files found (neither out2d_1.nc nor staout_1)")
+        sys.exit(1)
+
+    if has_fields:
+        print("\n  Field output files detected (out2d_*.nc)")
+    else:
+        print("\n  No field output files (out2d_*.nc) — stations-only mode")
+
+    if has_stations:
+        print(f"  Station output files detected (staout_*)")
+
     # Get grid dimensions dynamically
     print("\nReading grid dimensions...")
-    dims = get_grid_dimensions(ctl['PREFIXNOS'])
-    print(f"  Nodes:    {dims['n_nodes']}")
-    print(f"  Elements: {dims['n_elements']}")
+    dims = get_grid_dimensions(ctl['PREFIXNOS'], fields_available=has_fields)
+    if has_fields:
+        print(f"  Nodes:    {dims['n_nodes']}")
+        print(f"  Elements: {dims['n_elements']}")
     print(f"  Stations: {dims['n_stations']}")
     print(f"  Levels:   {dims['n_levels']}")
 
-    # Process field files
-    print("\n--- Processing Field Files ---")
-    process_field_files(ctl, dims)
+    # Process field files (only if out2d_*.nc available)
+    if has_fields:
+        print("\n--- Processing Field Files ---")
+        process_field_files(ctl, dims)
+    else:
+        print("\n--- Skipping Field Files (no out2d_*.nc) ---")
 
-    # Process station files
-    print("\n--- Processing Station Files ---")
-    process_station_files(ctl, dims)
+    # Process station files (only if staout_* available)
+    if has_stations:
+        print("\n--- Processing Station Files ---")
+        process_station_files(ctl, dims)
+    else:
+        print("\n--- Skipping Station Files (no staout_*) ---")
 
     print("\n" + "=" * 60)
     print("SCHISM output combining completed successfully")

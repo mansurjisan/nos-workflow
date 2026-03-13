@@ -1015,6 +1015,106 @@ _comf_execute_ufs_coastal() {
         echo "WARNING: fd_ufs.yaml not found in ${DATA}/"
     fi
 
+    # ------------------------------------------------------------------
+    # Sync datm_in and ESMF mesh with actual forcing file dimensions.
+    # The datm_in template may have stale nx_global/ny_global values
+    # (e.g., raw GFS 0.25° grid) that don't match the actual forcing
+    # file (e.g., blended HRRR+GFS grid). Mismatched dimensions cause
+    # CDEPS to scramble the atmospheric forcing distribution.
+    # ------------------------------------------------------------------
+    local _forcing_file="${DATA}/${DATM_DIR}/datm_forcing.nc"
+    if [ -s "${_forcing_file}" ] && [ -s "${DATA}/datm_in" ]; then
+        local _fdims=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${_forcing_file}', 'r')
+try:
+    print(len(ds.dimensions['x']), len(ds.dimensions['y']))
+except:
+    print(len(ds.dimensions['longitude']), len(ds.dimensions['latitude']))
+ds.close()
+" 2>/dev/null || echo "")
+
+        if [ -n "$_fdims" ]; then
+            local _fnx=$(echo $_fdims | awk '{print $1}')
+            local _fny=$(echo $_fdims | awk '{print $2}')
+            local _old_nx=$(grep -oP 'nx_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
+            local _old_ny=$(grep -oP 'ny_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
+
+            if [ "${_old_nx}" != "${_fnx}" ] || [ "${_old_ny}" != "${_fny}" ]; then
+                echo "Patching datm_in: nx_global ${_old_nx}->${_fnx}, ny_global ${_old_ny}->${_fny}"
+            fi
+            sed -i "s/nx_global[[:space:]]*=.*/nx_global = ${_fnx}/" ${DATA}/datm_in
+            sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${_fny}/" ${DATA}/datm_in
+
+            # Regenerate ESMF mesh from forcing file to guarantee consistency.
+            # This ensures mesh dimensions, elementMask, and coordinates all
+            # match the actual forcing data — no stale template meshes.
+            local _ftotal=$((_fnx * _fny))
+            echo "Generating ESMF mesh from forcing (${_fnx}x${_fny} = ${_ftotal} nodes)..."
+            python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+
+ds = Dataset('${_forcing_file}', 'r')
+try:
+    lons = ds.variables['longitude'][:]
+    lats = ds.variables['latitude'][:]
+    if lons.ndim == 1:
+        lon2d, lat2d = np.meshgrid(lons, lats)
+    else:
+        lon2d, lat2d = lons, lats
+except:
+    lon2d = ds.variables['x'][:]
+    lat2d = ds.variables['y'][:]
+ds.close()
+
+ny, nx = lon2d.shape
+n_nodes = ny * nx
+n_elems = (ny - 1) * (nx - 1)
+
+out = Dataset('${DATA}/${DATM_DIR}/datm_esmf_mesh.nc', 'w')
+out.createDimension('nodeCount', n_nodes)
+out.createDimension('elementCount', n_elems)
+out.createDimension('maxNodePElement', 4)
+out.createDimension('coordDim', 2)
+
+nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
+nodeCoords.units = 'degrees'
+coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
+nodeCoords[:] = coords
+
+j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
+n0 = (j_idx * nx + i_idx + 1).ravel()
+conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
+
+elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
+elemConn.long_name = 'Node indices that define the element connectivity'
+elemConn.start_index = 1
+elemConn[:] = conn
+
+numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
+numElemConn[:] = 4
+
+elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
+elementMask[:] = np.ones(n_elems, dtype=np.int32)
+
+centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
+centerCoords.units = 'degrees'
+clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
+clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
+centerCoords[:] = np.column_stack([clon, clat])
+
+out.title = 'ESMF mesh generated from DATM forcing file'
+out.gridType = 'unstructured mesh'
+out.close()
+print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
+" 2>&1
+            if [ $? -ne 0 ]; then
+                echo "WARNING: ESMF mesh generation failed — using existing mesh" >&2
+            fi
+        fi
+    fi
+
     # Determine executable
     local UFS_EXEC=""
     if [ -x "${DATA}/fv3_coastalS.exe" ]; then

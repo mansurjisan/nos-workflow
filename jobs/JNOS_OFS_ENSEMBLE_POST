@@ -178,26 +178,37 @@ else
             continue
         fi
 
-        # Skip if already combined
-        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1; then
+        # Skip if already combined (check both field and station files)
+        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1 || \
+           ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc 1>/dev/null 2>&1; then
             echo "  Member ${MID}: already combined, skipping"
             continue
         fi
 
-        # Check for SCHISM combined outputs
-        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
-            echo "  Member ${MID}: no out2d_1.nc, skipping"
+        # Check for ANY SCHISM outputs (combined out2d OR raw staout)
+        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ] && [ ! -f "${OUTPUTS_DIR}/staout_1" ]; then
+            echo "  Member ${MID}: no out2d_1.nc or staout_1, skipping"
             continue
         fi
 
         echo "  Combining outputs for member ${MID}..."
+        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
+            echo "    Mode: field + station files"
+        else
+            echo "    Mode: station files only (no out2d_*.nc)"
+        fi
         cd ${OUTPUTS_DIR}
 
         # Step 1a: Copy FIX files to outputs dir
-        # (same as nos_ofs_nowcast_forecast.sh lines 1097-1101)
+        # station.lat.lon and sigma.dat always needed (stations)
+        # nv.nc and hgrid.gr3 needed only for field files (out2d_*.nc present)
         # Handle UFS-Coastal prefix variants: secofs_ufs grid files
         # may be named secofs.* in FIXofs
-        for _ext in nv.nc hgrid.gr3 station.lat.lon sigma.dat; do
+        _FIX_EXTS="station.lat.lon sigma.dat"
+        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
+            _FIX_EXTS="nv.nc hgrid.gr3 station.lat.lon sigma.dat"
+        fi
+        for _ext in ${_FIX_EXTS}; do
             _target="${PREFIXNOS}.${_ext}"
             if [ ! -f "${_target}" ]; then
                 if [ -f "${FIXofs}/${PREFIXNOS}.${_ext}" ]; then
@@ -234,11 +245,13 @@ else
         # Step 1d: Move products from outputs/ to member directory
         mv ${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc ${MDIR}/ 2>/dev/null
         mv ${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc ${MDIR}/ 2>/dev/null
+        mv ${PREFIXNOS}.${cycle}.${PDY}.stations.nowcast.nc ${MDIR}/ 2>/dev/null
 
         cd ${DATA}
 
         N_FIELDS=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 2>/dev/null | wc -l)
-        echo "  Member ${MID}: ${N_FIELDS} field files + station file created"
+        HAS_STA=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.*.nc 2>/dev/null | wc -l)
+        echo "  Member ${MID}: ${N_FIELDS} field files, ${HAS_STA} station file(s) created"
     done
 fi
 
