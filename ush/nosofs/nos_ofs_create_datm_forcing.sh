@@ -188,11 +188,14 @@ fi
 # =============================================================================
 # Function: Find GFS file for a valid time
 # Strategy: Use base cycle with extended forecasts (up to f120 = 5 days)
+# Note: MAX_GFS_CYCLE caps the newest GFS cycle to use (default: ${PDY}${cyc}).
+#       This ensures reproducible file selection regardless of when prep runs.
 # =============================================================================
 find_gfs_file() {
     local VALID_TIME=$1
     local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
     local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
+    local _MAX_CYCLE=${MAX_GFS_CYCLE:-${PDY}${cyc}}
 
     # Calculate initial cycle (6 hours before valid time, rounded down to 00/06/12/18)
     local INIT_CYCLE_TIME=$($NDATE -6 $VALID_TIME)
@@ -204,6 +207,14 @@ find_gfs_file() {
     local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
     local CYCLE_DATE=$INIT_DATE
     local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+
+    # Cap: never use a GFS cycle newer than the model cycle
+    if [ "$CYCLE_TIME" -gt "$_MAX_CYCLE" ]; then
+        local _CAP_HH_NUM=$((10#$(echo $_MAX_CYCLE | cut -c9-10)))
+        CYCLE_HH=$(printf "%02d" $((_CAP_HH_NUM / 6 * 6)))
+        CYCLE_DATE=$(echo $_MAX_CYCLE | cut -c1-8)
+        CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+    fi
 
     # Try up to 12 cycles (going back 72 hours)
     for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
@@ -233,11 +244,13 @@ find_gfs_file() {
 # Function: Find GEFS pgrb2sp25 file for a valid time
 # GEFS path: ${COMINgefs}/gefs.YYYYMMDD/HH/atmos/pgrb2sp25/gepNN.tHHz.pgrb2s.0p25.fFFF
 # Strategy: Same as GFS — use base cycle with extended forecasts
+# Note: MAX_GFS_CYCLE caps the newest cycle to use (default: ${PDY}${cyc}).
 # =============================================================================
 find_gefs_file() {
     local VALID_TIME=$1
     local VALID_DATE=$(echo $VALID_TIME | cut -c1-8)
     local VALID_HH=$(echo $VALID_TIME | cut -c9-10)
+    local _MAX_CYCLE=${MAX_GFS_CYCLE:-${PDY}${cyc}}
 
     # Calculate initial cycle (6 hours before valid time, rounded down to 00/06/12/18)
     local INIT_CYCLE_TIME=$($NDATE -6 $VALID_TIME)
@@ -248,6 +261,14 @@ find_gefs_file() {
     local CYCLE_HH=$(printf "%02d" $((INIT_HH_NUM / 6 * 6)))
     local CYCLE_DATE=$INIT_DATE
     local CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+
+    # Cap: never use a cycle newer than the model cycle
+    if [ "$CYCLE_TIME" -gt "$_MAX_CYCLE" ]; then
+        local _CAP_HH_NUM=$((10#$(echo $_MAX_CYCLE | cut -c9-10)))
+        CYCLE_HH=$(printf "%02d" $((_CAP_HH_NUM / 6 * 6)))
+        CYCLE_DATE=$(echo $_MAX_CYCLE | cut -c1-8)
+        CYCLE_TIME="${CYCLE_DATE}${CYCLE_HH}"
+    fi
 
     # Try up to 12 cycles (going back 72 hours)
     for attempt in 1 2 3 4 5 6 7 8 9 10 11 12; do
@@ -684,6 +705,7 @@ print_files_summary() {
 # =============================================================================
 echo ""
 echo "Step 1: Finding GRIB2 files for time range..."
+echo "  Max GFS/GEFS cycle: ${MAX_GFS_CYCLE:-${PDY}${cyc}}"
 echo "============================================"
 
 FILE_COUNT=0
