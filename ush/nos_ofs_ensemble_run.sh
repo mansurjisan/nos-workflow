@@ -598,17 +598,30 @@ print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
         fi
     fi
 
-    # Patch datm.streams to point to member-specific forcing files.
-    # The datm.streams copied from COMOUT contains the DET prep's absolute
-    # path (e.g., $COMOUT/secofs_ufs.t12z.datm_input/datm_forcing.nc).
+    # Patch datm.streams AND datm_in to point to member-specific forcing files.
+    # The datm.streams and datm_in copied from COMOUT contain the DET prep's
+    # absolute path (e.g., $COMOUT/secofs_ufs.t12z.datm_input/datm_forcing.nc).
     # Each ensemble member has its own datm_forcing.nc in $MEMBER_DATA/INPUT/
-    # (from the GEFS-specific prep), so we must redirect datm.streams.
-    if [ -s "${MEMBER_DATA}/datm.streams" ] && [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ]; then
-        echo "Patching datm.streams to use member-specific INPUT/..."
-        sed -i "s|\"[^\"]*datm_forcing.nc\"|\"${MEMBER_DATA}/INPUT/datm_forcing.nc\"|g" ${MEMBER_DATA}/datm.streams
-        sed -i "s|\"[^\"]*datm_esmf_mesh.nc\"|\"${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc\"|g" ${MEMBER_DATA}/datm.streams
-        echo "  stream_data_files01 -> ${MEMBER_DATA}/INPUT/datm_forcing.nc"
-        echo "  stream_mesh_file01  -> ${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+    # (from the GEFS-specific prep), so we must redirect both files.
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ]; then
+        echo "Patching datm.streams and datm_in to use member-specific INPUT/..."
+
+        # Patch datm.streams: stream_data_files01 and stream_mesh_file01
+        if [ -s "${MEMBER_DATA}/datm.streams" ]; then
+            sed -i "s|\"[^\"]*datm_forcing.nc\"|\"${MEMBER_DATA}/INPUT/datm_forcing.nc\"|g" ${MEMBER_DATA}/datm.streams
+            sed -i "s|\"[^\"]*datm_esmf_mesh.nc\"|\"${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc\"|g" ${MEMBER_DATA}/datm.streams
+            echo "  datm.streams: data  -> ${MEMBER_DATA}/INPUT/datm_forcing.nc"
+            echo "  datm.streams: mesh  -> ${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+        fi
+
+        # Patch datm_in: model_meshfile and model_maskfile
+        # These also use the DET's @[DATM_INPUT_DIR] path and must point to
+        # the member's ESMF mesh (which matches the GEFS grid, not DET grid).
+        if [ -s "${MEMBER_DATA}/datm_in" ] && [ -s "${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc" ]; then
+            sed -i "s|model_meshfile[[:space:]]*=.*|model_meshfile = \"${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc\"|" ${MEMBER_DATA}/datm_in
+            sed -i "s|model_maskfile[[:space:]]*=.*|model_maskfile = \"${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc\"|" ${MEMBER_DATA}/datm_in
+            echo "  datm_in: meshfile -> ${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+        fi
     fi
 
     # Ensure forcing NetCDF has all 8 variables expected by datm.streams.
