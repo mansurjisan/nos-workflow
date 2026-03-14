@@ -426,6 +426,7 @@ print(ms)
 " 2>/dev/null || echo "")
     fi
 
+    local is_control_det=false
     case "${met_source}" in
         GEFS_*)
             local gefs_id=$(echo "${met_source}" | sed 's/GEFS_//')
@@ -437,6 +438,7 @@ print(ms)
         *)
             # Control member (GFS+HRRR) uses the standard prep output
             datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+            is_control_det=true
             ;;
     esac
 
@@ -489,6 +491,11 @@ ds.close()
             # Verify ESMF mesh matches forcing dims. If the member's
             # datm_input dir already had a matching mesh (e.g., from gefs_prep),
             # no regeneration needed. Only regenerate if mesh node count != nx*ny.
+            #
+            # EXCEPTION: Control members (is_control_det=true) use the DET prep's
+            # mesh+forcing pair, which is validated to match Op SECOFS. The DET's
+            # ESMF mesh may have a padding row/column (e.g., 1722x1722 nodes for
+            # 1721x1721 forcing) — this is correct and must NOT be regenerated.
             local mem_total=$((mem_nx * mem_ny))
             local staged_mesh="${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
             local mesh_nodes="0"
@@ -500,6 +507,32 @@ print(len(ds.dimensions.get('nodeCount', ds.dimensions.get('node_count', []))))
 ds.close()
 " 2>/dev/null || echo "0")
             fi
+
+            # Control member: trust the DET prep's mesh — skip regen
+            if [ "${is_control_det}" = "true" ] && [ "${mesh_nodes}" != "0" ]; then
+                echo "Control member: using DET mesh as-is (${mesh_nodes} nodes, forcing ${mem_nx}x${mem_ny}=${mem_total})"
+                # Only ensure elementMask exists (required by CMEPS)
+                local has_emask_ctrl=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${staged_mesh}', 'r')
+print('true' if 'elementMask' in ds.variables else 'false')
+ds.close()
+" 2>/dev/null || echo "false")
+                if [ "${has_emask_ctrl}" != "true" ]; then
+                    echo "Adding elementMask to DET mesh..."
+                    python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+ds = Dataset('${staged_mesh}', 'a')
+n_elems = len(ds.dimensions['elementCount'])
+em = ds.createVariable('elementMask', 'i4', ('elementCount',))
+em[:] = np.ones(n_elems, dtype=np.int32)
+ds.close()
+print('Added elementMask ({} elements)'.format(n_elems))
+" 2>&1
+                fi
+            else
+            # Non-control members: check mesh node count and regenerate if needed
 
             # Also check elementMask exists — meshes generated before the
             # elementMask fix will pass the nodeCount check but still crash.
@@ -595,6 +628,8 @@ print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
             else
                 echo "ESMF mesh OK: ${mesh_nodes} nodes matches forcing ${mem_nx}x${mem_ny}"
             fi
+
+            fi  # end is_control_det check
         fi
     fi
 
