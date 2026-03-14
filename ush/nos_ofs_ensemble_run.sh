@@ -598,6 +598,19 @@ print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
         fi
     fi
 
+    # Patch datm.streams to point to member-specific forcing files.
+    # The datm.streams copied from COMOUT contains the DET prep's absolute
+    # path (e.g., $COMOUT/secofs_ufs.t12z.datm_input/datm_forcing.nc).
+    # Each ensemble member has its own datm_forcing.nc in $MEMBER_DATA/INPUT/
+    # (from the GEFS-specific prep), so we must redirect datm.streams.
+    if [ -s "${MEMBER_DATA}/datm.streams" ] && [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ]; then
+        echo "Patching datm.streams to use member-specific INPUT/..."
+        sed -i "s|\"[^\"]*datm_forcing.nc\"|\"${MEMBER_DATA}/INPUT/datm_forcing.nc\"|g" ${MEMBER_DATA}/datm.streams
+        sed -i "s|\"[^\"]*datm_esmf_mesh.nc\"|\"${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc\"|g" ${MEMBER_DATA}/datm.streams
+        echo "  stream_data_files01 -> ${MEMBER_DATA}/INPUT/datm_forcing.nc"
+        echo "  stream_mesh_file01  -> ${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+    fi
+
     # Ensure forcing NetCDF has all 8 variables expected by datm.streams.
     # GEFS pgrb2sp25 lacks SPFH_2maboveground, PRATE_surface, and uses
     # PRMSL_meansealevel instead of MSLMA_meansealevel.  Rather than
