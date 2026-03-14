@@ -1,0 +1,6 @@
+2 0 10. !nvrt=2, kz=0 (no Z-levels), h_s=10
+Z levels
+S levels
+30. 0.7 10.  !h_c, theta_b, theta_f
+1  -1.000000
+2   0.000000
