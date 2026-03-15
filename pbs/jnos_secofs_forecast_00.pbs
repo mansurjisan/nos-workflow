@@ -10,7 +10,7 @@
 . /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/versions/run.ver
 
 # Working directory
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs
 if [ ! -r $WORKDIR ]; then
   mkdir -p -m 755 $WORKDIR

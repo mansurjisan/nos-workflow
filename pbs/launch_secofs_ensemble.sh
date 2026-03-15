@@ -166,7 +166,7 @@ if [ "${ATMOS_ENSEMBLE}" = true ] && [ ! -f "${ATMOS_PREP_PBS}" ]; then
     exit 1
 fi
 
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 mkdir -p ${RPTDIR} 2>/dev/null || true
 
 # ---- Step 1: Submit prep job (unless --skip-prep) --------------------
