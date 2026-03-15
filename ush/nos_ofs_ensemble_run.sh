@@ -488,69 +488,15 @@ ds.close()
             sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${mem_ny}/" ${MEMBER_DATA}/datm_in
             echo "Patched datm_in: nx_global=${mem_nx}, ny_global=${mem_ny}"
 
-            # Verify ESMF mesh matches forcing dims. If the member's
-            # datm_input dir already had a matching mesh (e.g., from gefs_prep),
-            # no regeneration needed. Only regenerate if mesh node count != nx*ny.
-            #
-            # EXCEPTION: Control members (is_control_det=true) use the DET prep's
-            # mesh+forcing pair, which is validated to match Op SECOFS. The DET's
-            # ESMF mesh may have a padding row/column (e.g., 1722x1722 nodes for
-            # 1721x1721 forcing) — this is correct and must NOT be regenerated.
+            # Always regenerate ESMF mesh from the forcing file.
+            # This matches what _comf_execute_ufs_coastal() does for the DET
+            # model run (nos_ofs_model_run.sh:1049-1111). The prep may create
+            # a different mesh (different generation method or coordinate
+            # convention), so we must regenerate to ensure identical
+            # interpolation weights between DET and ensemble members.
             local mem_total=$((mem_nx * mem_ny))
-            local staged_mesh="${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
-            local mesh_nodes="0"
-            if [ -s "$staged_mesh" ]; then
-                mesh_nodes=$(python3 -c "
-from netCDF4 import Dataset
-ds = Dataset('${staged_mesh}', 'r')
-print(len(ds.dimensions.get('nodeCount', ds.dimensions.get('node_count', []))))
-ds.close()
-" 2>/dev/null || echo "0")
-            fi
-
-            # Control member: trust the DET prep's mesh — skip regen
-            if [ "${is_control_det}" = "true" ] && [ "${mesh_nodes}" != "0" ]; then
-                echo "Control member: using DET mesh as-is (${mesh_nodes} nodes, forcing ${mem_nx}x${mem_ny}=${mem_total})"
-                # Only ensure elementMask exists (required by CMEPS)
-                local has_emask_ctrl=$(python3 -c "
-from netCDF4 import Dataset
-ds = Dataset('${staged_mesh}', 'r')
-print('true' if 'elementMask' in ds.variables else 'false')
-ds.close()
-" 2>/dev/null || echo "false")
-                if [ "${has_emask_ctrl}" != "true" ]; then
-                    echo "Adding elementMask to DET mesh..."
-                    python3 -c "
-from netCDF4 import Dataset
-import numpy as np
-ds = Dataset('${staged_mesh}', 'a')
-n_elems = len(ds.dimensions['elementCount'])
-em = ds.createVariable('elementMask', 'i4', ('elementCount',))
-em[:] = np.ones(n_elems, dtype=np.int32)
-ds.close()
-print('Added elementMask ({} elements)'.format(n_elems))
-" 2>&1
-                fi
-            else
-            # Non-control members: check mesh node count and regenerate if needed
-
-            # Also check elementMask exists — meshes generated before the
-            # elementMask fix will pass the nodeCount check but still crash.
-            local has_emask="false"
-            if [ -s "$staged_mesh" ] && [ "${mesh_nodes}" = "${mem_total}" ]; then
-                has_emask=$(python3 -c "
-from netCDF4 import Dataset
-ds = Dataset('${staged_mesh}', 'r')
-print('true' if 'elementMask' in ds.variables else 'false')
-ds.close()
-" 2>/dev/null || echo "false")
-            fi
-
-            if [ "${mesh_nodes}" != "${mem_total}" ]; then
-                # Node count mismatch — full regeneration needed
-                echo "ESMF mesh node mismatch: mesh=${mesh_nodes}, forcing=${mem_total} (${mem_nx}x${mem_ny})"
-                echo "Regenerating ESMF mesh (vectorized)..."
-                python3 -c "
+            echo "Regenerating ESMF mesh from forcing (${mem_nx}x${mem_ny} = ${mem_total} nodes)..."
+            python3 -c "
 from netCDF4 import Dataset
 import numpy as np
 
@@ -558,10 +504,13 @@ ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
 try:
     lons = ds.variables['longitude'][:]
     lats = ds.variables['latitude'][:]
-    lon2d, lat2d = np.meshgrid(lons, lats)
+    if lons.ndim == 1:
+        lon2d, lat2d = np.meshgrid(lons, lats)
+    else:
+        lon2d, lat2d = lons, lats
 except:
-    lon2d = ds.variables['longitude'][:]
-    lat2d = ds.variables['latitude'][:]
+    lon2d = ds.variables['x'][:]
+    lat2d = ds.variables['y'][:]
 ds.close()
 
 ny, nx = lon2d.shape
@@ -579,7 +528,6 @@ nodeCoords.units = 'degrees'
 coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
 nodeCoords[:] = coords
 
-# Vectorized element connectivity (no Python for-loop)
 j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
 n0 = (j_idx * nx + i_idx + 1).ravel()
 conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
@@ -601,35 +549,14 @@ clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-
 clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
 centerCoords[:] = np.column_stack([clon, clat])
 
-out.title = 'ESMF unstructured mesh for DATM forcing'
+out.title = 'ESMF mesh generated from DATM forcing file'
 out.gridType = 'unstructured mesh'
 out.close()
-print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(n_nodes, n_elems))
+print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
 " 2>&1
-                if [ $? -ne 0 ]; then
-                    echo "WARNING: ESMF mesh regeneration failed — model may crash" >&2
-                fi
-            elif [ "${has_emask}" != "true" ]; then
-                # Node count OK but elementMask missing — lightweight in-place patch
-                echo "ESMF mesh missing elementMask — patching in-place..."
-                python3 -c "
-from netCDF4 import Dataset
-import numpy as np
-ds = Dataset('${staged_mesh}', 'a')
-n_elems = len(ds.dimensions['elementCount'])
-em = ds.createVariable('elementMask', 'i4', ('elementCount',))
-em[:] = np.ones(n_elems, dtype=np.int32)
-ds.close()
-print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
-" 2>&1
-                if [ $? -ne 0 ]; then
-                    echo "WARNING: elementMask patch failed — model may crash" >&2
-                fi
-            else
-                echo "ESMF mesh OK: ${mesh_nodes} nodes matches forcing ${mem_nx}x${mem_ny}"
+            if [ $? -ne 0 ]; then
+                echo "WARNING: ESMF mesh generation failed — model may crash" >&2
             fi
-
-            fi  # end is_control_det check
         fi
     fi
 
