@@ -140,13 +140,18 @@ def check_dir(label, dirpath, expected_scrip_nodes=None):
             print(f"    Vars:   {', '.join(variables)}")
 
             # Check expected variables for DATM
+            # MSLMA_meansealevel OR PRMSL_meansealevel (renamed at runtime)
             expected = {
                 "UGRD_10maboveground", "VGRD_10maboveground",
-                "TMP_2maboveground", "MSLMA_meansealevel",
+                "TMP_2maboveground",
             }
             missing_vars = expected - set(variables)
             if missing_vars:
                 print(f"    WARN:   Missing expected vars: {missing_vars}")
+            has_mslp = ("MSLMA_meansealevel" in variables or
+                        "PRMSL_meansealevel" in variables)
+            if not has_mslp:
+                print(f"    WARN:   Missing MSLMA/PRMSL mean sea level pressure")
 
     # --- ESMF mesh ---
     if not os.path.isfile(mesh):
@@ -189,20 +194,26 @@ def check_dir(label, dirpath, expected_scrip_nodes=None):
                 f_total = fnx * fny
                 # SCRIP mesh: corner-based nodes = (nx+1)*(ny+1)
                 scrip_nodes = (fnx + 1) * (fny + 1)
+                # SCRIP mesh for global wrapping grids: lon wraps so
+                # no extra column, only extra row for lat corners
+                scrip_global = fnx * (fny + 1)
                 # Center-based mesh: nodes = nx*ny
                 center_nodes = f_total
 
                 if mi["nodeCount"] == scrip_nodes:
                     print(f"    Match:  SCRIP corner-based ({fnx+1}x{fny+1} = "
                           f"{scrip_nodes} nodes) ✓")
+                elif mi["nodeCount"] == scrip_global:
+                    print(f"    Match:  SCRIP global-wrap ({fnx}x{fny+1} = "
+                          f"{scrip_global} nodes) ✓")
                 elif mi["nodeCount"] == center_nodes:
                     print(f"    Match:  Center-based ({fnx}x{fny} = "
                           f"{center_nodes} nodes)")
                     print(f"    WARN:   Not SCRIP method — may differ from prep mesh")
                 else:
                     print(f"    WARN:   Node count {mi['nodeCount']} doesn't match "
-                          f"forcing {fnx}x{fny} (expected SCRIP={scrip_nodes} "
-                          f"or center={center_nodes})")
+                          f"forcing {fnx}x{fny} (expected SCRIP={scrip_nodes}, "
+                          f"global-wrap={scrip_global}, or center={center_nodes})")
                     errors.append("mesh/forcing dimension mismatch")
 
     # --- datm_in ---
