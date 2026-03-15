@@ -178,8 +178,8 @@ else
             continue
         fi
 
-        # Skip if already combined (check both field and station files)
-        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1 || \
+        # Skip if already combined (require BOTH field AND station files)
+        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1 && \
            ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc 1>/dev/null 2>&1; then
             echo "  Member ${MID}: already combined, skipping"
             continue
