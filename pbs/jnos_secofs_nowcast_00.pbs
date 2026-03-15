@@ -62,7 +62,7 @@ export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 export COMPATH=/lfs/h1/ops/prod/com/nos
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
-export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 export COMIN=/lfs/h1/ops/prod/com
 
 # Input data paths (production WCOSS2)
