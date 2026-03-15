@@ -138,8 +138,11 @@ echo ""
 TIME_START=${time_hotstart:-$($NDATE -6 ${PDY}${cyc})}
 # Add 3h buffer before start
 TIME_START_BUFFERED=$($NDATE -3 $TIME_START)
-# End: cycle + forecast hours
-TIME_END=$($NDATE ${NHOURS_FCST} ${PDY}${cyc})
+# End: cycle + forecast hours + 3h buffer for CDEPS linear interpolation
+# CDEPS tintalgo=linear needs data records bracketing each model timestep.
+# Without buffer, the last forcing record equals the model end time and
+# CDEPS fails with "rDateIn gt rDategvd".
+TIME_END=$($NDATE $((NHOURS_FCST + 3)) ${PDY}${cyc})
 
 echo "Forcing time range: $TIME_START_BUFFERED to $TIME_END"
 echo "Primary source: $DATM_PRIMARY_SOURCE"
