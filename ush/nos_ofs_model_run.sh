@@ -1024,19 +1024,20 @@ _comf_execute_ufs_coastal() {
     # ------------------------------------------------------------------
     local _forcing_file="${DATA}/${DATM_DIR}/datm_forcing.nc"
     if [ -s "${_forcing_file}" ] && [ -s "${DATA}/datm_in" ]; then
-        local _fdims=$(python3 -c "
-from netCDF4 import Dataset
-ds = Dataset('${_forcing_file}', 'r')
-try:
-    print(len(ds.dimensions['x']), len(ds.dimensions['y']))
-except:
-    print(len(ds.dimensions['longitude']), len(ds.dimensions['latitude']))
-ds.close()
-" 2>/dev/null || echo "")
+        # Use ncdump (always available) instead of Python netCDF4
+        # to avoid LD_PRELOAD conflicts with libnetcdff.so
+        local _ncdump_h=$(ncdump -h "${_forcing_file}" 2>/dev/null || true)
+        local _fnx="" _fny=""
+        if [ -n "$_ncdump_h" ]; then
+            _fnx=$(echo "$_ncdump_h" | grep -oP '\bx\s*=\s*\K\d+' | head -1)
+            _fny=$(echo "$_ncdump_h" | grep -oP '\by\s*=\s*\K\d+' | head -1)
+            if [ -z "$_fnx" ]; then
+                _fnx=$(echo "$_ncdump_h" | grep -oP '\blongitude\s*=\s*\K\d+' | head -1)
+                _fny=$(echo "$_ncdump_h" | grep -oP '\blatitude\s*=\s*\K\d+' | head -1)
+            fi
+        fi
 
-        if [ -n "$_fdims" ]; then
-            local _fnx=$(echo $_fdims | awk '{print $1}')
-            local _fny=$(echo $_fdims | awk '{print $2}')
+        if [ -n "$_fnx" ] && [ -n "$_fny" ]; then
             local _old_nx=$(grep -oP 'nx_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
             local _old_ny=$(grep -oP 'ny_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
 
@@ -1045,14 +1046,18 @@ ds.close()
             fi
             sed -i "s/nx_global[[:space:]]*=.*/nx_global = ${_fnx}/" ${DATA}/datm_in
             sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${_fny}/" ${DATA}/datm_in
+        else
+            echo "WARNING: Could not read forcing dims from ${_forcing_file}" >&2
+        fi
 
-            # Ensure ESMF mesh has elementMask (required by CMEPS).
-            # The prep's SCRIP-based mesh (proc_scrip.py + ESMF_Scrip2Unstruct)
-            # is the authoritative mesh — do NOT regenerate it here.
-            # ESMF_Scrip2Unstruct does not add elementMask, so we add it if missing.
-            local _mesh_file="${DATA}/${DATM_DIR}/datm_esmf_mesh.nc"
-            if [ -s "${_mesh_file}" ]; then
-                python3 -c "
+        # Ensure ESMF mesh has elementMask (required by CMEPS).
+        # The prep's SCRIP-based mesh (proc_scrip.py + ESMF_Scrip2Unstruct)
+        # is the authoritative mesh — do NOT regenerate it here.
+        # ESMF_Scrip2Unstruct does not add elementMask, so we add it if missing.
+        # Unset LD_PRELOAD to avoid libnetcdff.so conflicts with Python netCDF4.
+        local _mesh_file="${DATA}/${DATM_DIR}/datm_esmf_mesh.nc"
+        if [ -s "${_mesh_file}" ]; then
+            (unset LD_PRELOAD; python3 -c "
 from netCDF4 import Dataset
 import numpy as np
 ds = Dataset('${_mesh_file}', 'a')
@@ -1064,10 +1069,9 @@ if 'elementMask' not in ds.variables:
 else:
     print('ESMF mesh already has elementMask')
 ds.close()
-" 2>&1
-            else
-                echo "WARNING: ESMF mesh not found at ${_mesh_file}" >&2
-            fi
+" 2>&1)
+        else
+            echo "WARNING: ESMF mesh not found at ${_mesh_file}" >&2
         fi
     fi
 
