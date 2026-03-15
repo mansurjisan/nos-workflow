@@ -12,7 +12,7 @@ PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs_ufs
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs_ufs
 mkdir -p -m 755 $RPTDIR $WORKDIR
 cd ${WORKDIR}
 

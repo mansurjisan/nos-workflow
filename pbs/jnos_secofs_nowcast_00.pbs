@@ -11,7 +11,7 @@
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs
 if [ ! -r $WORKDIR ]; then
   mkdir -p -m 755 $WORKDIR
 fi

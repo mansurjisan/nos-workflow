@@ -35,7 +35,7 @@ export OFS=${OFS:-secofs}
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 if [ ! -r $WORKDIR ]; then
   mkdir -p -m 755 $WORKDIR
 fi
