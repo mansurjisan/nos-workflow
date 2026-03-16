@@ -382,7 +382,11 @@ _ensemble_execute_ufs_coastal() {
 
     # --- Verify critical input files ---
     local MISSING=0
-    for required in param.nml hotstart.nc bctides.in; do
+    local _required_files="param.nml bctides.in"
+    if [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ]; then
+        _required_files="param.nml hotstart.nc bctides.in"
+    fi
+    for required in ${_required_files}; do
         if [ ! -e "${MEMBER_DATA}/${required}" ]; then
             echo "MISSING: ${required}"
             MISSING=$((MISSING + 1))
