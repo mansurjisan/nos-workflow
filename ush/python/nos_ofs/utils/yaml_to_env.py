@@ -222,7 +222,7 @@ def get_standard_exports(
     # Model type (uppercase for nosofs)
     model = data.get('model', {})
     ocean_model = model.get('ocean_model', model.get('type', 'SCHISM'))
-    exports['OCEAN_MODEL'] = ocean_model.upper()
+    exports['OCEAN_MODEL'] = (ocean_model or 'SCHISM').upper()
 
     # Grid info
     grid = data.get('grid', {})
@@ -279,15 +279,15 @@ def get_standard_exports(
         # Forcing sources (uppercase for nosofs)
         forcing = data.get('forcing', {})
         atm = forcing.get('atmospheric', {})
-        exports['DBASE_MET_NOW'] = atm.get('primary', '').upper()
-        exports['DBASE_MET_FOR'] = atm.get('forecast_source', atm.get('primary', '')).upper()
+        exports['DBASE_MET_NOW'] = (atm.get('primary') or '').upper()
+        exports['DBASE_MET_FOR'] = (atm.get('forecast_source') or atm.get('primary') or '').upper()
 
         ocean = forcing.get('ocean', {})
         obc = ocean.get('obc', {})
-        exports['DBASE_WL_NOW'] = obc.get('wl_source', '').upper()
-        exports['DBASE_WL_FOR'] = obc.get('wl_source', '').upper()
-        exports['DBASE_TS_NOW'] = obc.get('ts_source', '').upper()
-        exports['DBASE_TS_FOR'] = obc.get('ts_source', '').upper()
+        exports['DBASE_WL_NOW'] = (obc.get('wl_source') or '').upper()
+        exports['DBASE_WL_FOR'] = (obc.get('wl_source') or '').upper()
+        exports['DBASE_TS_NOW'] = (obc.get('ts_source') or '').upper()
+        exports['DBASE_TS_FOR'] = (obc.get('ts_source') or '').upper()
 
         # Tidal
         tidal = forcing.get('tidal', {})
