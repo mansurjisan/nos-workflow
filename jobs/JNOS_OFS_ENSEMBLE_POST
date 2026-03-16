@@ -185,17 +185,21 @@ else
             continue
         fi
 
-        # Check for ANY SCHISM outputs (combined out2d OR raw staout)
-        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ] && [ ! -f "${OUTPUTS_DIR}/staout_1" ]; then
-            echo "  Member ${MID}: no out2d_1.nc or staout_1, skipping"
+        # Check for ANY SCHISM outputs (split out2d, combined schout, or raw staout)
+        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ] && \
+           [ ! -f "${OUTPUTS_DIR}/schout_1.nc" ] && \
+           [ ! -f "${OUTPUTS_DIR}/staout_1" ]; then
+            echo "  Member ${MID}: no out2d_1.nc, schout_1.nc, or staout_1, skipping"
             continue
         fi
 
         echo "  Combining outputs for member ${MID}..."
         if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
-            echo "    Mode: field + station files"
+            echo "    Mode: field + station files (split format)"
+        elif [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
+            echo "    Mode: field + station files (combined schout format)"
         else
-            echo "    Mode: station files only (no out2d_*.nc)"
+            echo "    Mode: station files only (no out2d_*.nc or schout_*.nc)"
         fi
         cd ${OUTPUTS_DIR}
 
@@ -205,7 +209,7 @@ else
         # Handle UFS-Coastal prefix variants: secofs_ufs grid files
         # may be named secofs.* in FIXofs
         _FIX_EXTS="station.lat.lon sigma.dat"
-        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
+        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ] || [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
             _FIX_EXTS="nv.nc hgrid.gr3 station.lat.lon sigma.dat"
         fi
         for _ext in ${_FIX_EXTS}; do
