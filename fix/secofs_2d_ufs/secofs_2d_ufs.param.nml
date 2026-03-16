@@ -63,10 +63,10 @@
   ipre2 = 0
 
 ! Starting time
-  start_year = start_year_value !int
-  start_month = start_month_value !int
-  start_day = start_day_value !int
-  start_hour = start_hour_value !double
+  start_year = 2026 !int (patched at runtime)
+  start_month = 3 !int (patched at runtime)
+  start_day = 11 !int (patched at runtime)
+  start_hour = 12 !double (patched at runtime)
   utc_start = 0 !double
 
 !-----------------------------------------------------------------------
