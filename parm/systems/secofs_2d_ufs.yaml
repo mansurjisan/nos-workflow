@@ -33,7 +33,7 @@ grid:
   n_nodes: 1684786
   n_elements: 3322329
   n_sides: 5007180
-  n_levels: 2                    # Barotropic: 2 vertical levels (was 63 in 3D)
+  n_levels: 3                    # Barotropic: nvrt=3 (kz=1 + 2 sigma, was 63 in 3D)
   files:
     horizontal: secofs_2d_ufs.hgrid.gr3
     vertical: secofs_2d_ufs.vgrid.in
@@ -148,7 +148,7 @@ model:
     tide_start: 0.0
     # Barotropic-specific physics overrides
     itur: 0                      # No turbulence closure for 2D (was 3 in 3D)
-    nvrt: 2                      # 2 vertical levels (was 63 in 3D)
+    nvrt: 3                      # nvrt=3 (kz=1 + 2 sigma, was 63 in 3D)
   run:
     hindcast_days: 0.25
     forecast_days: 2.0
