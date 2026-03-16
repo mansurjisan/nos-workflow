@@ -1,6 +1,7 @@
 2 !ivcor (1=LSC2, 2=SZ)
-2 0 10. !nvrt, kz, h_s
+3 1 10. !nvrt, kz, h_s (kz>=1 required; nvrt=kz+2 for 2 sigma levels)
 Z levels
+-10. !z-level at bottom (must have kz lines)
 S levels
 30. 0.7 10.  !h_c, theta_b, theta_f
   -1.
