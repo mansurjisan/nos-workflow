@@ -270,7 +270,7 @@
 ! Elevation initial condition flag for cold start only. If ic_elev=1, elev.ic (in *.gr3 format) is needed
 ! to specify the initial elevations; otherwise elevation is initialized to 0 everywhere
 !-----------------------------------------------------------------------
-  ic_elev = 1
+  ic_elev = 0 !Start from zero elevation (no elev.ic file for cold start)
 
 !-----------------------------------------------------------------------
 ! Elevation boundary condition ramp-up flag. =0: ramp up from 0; =1: ramp up from
