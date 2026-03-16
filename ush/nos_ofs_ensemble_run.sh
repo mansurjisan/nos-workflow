@@ -110,7 +110,11 @@ ensemble_configure_runtime() {
     # Standalone SCHISM: ihot=2 (continue from hotstart time, appends staout)
     # UFS-Coastal: ihot=1 (NUOPC start_type=startup resets ESMF clock to t=0;
     #   ihot=2 causes SCHISM/ESMF clock desync → ghost node pressure transient)
-    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+    # Barotropic cold start: ihot=0 (no 3D hotstart compatible with 2D grid)
+    if [ "${BAROTROPIC:-false}" == "true" ]; then
+        sed -i 's/ihot *= *[0-9]*/ihot = 0/' ${MEMBER_DATA}/param.nml
+        echo "Set ihot=0 for barotropic cold start (no 3D-compatible hotstart)"
+    elif [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
         sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
         echo "Set ihot=1 for UFS-Coastal (NUOPC clock sync requires reset)"
     else
@@ -144,6 +148,13 @@ ensemble_configure_runtime() {
 ################################################################################
 ensemble_prepare_restart() {
     echo "=== ensemble_prepare_restart: member ${MEMBER_ID} ==="
+
+    # Barotropic cold start: skip hotstart and restart file staging
+    if [ "${BAROTROPIC:-false}" == "true" ]; then
+        echo "Barotropic cold start (ihot=0): skipping hotstart and restart file staging"
+        mkdir -p ${MEMBER_DATA}/outputs
+        return 0
+    fi
 
     # Search for hotstart file in COMOUT (archived by nowcast job)
     # STOFS naming: ${RUN}.t${cyc}z.hotstart.stofs3d.nc

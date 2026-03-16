@@ -79,7 +79,7 @@
 ! Hotstart option. 0: cold start; 1: hotstart with time reset to 0; 2:
 ! continue from the step in hotstart.nc
 !-----------------------------------------------------------------------
-  ihot = 1
+  ihot = 0 !Cold start (no hotstart file needed for 2D barotropic)
 
 !-----------------------------------------------------------------------
 ! Equation of State type used
