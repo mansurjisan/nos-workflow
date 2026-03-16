@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.out
 #PBS  -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.err
-#PBS  -l place=vscatter:excl,select=5:ncpus=120:mpiprocs=120
+#PBS  -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=120
 #PBS  -l walltime=01:00:00
 
 # ------------------------------------------------------------------
