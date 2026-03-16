@@ -31,7 +31,7 @@
   ibc = 0 !Baroclinic/barotropic flag (0 for both; nvrt=2 makes it barotropic)
   ibtp = 0
 
-  rnday = rnday_value  !total run time in days
+  rnday = 2.0  !total run time in days (48 hours, patched at runtime)
   dt = 120. !Time step in sec
 
 ! Grid for WWM (USE_WWM)
