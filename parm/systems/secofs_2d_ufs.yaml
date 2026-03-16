@@ -170,10 +170,10 @@ ufs_coastal:
   coupling_interval: 120
   # MED+ATM share PETs 0-59 (60 PETs, was 120 in 3D)
   datm_tasks: 60
-  # OCN PETs 60-559 (500 PETs, was 1080 in 3D)
-  schism_tasks: 500
-  # Total MPI tasks (MED+ATM overlap, so total = 60 + 500 = 560)
-  total_tasks: 560
+  # OCN PETs 60-599 (540 PETs, was 1080 in 3D)
+  schism_tasks: 540
+  # Total MPI tasks (MED+ATM overlap, so total = 60 + 540 = 600)
+  total_tasks: 600
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
@@ -230,9 +230,9 @@ output:
     interval: 21600
 
 # Computational resources (DATM + SCHISM)
-# Reduced from 3D: 560 total tasks (60 DATM + 500 SCHISM) vs 1200 in 3D
+# 5 nodes x 120 mpiprocs = 600 total (60 DATM + 540 SCHISM) vs 1200 in 3D
 resources:
-  nprocs: 560
+  nprocs: 600
   nscribes: 0
   memory_gb: 500                 # Much less memory than 3D (no tracer arrays)
   walltime_hours: 2
