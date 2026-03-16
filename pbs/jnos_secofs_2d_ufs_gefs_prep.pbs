@@ -2,8 +2,8 @@
 #PBS  -N secofs_2d_ufs_gefs_prep
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_2d_ufs/secofs_2d_ufs_gefs_prep.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_2d_ufs/secofs_2d_ufs_gefs_prep.err
+#PBS  -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_gefs_prep.out
+#PBS  -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_gefs_prep.err
 #PBS  -l select=1:ncpus=128:mpiprocs=8
 #PBS  -l place=vscatter
 #PBS  -l walltime=03:00:00

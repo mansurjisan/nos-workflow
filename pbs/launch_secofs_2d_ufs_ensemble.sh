@@ -305,9 +305,14 @@ fi
 
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
-    GEFS_MEM_ID=$(printf '%02d' $i)
     MEMBER_VARS="MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY},OFS=${OFS}"
-    MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=${GEFS_MEM_ID}"
+    if [ $i -eq 0 ]; then
+        # Control member uses GFS+HRRR (no GEFS member ID)
+        MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=false,GEFS_MEMBER_ID="
+    else
+        GEFS_MEM_ID=$(printf '%02d' $i)
+        MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=${GEFS_MEM_ID}"
+    fi
     MEMBER_VARS="${MEMBER_VARS},BAROTROPIC=true,ATMOS_ENSEMBLE=true"
     _PBSID_TAG=".${PDY}"
     QSUB_ARGS=(-v "${MEMBER_VARS}" \
@@ -320,8 +325,8 @@ for i in $(seq 0 $((N_MEMBERS - 1))); do
     MJOB=$(qsub "${QSUB_ARGS[@]}" "${MEMBER_PBS}")
     MEMBER_JOBIDS+=("${MJOB}")
     MJOB_SHORT=${MJOB%%.*}
-    if [ "${MID}" = "000" ]; then
-        echo "    Member ${MID} (control GFS): ${MJOB}"
+    if [ $i -eq 0 ]; then
+        echo "    Member ${MID} (control GFS+HRRR): ${MJOB}"
     else
         echo "    Member ${MID} (GEFS gep${GEFS_MEM_ID}): ${MJOB}"
     fi

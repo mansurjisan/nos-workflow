@@ -28,7 +28,7 @@
   ipre = 0 !Pre-processor flag (1: on; 0: off)
 
 ! Baroclinic/barotropic option. If ibc=0 (baroclinic model), ibtp is not used.
-  ibc = 1 !Barotropic mode (was 0 in 3D version)
+  ibc = 0 !Baroclinic/barotropic flag (0 for both; nvrt=2 makes it barotropic)
   ibtp = 0
 
   rnday = rnday_value  !total run time in days

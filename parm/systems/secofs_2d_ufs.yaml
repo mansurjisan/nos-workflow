@@ -488,7 +488,7 @@ ensemble:
   # Reduced from 3D: 560 tasks per member (vs 1200 in 3D)
   resources:
     select: "select=5:ncpus=128:mpiprocs=112"
-    walltime: "03:00:00"
+    walltime: "01:00:00"
   # Ensemble post-processing resources
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"
