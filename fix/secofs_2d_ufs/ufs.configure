@@ -38,7 +38,7 @@ ATM_attributes::
 
 # OCN #
 OCN_model:                      schism
-OCN_petlist_bounds:             60 559
+OCN_petlist_bounds:             60 599
 OCN_omp_num_threads:            1
 OCN_attributes::
   Verbosity = 0
