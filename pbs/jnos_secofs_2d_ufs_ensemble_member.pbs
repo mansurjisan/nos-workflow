@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.out
 #PBS  -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.err
-#PBS  -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=112
+#PBS  -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=120
 #PBS  -l walltime=01:00:00
 
 # ------------------------------------------------------------------
@@ -92,7 +92,7 @@ export BAROTROPIC=true
 # UFS-Coastal DATM coupling
 export USE_DATM=${USE_DATM:-true}
 # 5 nodes x 112 mpiprocs = 560 tasks (60 DATM + 500 SCHISM)
-export TOTAL_TASKS=${TOTAL_TASKS:-560}
+export TOTAL_TASKS=${TOTAL_TASKS:-600}
 
 # Atmospheric ensemble flags
 export ATMOS_ENSEMBLE=${ATMOS_ENSEMBLE:-true}
