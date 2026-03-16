@@ -183,7 +183,7 @@ if [ "${SKIP_PREP}" = true ]; then
 else
     echo ""
     echo ">>> Submitting prep job..."
-    PREP_JOBID=$(qsub -v "PDY=${PDY}" "${PREP_PBS}")
+    PREP_JOBID=$(qsub -v "PDY=${PDY},OFS=${OFS},CYC=${CYC}" "${PREP_PBS}")
     PREP_JOBID_SHORT=${PREP_JOBID%%.*}
     echo "    Prep job: ${PREP_JOBID}"
 fi
