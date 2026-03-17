@@ -89,6 +89,8 @@ forcing:
     obc:
       wl_source: RTOFS
       ts_source: null            # No T/S OBC for barotropic mode
+      files:
+        obc_clim: nosofs.clim.WOA05.nc
     nudging:
       enabled: false             # No T/S nudging in barotropic mode
 
