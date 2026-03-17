@@ -119,7 +119,10 @@ if [ -z "$ESMF_SCRIP2UNSTRUCT" ] || [ ! -x "$ESMF_SCRIP2UNSTRUCT" ]; then
 fi
 if [ -z "$ESMF_SCRIP2UNSTRUCT" ]; then
     # Search known WCOSS2 hpc-stack ESMF installations
-    for esmf_dir in /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/esmf/*/bin; do
+    for esmf_dir in \
+        /apps/prod/hpc-stack/i-19.1.3.304__m-8.1.12__h-1.14.0__n-4.9.2__p-2.5.10__e-8.4.2/intel-19.1.3.304/cray-mpich-8.1.12/esmf/8.4.2/bin \
+        /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/esmf/*/bin \
+        /apps/prod/hpc-stack/*/*/esmf/*/bin; do
         if [ -x "${esmf_dir}/ESMF_Scrip2Unstruct" ]; then
             ESMF_SCRIP2UNSTRUCT="${esmf_dir}/ESMF_Scrip2Unstruct"
             echo "Found ESMF in hpc-stack: $ESMF_SCRIP2UNSTRUCT"
