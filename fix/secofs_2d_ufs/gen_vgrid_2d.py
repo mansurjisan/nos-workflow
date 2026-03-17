@@ -44,10 +44,12 @@ def gen_vgrid_2d(np_nodes, output_path, nvrt=3):
             chunk = kbp[i:i + row_size]
             f.write(''.join(f'{v:>11d}' for v in chunk) + '\n')
 
-        # Sigma levels for each node (same for all nodes)
-        sigma_line = ''.join(f'{s:>14.6f}' for s in sigma) + '\n'
-        for _ in range(np_nodes):
-            f.write(sigma_line)
+        # Sigma levels for each node
+        # Format per line: node_index  sigma_1  sigma_2  ...  sigma_nvrt
+        # With kbp=1, all levels are valid (no -9 fill needed)
+        sigma_str = ''.join(f'{s:>14.6f}' for s in sigma)
+        for i in range(np_nodes):
+            f.write(f'{i+1:>10d}{sigma_str}\n')
 
     print(f'Generated: {output_path}')
     print(f'  ivcor=1 (LSC2), nvrt={nvrt}, nodes={np_nodes}')
