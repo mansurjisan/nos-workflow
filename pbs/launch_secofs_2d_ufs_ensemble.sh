@@ -204,14 +204,22 @@ if [ "${DET_ONLY}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS},TOTAL_TASKS=600,BAROTROPIC=true" \
+        -o "${RPTDIR}/${OFS}_nc_${CYC}.${PDY}.out" \
+        -e "${RPTDIR}/${OFS}_nc_${CYC}.${PDY}.err" \
+        -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=120 \
+        -l walltime=00:30:00 \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_SHORT=${NCST_JOBID%%.*}
     echo "    Nowcast:  ${NCST_JOBID}"
 
     FCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS},TOTAL_TASKS=600,BAROTROPIC=true" \
+        -o "${RPTDIR}/${OFS}_fc_${CYC}.${PDY}.out" \
+        -e "${RPTDIR}/${OFS}_fc_${CYC}.${PDY}.err" \
+        -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=120 \
+        -l walltime=01:00:00 \
         -W depend=afterok:${NCST_SHORT} \
         "${FCST_PBS}")
     FCST_SHORT=${FCST_JOBID%%.*}
