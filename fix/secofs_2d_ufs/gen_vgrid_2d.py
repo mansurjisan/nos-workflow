@@ -55,7 +55,7 @@ def gen_vgrid_2d(np_nodes, output_path, nvrt=3):
 
     print(f'Generated: {output_path}')
     print(f'  ivcor=1 (LSC2), nvrt={nvrt}, nodes={np_nodes}')
-    print(f'  sigma levels: {sigma.tolist()}')
+    print(f'  sigma levels: [-9 (dry), -1.0, 0.0], kbp=2')
     print(f'  file size: {os.path.getsize(output_path) / 1e6:.1f} MB')
 
 
