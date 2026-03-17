@@ -113,9 +113,22 @@ fi
 # Step 2: Run ESMF_Scrip2Unstruct
 echo "Step 2: Running ESMF_Scrip2Unstruct..."
 
-ESMF_SCRIP2UNSTRUCT=$(which ESMF_Scrip2Unstruct 2>/dev/null || echo "")
+ESMF_SCRIP2UNSTRUCT="${ESMF_SCRIP2UNSTRUCT:-}"
+if [ -z "$ESMF_SCRIP2UNSTRUCT" ] || [ ! -x "$ESMF_SCRIP2UNSTRUCT" ]; then
+    ESMF_SCRIP2UNSTRUCT=$(which ESMF_Scrip2Unstruct 2>/dev/null || echo "")
+fi
+if [ -z "$ESMF_SCRIP2UNSTRUCT" ]; then
+    # Search known WCOSS2 hpc-stack ESMF installations
+    for esmf_dir in /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/esmf/*/bin; do
+        if [ -x "${esmf_dir}/ESMF_Scrip2Unstruct" ]; then
+            ESMF_SCRIP2UNSTRUCT="${esmf_dir}/ESMF_Scrip2Unstruct"
+            echo "Found ESMF in hpc-stack: $ESMF_SCRIP2UNSTRUCT"
+            break
+        fi
+    done
+fi
 if [ -z "${ESMF_SCRIP2UNSTRUCT}" ]; then
-    echo "ERROR: ESMF_Scrip2Unstruct not found. Load esmf module first." >&2
+    echo "ERROR: ESMF_Scrip2Unstruct not found in PATH or hpc-stack" >&2
     exit 1
 fi
 
