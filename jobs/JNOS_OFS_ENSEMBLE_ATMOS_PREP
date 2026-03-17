@@ -598,63 +598,46 @@ else
 
     # ---------------------------------------------------------------
     # Pre-generate ESMF mesh for the GEFS 0.25-degree grid ONCE.
-    # All GEFS members share the same grid, so generate from the
-    # first available GEFS extraction sample using Python (not
-    # ESMF_Scrip2Unstruct which fails under parallel cfp).
+    # All GEFS members share the same grid, so generate once before cfp.
+    # Uses ESMF_Scrip2Unstruct (not Python) for correct node/element counts.
     # ---------------------------------------------------------------
     GEFS_MESH=${DATA}/datm_ensemble/gefs_esmf_mesh.nc
+    MESH_SCRIPT=${USHnos}/nosofs/create_esmf_mesh_from_forcing.sh
     mkdir -p ${DATA}/datm_ensemble
-    echo "Pre-generating ESMF mesh for GEFS 0.25-degree grid..."
-    python3 -c "
+
+    # Find a sample GEFS forcing file to generate the mesh from.
+    # If no GEFS forcing exists yet (cfp hasn't run), create a minimal
+    # sample from the GEFS grid dimensions.
+    GEFS_SAMPLE=""
+    for _g in ${GEFS_MEMBERS}; do
+        _gdir=${DATA}/datm_ensemble/gefs_${_g}/datm_forcing/primary
+        if [ -s "${_gdir}/gefs_${_g}_forcing.nc" ]; then
+            GEFS_SAMPLE="${_gdir}/gefs_${_g}_forcing.nc"
+            break
+        fi
+    done
+
+    if [ -z "${GEFS_SAMPLE}" ]; then
+        # No GEFS forcing yet — create a minimal sample for SCRIP generation
+        echo "Creating minimal GEFS sample for mesh generation..."
+        GEFS_SAMPLE=${DATA}/datm_ensemble/gefs_sample.nc
+        python3 -c "
 import numpy as np
 from netCDF4 import Dataset
-
-lons = np.arange(0, 360, 0.25)
-lats = np.arange(-90, 90.25, 0.25)
-nx, ny = len(lons), len(lats)
-lon2d, lat2d = np.meshgrid(lons, lats)
-
-n_nodes = ny * nx
-n_elems = (ny - 1) * (nx - 1)
-
-out = Dataset('${GEFS_MESH}', 'w')
-out.createDimension('nodeCount', n_nodes)
-out.createDimension('elementCount', n_elems)
-out.createDimension('maxNodePElement', 4)
-out.createDimension('coordDim', 2)
-
-nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
-nodeCoords.units = 'degrees'
-coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
-nodeCoords[:] = coords
-
-# Vectorized element connectivity (no Python for-loop)
-j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
-n0 = (j_idx * nx + i_idx + 1).ravel()
-conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
-
-elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
-elemConn.long_name = 'Node indices that define the element connectivity'
-elemConn.start_index = 1
-elemConn[:] = conn
-
-numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
-numElemConn[:] = 4
-
-elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
-elementMask[:] = np.ones(n_elems, dtype=np.int32)
-
-centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
-centerCoords.units = 'degrees'
-clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
-clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
-centerCoords[:] = np.column_stack([clon, clat])
-
-out.title = 'ESMF mesh for GEFS 0.25-degree global grid'
-out.gridType = 'unstructured mesh'
-out.close()
-print('Generated GEFS ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
+ds = Dataset('${GEFS_SAMPLE}', 'w')
+ds.createDimension('latitude', 721)
+ds.createDimension('longitude', 1440)
+lat = ds.createVariable('latitude', 'f8', ('latitude',))
+lat[:] = np.arange(-90, 90.25, 0.25)
+lon = ds.createVariable('longitude', 'f8', ('longitude',))
+lon[:] = np.arange(0, 360, 0.25)
+ds.close()
+print('Created GEFS sample: 1440x721')
 "
+    fi
+
+    echo "Pre-generating ESMF mesh for GEFS grid using ESMF_Scrip2Unstruct..."
+    bash ${MESH_SCRIPT} ${GEFS_SAMPLE} ${GEFS_MESH}
     rc=$?
     if [ $rc -ne 0 ] || [ ! -s "${GEFS_MESH}" ]; then
         echo "ERROR: Failed to pre-generate GEFS ESMF mesh" >&2
@@ -663,101 +646,23 @@ print('Generated GEFS ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n
     echo "Pre-generated GEFS ESMF mesh: ${GEFS_MESH}"
 
     # ---------------------------------------------------------------
-    # Fix control (det prep) ESMF mesh if it doesn't match forcing dims.
-    # ESMF_Scrip2Unstruct sometimes produces meshes with different node
-    # counts than the forcing grid (e.g., 1723x1723 for a 1721x1721 grid).
-    # Pre-generate the correct mesh here so member 000 never needs to
-    # regenerate at runtime.
+    # Regenerate control ESMF mesh using ESMF_Scrip2Unstruct.
+    # The prep job may have generated the mesh already, but we
+    # regenerate here to ensure consistency with ESMF_Scrip2Unstruct
+    # (Python-generated meshes have wrong node counts).
     # ---------------------------------------------------------------
     CTRL_DATM_DIR=${COMOUT}/${RUN}.${cycle}.datm_input
     if [ -s "${CTRL_DATM_DIR}/datm_forcing.nc" ]; then
-        echo "Checking control ESMF mesh against forcing dims..."
-        python3 -c "
-import numpy as np
-from netCDF4 import Dataset
-
-# Read forcing grid dims
-ds = Dataset('${CTRL_DATM_DIR}/datm_forcing.nc', 'r')
-try:
-    nx = len(ds.dimensions['x'])
-    ny = len(ds.dimensions['y'])
-    lons = ds.variables['longitude'][:]
-    lats = ds.variables['latitude'][:]
-    if lons.ndim == 1:
-        lon2d, lat2d = np.meshgrid(lons, lats)
-    else:
-        lon2d, lat2d = lons, lats
-except:
-    nx = len(ds.dimensions['longitude'])
-    ny = len(ds.dimensions['latitude'])
-    lons = ds.variables['longitude'][:]
-    lats = ds.variables['latitude'][:]
-    lon2d, lat2d = np.meshgrid(lons, lats)
-ds.close()
-
-forcing_total = nx * ny
-
-# Check existing mesh
-mesh_path = '${CTRL_DATM_DIR}/datm_esmf_mesh.nc'
-try:
-    mds = Dataset(mesh_path, 'r')
-    mesh_nodes = len(mds.dimensions.get('nodeCount', mds.dimensions.get('node_count', [])))
-    mds.close()
-except:
-    mesh_nodes = 0
-
-if mesh_nodes == forcing_total:
-    print('Control ESMF mesh OK: {} nodes matches forcing {}x{}'.format(mesh_nodes, nx, ny))
-else:
-    print('Control ESMF mesh mismatch: mesh={} vs forcing={}x{}={}'.format(mesh_nodes, nx, ny, forcing_total))
-    print('Regenerating control ESMF mesh...')
-    n_nodes = ny * nx
-    n_elems = (ny - 1) * (nx - 1)
-
-    out = Dataset(mesh_path, 'w')
-    out.createDimension('nodeCount', n_nodes)
-    out.createDimension('elementCount', n_elems)
-    out.createDimension('maxNodePElement', 4)
-    out.createDimension('coordDim', 2)
-
-    nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
-    nodeCoords.units = 'degrees'
-    coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
-    nodeCoords[:] = coords
-
-    j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
-    n0 = (j_idx * nx + i_idx + 1).ravel()
-    conn = np.column_stack([n0, n0+1, n0+nx+1, n0+nx]).astype(np.int32)
-
-    elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
-    elemConn.long_name = 'Node indices that define the element connectivity'
-    elemConn.start_index = 1
-    elemConn[:] = conn
-
-    numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
-    numElemConn[:] = 4
-
-    elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
-    elementMask[:] = np.ones(n_elems, dtype=np.int32)
-
-    centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
-    centerCoords.units = 'degrees'
-    clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
-    clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
-    centerCoords[:] = np.column_stack([clon, clat])
-
-    out.title = 'ESMF mesh for control DATM forcing (corrected)'
-    out.gridType = 'unstructured mesh'
-    out.close()
-    print('Generated control ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
-" 2>&1
+        echo "Regenerating control ESMF mesh with ESMF_Scrip2Unstruct..."
+        bash ${MESH_SCRIPT} ${CTRL_DATM_DIR}/datm_forcing.nc \
+             ${CTRL_DATM_DIR}/datm_esmf_mesh.nc
         rc=$?
         if [ $rc -ne 0 ]; then
-            echo "WARNING: Control ESMF mesh check/fix failed (rc=$rc)" >&2
+            echo "WARNING: Control ESMF mesh regeneration failed (rc=$rc)" >&2
+            echo "Control member will use existing mesh"
         fi
-
     else
-        echo "WARNING: Control datm_forcing.nc not found at ${CTRL_DATM_DIR} — mesh not checked"
+        echo "WARNING: Control datm_forcing.nc not found at ${CTRL_DATM_DIR} — mesh not regenerated"
     fi
 
     # Build cfp command file for parallel DATM forcing generation
