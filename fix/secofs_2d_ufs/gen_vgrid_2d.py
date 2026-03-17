@@ -28,26 +28,28 @@ def get_node_count(hgrid_path):
 def gen_vgrid_2d(np_nodes, output_path, nvrt=3):
     """Generate ivcor=1 (LSC2) vgrid.in with nvrt levels.
 
-    All nodes get kbp=1 (all levels wet) and uniform sigma
-    from -1.0 (bottom) to 0.0 (surface).
-    """
-    sigma = np.linspace(-1.0, 0.0, nvrt)
+    All nodes get kbp=2 (bottom level is dry fill, 2 wet sigma levels).
+    Level 1: -9 (dry fill, below kbp)
+    Level 2: -1.0 (bottom)
+    Level 3: 0.0 (surface)
 
+    This gives a true 2D barotropic setup matching how the 3D grid
+    handles shallow nodes (kbp=62 out of nvrt=63 = 2 wet levels).
+    """
     with open(output_path, 'w') as f:
         f.write('1\n')        # ivcor = 1 (LSC2)
         f.write(f'{nvrt}\n')  # nvrt
 
-        # kbp array: all nodes = 1
-        kbp = np.ones(np_nodes, dtype=int)
+        # kbp array: all nodes = 2 (2 wet levels: levels 2 and 3)
+        kbp = np.full(np_nodes, 2, dtype=int)
         row_size = 20
         for i in range(0, np_nodes, row_size):
             chunk = kbp[i:i + row_size]
             f.write(''.join(f'{v:>11d}' for v in chunk) + '\n')
 
         # Sigma levels for each node
-        # Format per line: node_index  sigma_1  sigma_2  ...  sigma_nvrt
-        # With kbp=1, all levels are valid (no -9 fill needed)
-        sigma_str = ''.join(f'{s:>14.6f}' for s in sigma)
+        # Format: node_index  sigma_1(-9=dry)  sigma_2(-1=bottom)  sigma_3(0=surface)
+        sigma_str = f'{"  -9.000000":>14s}{"  -1.000000":>14s}{"   0.000000":>14s}'
         for i in range(np_nodes):
             f.write(f'{i+1:>10d}{sigma_str}\n')
 
