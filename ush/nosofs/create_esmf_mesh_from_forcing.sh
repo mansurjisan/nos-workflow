@@ -135,6 +135,17 @@ if [ -z "${ESMF_SCRIP2UNSTRUCT}" ]; then
     exit 1
 fi
 
+# Set LD_LIBRARY_PATH for hpc-stack ESMF dependencies (HDF5, NetCDF)
+# ESMF_Scrip2Unstruct from hpc-stack needs hpc-stack libs, not system modules
+_esmf_bin_dir=$(dirname ${ESMF_SCRIP2UNSTRUCT})
+_hpc_root=$(echo ${_esmf_bin_dir} | sed 's|/esmf/.*/bin||')
+for _lib_dir in ${_hpc_root}/hdf5/*/lib ${_hpc_root}/netcdf/*/lib; do
+    if [ -d "$_lib_dir" ]; then
+        export LD_LIBRARY_PATH="${_lib_dir}:${LD_LIBRARY_PATH:-}"
+    fi
+done
+echo "  LD_LIBRARY_PATH updated for hpc-stack ESMF"
+
 ${ESMF_SCRIP2UNSTRUCT} ${SCRIP_FILE} ${WORKDIR}/esmf_mesh.nc 0
 rc=$?
 
