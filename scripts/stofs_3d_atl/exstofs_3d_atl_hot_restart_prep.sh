@@ -7,7 +7,7 @@
 #    (2) save the newly created file as stofs_3d_atl.t12z.hotstart.stofs3d.nc                                   # 
 #                                                                                                               #
 #  Remarks:                                                                                                     #
-#                                                                                                 May 2023      #
+#                                                                                           September 2025      #
 #################################################################################################################
 
   seton='-xa'
@@ -35,14 +35,19 @@
   echo "Current dir=`pwd`"; echo
 
 
-  # NCPU_PBS==4320; minus N_scribe=6, hence, 4316; 
-  # note: count (0, ..., 4316-1)
-  NCPU_PBS_hot_restart=4314
+  # NCPU_PBS==4320; minus N_scribe=8, hence, 4312;
+  # note: count (0, ..., 4312-1)
+  #NCPU_PBS_hot_restart=4314
+
+  let n_scribes=8
+  let NCPU_PBS_hot_restart=${NCPU_PBS}-${n_scribes}
+  echo "NCPU_PBS_hot_restart=${NCPU_PBS_hot_restart}"
 
   sz_cr_ht_subdmn_MB=100000    # bytes
 
-  # list_steps_OI=(288 576 864 1152 1440 1728 2016 2304 2592 2880)
-  list_steps_OI=(2880 2592 2304 2016 1728 1440 1152 864 576 288) 
+  # list_steps_OI=(2880 2592 2304 2016 1728 1440 1152 864 576 288)
+  list_steps_OI=(2592 2304 2016 1728 1440 1152 864 576 288)
+
   dt_timestep=150
 
   # str_ht_fn_prefix=
@@ -52,16 +57,28 @@
 
   rm -f  tmp_chk_hotstart_file
 
+
+  dir_nco_tmp_archive=${COMOUT}/outputs_watchdog
+
+
+     echo
+     echo "In exstofs_3d_atl_hot_restart_prep.sh: `pwd`: dir_nco_tmp_archive=${dir_nco_tmp_archive}"
+     echo
+
+
+#   mkdir -p ${dir_nco_tmp_archive}
+
+
+  cd ${dir_nco_tmp_archive}
+
   for k_OI in ${list_steps_OI[@]}
   do
 
-
-     # list_fn_ht_OI=`ls ${DATA}/outputs/hotstart_0?????_${k_OI}.nc` 
-     list_fn_ht_OI=`ls ./outputs/hotstart_0?????_${k_OI}.nc 2> tmp_chk_hotstart_file`
+     list_fn_ht_OI=`ls hotstart_0?????_${k_OI}.nc 2> tmp_chk_hotstart_file`
 
      echo "checking hotstart file of step=${k_OI}"
 
-     N_file_hotstart_default=`ls -lr  ./outputs/hotstart_0?????_*${k_OI}.nc 2>> tmp_chk_hotstart_file | wc -l`   
+     N_file_hotstart_default=`ls -lr  ./hotstart_0?????_*${k_OI}.nc 2>> tmp_chk_hotstart_file | wc -l`
      
      echo
      echo checking hotstart file of step=${k_OI} 
@@ -117,18 +134,21 @@ if [[ ${time_sec_merge_hotstart}  -ne 0 ]]; then
  
   cd ${DATA}
 
-  mv param.nml param.nml_cold_restart
+  fn_src_nml_rerun_ihot1=${COMOUTrerun}/${RUN}.${cycle}.param.nml
+  mv  ${fn_src_nml_rerun_ihot1}  ${fn_src_nml_rerun_ihot1}_backup_ihot1
 
-  cat param.nml_cold_restart | sed "s/ihot = 1/ihot = 2/" > param.nml
+  cpreq  -f  ${fn_src_nml_rerun_ihot1}_backup_ihot1   param.nml_ihot1_tmp
+    rm -f param.nml
+    cat param.nml_ihot1_tmp | sed "s/ihot = 1/ihot = 2/" > param.nml
 
-  # backup param.nml of cold restart
   fn_param_modelRun_std=${RUN}.${cycle}.param.nml
-  cpreq -f param.nml ${COMOUT}/rerun/${fn_param_modelRun_std}_hot_restart
+    cpreq -f param.nml ${COMOUT}/rerun/${fn_param_modelRun_std}
+    cpreq -f param.nml ${COMOUT}/rerun/${fn_param_modelRun_std}_backup_ihot2
 
   # files for ihot=2:
-  mv outputs/mirror.out outputs/mirror.out_cold_restart
-  touch outputs/mirror.out
-  touch outputs/flux.out
+  # post-crash run started 'new' dir: mv outputs/mirror.out outputs/mirror.out_cold_restart
+    touch outputs/mirror.out
+    touch outputs/flux.out
 
   if [[ ! -f "outputs/staout_1" ]]; then
      for i in {1,2,3,4,5,6,7,8,9}; do
@@ -143,18 +163,18 @@ fi
 
 if [[ ${time_sec_merge_hotstart} -eq 0 ]]; 
 then	
-   # cold restart file
+   # use rerun/_restart.nc (at beginning time of nowcast)
    fn_restart_rerun=${COMOUTrerun}/${RUN}.${cycle}.restart.nc
 
    if [[ $(find ${fn_restart_rerun} -type f -size  +20G 2>/dev/null) ]]; then
      msg="restart.nc:  ${fn_restart_rerun}"
      ln -sf  ${fn_restart_rerun} ${DATA}/hotstart.nc
      # cpreq -pf ${fn_restart_rerun} ${DATA}/hotstart.nc
-    
+
      list_fn_avail_input_forcing+=(" \n " $fn_restart_rerun)
      msg="restart.nc=${fn_restart_rerun}"
 
-  else 
+  else
     fn_restart_hotstart="${fn_restart_rerun}"
     FLAG_all_exist_model_input_files=0
     list_fn_missed_input_forcing+=(" \n " ${fn_restart_rerun})
@@ -162,13 +182,31 @@ then
     echo -e "\n ${fn_restart_rerun}/hotstart file is not found in ${COMOUTrerun}"
     msg="\n WARNING: None existing: ${COMOUTrerun} - WARNING"
   fi
-  
-   msg="\n To use the cold restart nc"   
+
+   msg="\n To use the rerun/_restart.nc at beginning time of nowcast"
    echo -e  $msg; echo $msg >> $pgmout
 
-else	
-    # hot restart file
+
+else
+
+    # Generate new global domain _restart.nc: to continue the unfinished run of the current cycle
+    mkdir -p ${DATA}/outputs/
     cd ${DATA}/outputs/
+
+    # cp local_global & hotstart nc to $DATA/outputs/
+    touch ../log_cp_watchdog_hot_local2glb_timing.txt
+    postmsg ../log_cp_watchdog_hot_local2glb_timing.txt "Before cp dir_nco_tmp_archive"
+
+    if [ -d ${dir_nco_tmp_archive} ]; then
+         echo; echo dir_nco_tmp_archive=${dir_nco_tmp_archive} exists; echo
+         cp -fp  ${dir_nco_tmp_archive}/local_to_global_*  ${DATA}/outputs
+         cp -fp  ${dir_nco_tmp_archive}/hotstart_*_${idx_time_step_merge_hotstart}.nc  ${DATA}/outputs
+         cp -fp  ${dir_nco_tmp_archive}/staout* ${DATA}/outputs
+
+    fi
+
+    postmsg ../log_cp_watchdog_hot_local2glb_timing.txt "Done cp dir_nco_tmp_archive"
+
 
     #idx_time_step_merge_hotstart=576
     fn_merged_hotstart_ftn=hotstart_it\=${idx_time_step_merge_hotstart}.nc
@@ -191,11 +229,14 @@ else
           msg="echo ${fn_merged_hotstart_ftn} has been created";
           echo $msg; echo $msg >> $pgmout
 
-          cpreq -pf ${fn_merged_hotstart_ftn}  ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}_hot_restart
 
-	  cd ${DATA}; 
-          mv hotstart.nc hotstart.nc_cold_restart 2> tmp_rename_cold_restart_file
-          ln -sf ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}_hot_restart hotstart.nc
+          mv ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std} ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}_ihot1
+          cpreq -pf ${fn_merged_hotstart_ftn}  ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}
+          ln -sf  ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}  ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std}_back_ihot2
+
+	  cd ${DATA};
+          rm -f mv hotstart.nc
+          ln -sf ${COMOUT}/rerun/${fn_hotstart_stofs3d_merged_std} hotstart.nc
 
        else
          msg=`echo ${fn_merged_hotstart_ftn}} was not created`

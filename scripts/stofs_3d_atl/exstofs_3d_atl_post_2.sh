@@ -32,16 +32,17 @@
 
 
 # -----------------------> static files
+#  fn_station_in=$FIXstofs3d/${RUN}_station.in
+#  cpreq --remove-destination -f ${fn_station_in} station.in
+
   cd ${DATA}
 
-  fn_src_nml=${COMOUTrerun:-${COMOUT}}/${RUN}.${cycle}.param.nml
-  if [ -f "${fn_src_nml}" ]; then
-    ln -sf ${fn_src_nml} param.nml
-  fi
+  fn_src_nml=${COMOUTrerun}/${RUN}.${cycle}.param.nml
+  ln -sf ${fn_src_nml} param.nml
 
 
-# -----------------------> check for model run complete
-fn_mirror=outputs/mirror.out
+# -----------------------> check & wait for model run complete
+fn_mirror=${COMOUT}/outputs_watchdog/mirror.out
 str_model_run_status="Run completed successfully"
 
 
@@ -55,6 +56,29 @@ if [[ ${flag_run_status} == 0 ]]; then
     msg=`echo checked mirror.out: SCHISM model run was completed SUCCESSFULLY`
     echo $msg
     echo $msg >> $pgmout
+
+     dir_outputs_local=${DATA}/outputs
+
+     mkdir -p ${dir_outputs_local}
+     cd ${DATA}
+
+     # including: history nc & local_to_global & hotstart_*_576.nc
+     #cpreq -fp ${COMOUT}/outputs_watchdog/hotstart_*_576.nc   ${dir_outputs_local}
+     #cpreq -fp ${COMOUT}/outputs_watchdog/local_to_global_??????   ${dir_outputs_local}
+     #cpreq -fp ${COMOUT}/outputs_2d3d_sta/*  ${dir_outputs_local}
+
+     postmsg "before cp data to post_1 outputs"
+
+     for i in ${COMOUT}/outputs_watchdog/local_to_global*; do
+        cpreq  -f  "$i" ${dir_outputs_local};
+     done
+
+     cpreq -f ${COMOUT}/outputs_watchdog/{horizontalVelX,horizontalVelY,out2d,salinity,temperature,zCoordinates,verticalVelocity,diffusivity}_*.nc ${dir_outputs_local};
+
+     TIME_STEP_restart=576
+     cpreq -f ${COMOUT}/outputs_watchdog/hotstart_*_${TIME_STEP_restart}.nc  ${dir_outputs_local};
+
+     postmsg "done cp data to post_1 outputs"
 
     # ---------> Update 2d & 3d nc: adding variable attributes
     cd ${DATA}; pwd

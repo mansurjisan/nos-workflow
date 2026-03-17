@@ -56,7 +56,7 @@
 
 
 # -----------------------> check & wait for model run complete
- fn_mirror=${DATA}/outputs/mirror.out
+ fn_mirror=${COMOUT}/outputs_watchdog/mirror.out
 
 str_model_run_status="Run completed successfully"
 
@@ -77,6 +77,22 @@ if [[ ${flag_run_status} == 0 ]]; then
 
      mkdir -p ${dir_outputs_local}
      cd ${DATA}
+
+
+     echo "date/time before cp data to post_1 outputs: `date`"
+
+
+     cpreq -f ${COMOUT}/outputs_watchdog/{horizontalVelX,horizontalVelY,out2d,salinity,temperature,zCoordinates,verticalVelocity,diffusivity}_*.nc ${dir_outputs_local};
+     cpreq -f ${COMOUT}/outputs_watchdog/staout_* ${dir_outputs_local}
+
+
+     echo "date/time when done cp data to post_1 outputs: `date`"
+
+     # Following is done in watchdog.sh
+     # including: history nc & local_to_global & hotstart_*_576.nc
+     # cpreq -fp ${COMOUT}/outputs_hotstart/hotstart_*_576.nc   ${dir_outputs_local}
+     # cpreq -fp ${COMOUT}/outputs_hotstart/local_to_global_??????   ${dir_outputs_local}
+
 
 
     # ---------> Update 2d & 3d nc: adding variable attributes
