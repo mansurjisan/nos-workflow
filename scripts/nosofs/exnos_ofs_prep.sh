@@ -393,11 +393,29 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "Generating the open boundary forcing"
   # For barotropic: Fortran OBC needs full 3D vertical levels to interpolate
   # RTOFS. Override KBm to 63 (3D), run OBC, then discard T/S outputs.
-  local _saved_KBm=""
+  local _saved_KBm="" _saved_vgrid="" _saved_vgrid_nu=""
   if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
       _saved_KBm=${KBm}
+      _saved_vgrid=${VGRID_CTL}
+      _saved_vgrid_nu=${VGRID_NU_CTL}
       export KBm=63
-      echo "  Barotropic: temporarily set KBm=63 for Fortran OBC (was ${_saved_KBm})"
+      # Use the 3D SECOFS vgrid for OBC Fortran (same grid, 63 levels)
+      _3d_ofs=$(echo ${OFS} | sed 's/_2d_ufs/_ufs/;s/_2d//')
+      if [ -f "${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.in" ]; then
+          export VGRID_CTL=${_3d_ofs}.vgrid.in
+          export VGRID_NU_CTL=${_3d_ofs}.vgrid.nu.in
+          cp -p ${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.in ${DATA}/
+          cp -p ${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.nu.in ${DATA}/ 2>/dev/null || true
+          echo "  Barotropic: using 3D vgrid (KBm=63, ${VGRID_CTL}) for Fortran OBC"
+      elif [ -f "${FIXnos}/../secofs/secofs.vgrid.in" ]; then
+          export VGRID_CTL=secofs.vgrid.in
+          export VGRID_NU_CTL=secofs.vgrid.nu.in
+          cp -p ${FIXnos}/../secofs/secofs.vgrid.in ${DATA}/
+          cp -p ${FIXnos}/../secofs/secofs.vgrid.nu.in ${DATA}/ 2>/dev/null || true
+          echo "  Barotropic: using secofs 3D vgrid (KBm=63) for Fortran OBC"
+      else
+          echo "  WARNING: No 3D vgrid found for barotropic OBC override"
+      fi
   fi
   export pgm=nos_ofs_create_forcing_obc.sh
   . prep_step
@@ -417,10 +435,12 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     postmsg "$jlogfile" "$msg"
     postmsg "$nosjlogfile" "$msg"
   fi
-  # Restore KBm for barotropic
+  # Restore KBm and vgrid for barotropic
   if [ -n "${_saved_KBm:-}" ]; then
       export KBm=${_saved_KBm}
-      echo "  Barotropic: restored KBm=${KBm}"
+      export VGRID_CTL=${_saved_vgrid}
+      export VGRID_NU_CTL=${_saved_vgrid_nu}
+      echo "  Barotropic: restored KBm=${KBm}, VGRID_CTL=${VGRID_CTL}"
   fi
 fi
 TS_NUDGING=${TS_NUDGING:-0}
