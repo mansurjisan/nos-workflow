@@ -392,30 +392,27 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "The script nos_ofs_create_forcing_obc.sh starts at time: " `date `
   echo "Generating the open boundary forcing"
   if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-      # Barotropic: skip Fortran OBC entirely. Only need elev2D.th.nc
-      # which tidal forcing (bctides.in) already provides.
-      # Create empty OBC tar with placeholder files.
-      echo "  Barotropic mode: skipping Fortran OBC (no 3D T/S/velocity needed)"
-      echo "  Converting bctides.in: iettype/ifltype 5->3 (tidal only, no elev2D.th.nc)"
-      # Convert bctides.in to barotropic (type 5->3, remove T/S)
-      local _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
-      if [ ! -f "$_convert_script" ]; then
-          _convert_script="${USHnos}/../fix/${OFS}/convert_bctides_2d.py"
-      fi
-      for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
-          if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
-              python3 $_convert_script "$_bct" "${_bct}.2d"
-              mv "${_bct}.2d" "$_bct"
-              echo "  Converted: $(basename $_bct)"
+      # Barotropic: run Fortran OBC with 3D config to get elev2D.th.nc,
+      # then convert bctides.in to strip 3D T/S boundary types.
+      echo "  Barotropic: running OBC with 3D config to generate elev2D.th.nc"
+      local _saved_KBm=${KBm} _saved_vgrid=${VGRID_CTL} _saved_vgrid_nu=${VGRID_NU_CTL}
+      # Use the 3D SECOFS config for OBC generation
+      export KBm=63
+      local _3d_ofs=$(echo ${OFS} | sed 's/_2d_ufs/_ufs/;s/_2d//')
+      for _vf in "${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.in" "${FIXnos}/../secofs/secofs.vgrid.in"; do
+          if [ -f "$_vf" ]; then
+              export VGRID_CTL=$(basename $_vf)
+              export VGRID_NU_CTL=$(basename $_vf | sed 's/vgrid\.in/vgrid.nu.in/')
+              ln -sf "$_vf" ${DATA}/$(basename $_vf)
+              ln -sf "$(echo $_vf | sed 's/vgrid\.in/vgrid.nu.in/')" ${DATA}/$(basename $_vf | sed 's/vgrid\.in/vgrid.nu.in/') 2>/dev/null
+              echo "  Using 3D vgrid: ${VGRID_CTL} (KBm=63)"
+              break
           fi
       done
-      # Create empty OBC tar with placeholder files
-      touch TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc
-      tar -cvf ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar \
-          TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc 2>/dev/null || true
-      echo "  Created empty OBC tar: ${PREFIXNOS}.${cycle}.${PDY}.obc.tar"
-      export err=0
-  else
+  fi
+  export pgm=nos_ofs_create_forcing_obc.sh
+  . prep_step
+  $USHnos/nos_ofs_create_forcing_obc.sh
   export pgm=nos_ofs_create_forcing_obc.sh
   . prep_step
   $USHnos/nos_ofs_create_forcing_obc.sh
@@ -434,7 +431,24 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     postmsg "$jlogfile" "$msg"
     postmsg "$nosjlogfile" "$msg"
   fi
-  fi  # end else (non-barotropic OBC)
+  # Barotropic: restore KBm/vgrid and convert bctides.in
+  if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+      export KBm=${_saved_KBm}
+      export VGRID_CTL=${_saved_vgrid}
+      export VGRID_NU_CTL=${_saved_vgrid_nu}
+      echo "  Barotropic: restored KBm=${KBm}"
+      # Convert bctides.in: strip 3D T/S, change iettype 5->3 (keep elev2D.th.nc via type 5? No — keep 5 since we have real elev2D now)
+      local _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
+      [ ! -f "$_convert_script" ] && _convert_script="${FIXofs}/convert_bctides_2d.py"
+      for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
+                  ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
+          if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
+              python3 $_convert_script "$_bct" "${_bct}.2d"
+              mv "${_bct}.2d" "$_bct"
+              echo "  Converted bctides: $(basename $_bct)"
+          fi
+      done
+  fi
 fi
 TS_NUDGING=${TS_NUDGING:-0}
 if [ $TS_NUDGING -eq 1 ]; then
