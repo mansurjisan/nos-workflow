@@ -1195,8 +1195,21 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
         echo "  Hotstart timestep: $nsteps (dt=${dt_val:-unknown})"
 
         # Run combine_hotstart7 executable
-        local COMBINE_EXE="${EXECnos:-}/schism_combine_hotstart7.exe"
-        if [ -x "$COMBINE_EXE" ]; then
+        # Search multiple locations: EXECnos, HOMEnos/exec, STOFS exec
+        local COMBINE_EXE=""
+        for _cand in \
+            "${EXECnos:-}/schism_combine_hotstart7.exe" \
+            "${HOMEnos:-}/exec/schism_combine_hotstart7.exe" \
+            "${EXECnos:-}/nos_ofs_combine_hotstart" \
+            "${EXECstofs3d:-}/stofs_3d_atl_combine_hotstart"; do
+            if [ -x "$_cand" ]; then
+                COMBINE_EXE="$_cand"
+                break
+            fi
+        done
+
+        if [ -n "$COMBINE_EXE" ]; then
+            echo "  Using combine executable: $COMBINE_EXE"
             $COMBINE_EXE -i $nsteps
             local combine_err=$?
             if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
@@ -1207,7 +1220,7 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
                 echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
             fi
         else
-            echo "WARNING: schism_combine_hotstart7.exe not found at $COMBINE_EXE"
+            echo "WARNING: schism_combine_hotstart7.exe not found in EXECnos or HOMEnos/exec"
             # Fallback: check if a combined hotstart already exists
             local combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
             if [ -n "$combined" ] && [ -s "$combined" ]; then
