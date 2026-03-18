@@ -1183,8 +1183,10 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
         echo "WARNING: mirror.out not found — UFS-Coastal may not have completed properly"
     fi
 
-    # After nowcast: combine distributed hotstart files and archive for forecast
-    if [ "$phase" = "nowcast" ] && [ -d "${DATA}/outputs" ]; then
+    # After nowcast or forecast: combine distributed hotstart files and archive
+    # Nowcast hotstart → used by forecast in the same cycle
+    # Forecast hotstart → used by next cycle's nowcast
+    if ([ "$phase" = "nowcast" ] || [ "$phase" = "forecast" ]) && [ -d "${DATA}/outputs" ]; then
         echo "Combining distributed hotstart files..."
         cd ${DATA}/outputs
 
@@ -1214,8 +1216,9 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
             local combine_err=$?
             if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
                 echo "  Hotstart combined successfully: hotstart_it=${nsteps}.nc"
-                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
-                echo "  Archived to ${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
+                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${_rst_name}"
+                echo "  Archived to ${COMOUT}/${_rst_name}"
             else
                 echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
             fi
@@ -1224,8 +1227,9 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
             # Fallback: check if a combined hotstart already exists
             local combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
             if [ -n "$combined" ] && [ -s "$combined" ]; then
-                cp -p "$combined" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
-                echo "  Found pre-combined hotstart: $combined, archived to COMOUT"
+                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+                cp -p "$combined" "${COMOUT}/${_rst_name}"
+                echo "  Found pre-combined hotstart: $combined, archived as ${_rst_name}"
             fi
         fi
         cd ${DATA}
