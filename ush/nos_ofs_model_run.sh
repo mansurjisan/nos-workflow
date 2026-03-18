@@ -1192,9 +1192,16 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
 
         # Calculate the hotstart timestep (total nowcast steps)
         local dt_val=$(grep -m1 '^\s*dt\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9.]//g')
-        local nhot_write_val=$(grep -m1 '^\s*nhot_write\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9]//g')
+        local nhot_write_val=$(grep -m1 'nhot_write' ${DATA}/param.nml | sed 's/!.*//;s/.*=//;s/[^0-9]//g')
         local nsteps=${nhot_write_val:-180}
-        echo "  Hotstart timestep: $nsteps (dt=${dt_val:-unknown})"
+        # For forecast, find the last hotstart step (multiple of nhot_write)
+        local _last_step=$(ls hotstart_*_${nsteps}.nc 2>/dev/null | tail -1 | sed 's/.*hotstart_0*\([0-9]*\)_.*/\1/')
+        if [ -z "$_last_step" ]; then
+            # No distributed files at nhot_write — check for any hotstart files
+            _last_step=$(ls hotstart_000000_*.nc 2>/dev/null | head -1 | sed 's/.*_0*\([0-9]*\)\.nc/\1/')
+        fi
+        nsteps=${_last_step:-$nsteps}
+        echo "  Hotstart timestep: $nsteps (nhot_write=${nhot_write_val:-unknown}, dt=${dt_val:-unknown})"
 
         # Run combine_hotstart7 executable
         # Search multiple locations: EXECnos, HOMEnos/exec, STOFS exec
