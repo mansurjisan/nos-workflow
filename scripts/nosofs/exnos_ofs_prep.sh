@@ -396,11 +396,20 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       # which tidal forcing (bctides.in) already provides.
       # Create empty OBC tar with placeholder files.
       echo "  Barotropic mode: skipping Fortran OBC (no 3D T/S/velocity needed)"
-      echo "  Tidal elevation from bctides.in is sufficient for barotropic OBC"
-      local OBC_FORCING_FILE=${PREFIXNOS}.t${HH}z.${PDY1}${YYYY4:+$YYYY4}.obc.tar
-      if [ -z "${OBC_FORCING_FILE}" ]; then
-          OBC_FORCING_FILE=${PREFIXNOS}.t$(printf '%02d' ${cyc})z.${PDY}.obc.tar
+      echo "  Converting bctides.in: iettype/ifltype 5->3 (tidal only, no elev2D.th.nc)"
+      # Convert bctides.in to barotropic (type 5->3, remove T/S)
+      local _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
+      if [ ! -f "$_convert_script" ]; then
+          _convert_script="${USHnos}/../fix/${OFS}/convert_bctides_2d.py"
       fi
+      for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
+          if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
+              python3 $_convert_script "$_bct" "${_bct}.2d"
+              mv "${_bct}.2d" "$_bct"
+              echo "  Converted: $(basename $_bct)"
+          fi
+      done
+      # Create empty OBC tar with placeholder files
       touch TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc
       tar -cvf ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar \
           TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc 2>/dev/null || true
