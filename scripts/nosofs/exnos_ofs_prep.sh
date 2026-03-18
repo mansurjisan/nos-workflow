@@ -391,6 +391,14 @@ fi
 if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "The script nos_ofs_create_forcing_obc.sh starts at time: " `date `
   echo "Generating the open boundary forcing"
+  # For barotropic: Fortran OBC needs full 3D vertical levels to interpolate
+  # RTOFS. Override KBm to 63 (3D), run OBC, then discard T/S outputs.
+  local _saved_KBm=""
+  if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+      _saved_KBm=${KBm}
+      export KBm=63
+      echo "  Barotropic: temporarily set KBm=63 for Fortran OBC (was ${_saved_KBm})"
+  fi
   export pgm=nos_ofs_create_forcing_obc.sh
   . prep_step
   $USHnos/nos_ofs_create_forcing_obc.sh
@@ -408,6 +416,11 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     msg=" Execution of $pgm completed normally"
     postmsg "$jlogfile" "$msg"
     postmsg "$nosjlogfile" "$msg"
+  fi
+  # Restore KBm for barotropic
+  if [ -n "${_saved_KBm:-}" ]; then
+      export KBm=${_saved_KBm}
+      echo "  Barotropic: restored KBm=${KBm}"
   fi
 fi
 TS_NUDGING=${TS_NUDGING:-0}
