@@ -401,12 +401,18 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       local _3d_ofs=$(echo ${OFS} | sed 's/_2d_ufs/_ufs/;s/_2d//')
       for _vf in "${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.in" "${FIXnos}/../secofs/secofs.vgrid.in"; do
           if [ -f "$_vf" ]; then
-              # Overwrite the 2D vgrid with the 3D one (Fortran reads ${PREFIXNOS}.vgrid.in)
+              # Fortran reads vgrid from FIXofs, so temporarily swap in FIXofs
+              # Save original 2D vgrid, replace with 3D, restore after OBC
+              cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.in ${FIXofs}/${PREFIXNOS}.vgrid.in.2d.bak
+              cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.nu.in ${FIXofs}/${PREFIXNOS}.vgrid.nu.in.2d.bak 2>/dev/null || true
+              cp -fp "$_vf" ${FIXofs}/${PREFIXNOS}.vgrid.in
+              cp -fp "$(echo $_vf | sed 's/vgrid\.in/vgrid.nu.in/')" ${FIXofs}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
+              # Also copy to DATA
               cp -fp "$_vf" ${DATA}/${PREFIXNOS}.vgrid.in
               cp -fp "$(echo $_vf | sed 's/vgrid\.in/vgrid.nu.in/')" ${DATA}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
               export VGRID_CTL=${PREFIXNOS}.vgrid.in
               export VGRID_NU_CTL=${PREFIXNOS}.vgrid.nu.in
-              echo "  Copied 3D vgrid as ${PREFIXNOS}.vgrid.in (KBm=63)"
+              echo "  Swapped FIXofs vgrid to 3D (KBm=63) for Fortran OBC"
               break
           fi
       done
@@ -437,10 +443,14 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       export KBm=${_saved_KBm}
       export VGRID_CTL=${_saved_vgrid}
       export VGRID_NU_CTL=${_saved_vgrid_nu}
-      # Restore 2D vgrid in DATA (overwrite the 3D copy)
+      # Restore 2D vgrid in FIXofs and DATA
+      if [ -f "${FIXofs}/${PREFIXNOS}.vgrid.in.2d.bak" ]; then
+          mv -f ${FIXofs}/${PREFIXNOS}.vgrid.in.2d.bak ${FIXofs}/${PREFIXNOS}.vgrid.in
+          mv -f ${FIXofs}/${PREFIXNOS}.vgrid.nu.in.2d.bak ${FIXofs}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
+      fi
       cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.in ${DATA}/${PREFIXNOS}.vgrid.in 2>/dev/null || true
       cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.nu.in ${DATA}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
-      echo "  Barotropic: restored KBm=${KBm}, 2D vgrid"
+      echo "  Barotropic: restored KBm=${KBm}, 2D vgrid in FIXofs and DATA"
       # Convert bctides.in: strip 3D T/S, change iettype 5->3 (keep elev2D.th.nc via type 5? No — keep 5 since we have real elev2D now)
       local _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
       [ ! -f "$_convert_script" ] && _convert_script="${FIXofs}/convert_bctides_2d.py"
