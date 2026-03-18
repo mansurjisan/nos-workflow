@@ -1213,12 +1213,13 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
         if [ -n "$COMBINE_EXE" ]; then
             echo "  Using combine executable: $COMBINE_EXE"
             # Set LD_LIBRARY_PATH for hpc-stack NetCDF/HDF5 libs
-            # (combine_hotstart7 is compiled against hpc-stack, not system modules)
+            # combine_hotstart7 links against /apps/prod/hpc-stack/intel-*/netcdf/4.7.4
+            # (serial hpc-stack build, no cray-mpich level)
             for _lib in \
-                /apps/prod/hpc-stack/i-19.1.3.304__m-8.1.12__h-1.14.0__n-4.9.2__p-2.5.10__e-8.4.2/intel-19.1.3.304/cray-mpich-8.1.12/netcdf/4.9.2/lib \
-                /apps/prod/hpc-stack/i-19.1.3.304__m-8.1.12__h-1.14.0__n-4.9.2__p-2.5.10__e-8.4.2/intel-19.1.3.304/cray-mpich-8.1.12/hdf5/1.14.0/lib \
-                /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/netcdf/*/lib \
-                /apps/prod/hpc-stack/*/intel-*/cray-mpich-*/hdf5/*/lib; do
+                /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+                /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+                /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+                /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
                 [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
             done
             $COMBINE_EXE -i $nsteps
