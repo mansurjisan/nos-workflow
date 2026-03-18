@@ -401,11 +401,12 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       local _3d_ofs=$(echo ${OFS} | sed 's/_2d_ufs/_ufs/;s/_2d//')
       for _vf in "${FIXnos}/../${_3d_ofs}/${_3d_ofs}.vgrid.in" "${FIXnos}/../secofs/secofs.vgrid.in"; do
           if [ -f "$_vf" ]; then
-              export VGRID_CTL=$(basename $_vf)
-              export VGRID_NU_CTL=$(basename $_vf | sed 's/vgrid\.in/vgrid.nu.in/')
-              ln -sf "$_vf" ${DATA}/$(basename $_vf)
-              ln -sf "$(echo $_vf | sed 's/vgrid\.in/vgrid.nu.in/')" ${DATA}/$(basename $_vf | sed 's/vgrid\.in/vgrid.nu.in/') 2>/dev/null
-              echo "  Using 3D vgrid: ${VGRID_CTL} (KBm=63)"
+              # Overwrite the 2D vgrid with the 3D one (Fortran reads ${PREFIXNOS}.vgrid.in)
+              cp -fp "$_vf" ${DATA}/${PREFIXNOS}.vgrid.in
+              cp -fp "$(echo $_vf | sed 's/vgrid\.in/vgrid.nu.in/')" ${DATA}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
+              export VGRID_CTL=${PREFIXNOS}.vgrid.in
+              export VGRID_NU_CTL=${PREFIXNOS}.vgrid.nu.in
+              echo "  Copied 3D vgrid as ${PREFIXNOS}.vgrid.in (KBm=63)"
               break
           fi
       done
@@ -436,7 +437,10 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       export KBm=${_saved_KBm}
       export VGRID_CTL=${_saved_vgrid}
       export VGRID_NU_CTL=${_saved_vgrid_nu}
-      echo "  Barotropic: restored KBm=${KBm}"
+      # Restore 2D vgrid in DATA (overwrite the 3D copy)
+      cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.in ${DATA}/${PREFIXNOS}.vgrid.in 2>/dev/null || true
+      cp -fp ${FIXofs}/${PREFIXNOS}.vgrid.nu.in ${DATA}/${PREFIXNOS}.vgrid.nu.in 2>/dev/null || true
+      echo "  Barotropic: restored KBm=${KBm}, 2D vgrid"
       # Convert bctides.in: strip 3D T/S, change iettype 5->3 (keep elev2D.th.nc via type 5? No — keep 5 since we have real elev2D now)
       local _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
       [ ! -f "$_convert_script" ] && _convert_script="${FIXofs}/convert_bctides_2d.py"
