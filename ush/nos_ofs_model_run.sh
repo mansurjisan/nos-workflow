@@ -715,6 +715,19 @@ _comf_stage_files() {
             echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
         fi
 
+        # Patch datm_in nx_global/ny_global to match actual forcing grid
+        if [ -s "${DATA}/datm_in" ] && [ -s "${DATA}/${DATM_DIR:-INPUT}/datm_forcing.nc" ]; then
+            local _dims=$(ncdump -h "${DATA}/${DATM_DIR:-INPUT}/datm_forcing.nc" 2>/dev/null | \
+                grep -oP '(x|y|longitude|latitude)\s*=\s*\K[0-9]+' | head -2)
+            local _nx=$(echo $_dims | awk '{print $1}')
+            local _ny=$(echo $_dims | awk '{print $2}')
+            if [ -n "$_nx" ] && [ -n "$_ny" ]; then
+                sed -i "s/nx_global = [0-9]*/nx_global = ${_nx}/" ${DATA}/datm_in
+                sed -i "s/ny_global = [0-9]*/ny_global = ${_ny}/" ${DATA}/datm_in
+                echo "  Patched datm_in: nx_global=${_nx}, ny_global=${_ny}"
+            fi
+        fi
+
         # SCHISM expects bare-name input files (hgrid.gr3, vgrid.in, etc.)
         # but nos_ofs_launch.sh copies them with prefixed names (e.g., secofs_ufs.hgrid.gr3).
         # The old COMF pathway (nos_ofs_nowcast_forecast.sh) re-copies from FIXofs with bare names.
