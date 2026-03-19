@@ -706,7 +706,10 @@ _comf_stage_files() {
             sed -i "s/start_month_value/${sim_mm#0}/" ${DATA}/param.nml
             sed -i "s/start_day_value/${sim_dd#0}/" ${DATA}/param.nml
             sed -i "s/start_hour_value/${sim_hh}/" ${DATA}/param.nml
-            # Also handle case where start_hour already has a numeric value
+            # Also handle case where start values already have numeric values
+            sed -i "s/^\(\s*start_year\s*=\s*\)[0-9]*\(.*\)/\1${sim_yyyy}\2/" ${DATA}/param.nml
+            sed -i "s/^\(\s*start_month\s*=\s*\)[0-9]*\(.*\)/\1${sim_mm#0}\2/" ${DATA}/param.nml
+            sed -i "s/^\(\s*start_day\s*=\s*\)[0-9]*\(.*\)/\1${sim_dd#0}\2/" ${DATA}/param.nml
             sed -i "s/^\(\s*start_hour\s*=\s*\)[0-9]*\(.*\)/\1${sim_hh#0}\2/" ${DATA}/param.nml
             sed -i "s/ihot = [0-9]*/ihot = ${ihot_val}/" ${DATA}/param.nml
             echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
