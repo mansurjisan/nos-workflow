@@ -405,17 +405,22 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
 
       if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
           echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
+          _elev_log=${DATA}/gen_elev2d_th.log
           python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
               "${PDY}" "${cyc}" "${_ndays}" \
               --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
-              -o ${DATA}/elev2D.th.nc 2>&1 | tee -a $pgmout
-          if [ -s "${DATA}/elev2D.th.nc" ]; then
+              -o ${DATA}/elev2D.th.nc > ${_elev_log} 2>&1
+          _elev_rc=$?
+          cat ${_elev_log}
+          cat ${_elev_log} >> $pgmout
+          if [ $_elev_rc -eq 0 ] && [ -s "${DATA}/elev2D.th.nc" ]; then
               echo "  Successfully generated elev2D.th.nc"
               _elev2d_ok=true
               # Also archive to COMOUTrerun for staging by model job
               cp -p ${DATA}/elev2D.th.nc ${COMOUTrerun}/${RUN}.${cycle}.elev2dth.nc 2>/dev/null || true
           else
-              echo "  WARNING: gen_elev2d_th.py failed, falling back to tidal-only"
+              echo "  WARNING: gen_elev2d_th.py failed (rc=${_elev_rc}), falling back to tidal-only"
+              [ -f ${_elev_log} ] && echo "  --- gen_elev2d_th.py output ---" && cat ${_elev_log} && echo "  --- end ---"
           fi
       else
           echo "  RTOFS SSH generation skipped (missing gen_elev2d_th.py, COMINrtofs, or hgrid.ll)"
