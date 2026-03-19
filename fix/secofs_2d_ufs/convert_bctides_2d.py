@@ -5,15 +5,19 @@ Changes ocean boundary types from itetype=4/isatype=4 (3D T/S) to
 itetype=0/isatype=0 (no T/S), removing all 3D T/S profile data.
 River boundaries with itetype=1/isatype=2 are also simplified to 0/0.
 
+By default, iettype=5 is converted to 3 (tidal only). With --with-elev2d,
+iettype=5 is converted to 4 (tidal + subtidal SSH from elev2D.th.nc).
+
 Usage:
     python3 convert_bctides_2d.py <input_bctides.in> <output_bctides.in>
+    python3 convert_bctides_2d.py --with-elev2d <input> <output>
 """
 
 import sys
 import re
 
 
-def convert_bctides_2d(input_path, output_path):
+def convert_bctides_2d(input_path, output_path, with_elev2d=False):
     with open(input_path) as f:
         lines = f.readlines()
 
@@ -59,9 +63,13 @@ def convert_bctides_2d(input_path, output_path):
         comment = m.group(6)
         i += 1
 
-        # For barotropic: change iettype/ifltype 5->3 (tidal only, no .th.nc files)
-        # and zero out T/S types
-        new_iettype = 3 if iettype == 5 else iettype
+        # For barotropic: zero out T/S types.
+        # Elevation: 5->4 if elev2D.th.nc provided (tidal+subtidal), else 5->3 (tidal only)
+        # Velocity: always 5->3 (tidal only, no uv3D.th.nc for barotropic)
+        if with_elev2d:
+            new_iettype = 4 if iettype == 5 else iettype
+        else:
+            new_iettype = 3 if iettype == 5 else iettype
         new_ifltype = 3 if ifltype == 5 else ifltype
         new_itetype = 0
         new_isatype = 0
@@ -150,7 +158,11 @@ def convert_bctides_2d(input_path, output_path):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) < 3:
-        print(f'Usage: {sys.argv[0]} <input_bctides.in> <output_bctides.in>')
+    args = sys.argv[1:]
+    with_elev2d = '--with-elev2d' in args
+    if with_elev2d:
+        args.remove('--with-elev2d')
+    if len(args) < 2:
+        print(f'Usage: {sys.argv[0]} [--with-elev2d] <input_bctides.in> <output_bctides.in>')
         sys.exit(1)
-    convert_bctides_2d(sys.argv[1], sys.argv[2])
+    convert_bctides_2d(args[0], args[1], with_elev2d=with_elev2d)

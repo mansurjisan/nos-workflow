@@ -392,24 +392,55 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "The script nos_ofs_create_forcing_obc.sh starts at time: " `date `
   echo "Generating the open boundary forcing"
   if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-      # Barotropic: skip Fortran OBC, use tidal-only boundaries (iettype=3)
-      # Convert bctides.in to strip T/S and change iettype 5->3
-      echo "  Barotropic: skipping Fortran OBC, using tidal-only boundaries"
+      # Barotropic: skip Fortran OBC for T/S/velocity but optionally
+      # generate elev2D.th.nc from RTOFS SSH for subtidal elevation BC
+      echo "  Barotropic mode: skipping 3D OBC (T/S/velocity)"
+
+      # Try to generate elev2D.th.nc from RTOFS SSH data
+      local _gen_elev="${FIXofs}/gen_elev2d_th.py"
+      [ ! -f "$_gen_elev" ] && _gen_elev="${HOMEnos:-}/fix/${OFS}/gen_elev2d_th.py"
+      local _hgrid_ll="${FIXofs}/${GRIDFILE_LL:-${PREFIXNOS}.hgrid.ll}"
+      local _ndays=$(echo "scale=2; (${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48}) / 24 + 0.5" | bc)
+      local _elev2d_ok=false
+
+      if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
+          echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
+          python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
+              "${PDY}" "${cyc}" "${_ndays}" \
+              --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
+              -o ${DATA}/elev2D.th.nc 2>&1 | tee -a $pgmout
+          if [ -s "${DATA}/elev2D.th.nc" ]; then
+              echo "  Successfully generated elev2D.th.nc"
+              _elev2d_ok=true
+              # Also archive to COMOUTrerun for staging by model job
+              cp -p ${DATA}/elev2D.th.nc ${COMOUTrerun}/${RUN}.${cycle}.elev2dth.nc 2>/dev/null || true
+          else
+              echo "  WARNING: gen_elev2d_th.py failed, falling back to tidal-only"
+          fi
+      else
+          echo "  RTOFS SSH generation skipped (missing gen_elev2d_th.py, COMINrtofs, or hgrid.ll)"
+      fi
+
+      # Convert bctides.in to strip T/S; use --with-elev2d if elev2D.th.nc was generated
       local _convert_script="${FIXofs}/convert_bctides_2d.py"
-      [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
+      [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
+      local _elev_flag=""
+      $_elev2d_ok && _elev_flag="--with-elev2d"
       for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
           if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
-              python3 $_convert_script "$_bct" "${_bct}.2d"
+              python3 $_convert_script $_elev_flag "$_bct" "${_bct}.2d"
               mv "${_bct}.2d" "$_bct"
-              echo "  Converted: $(basename $_bct)"
+              echo "  Converted: $(basename $_bct) ${_elev_flag:+(iettype=4: tidal+subtidal)}"
           fi
       done
-      # Create empty OBC tar (no real OBC files needed for tidal-only boundaries)
+
+      # Create OBC tar (elev2D.th.nc is real if generated, empty placeholders for T/S)
       touch ${DATA}/TEM_nu.nc ${DATA}/TEM_3D.th.nc ${DATA}/SAL_nu.nc \
-            ${DATA}/SAL_3D.th.nc ${DATA}/elev2D.th.nc ${DATA}/uv3D.th.nc
+            ${DATA}/SAL_3D.th.nc ${DATA}/uv3D.th.nc
+      [ ! -f "${DATA}/elev2D.th.nc" ] && touch ${DATA}/elev2D.th.nc
       tar -C ${DATA} -cvf ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar \
           TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc 2>/dev/null || true
-      echo "  Created placeholder OBC tar"
+      echo "  Created OBC tar (elev2D.th.nc: $($_elev2d_ok && echo 'from RTOFS' || echo 'placeholder'))"
       export err=0
   else
   export pgm=nos_ofs_create_forcing_obc.sh
