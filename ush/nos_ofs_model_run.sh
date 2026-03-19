@@ -762,6 +762,17 @@ _comf_stage_files() {
                 echo "  WARNING: Using FIXofs bctides.in (prep-generated not found)"
             fi
 
+            # Barotropic: convert bctides.in at point of use (iettype 5->3, strip T/S)
+            if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+                local _cvt="${FIXofs}/convert_bctides_2d.py"
+                [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
+                if [ -f "$_cvt" ] && [ -s "${DATA}/bctides.in" ]; then
+                    python3 $_cvt ${DATA}/bctides.in ${DATA}/bctides.in.2d
+                    mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
+                    echo "  Converted bctides.in for barotropic (iettype 5->3, no T/S)"
+                fi
+            fi
+
             # Hotstart/initial condition file
             if [ "$phase" = "nowcast" ]; then
                 if [ -n "${INI_FILE_NOWCAST:-}" ] && [ -s "${COMOUT}/${INI_FILE_NOWCAST}" ]; then
