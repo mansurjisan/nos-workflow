@@ -406,10 +406,12 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
           echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
           _elev_log=${DATA}/gen_elev2d_th.log
-          # Run in clean subshell to avoid Intel/MPI library conflicts with numpy
+          # Run in clean subshell: Intel (for libifport.so.5) + Python only
+          # Full PrgEnv-intel/craype/cray-mpich stack causes numpy segfault
           (
               module purge 2>/dev/null || true
               module load envvar/1.0 2>/dev/null || true
+              module load intel/${intel_ver:-19.1.3.304} 2>/dev/null || true
               module load python/3.12.0 2>/dev/null || true
               python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
                   "${PDY}" "${cyc}" "${_ndays}" \
