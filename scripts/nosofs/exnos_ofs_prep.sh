@@ -434,18 +434,30 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     postmsg "$nosjlogfile" "$msg"
   fi
   fi  # end else (non-barotropic OBC)
-  # Convert bctides.in in COMOUT for barotropic (strip T/S types)
+  # Convert bctides.in in BOTH DATA and COMOUT for barotropic
+  # Must convert DATA copy too, because later steps may copy it back to COMOUT
   if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
       local _convert_script="${FIXofs}/convert_bctides_2d.py"
       [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
-      for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
-                  ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
-          if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
-              python3 $_convert_script "$_bct" "${_bct}.2d"
-              mv "${_bct}.2d" "$_bct"
-              echo "  Converted bctides: $(basename $_bct)"
-          fi
-      done
+      if [ -f "$_convert_script" ]; then
+          # Convert in DATA (source for any subsequent copies)
+          for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
+              if [ -f "$_bct" ]; then
+                  python3 $_convert_script "$_bct" "${_bct}.2d"
+                  mv "${_bct}.2d" "$_bct"
+                  echo "  Converted DATA: $(basename $_bct)"
+              fi
+          done
+          # Convert in COMOUT (already archived copies)
+          for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
+                      ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
+              if [ -f "$_bct" ]; then
+                  python3 $_convert_script "$_bct" "${_bct}.2d"
+                  mv "${_bct}.2d" "$_bct"
+                  echo "  Converted COMOUT: $(basename $_bct)"
+              fi
+          done
+      fi
   fi
 fi
 TS_NUDGING=${TS_NUDGING:-0}
@@ -803,6 +815,24 @@ cp ${NWM_SOURCE_SINK_FORE} ${COMOUT}/${NWM_SOURCE_SINK_FORE}
 fi
 
 cp -p $jlogfile $COMOUT
+
+# Final barotropic bctides conversion — must be LAST to prevent overwrites
+if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+    _convert_script="${FIXofs}/convert_bctides_2d.py"
+    [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
+    if [ -f "$_convert_script" ]; then
+        echo "  Final barotropic bctides conversion (iettype 5->3, strip T/S)..."
+        for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
+                    ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
+            if [ -f "$_bct" ]; then
+                python3 $_convert_script "$_bct" "${_bct}.2d"
+                mv "${_bct}.2d" "$_bct"
+                echo "  Final converted: $(basename $_bct)"
+            fi
+        done
+    fi
+fi
+
 	   echo "			  "
 	   echo "END OF PREP SUCCESSFULLY "
 	   echo "			  "
