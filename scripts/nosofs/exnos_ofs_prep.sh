@@ -397,11 +397,11 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       echo "  Barotropic mode: skipping 3D OBC (T/S/velocity)"
 
       # Try to generate elev2D.th.nc from RTOFS SSH data
-      local _gen_elev="${FIXofs}/gen_elev2d_th.py"
+      _gen_elev="${FIXofs}/gen_elev2d_th.py"
       [ ! -f "$_gen_elev" ] && _gen_elev="${HOMEnos:-}/fix/${OFS}/gen_elev2d_th.py"
-      local _hgrid_ll="${FIXofs}/${GRIDFILE_LL:-${PREFIXNOS}.hgrid.ll}"
-      local _ndays=$(echo "scale=2; (${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48}) / 24 + 0.5" | bc)
-      local _elev2d_ok=false
+      _hgrid_ll="${FIXofs}/${GRIDFILE_LL:-${PREFIXNOS}.hgrid.ll}"
+      _ndays=$(echo "scale=2; (${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48}) / 24 + 0.5" | bc)
+      _elev2d_ok=false
 
       if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
           echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
@@ -422,9 +422,9 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       fi
 
       # Convert bctides.in to strip T/S; use --with-elev2d if elev2D.th.nc was generated
-      local _convert_script="${FIXofs}/convert_bctides_2d.py"
+      _convert_script="${FIXofs}/convert_bctides_2d.py"
       [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
-      local _elev_flag=""
+      _elev_flag=""
       $_elev2d_ok && _elev_flag="--with-elev2d"
       for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
           if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
