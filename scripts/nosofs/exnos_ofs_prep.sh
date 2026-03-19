@@ -406,7 +406,9 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
           echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
           _elev_log=${DATA}/gen_elev2d_th.log
-          python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
+          # Isolate Python from Intel/MPI library environment to avoid segfault
+          env -u LD_LIBRARY_PATH -u LIBRARY_PATH -u CPATH \
+              python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
               "${PDY}" "${cyc}" "${_ndays}" \
               --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
               -o ${DATA}/elev2D.th.nc > ${_elev_log} 2>&1
