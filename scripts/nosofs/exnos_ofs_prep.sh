@@ -406,13 +406,17 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
       if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
           echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
           _elev_log=${DATA}/gen_elev2d_th.log
-          # Isolate Python from Intel/MPI library environment to avoid segfault
-          env -u LD_LIBRARY_PATH -u LIBRARY_PATH -u CPATH \
-              python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
+          # Strip MKL/MPI paths from LD_LIBRARY_PATH to avoid numpy segfault,
+          # but keep Intel base libs (libifport.so.5 needed by python3 itself)
+          _saved_ldlp="${LD_LIBRARY_PATH:-}"
+          export LD_LIBRARY_PATH=$(echo "$_saved_ldlp" | tr ':' '\n' | \
+              grep -v -E 'mkl|mpi|mpich|cray-mpich' | tr '\n' ':' | sed 's/:$//')
+          python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
               "${PDY}" "${cyc}" "${_ndays}" \
               --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
               -o ${DATA}/elev2D.th.nc > ${_elev_log} 2>&1
           _elev_rc=$?
+          export LD_LIBRARY_PATH="$_saved_ldlp"
           cat ${_elev_log}
           cat ${_elev_log} >> $pgmout
           if [ $_elev_rc -eq 0 ] && [ -s "${DATA}/elev2D.th.nc" ]; then
