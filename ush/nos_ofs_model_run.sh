@@ -779,20 +779,23 @@ _comf_stage_files() {
             fi
 
             # Barotropic: convert bctides.in at point of use (strip T/S)
-            # If elev2D.th.nc is staged, use iettype=4 (tidal+subtidal SSH);
-            # otherwise use iettype=3 (tidal only)
+            # Skip if prep already converted (no itetype=4 or isatype=4 remaining)
             if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-                local _cvt="${FIXofs}/convert_bctides_2d.py"
-                [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
-                if [ -f "$_cvt" ] && [ -s "${DATA}/bctides.in" ]; then
-                    local _elev_flag=""
-                    if [ -s "${DATA}/elev2D.th.nc" ]; then
-                        _elev_flag="--with-elev2d"
-                        echo "  elev2D.th.nc found: using iettype=4 (tidal+subtidal SSH)"
+                if grep -qE '^[0-9]+\s+[0-9]+\s+[0-9]+\s+[1-9]' ${DATA}/bctides.in 2>/dev/null; then
+                    local _cvt="${FIXofs}/convert_bctides_2d.py"
+                    [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
+                    if [ -f "$_cvt" ]; then
+                        local _elev_flag=""
+                        if [ -s "${DATA}/elev2D.th.nc" ]; then
+                            _elev_flag="--with-elev2d"
+                            echo "  elev2D.th.nc found: using iettype=4 (tidal+subtidal SSH)"
+                        fi
+                        python3 $_cvt $_elev_flag ${DATA}/bctides.in ${DATA}/bctides.in.2d
+                        mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
+                        echo "  Converted bctides.in for barotropic (T/S zeroed)"
                     fi
-                    python3 $_cvt $_elev_flag ${DATA}/bctides.in ${DATA}/bctides.in.2d
-                    mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
-                    echo "  Converted bctides.in for barotropic (T/S zeroed)"
+                else
+                    echo "  bctides.in already converted for barotropic (skipping)"
                 fi
             fi
 
