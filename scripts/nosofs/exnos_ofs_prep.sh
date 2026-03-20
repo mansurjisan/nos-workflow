@@ -434,18 +434,8 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
           echo "  RTOFS SSH generation skipped (missing gen_elev2d_th.py, COMINrtofs, or hgrid.ll)"
       fi
 
-      # Convert bctides.in to strip T/S; use --with-elev2d if elev2D.th.nc was generated
-      _convert_script="${FIXofs}/convert_bctides_2d.py"
-      [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
-      _elev_flag=""
-      $_elev2d_ok && _elev_flag="--with-elev2d"
-      for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
-          if [ -f "$_bct" ] && [ -f "$_convert_script" ]; then
-              python3 $_convert_script $_elev_flag "$_bct" "${_bct}.2d"
-              mv "${_bct}.2d" "$_bct"
-              echo "  Converted: $(basename $_bct) ${_elev_flag:+(iettype=4: tidal+subtidal)}"
-          fi
-      done
+      # NOTE: bctides.in conversion moved to final step at end of prep (line ~865)
+      # to avoid double-conversion corruption
 
       # Create OBC tar (elev2D.th.nc is real if generated, empty placeholders for T/S)
       touch ${DATA}/TEM_nu.nc ${DATA}/TEM_3D.th.nc ${DATA}/SAL_nu.nc \
@@ -478,31 +468,8 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     postmsg "$nosjlogfile" "$msg"
   fi
   fi  # end else (non-barotropic OBC)
-  # Convert bctides.in in BOTH DATA and COMOUT for barotropic
-  # Must convert DATA copy too, because later steps may copy it back to COMOUT
-  if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-      local _convert_script="${FIXofs}/convert_bctides_2d.py"
-      [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
-      if [ -f "$_convert_script" ]; then
-          # Convert in DATA (source for any subsequent copies)
-          for _bct in ${DATA}/${PREFIXNOS}.bctides.in ${DATA}/bctides.in; do
-              if [ -f "$_bct" ]; then
-                  python3 $_convert_script "$_bct" "${_bct}.2d"
-                  mv "${_bct}.2d" "$_bct"
-                  echo "  Converted DATA: $(basename $_bct)"
-              fi
-          done
-          # Convert in COMOUT (already archived copies)
-          for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
-                      ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
-              if [ -f "$_bct" ]; then
-                  python3 $_convert_script "$_bct" "${_bct}.2d"
-                  mv "${_bct}.2d" "$_bct"
-                  echo "  Converted COMOUT: $(basename $_bct)"
-              fi
-          done
-      fi
-  fi
+  # NOTE: bctides.in conversion for barotropic moved to final step at end of prep
+  # to avoid double-conversion corruption
 fi
 TS_NUDGING=${TS_NUDGING:-0}
 if [ $TS_NUDGING -eq 1 ]; then
