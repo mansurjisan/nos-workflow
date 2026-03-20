@@ -408,9 +408,15 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
           _elev_log=${DATA}/gen_elev2d_th.log
           # Run with unset LD_PRELOAD (Fortran preloads cause numpy segfault)
           # but keep LD_LIBRARY_PATH intact (python3 needs libifport.so.5)
+          # Ocean boundaries only (skip river segments) for elev2D.th.nc
+          # SECOFS: segments 1-3 are ocean (1199+281+8=1488 nodes),
+          # segments 4-5 are rivers (Clyo, Moultrie)
+          _n_ocean_bnd=${N_OCEAN_BND:-3}
+          _bnd_list=$(seq -s ' ' 1 $_n_ocean_bnd)
           LD_PRELOAD= python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
               "${PDY}" "${cyc}" "${_ndays}" \
               --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
+              --boundaries ${_bnd_list} \
               -o ${DATA}/elev2D.th.nc > ${_elev_log} 2>&1
           _elev_rc=$?
           cat ${_elev_log}
