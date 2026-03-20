@@ -778,13 +778,13 @@ _comf_stage_files() {
                 echo "  WARNING: Using FIXofs bctides.in (prep-generated not found)"
             fi
 
-            # Barotropic: convert bctides.in at point of use (strip T/S)
-            # Skip if prep already converted (no itetype=4 or isatype=4 remaining)
+            # Barotropic: convert bctides.in at point of use (strip 3D T/S)
+            # Uses --needs-conversion to check if already converted by prep
             if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-                if grep -qE '^[0-9]+\s+[0-9]+\s+[0-9]+\s+[1-9]' ${DATA}/bctides.in 2>/dev/null; then
-                    local _cvt="${FIXofs}/convert_bctides_2d.py"
-                    [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
-                    if [ -f "$_cvt" ]; then
+                local _cvt="${FIXofs}/convert_bctides_2d.py"
+                [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
+                if [ -f "$_cvt" ] && [ -s "${DATA}/bctides.in" ]; then
+                    if python3 $_cvt --needs-conversion ${DATA}/bctides.in; then
                         local _elev_flag=""
                         if [ -s "${DATA}/elev2D.th.nc" ]; then
                             _elev_flag="--with-elev2d"
@@ -792,10 +792,10 @@ _comf_stage_files() {
                         fi
                         python3 $_cvt $_elev_flag ${DATA}/bctides.in ${DATA}/bctides.in.2d
                         mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
-                        echo "  Converted bctides.in for barotropic (T/S zeroed)"
+                        echo "  Converted bctides.in for barotropic (3D T/S stripped)"
+                    else
+                        echo "  bctides.in already converted for barotropic (skipping)"
                     fi
-                else
-                    echo "  bctides.in already converted for barotropic (skipping)"
                 fi
             fi
 

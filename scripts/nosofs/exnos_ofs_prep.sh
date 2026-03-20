@@ -837,16 +837,17 @@ if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
         if [ -s "${COMOUTrerun:-/dev/null}/${RUN}.${cycle}.elev2dth.nc" ] || \
            [ -s "${DATA}/elev2D.th.nc" ]; then
             _final_elev_flag="--with-elev2d"
-            echo "  Final barotropic bctides conversion (iettype 5->4, tidal+subtidal)..."
-        else
-            echo "  Final barotropic bctides conversion (iettype 5->3, tidal only)..."
         fi
         for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
                     ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
             if [ -f "$_bct" ]; then
-                python3 $_convert_script $_final_elev_flag "$_bct" "${_bct}.2d"
-                mv "${_bct}.2d" "$_bct"
-                echo "  Final converted: $(basename $_bct)"
+                if python3 $_convert_script --needs-conversion "$_bct"; then
+                    python3 $_convert_script $_final_elev_flag "$_bct" "${_bct}.2d"
+                    mv "${_bct}.2d" "$_bct"
+                    echo "  Final converted: $(basename $_bct) ${_final_elev_flag:+(tidal+subtidal)}"
+                else
+                    echo "  Already converted: $(basename $_bct) (skipping)"
+                fi
             fi
         done
     fi
