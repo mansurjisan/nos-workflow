@@ -841,12 +841,16 @@ if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
         for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
                     ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
             if [ -f "$_bct" ]; then
-                if python3 $_convert_script --needs-conversion "$_bct"; then
+                python3 $_convert_script --needs-conversion "$_bct"
+                _nc_rc=$?
+                if [ $_nc_rc -eq 0 ]; then
                     python3 $_convert_script $_final_elev_flag "$_bct" "${_bct}.2d"
                     mv "${_bct}.2d" "$_bct"
                     echo "  Final converted: $(basename $_bct) ${_final_elev_flag:+(tidal+subtidal)}"
-                else
+                elif [ $_nc_rc -eq 1 ]; then
                     echo "  Already converted: $(basename $_bct) (skipping)"
+                else
+                    echo "  ERROR: --needs-conversion check failed for $(basename $_bct) (rc=$_nc_rc)"
                 fi
             fi
         done

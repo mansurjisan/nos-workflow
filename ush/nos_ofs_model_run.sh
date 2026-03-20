@@ -784,7 +784,9 @@ _comf_stage_files() {
                 local _cvt="${FIXofs}/convert_bctides_2d.py"
                 [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
                 if [ -f "$_cvt" ] && [ -s "${DATA}/bctides.in" ]; then
-                    if python3 $_cvt --needs-conversion ${DATA}/bctides.in; then
+                    python3 $_cvt --needs-conversion ${DATA}/bctides.in
+                    local _nc_rc=$?
+                    if [ $_nc_rc -eq 0 ]; then
                         local _elev_flag=""
                         if [ -s "${DATA}/elev2D.th.nc" ]; then
                             _elev_flag="--with-elev2d"
@@ -793,8 +795,11 @@ _comf_stage_files() {
                         python3 $_cvt $_elev_flag ${DATA}/bctides.in ${DATA}/bctides.in.2d
                         mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
                         echo "  Converted bctides.in for barotropic (3D T/S stripped)"
-                    else
+                    elif [ $_nc_rc -eq 1 ]; then
                         echo "  bctides.in already converted for barotropic (skipping)"
+                    else
+                        echo "FATAL: bctides.in --needs-conversion check failed (rc=$_nc_rc)" >&2
+                        return 1
                     fi
                 fi
             fi
