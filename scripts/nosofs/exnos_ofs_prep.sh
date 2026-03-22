@@ -392,47 +392,12 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "The script nos_ofs_create_forcing_obc.sh starts at time: " `date `
   echo "Generating the open boundary forcing"
   if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
-      # Barotropic: skip Fortran OBC for T/S/velocity but optionally
-      # generate elev2D.th.nc from RTOFS SSH for subtidal elevation BC
-      echo "  Barotropic mode: skipping 3D OBC (T/S/velocity)"
-
-      # Try to generate elev2D.th.nc from RTOFS SSH data
-      _gen_elev="${FIXofs}/gen_elev2d_th.py"
-      [ ! -f "$_gen_elev" ] && _gen_elev="${HOMEnos:-}/fix/${OFS}/gen_elev2d_th.py"
-      _hgrid_ll="${FIXofs}/${GRIDFILE_LL:-${PREFIXNOS}.hgrid.ll}"
-      _ndays=$(echo "scale=2; (${LEN_NOWCAST:-6} + ${LEN_FORECAST:-48}) / 24 + 0.5" | bc)
-      _elev2d_ok=false
-
-      if [ -f "$_gen_elev" ] && [ -d "${COMINrtofs:-/dev/null}" ] && [ -f "$_hgrid_ll" ]; then
-          echo "  Generating elev2D.th.nc from RTOFS SSH (ndays=${_ndays})"
-          _elev_log=${DATA}/gen_elev2d_th.log
-          # Run with unset LD_PRELOAD (Fortran preloads cause numpy segfault)
-          # but keep LD_LIBRARY_PATH intact (python3 needs libifport.so.5)
-          # Ocean boundaries only (skip river segments) for elev2D.th.nc
-          # SECOFS: segments 1-3 are ocean (1199+281+8=1488 nodes),
-          # segments 4-5 are rivers (Clyo, Moultrie)
-          _n_ocean_bnd=${N_OCEAN_BND:-3}
-          _bnd_list=$(seq -s ' ' 1 $_n_ocean_bnd)
-          LD_PRELOAD= python3 $_gen_elev "$_hgrid_ll" "${COMINrtofs}" \
-              "${PDY}" "${cyc}" "${_ndays}" \
-              --dt 21600 --ssh-offset ${SSH_OFFSET:-0.04} \
-              --boundaries ${_bnd_list} \
-              -o ${DATA}/elev2D.th.nc > ${_elev_log} 2>&1
-          _elev_rc=$?
-          cat ${_elev_log}
-          cat ${_elev_log} >> $pgmout
-          if [ $_elev_rc -eq 0 ] && [ -s "${DATA}/elev2D.th.nc" ]; then
-              echo "  Successfully generated elev2D.th.nc"
-              _elev2d_ok=true
-              # Also archive to COMOUTrerun for staging by model job
-              cp -p ${DATA}/elev2D.th.nc ${COMOUTrerun}/${RUN}.${cycle}.elev2dth.nc 2>/dev/null || true
-          else
-              echo "  WARNING: gen_elev2d_th.py failed (rc=${_elev_rc}), falling back to tidal-only"
-              [ -f ${_elev_log} ] && echo "  --- gen_elev2d_th.py output ---" && cat ${_elev_log} && echo "  --- end ---"
-          fi
-      else
-          echo "  RTOFS SSH generation skipped (missing gen_elev2d_th.py, COMINrtofs, or hgrid.ll)"
-      fi
+      # Barotropic: skip all 3D OBC (T/S/velocity/subtidal SSH).
+      # elev2D.th.nc is NOT generated because the 2D converter uses
+      # tidal-only boundaries (iettype=3, ifltype=3). Using iettype=5
+      # (subtidal SSH) with ifltype=3 (tidal-only velocity) caused a
+      # domain-wide drawdown of ~1m/2d due to mass imbalance.
+      echo "  Barotropic mode: skipping 3D OBC (T/S/velocity/subtidal SSH)"
 
       # NOTE: bctides.in conversion moved to final step at end of prep (line ~865)
       # to avoid double-conversion corruption

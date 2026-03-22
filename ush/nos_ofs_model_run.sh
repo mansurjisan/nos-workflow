@@ -192,9 +192,9 @@ _stofs_stage_files() {
         cp -p "$FIXstofs3d/${RUN}_sflux_inputs.txt" "$DATA/sflux/sflux_inputs.txt"
 
     # RTOFS OBC time-history files
-    # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
+    # Barotropic mode: skip all OBC (tidal-only boundaries, no subtidal files)
     if [ "${BAROTROPIC:-false}" = "true" ]; then
-        local obc_pairs=("elev2dth.nc:elev2D.th.nc")
+        local obc_pairs=()
     else
         local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
     fi
