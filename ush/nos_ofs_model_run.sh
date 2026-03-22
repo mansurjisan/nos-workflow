@@ -747,7 +747,7 @@ _comf_stage_files() {
 
             # Optional grid property files
             for bare in shapiro.gr3 diffmax.gr3 diffmin.gr3 watertype.gr3 \
-                        windrot_geo2proj.gr3 albedo.gr3 rough.gr3 \
+                        windrot_geo2proj.gr3 albedo.gr3 rough.gr3 drag.gr3 \
                         SAL_nudge.gr3 TEM_nudge.gr3 elev.ic hgrid.ll; do
                 if [ -s "${FIXofs}/${PREFIXNOS}.${bare}" ]; then
                     cp -p ${FIXofs}/${PREFIXNOS}.${bare} ${DATA}/${bare}
