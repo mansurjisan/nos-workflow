@@ -44,9 +44,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from datetime import datetime, timedelta
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
@@ -144,13 +146,15 @@ def compute_coefficients(
     det_dates: list[datetime], det_wl: np.ndarray,
     station_labels: list[str],
     amp_clip: tuple[float, float] = (0.1, 5.0),
+    corr_floor: float = 0.3,
 ) -> list[dict]:
     """Compute per-station amplitude scaling from 2D control vs 3D det.
 
     a_i = std(det_demeaned_i) / std(ctl_demeaned_i)
 
     Clipped to [amp_clip[0], amp_clip[1]] to avoid blowup at weak-signal
-    stations.
+    stations. If correlation < corr_floor, a_i is set to 1.0 (pass-through)
+    to avoid scaling noise at stations where 2D and 3D are uncorrelated.
 
     Returns list of dicts with station label, a_i, and diagnostics.
     """
@@ -182,15 +186,18 @@ def compute_coefficients(
         ctl_std = np.std(c_m - np.mean(c_m))
         det_std = np.std(d_m - np.mean(d_m))
 
-        if ctl_std < 1e-6:
+        r = float(np.corrcoef(c_m - np.mean(c_m), d_m - np.mean(d_m))[0, 1])
+
+        if ctl_std < 1e-6 or abs(r) < corr_floor:
+            # Weak signal or uncorrelated: pass-through (scale=1.0)
             a_i = 1.0
             clipped = True
+            gate_reason = "low_signal" if ctl_std < 1e-6 else "low_corr"
         else:
             a_i_raw = det_std / ctl_std
             a_i = float(np.clip(a_i_raw, amp_clip[0], amp_clip[1]))
             clipped = (a_i != a_i_raw)
-
-        r = float(np.corrcoef(c_m - np.mean(c_m), d_m - np.mean(d_m))[0, 1])
+            gate_reason = "clipped" if clipped else ""
 
         coefficients.append({
             "station": station_labels[i] if i < len(station_labels) else f"sta_{i+1}",
@@ -202,6 +209,7 @@ def compute_coefficients(
             "corr": round(r, 4),
             "n_samples": int(mask.sum()),
             "clipped": bool(clipped),
+            "gate_reason": gate_reason,
         })
 
     return coefficients
@@ -218,6 +226,7 @@ def apply_correction(
     WL_final(t) = WL_3d_det(t) + a_i * (WL_2d_member(t) - WL_2d_control(t))
 
     All three timeseries are aligned by datetime before correction.
+    Station counts are validated across all inputs.
     """
     # Align det and ctl
     common_dc, det_a, ctl_a = align_series(det_dates, det_wl, ctl_dates, ctl_wl)
@@ -232,9 +241,27 @@ def apply_correction(
     ctl_aligned = ctl_a[idx_dc, :]
     mem_aligned = mem_wl[idx_m, :]
 
-    nsta = min(det_aligned.shape[1], ctl_aligned.shape[1],
-               mem_aligned.shape[1], len(coefficients))
+    # Validate station counts match
+    n_det = det_aligned.shape[1]
+    n_ctl = ctl_aligned.shape[1]
+    n_mem = mem_aligned.shape[1]
+    n_coeff = len(coefficients)
 
+    if n_ctl != n_mem:
+        raise ValueError(
+            f"Station count mismatch: 2D control has {n_ctl} stations "
+            f"but member has {n_mem}. All 2D runs must use the same station.in.")
+    if n_det != n_coeff:
+        raise ValueError(
+            f"Station count mismatch: 3D det has {n_det} stations "
+            f"but coefficients have {n_coeff}. "
+            f"Were coefficients trained with a different station.in?")
+    if n_ctl != n_det:
+        raise ValueError(
+            f"Station count mismatch: 2D has {n_ctl} stations "
+            f"but 3D det has {n_det}. Check station.in consistency.")
+
+    nsta = n_det
     corrected = np.full((len(common), nsta), np.nan)
     for i in range(nsta):
         a_i = coefficients[i]["a_i"]
@@ -260,14 +287,17 @@ def cmd_train(args):
         Path(args.det_ncast), Path(args.det_fcast))
 
     coeffs = compute_coefficients(ctl_dates, ctl_wl, det_dates, det_wl, labels,
-                                  amp_clip=(args.amp_min, args.amp_max))
+                                  amp_clip=(args.amp_min, args.amp_max),
+                                  corr_floor=args.corr_floor)
 
     # Summary
     a_vals = [c["a_i"] for c in coeffs]
     clipped = sum(1 for c in coeffs if c["clipped"])
+    gated_corr = sum(1 for c in coeffs if c.get("gate_reason") == "low_corr")
     print(f"Computed {len(coeffs)} station coefficients")
     print(f"  a_i range: [{min(a_vals):.3f}, {max(a_vals):.3f}]")
     print(f"  a_i mean:  {np.mean(a_vals):.3f}")
+    print(f"  Gated (corr<{args.corr_floor}): {gated_corr}/{len(coeffs)}")
     print(f"  Clipped:   {clipped}/{len(coeffs)}")
 
     # Show a few
@@ -309,15 +339,16 @@ def cmd_apply(args):
     common, corrected = apply_correction(
         det_dates, det_wl, ctl_dates, ctl_wl, mem_dates, mem_wl, coeffs)
 
-    # Write CSV
+    # Write CSV with proper quoting for station names containing commas
     out = Path(args.output)
     nsta = corrected.shape[1]
-    header = "datetime," + ",".join(c["station"] for c in coeffs[:nsta])
-    with open(out, "w") as f:
-        f.write(header + "\n")
+    with open(out, "w", newline="") as f:
+        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+        writer.writerow(["datetime"] + [c["station"] for c in coeffs[:nsta]])
         for i, dt in enumerate(common):
-            vals = ",".join(f"{corrected[i, j]:.6f}" for j in range(nsta))
-            f.write(f"{dt.strftime('%Y-%m-%d %H:%M:%S')},{vals}\n")
+            row = [dt.strftime("%Y-%m-%d %H:%M:%S")]
+            row.extend(f"{corrected[i, j]:.6f}" for j in range(nsta))
+            writer.writerow(row)
 
     print(f"Corrected {nsta} stations, {len(common)} timesteps → {out}")
 
@@ -338,6 +369,8 @@ def main():
     p_train.add_argument("--fc-base", required=True, help="Forecast base time (YYYYMMDDHH)")
     p_train.add_argument("--amp-min", type=float, default=0.1, help="Min a_i clip (default 0.1)")
     p_train.add_argument("--amp-max", type=float, default=5.0, help="Max a_i clip (default 5.0)")
+    p_train.add_argument("--corr-floor", type=float, default=0.3,
+                        help="Min correlation to fit a_i; below this, a_i=1.0 (default 0.3)")
     p_train.add_argument("-o", "--output", default="bias_coefficients.json")
 
     # Apply
