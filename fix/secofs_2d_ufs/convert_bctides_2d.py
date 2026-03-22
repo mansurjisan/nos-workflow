@@ -4,7 +4,7 @@
 Only strips true 3D ocean tracer sections (itetype=4 → 0, isatype=4 → 0).
 All other boundary types (rivers, etc.) are preserved exactly as-is.
 
-Elevation: iettype=5 → 4 (with --with-elev2d) or 5 → 3 (tidal only).
+Elevation: iettype=5 kept as 5 (with --with-elev2d, tidal+subtidal) or 5 → 3 (tidal only).
 Velocity:  ifltype=5 → 3 (tidal only, no uv3D.th.nc for barotropic).
 
 Usage:
@@ -44,9 +44,12 @@ def _parse_header(line):
 
 
 def _skip_iet(iettype, nbfr, nond):
-    """Return number of lines to skip for elevation data."""
-    if iettype in [2, 3, 4, 5]:
+    """Return number of lines to skip for elevation data.
+    iettype=4 is file-only (no tidal data in bctides.in).
+    iettype=2,3,5 have tidal constituent blocks."""
+    if iettype in [2, 3, 5]:
         return nbfr * (1 + nond)
+    # iettype=4: all elevation from elev2D.th.nc, nothing in bctides.in
     return 0
 
 
@@ -86,7 +89,8 @@ def _skip_isa(isatype, nond):
 def needs_conversion(input_path):
     """Check if bctides.in still has 3D boundary types that need conversion.
 
-    Returns True if any boundary has iettype=5, ifltype=5, itetype=4, or isatype=4.
+    Returns True if any boundary has ifltype=5, itetype=4, or isatype=4.
+    Note: iettype=5 is valid for 2D (tidal+subtidal) and is NOT a marker.
     Raises on parse errors.
     """
     with open(input_path) as f:
