@@ -4,12 +4,17 @@
 Only strips true 3D ocean tracer sections (itetype=4 → 0, isatype=4 → 0).
 All other boundary types (rivers, etc.) are preserved exactly as-is.
 
-Elevation: iettype=5 kept as 5 (with --with-elev2d, tidal+subtidal) or 5 → 3 (tidal only).
-Velocity:  ifltype=5 → 3 (tidal only, no uv3D.th.nc for barotropic).
+Elevation: iettype=5 → 3 (tidal only).
+Velocity:  ifltype=5 → 3 (tidal only).
+
+Both elevation and velocity are downgraded to tidal-only (type 3) to maintain
+dynamical consistency. Using iettype=5 (tidal+subtidal SSH via elev2D.th.nc)
+with ifltype=3 (tidal-only velocity) creates a mass imbalance: the boundary
+imposes low-frequency sea level changes without matching transport, causing a
+monotonic domain-wide drawdown (~1 m over 2 days in testing).
 
 Usage:
     python3 convert_bctides_2d.py <input_bctides.in> <output_bctides.in>
-    python3 convert_bctides_2d.py --with-elev2d <input> <output>
     python3 convert_bctides_2d.py --needs-conversion <input>
         Exit codes: 0 = needs conversion, 1 = already converted, 2 = error
 """
@@ -18,10 +23,10 @@ import sys
 import re
 
 # Boundary types that indicate unconverted 3D content.
-# Note: iettype=5 is valid for 2D (tidal+subtidal with elev2D.th.nc),
-# so it is NOT a 3D marker. The true 3D markers are ifltype=5 (needs
-# uv3D.th.nc), itetype=4 (3D T profiles), and isatype=4 (3D S profiles).
+# iettype=5 and ifltype=5 both need conversion to 3 (tidal only).
+# itetype=4 (3D T profiles) and isatype=4 (3D S profiles) → 0.
 _3D_MARKERS = {
+    'iettype': {5},
     'ifltype': {5},
     'itetype': {4},
     'isatype': {4},
@@ -89,8 +94,7 @@ def _skip_isa(isatype, nond):
 def needs_conversion(input_path):
     """Check if bctides.in still has 3D boundary types that need conversion.
 
-    Returns True if any boundary has ifltype=5, itetype=4, or isatype=4.
-    Note: iettype=5 is valid for 2D (tidal+subtidal) and is NOT a marker.
+    Returns True if any boundary has iettype=5, ifltype=5, itetype=4, or isatype=4.
     Raises on parse errors.
     """
     with open(input_path) as f:
@@ -114,7 +118,8 @@ def needs_conversion(input_path):
         hdr = _parse_header(lines[i])
         if hdr is None:
             raise ValueError(f"Cannot parse boundary header at line {i+1}: {lines[i].strip()}")
-        if (hdr['ifltype'] in _3D_MARKERS['ifltype'] or
+        if (hdr['iettype'] in _3D_MARKERS['iettype'] or
+            hdr['ifltype'] in _3D_MARKERS['ifltype'] or
             hdr['itetype'] in _3D_MARKERS['itetype'] or
             hdr['isatype'] in _3D_MARKERS['isatype']):
             return True
@@ -127,7 +132,7 @@ def needs_conversion(input_path):
     return False
 
 
-def convert_bctides_2d(input_path, output_path, with_elev2d=False):
+def convert_bctides_2d(input_path, output_path):
     with open(input_path) as f:
         lines = f.readlines()
 
@@ -167,9 +172,9 @@ def convert_bctides_2d(input_path, output_path, with_elev2d=False):
         i += 1
 
         # Compute new types: only change 3D-specific values
-        # iettype=5: tidal (bctides.in) + subtidal (elev2D.th.nc) — keep as 5
-        # if elev2D.th.nc exists; otherwise downgrade to 3 (tidal only)
-        new_iettype = iettype if (iettype == 5 and with_elev2d) else (3 if iettype == 5 else iettype)
+        # Both iettype and ifltype downgraded to 3 (tidal only) for consistency.
+        # Using iettype=5 with ifltype=3 causes domain-wide drawdown (~1m/2d).
+        new_iettype = 3 if iettype == 5 else iettype
         new_ifltype = 3 if ifltype == 5 else ifltype
         new_itetype = 0 if itetype == 4 else itetype  # only strip 3D ocean
         new_isatype = 0 if isatype == 4 else isatype  # only strip 3D ocean
@@ -244,11 +249,8 @@ if __name__ == '__main__':
             sys.exit(1)
 
     # Normal conversion mode
-    with_elev2d = '--with-elev2d' in args
-    if with_elev2d:
-        args.remove('--with-elev2d')
     if len(args) < 2:
-        print(f'Usage: {sys.argv[0]} [--with-elev2d] <input_bctides.in> <output_bctides.in>')
+        print(f'Usage: {sys.argv[0]} <input_bctides.in> <output_bctides.in>')
         print(f'       {sys.argv[0]} --needs-conversion <bctides.in>')
         sys.exit(1)
-    convert_bctides_2d(args[0], args[1], with_elev2d=with_elev2d)
+    convert_bctides_2d(args[0], args[1])

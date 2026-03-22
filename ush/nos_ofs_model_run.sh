@@ -787,14 +787,9 @@ _comf_stage_files() {
                     python3 $_cvt --needs-conversion ${DATA}/bctides.in
                     local _nc_rc=$?
                     if [ $_nc_rc -eq 0 ]; then
-                        local _elev_flag=""
-                        if [ -s "${DATA}/elev2D.th.nc" ]; then
-                            _elev_flag="--with-elev2d"
-                            echo "  elev2D.th.nc found: using iettype=4 (tidal+subtidal SSH)"
-                        fi
-                        python3 $_cvt $_elev_flag ${DATA}/bctides.in ${DATA}/bctides.in.2d
+                        python3 $_cvt ${DATA}/bctides.in ${DATA}/bctides.in.2d
                         mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
-                        echo "  Converted bctides.in for barotropic (3D T/S stripped)"
+                        echo "  Converted bctides.in for barotropic (tidal only, 3 3 0 0)"
                     elif [ $_nc_rc -eq 1 ]; then
                         echo "  bctides.in already converted for barotropic (skipping)"
                     else

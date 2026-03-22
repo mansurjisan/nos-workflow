@@ -832,21 +832,15 @@ if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
     _convert_script="${FIXofs}/convert_bctides_2d.py"
     [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
     if [ -f "$_convert_script" ]; then
-        # Check if elev2D.th.nc was generated (in OBC tar or COMOUTrerun)
-        _final_elev_flag=""
-        if [ -s "${COMOUTrerun:-/dev/null}/${RUN}.${cycle}.elev2dth.nc" ] || \
-           [ -s "${DATA}/elev2D.th.nc" ]; then
-            _final_elev_flag="--with-elev2d"
-        fi
         for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
                     ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
             if [ -f "$_bct" ]; then
                 python3 $_convert_script --needs-conversion "$_bct"
                 _nc_rc=$?
                 if [ $_nc_rc -eq 0 ]; then
-                    python3 $_convert_script $_final_elev_flag "$_bct" "${_bct}.2d"
+                    python3 $_convert_script "$_bct" "${_bct}.2d"
                     mv "${_bct}.2d" "$_bct"
-                    echo "  Final converted: $(basename $_bct) ${_final_elev_flag:+(tidal+subtidal)}"
+                    echo "  Final converted: $(basename $_bct) (tidal only, 3 3 0 0)"
                 elif [ $_nc_rc -eq 1 ]; then
                     echo "  Already converted: $(basename $_bct) (skipping)"
                 else
