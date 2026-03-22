@@ -159,7 +159,23 @@ def compute_coefficients(
     Returns list of dicts with station label, a_i, and diagnostics.
     """
     common, ctl_a, det_a = align_series(ctl_dates, ctl_wl, det_dates, det_wl)
-    nsta = min(ctl_a.shape[1], det_a.shape[1])
+
+    n_ctl = ctl_a.shape[1]
+    n_det = det_a.shape[1]
+    n_labels = len(station_labels)
+    if n_ctl != n_det:
+        raise ValueError(
+            f"Training station count mismatch: 2D control has {n_ctl} stations "
+            f"but 3D det has {n_det}. Both must use the same station.in.")
+    nsta = min(n_ctl, n_det)
+    if n_labels != nsta:
+        print(f"  WARNING: station.in has {n_labels} labels but data has {nsta} "
+              f"stations. Using min({n_labels}, {nsta}) stations.",
+              file=sys.stderr)
+        nsta = min(nsta, n_labels)
+        # Pad labels if data has more stations than station.in
+        while len(station_labels) < n_ctl:
+            station_labels.append(f"sta_{len(station_labels)+1}")
 
     coefficients = []
     for i in range(nsta):
@@ -310,12 +326,17 @@ def cmd_train(args):
         print(f"  ... ({len(coeffs) - 20} more)")
 
     out = Path(args.output)
+    # Station order list for identity validation at apply time
+    station_order = [c["station"] for c in coeffs]
+
     with open(out, "w") as f:
         json.dump({"coefficients": coeffs,
+                    "station_order": station_order,
                     "training": {
                         "nc_base": args.nc_base,
                         "fc_base": args.fc_base,
                         "amp_clip": [args.amp_min, args.amp_max],
+                        "corr_floor": args.corr_floor,
                     }}, f, indent=2)
     print(f"\nSaved: {out}")
 
@@ -328,6 +349,22 @@ def cmd_apply(args):
     with open(args.coefficients) as f:
         data = json.load(f)
     coeffs = data["coefficients"]
+
+    # Validate station identity if station.in is provided
+    if args.station_in:
+        labels = parse_station_in(Path(args.station_in))
+        trained_order = data.get("station_order", [c["station"] for c in coeffs])
+        if len(labels) != len(trained_order):
+            raise ValueError(
+                f"Station count mismatch: station.in has {len(labels)} but "
+                f"coefficients have {len(trained_order)}.")
+        mismatched = [(i, labels[i], trained_order[i])
+                      for i in range(len(labels)) if labels[i] != trained_order[i]]
+        if mismatched:
+            msg = "; ".join(f"#{i}: '{l}' vs '{t}'" for i, l, t in mismatched[:5])
+            raise ValueError(
+                f"Station identity mismatch at {len(mismatched)} positions "
+                f"(first 5: {msg}). Ensure station.in matches training data.")
 
     det_dates, det_wl = combine_3d(
         Path(args.det_ncast), Path(args.det_fcast))
@@ -382,6 +419,8 @@ def main():
     p_apply.add_argument("--ctl-fcast", required=True, help="2D control forecast staout_1")
     p_apply.add_argument("--member-ncast", required=True, help="2D member nowcast staout_1")
     p_apply.add_argument("--member-fcast", required=True, help="2D member forecast staout_1")
+    p_apply.add_argument("--station-in", default=None,
+                        help="station.in for identity validation (recommended)")
     p_apply.add_argument("--nc-base", required=True, help="Nowcast base time (YYYYMMDDHH)")
     p_apply.add_argument("--fc-base", required=True, help="Forecast base time (YYYYMMDDHH)")
     p_apply.add_argument("-o", "--output", default="corrected_wl.csv")
