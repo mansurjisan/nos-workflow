@@ -17,9 +17,11 @@ Usage:
 import sys
 import re
 
-# Boundary types that indicate unconverted 3D content
+# Boundary types that indicate unconverted 3D content.
+# Note: iettype=5 is valid for 2D (tidal+subtidal with elev2D.th.nc),
+# so it is NOT a 3D marker. The true 3D markers are ifltype=5 (needs
+# uv3D.th.nc), itetype=4 (3D T profiles), and isatype=4 (3D S profiles).
 _3D_MARKERS = {
-    'iettype': {5},
     'ifltype': {5},
     'itetype': {4},
     'isatype': {4},
@@ -108,8 +110,7 @@ def needs_conversion(input_path):
         hdr = _parse_header(lines[i])
         if hdr is None:
             raise ValueError(f"Cannot parse boundary header at line {i+1}: {lines[i].strip()}")
-        if (hdr['iettype'] in _3D_MARKERS['iettype'] or
-            hdr['ifltype'] in _3D_MARKERS['ifltype'] or
+        if (hdr['ifltype'] in _3D_MARKERS['ifltype'] or
             hdr['itetype'] in _3D_MARKERS['itetype'] or
             hdr['isatype'] in _3D_MARKERS['isatype']):
             return True
@@ -162,7 +163,9 @@ def convert_bctides_2d(input_path, output_path, with_elev2d=False):
         i += 1
 
         # Compute new types: only change 3D-specific values
-        new_iettype = (4 if with_elev2d else 3) if iettype == 5 else iettype
+        # iettype=5: tidal (bctides.in) + subtidal (elev2D.th.nc) — keep as 5
+        # if elev2D.th.nc exists; otherwise downgrade to 3 (tidal only)
+        new_iettype = iettype if (iettype == 5 and with_elev2d) else (3 if iettype == 5 else iettype)
         new_ifltype = 3 if ifltype == 5 else ifltype
         new_itetype = 0 if itetype == 4 else itetype  # only strip 3D ocean
         new_isatype = 0 if isatype == 4 else isatype  # only strip 3D ocean
