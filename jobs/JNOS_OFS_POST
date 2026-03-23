@@ -154,9 +154,12 @@ case "${OFS_FRAMEWORK}" in
         echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
         ;;
     comf|*)
-        # nosofs/COMF single post-processing stage
-        echo "INFO: COMF post-processing not yet implemented in unified package"
-        echo "INFO: Please use legacy nosofs post-processing scripts"
+        # nosofs/COMF SCHISM post-processing: generate station NetCDF from staout files
+        if [ -f "${SCRIPTSnos}/nosofs/exnos_ofs_post.sh" ]; then
+            ${SCRIPTSnos}/nosofs/exnos_ofs_post.sh
+        else
+            echo "WARNING: ${SCRIPTSnos}/nosofs/exnos_ofs_post.sh not found"
+        fi
         ;;
 esac
 
