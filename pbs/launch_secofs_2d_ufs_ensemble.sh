@@ -358,7 +358,7 @@ for mjob in "${MEMBER_JOBIDS[@]}"; do
 done
 
 ENSPOST_JOBID=$(qsub \
-    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY},OFS=${OFS}" \
+    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY},OFS=${OFS},BAROTROPIC=true" \
     -N "${OFS}_enspost_${CYC}" \
     -o "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.out" \
     -e "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.err" \
