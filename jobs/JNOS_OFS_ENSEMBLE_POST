@@ -125,7 +125,9 @@ export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
 MEMBER_DIRS=""
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
-    MDIR="${COMOUT}/ensemble/member_${MID}"
+    # Check cycle-specific path first, fall back to legacy flat layout
+    MDIR="${COMOUT}/ensemble/${cycle}/member_${MID}"
+    [ ! -d "${MDIR}" ] && MDIR="${COMOUT}/ensemble/member_${MID}"
     if [ -d "${MDIR}" ]; then
         MEMBER_DIRS="${MEMBER_DIRS} ${MDIR}"
     else
@@ -257,6 +259,121 @@ else
         HAS_STA=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.*.nc 2>/dev/null | wc -l)
         echo "  Member ${MID}: ${N_FIELDS} field files, ${HAS_STA} station file(s) created"
     done
+fi
+
+########################################################
+# Step 1.5: Bias correction (2D barotropic only)
+#
+# Anchors 2D ensemble anomalies to 3D deterministic:
+#   WL_final(t) = WL_3d_det(t) + a_i * (WL_2d_member(t) - WL_2d_control(t))
+#
+# Requires: 3D det station NC for same cycle, 2D control staout
+########################################################
+if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
+
+    BIAS_SCRIPT="${HOMEnos}/ush/python/nos_ofs/ensemble/ensemble_bias_correct.py"
+
+    # 3D deterministic OFS paths
+    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs/_ufs/' | sed 's/_2d//')}
+    DET_COMOUT=${DET_COMOUT:-$(dirname $COMOUT)/${DET_OFS}.${PDY}}
+    DET_NCAST="${DET_COMOUT}/${DET_OFS}.${cycle}.${PDY}.stations.nowcast.nc"
+    DET_FCAST="${DET_COMOUT}/${DET_OFS}.${cycle}.${PDY}.stations.forecast.nc"
+
+    # Station file
+    STA_IN="${FIXofs}/${PREFIXNOS}.station.in"
+    [ ! -f "$STA_IN" ] && STA_IN="${FIXofs}/${STA_OUT_CTL:-${PREFIXNOS}.station.in}"
+
+    # Control member (000) staout files
+    CTL_DIR=""
+    for _cdir in ${MEMBER_DIRS}; do
+        if echo "$_cdir" | grep -q "member_000"; then
+            CTL_DIR="$_cdir"
+            break
+        fi
+    done
+    CTL_NCAST="${CTL_DIR}/outputs/staout_1"
+    CTL_FCAST="${CTL_DIR}/outputs/staout_1"
+
+    # Also check deterministic (non-ensemble) staout locations
+    if [ ! -f "$CTL_NCAST" ]; then
+        CTL_NCAST="${COMOUT}/${RUN}.${cycle}.restart_outputs/staout_1"
+    fi
+    if [ ! -f "$CTL_FCAST" ]; then
+        CTL_FCAST="${COMOUT}/${RUN}.${cycle}.forecast_outputs/staout_1"
+    fi
+
+    # Compute nowcast base time
+    NC_HOUR=$(printf '%02d' $(( ${cyc#0} - ${LEN_NOWCAST:-6} )))
+    [ ${NC_HOUR#0} -lt 0 ] && NC_HOUR=$(printf '%02d' $(( ${NC_HOUR#0} + 24 )))
+
+    if [ -f "$BIAS_SCRIPT" ] && [ -f "$DET_NCAST" ] && [ -f "$DET_FCAST" ] && \
+       [ -f "$CTL_NCAST" ] && [ -f "$CTL_FCAST" ] && [ -f "$STA_IN" ]; then
+
+        echo "=== Ensemble bias correction (2D → 3D anchored) ==="
+        echo "  3D det: $DET_OFS ($DET_COMOUT)"
+        echo "  Control: $CTL_DIR"
+
+        COEFF_FILE="${COMOUT}/ensemble/${cycle}/bias_coefficients.json"
+        mkdir -p "$(dirname $COEFF_FILE)"
+
+        # Train: control vs 3D det
+        echo "  Training bias correction coefficients ..."
+        LD_PRELOAD= python3 "$BIAS_SCRIPT" train \
+            --ctl-ncast "$CTL_NCAST" \
+            --ctl-fcast "$CTL_FCAST" \
+            --det-ncast "$DET_NCAST" \
+            --det-fcast "$DET_FCAST" \
+            --station-in "$STA_IN" \
+            --nc-base "${PDY}${NC_HOUR}" \
+            --fc-base "${PDY}${cyc}" \
+            -o "$COEFF_FILE" >> $pgmout 2>&1
+        train_rc=$?
+
+        if [ $train_rc -ne 0 ] || [ ! -f "$COEFF_FILE" ]; then
+            echo "  WARNING: Bias correction training failed (rc=$train_rc)"
+        else
+            echo "  Coefficients: $COEFF_FILE"
+
+            # Apply: correct each perturbed member
+            for MDIR in ${MEMBER_DIRS}; do
+                MID=$(basename ${MDIR} | sed 's/member_//')
+                [ "$MID" = "000" ] && continue  # skip control
+
+                MEM_FCAST="${MDIR}/outputs/staout_1"
+                if [ ! -f "$MEM_FCAST" ]; then
+                    echo "  Member $MID: staout_1 not found, skipping"
+                    continue
+                fi
+
+                CORR_OUT="${MDIR}/corrected_wl.csv"
+                echo "  Correcting member $MID ..."
+                LD_PRELOAD= python3 "$BIAS_SCRIPT" apply \
+                    --coefficients "$COEFF_FILE" \
+                    --det-ncast "$DET_NCAST" \
+                    --det-fcast "$DET_FCAST" \
+                    --ctl-ncast "$CTL_NCAST" \
+                    --ctl-fcast "$CTL_FCAST" \
+                    --member-ncast "$CTL_NCAST" \
+                    --member-fcast "$MEM_FCAST" \
+                    --station-in "$STA_IN" \
+                    --nc-base "${PDY}${NC_HOUR}" \
+                    --fc-base "${PDY}${cyc}" \
+                    -o "$CORR_OUT" >> $pgmout 2>&1
+
+                [ $? -eq 0 ] && [ -f "$CORR_OUT" ] && \
+                    echo "  Member $MID: → $(basename $CORR_OUT)" || \
+                    echo "  Member $MID: correction failed"
+            done
+        fi
+    else
+        echo "=== Skipping bias correction (missing inputs) ==="
+        [ ! -f "$BIAS_SCRIPT" ] && echo "  - Script not found: $BIAS_SCRIPT"
+        [ ! -f "$DET_NCAST" ] && echo "  - 3D det nowcast: $DET_NCAST"
+        [ ! -f "$DET_FCAST" ] && echo "  - 3D det forecast: $DET_FCAST"
+        [ ! -f "$CTL_NCAST" ] && echo "  - 2D control nowcast: $CTL_NCAST"
+        [ ! -f "$CTL_FCAST" ] && echo "  - 2D control forecast: $CTL_FCAST"
+        [ ! -f "$STA_IN" ] && echo "  - station.in: $STA_IN"
+    fi
 fi
 
 ########################################################
