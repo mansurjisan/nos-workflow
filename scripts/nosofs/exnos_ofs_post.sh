@@ -142,7 +142,7 @@ if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
     DET_NCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.nowcast.nc"
     DET_FCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.forecast.nc"
 
-    ENS_DIR="${COMOUT}/ensemble"
+    ENS_DIR="${COMOUT}/ensemble/${cycle}"
     CTL_NCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.restart_outputs/staout_1"
     CTL_FCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.forecast_outputs/staout_1"
 

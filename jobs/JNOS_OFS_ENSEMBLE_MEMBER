@@ -156,8 +156,8 @@ export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 mkdir -m 775 -p $COMOUT
 
-# Ensemble output directory for this member
-export ENSEMBLE_COMOUT=${COMOUT}/ensemble/member_${MEMBER_ID}
+# Ensemble output directory for this member (cycle-specific to avoid overwrites)
+export ENSEMBLE_COMOUT=${COMOUT}/ensemble/${cycle}/member_${MEMBER_ID}
 mkdir -m 775 -p ${ENSEMBLE_COMOUT}
 
 # STOFS COMOUTrerun (where prep job places forcing files)
