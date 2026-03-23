@@ -375,13 +375,24 @@ def process_station_files(ctl, dims):
             print(f"WARNING: {file_name} is empty, skipping 3D variable")
             continue
 
+        def _parse_fortran_float(s):
+            """Parse Fortran-style floats like '-0.281012-220' (missing 'E')."""
+            try:
+                return float(s)
+            except ValueError:
+                # Insert 'E' before the last sign: '-0.281012-220' → '-0.281012E-220'
+                for i in range(len(s) - 1, 0, -1):
+                    if s[i] in '+-' and s[i-1] not in 'eEdD':
+                        return float(s[:i] + 'E' + s[i:])
+                return 0.0  # fallback
+
         all_numbers = []
         nline = 0
         with open(file_name, 'r') as f:
             for line in f:
                 nline += 1
                 if nline % 2 == 0:
-                    numbers = [float(x) for x in line.strip().split()]
+                    numbers = [_parse_fortran_float(x) for x in line.strip().split()]
                     all_numbers.append(numbers)
 
         arr = np.array(all_numbers)
