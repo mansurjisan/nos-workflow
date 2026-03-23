@@ -113,9 +113,32 @@ def get_grid_dimensions(prefixnos, fields_available=True):
         n_stations = sum(1 for line in f if line.strip())
 
     # Sigma levels from sigma.dat
-    sigma_data = np.loadtxt(f"{prefixnos}.sigma.dat", dtype=float)
-    sigma = sigma_data.T
-    n_levels = sigma.shape[1] if sigma.ndim == 2 else len(sigma)
+    sigma_file = f"{prefixnos}.sigma.dat"
+    if os.path.exists(sigma_file) and os.path.getsize(sigma_file) > 0:
+        sigma_data = np.loadtxt(sigma_file, dtype=float)
+        sigma = sigma_data.T
+        n_levels = sigma.shape[1] if sigma.ndim == 2 else len(sigma)
+    else:
+        # No sigma.dat — detect levels from staout_5 format
+        # For 2D barotropic (nvrt=3), 3D staout files have alternating lines:
+        #   odd line: time + nsta*nvrt values
+        #   even line: nsta*nvrt values
+        # For pure 2D (nvrt=1 or no 3D output), fall back to 1 level
+        n_levels = 1
+        if os.path.exists("staout_5") and os.path.getsize("staout_5") > 0:
+            with open("staout_5", 'r') as f:
+                line1 = f.readline().strip().split()
+                line2 = f.readline().strip().split()
+            # line1 has time + data, line2 has data only
+            # For 3D staout: ncols_line2 = nsta * 2 * nvrt
+            ncols = len(line2)
+            if ncols > 0 and n_stations > 0:
+                nsta2 = n_stations * 2
+                n_levels = max(1, ncols // nsta2)
+        print(f"  No sigma.dat found, detected n_levels={n_levels} from staout_5")
+        # Create uniform sigma for NetCDF output
+        sigma = np.linspace(-1, 0, n_levels).reshape(1, -1)
+        sigma = np.tile(sigma, (n_stations, 1)) if n_stations > 0 else sigma
 
     return {
         'n_nodes': n_nodes,
@@ -345,6 +368,11 @@ def process_station_files(ctl, dims):
         file_name = f"staout_{ind}"
         if not os.path.exists(file_name):
             print(f"WARNING: {file_name} not found, skipping 3D variable")
+            continue
+
+        # Skip empty files (barotropic 2D runs write empty staout_5-9)
+        if os.path.getsize(file_name) == 0:
+            print(f"WARNING: {file_name} is empty, skipping 3D variable")
             continue
 
         all_numbers = []
