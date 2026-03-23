@@ -136,8 +136,9 @@ echo "=============================================="
 
 # ---- Validate PBS scripts exist --------------------------------------
 # UFS mode uses UFS-specific prep scripts but the SAME ensemble scripts
+# PBS scripts use _00 naming; cycle is passed via -v CYC=
 if [ "${UFS_MODE}" = true ]; then
-    PREP_PBS="${PBS_DIR}/jnos_secofs_ufs_prep_${CYC}.pbs"
+    PREP_PBS="${PBS_DIR}/jnos_secofs_ufs_prep_00.pbs"
 else
     PREP_PBS="${PBS_DIR}/jnos_secofs_prep_${CYC}.pbs"
 fi
@@ -177,7 +178,7 @@ if [ "${SKIP_PREP}" = true ]; then
 else
     echo ""
     echo ">>> Submitting prep job..."
-    PREP_JOBID=$(qsub -v "PDY=${PDY}" "${PREP_PBS}")
+    PREP_JOBID=$(qsub -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" "${PREP_PBS}")
     PREP_JOBID_SHORT=${PREP_JOBID%%.*}
     echo "    Prep job: ${PREP_JOBID}"
 fi
@@ -188,8 +189,8 @@ if [ "${DET_ONLY}" = true ]; then
     echo ">>> Deterministic-only mode: submitting nowcast + forecast..."
 
     if [ "${UFS_MODE}" = true ]; then
-        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_${CYC}.pbs"
-        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_${CYC}.pbs"
+        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_00.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_00.pbs"
     else
         NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
         FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
@@ -272,8 +273,8 @@ if [ "${WITH_DET}" = true ]; then
     echo ">>> Submitting deterministic nowcast (required for ensemble ihot=2)..."
 
     if [ "${UFS_MODE}" = true ]; then
-        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_${CYC}.pbs"
-        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_${CYC}.pbs"
+        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_00.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_00.pbs"
     else
         NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
         FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
