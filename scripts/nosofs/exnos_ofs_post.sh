@@ -136,7 +136,8 @@ if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
 
     BIAS_SCRIPT="${HOMEnos}/ush/python/nos_ofs/ensemble/ensemble_bias_correct.py"
     # 3D deterministic OFS name (e.g., secofs_2d_ufs → secofs_ufs or secofs)
-    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs/_ufs/' | sed 's/_2d//')}
+    # Derive 3D OFS name: secofs_2d_ufs → secofs, stofs_2d_atl → stofs_3d_atl
+    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs//' | sed 's/_2d_/_3d_/')}
     DET_COMOUT=${DET_COMOUT:-$(dirname $COMOUT)/${DET_OFS}.${PDY}}
 
     DET_NCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.nowcast.nc"
