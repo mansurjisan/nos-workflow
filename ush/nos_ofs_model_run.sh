@@ -1320,23 +1320,78 @@ _comf_archive_outputs() {
     # "end-of-file during read" on the empty placeholders.
     # Note: nos_ofs_nowcast_forecast.sh renames $DATA/outputs → $DATA/outputs_nowcast
     # after the nowcast completes, so check both locations.
-    if [ "$phase" = "nowcast" ]; then
-        local outputs_dir=""
-        if [ -d "$DATA/outputs" ]; then
-            outputs_dir="$DATA/outputs"
-        elif [ -d "$DATA/outputs_nowcast" ]; then
-            outputs_dir="$DATA/outputs_nowcast"
-        fi
-        if [ -n "$outputs_dir" ]; then
-            local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
-            mkdir -p "$restart_dir"
-            for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
-                     staout_5 staout_6 staout_7 staout_8 staout_9; do
-                [ -f "$outputs_dir/$f" ] && cp -p "$outputs_dir/$f" "$restart_dir/"
+    local outputs_dir=""
+    if [ -d "$DATA/outputs" ]; then
+        outputs_dir="$DATA/outputs"
+    elif [ -d "$DATA/outputs_nowcast" ]; then
+        outputs_dir="$DATA/outputs_nowcast"
+    fi
+
+    if [ "$phase" = "nowcast" ] && [ -n "$outputs_dir" ]; then
+        local restart_dir="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+        mkdir -p "$restart_dir"
+        for f in mirror.out flux.out staout_1 staout_2 staout_3 staout_4 \
+                 staout_5 staout_6 staout_7 staout_8 staout_9; do
+            [ -f "$outputs_dir/$f" ] && cp -p "$outputs_dir/$f" "$restart_dir/"
+        done
+        echo "Archived SCHISM restart output files from $outputs_dir to $restart_dir"
+    elif [ "$phase" = "nowcast" ]; then
+        echo "WARNING: Neither $DATA/outputs nor $DATA/outputs_nowcast found, skipping restart_outputs archive"
+    fi
+
+    # Generate station timeseries NetCDF (CO-OPS standard format)
+    # Uses schism_combine_outputs.py to convert staout text files to
+    # {prefix}.t{cyc}z.{PDY}.stations.{nowcast|forecast}.nc
+    if [ -n "$outputs_dir" ] && [ -f "$outputs_dir/staout_1" ]; then
+        local _combine_script="${HOMEnos:-}/ush/nosofs/schism_combine_outputs.py"
+        if [ -f "$_combine_script" ]; then
+            local _modeflag="n"
+            local _modefull="nowcast"
+            local _timestart="${PDY}$(printf '%02d' $(( ${cyc#0} - ${LEN_NOWCAST:-6}/1 )) )"
+            if [ "$phase" = "forecast" ]; then
+                _modeflag="f"
+                _modefull="forecast"
+                _timestart="${PDY}${cyc}"
+            fi
+
+            # Create control file for combine script
+            local _work_post="$DATA/post_${phase}"
+            mkdir -p "$_work_post"
+            cat > "$_work_post/schism_standard_output.ctl" << CTLEOF
+${PREFIXNOS}
+${cyc}
+${PDY}
+${_modeflag}
+${_timestart}
+CTLEOF
+
+            # Create station.lat.lon from station.in
+            local _sta_in="${FIXofs}/${PREFIXNOS}.station.in"
+            [ ! -f "$_sta_in" ] && _sta_in="${FIXofs}/${STA_OUT_CTL:-${PREFIXNOS}.station.in}"
+            if [ -f "$_sta_in" ]; then
+                awk 'NR>2 && NF>=3 {print NR-2, $2, $3}' "$_sta_in" \
+                    > "$_work_post/${PREFIXNOS}.station.lat.lon"
+            fi
+
+            # Symlink staout files into work directory
+            for f in staout_1 staout_2 staout_3 staout_4 staout_5 \
+                     staout_6 staout_7 staout_8 staout_9; do
+                [ -f "$outputs_dir/$f" ] && ln -sf "$outputs_dir/$f" "$_work_post/$f"
             done
-            echo "Archived SCHISM restart output files from $outputs_dir to $restart_dir"
+
+            # Run combine script (station products only — field files may not exist)
+            echo "Generating station NetCDF for $phase ..."
+            (cd "$_work_post" && LD_PRELOAD= python3 "$_combine_script" 2>&1) || \
+                echo "WARNING: Station NetCDF generation failed (non-fatal)"
+
+            # Copy station NC to COMOUT if generated
+            local _sta_nc="$_work_post/${PREFIXNOS}.t${cyc}z.${PDY}.stations.${_modefull}.nc"
+            if [ -f "$_sta_nc" ]; then
+                cp -p "$_sta_nc" "${COMOUT}/"
+                echo "Archived station NetCDF: $(basename $_sta_nc)"
+            fi
         else
-            echo "WARNING: Neither $DATA/outputs nor $DATA/outputs_nowcast found, skipping restart_outputs archive"
+            echo "WARNING: schism_combine_outputs.py not found, skipping station NetCDF"
         fi
     fi
 }
