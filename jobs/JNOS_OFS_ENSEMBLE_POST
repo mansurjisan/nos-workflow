@@ -206,13 +206,19 @@ else
         cd ${OUTPUTS_DIR}
 
         # Step 1a: Copy FIX files to outputs dir
-        # station.lat.lon and sigma.dat always needed (stations)
+        # station.lat.lon always needed; sigma.dat needed for 3D only
         # nv.nc and hgrid.gr3 needed only for field files (out2d_*.nc present)
         # Handle UFS-Coastal prefix variants: secofs_ufs grid files
         # may be named secofs.* in FIXofs
-        _FIX_EXTS="station.lat.lon sigma.dat"
+        # Skip sigma.dat for barotropic — the 3D sigma.dat has wrong level count
+        if [ "${BAROTROPIC:-false}" = "true" ]; then
+            _FIX_EXTS="station.lat.lon"
+        else
+            _FIX_EXTS="station.lat.lon sigma.dat"
+        fi
         if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ] || [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
-            _FIX_EXTS="nv.nc hgrid.gr3 station.lat.lon sigma.dat"
+            _FIX_EXTS="${_FIX_EXTS} nv.nc hgrid.gr3"
+            [ "${BAROTROPIC:-false}" != "true" ] && _FIX_EXTS="${_FIX_EXTS} sigma.dat"
         fi
         for _ext in ${_FIX_EXTS}; do
             _target="${PREFIXNOS}.${_ext}"
