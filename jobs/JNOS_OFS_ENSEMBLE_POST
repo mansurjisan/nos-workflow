@@ -382,7 +382,7 @@ fi
 ########################################################
 echo "=== Computing ensemble statistics ==="
 
-STATS_DIR="${COMOUT}/ensemble/stats"
+STATS_DIR="${COMOUT}/ensemble/${cycle}/stats"
 
 # VARIABLES env var: space-separated list (e.g., "elevation temperature")
 # If not set, defaults to elevation, temperature, salinity
