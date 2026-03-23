@@ -206,7 +206,7 @@ else
         cd ${OUTPUTS_DIR}
 
         # Remove stale sigma.dat from previous runs (wrong level count for 2D)
-        if [ "${BAROTROPIC:-false}" = "true" ]; then
+        if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
             rm -f ${PREFIXNOS}.sigma.dat secofs.sigma.dat 2>/dev/null
         fi
 
@@ -216,14 +216,14 @@ else
         # Handle UFS-Coastal prefix variants: secofs_ufs grid files
         # may be named secofs.* in FIXofs
         # Skip sigma.dat for barotropic — the 3D sigma.dat has wrong level count
-        if [ "${BAROTROPIC:-false}" = "true" ]; then
+        if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
             _FIX_EXTS="station.lat.lon"
         else
             _FIX_EXTS="station.lat.lon sigma.dat"
         fi
         if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ] || [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
             _FIX_EXTS="${_FIX_EXTS} nv.nc hgrid.gr3"
-            [ "${BAROTROPIC:-false}" != "true" ] && _FIX_EXTS="${_FIX_EXTS} sigma.dat"
+            [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ] && _FIX_EXTS="${_FIX_EXTS} sigma.dat"
         fi
         for _ext in ${_FIX_EXTS}; do
             _target="${PREFIXNOS}.${_ext}"
