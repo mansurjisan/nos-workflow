@@ -62,6 +62,7 @@ export SENDDBN=NO
 export SENDSMS=NO
 
 export nosofs_ver=v3.7.0
+export nos_ofs_ver=${nosofs_ver}
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
