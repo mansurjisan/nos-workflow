@@ -217,6 +217,24 @@ if [ "${DET_ONLY}" = true ]; then
     FCST_SHORT=${FCST_JOBID%%.*}
     echo "    Forecast: ${FCST_JOBID}"
 
+    # Submit post-processing (depends on forecast completing)
+    POST_SHORT=""
+    if [ "${UFS_MODE}" = true ]; then
+        POST_PBS="${PBS_DIR}/jnos_secofs_ufs_post_00.pbs"
+    else
+        POST_PBS="${PBS_DIR}/jnos_secofs_post_00.pbs"
+    fi
+    if [ -f "${POST_PBS}" ]; then
+        POST_JOBID=$(qsub \
+            -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
+            -W depend=afterok:${FCST_SHORT} \
+            "${POST_PBS}")
+        POST_SHORT=${POST_JOBID%%.*}
+        echo "    Post:     ${POST_JOBID}"
+    else
+        echo "    Post:     (skipped — ${POST_PBS} not found)"
+    fi
+
     # Summary
     echo ""
     echo "=============================================="
@@ -227,9 +245,12 @@ if [ "${DET_ONLY}" = true ]; then
     echo "   prep (${PREP_JOBID_SHORT:-skipped})"
     echo "     |-> nowcast (${NCST_SHORT})"
     echo "           |-> forecast (${FCST_SHORT})"
+    if [ -n "${POST_SHORT}" ]; then
+    echo "                 |-> post (${POST_SHORT})"
+    fi
     echo ""
     echo " Monitor with:  qstat -u $LOGNAME"
-    echo " Cancel all:    qdel ${PREP_JOBID_SHORT:-} ${NCST_SHORT} ${FCST_SHORT}"
+    echo " Cancel all:    qdel ${PREP_JOBID_SHORT:-} ${NCST_SHORT} ${FCST_SHORT} ${POST_SHORT}"
     echo ""
     exit 0
 fi
