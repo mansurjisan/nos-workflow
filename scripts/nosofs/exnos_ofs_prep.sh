@@ -414,9 +414,6 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   export pgm=nos_ofs_create_forcing_obc.sh
   . prep_step
   $USHnos/nos_ofs_create_forcing_obc.sh
-  export pgm=nos_ofs_create_forcing_obc.sh
-  . prep_step
-  $USHnos/nos_ofs_create_forcing_obc.sh
   export err=$?
   if [ $err -ne 0 ];  then
     echo "Execution of $pgm did not complete normally, FATAL ERROR!"
