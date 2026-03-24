@@ -204,14 +204,14 @@ if [ "${DET_ONLY}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_SHORT=${NCST_JOBID%%.*}
     echo "    Nowcast:  ${NCST_JOBID}"
 
     FCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         -W depend=afterok:${NCST_SHORT} \
         "${FCST_PBS}")
     FCST_SHORT=${FCST_JOBID%%.*}
@@ -286,7 +286,7 @@ if [ "${WITH_DET}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_JOBID_SHORT=${NCST_JOBID%%.*}
@@ -295,7 +295,7 @@ if [ "${WITH_DET}" = true ]; then
     # Submit forecast (depends on nowcast, runs in parallel with ensemble members)
     if [ -f "${FCST_PBS}" ]; then
         FCST_JOBID=$(qsub \
-            -v "PDY=${PDY},cyc=${CYC}" \
+            -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
             -W depend=afterok:${NCST_JOBID_SHORT} \
             "${FCST_PBS}")
         FCST_JOBID_SHORT=${FCST_JOBID%%.*}
