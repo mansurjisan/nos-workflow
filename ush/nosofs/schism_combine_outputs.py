@@ -83,19 +83,29 @@ def read_control_file(cfile="schism_standard_output.ctl"):
     }
 
 
-def get_grid_dimensions(prefixnos):
-    """Read grid dimensions dynamically from output files and FIX files."""
-    # Node and element counts from out2d_1.nc
-    ds = nc.Dataset("out2d_1.nc")
-    n_nodes = len(ds.dimensions['nSCHISM_hgrid_node'])
-    ds.close()
+def get_grid_dimensions(prefixnos, fields_available=True):
+    """Read grid dimensions dynamically from output files and FIX files.
 
-    # Element count from nv.nc
-    nvfile = f"{prefixnos}.nv.nc"
-    ds_nv = nc.Dataset(nvfile)
-    nv = ds_nv.variables["nv"][:]
-    n_elements = nv.shape[1]  # nv is (nface, nele)
-    ds_nv.close()
+    If fields_available=False, skip reading out2d_1.nc and nv.nc (needed
+    only for field file creation). Station processing needs only station
+    count and sigma levels from FIX files.
+    """
+    n_nodes = 0
+    n_elements = 0
+    nv = None
+
+    if fields_available:
+        # Node and element counts from out2d_1.nc
+        ds = nc.Dataset("out2d_1.nc")
+        n_nodes = len(ds.dimensions['nSCHISM_hgrid_node'])
+        ds.close()
+
+        # Element count from nv.nc
+        nvfile = f"{prefixnos}.nv.nc"
+        ds_nv = nc.Dataset(nvfile)
+        nv = ds_nv.variables["nv"][:]
+        n_elements = nv.shape[1]  # nv is (nface, nele)
+        ds_nv.close()
 
     # Station count from station.lat.lon
     sta_file = f"{prefixnos}.station.lat.lon"
@@ -103,9 +113,32 @@ def get_grid_dimensions(prefixnos):
         n_stations = sum(1 for line in f if line.strip())
 
     # Sigma levels from sigma.dat
-    sigma_data = np.loadtxt(f"{prefixnos}.sigma.dat", dtype=float)
-    sigma = sigma_data.T
-    n_levels = sigma.shape[1] if sigma.ndim == 2 else len(sigma)
+    sigma_file = f"{prefixnos}.sigma.dat"
+    if os.path.exists(sigma_file) and os.path.getsize(sigma_file) > 0:
+        sigma_data = np.loadtxt(sigma_file, dtype=float)
+        sigma = sigma_data.T
+        n_levels = sigma.shape[1] if sigma.ndim == 2 else len(sigma)
+    else:
+        # No sigma.dat — detect levels from staout_5 format
+        # For 2D barotropic (nvrt=3), 3D staout files have alternating lines:
+        #   odd line: time + nsta*nvrt values
+        #   even line: nsta*nvrt values
+        # For pure 2D (nvrt=1 or no 3D output), fall back to 1 level
+        n_levels = 1
+        if os.path.exists("staout_5") and os.path.getsize("staout_5") > 0:
+            with open("staout_5", 'r') as f:
+                line1 = f.readline().strip().split()
+                line2 = f.readline().strip().split()
+            # line1 has time + data, line2 has data only
+            # For 3D staout: ncols_line2 = nsta * 2 * nvrt
+            ncols = len(line2)
+            if ncols > 0 and n_stations > 0:
+                nsta2 = n_stations * 2
+                n_levels = max(1, ncols // nsta2)
+        print(f"  No sigma.dat found, detected n_levels={n_levels} from staout_5")
+        # Create uniform sigma for NetCDF output
+        sigma = np.linspace(-1, 0, n_levels).reshape(1, -1)
+        sigma = np.tile(sigma, (n_stations, 1)) if n_stations > 0 else sigma
 
     return {
         'n_nodes': n_nodes,
@@ -337,13 +370,29 @@ def process_station_files(ctl, dims):
             print(f"WARNING: {file_name} not found, skipping 3D variable")
             continue
 
+        # Skip empty files (barotropic 2D runs write empty staout_5-9)
+        if os.path.getsize(file_name) == 0:
+            print(f"WARNING: {file_name} is empty, skipping 3D variable")
+            continue
+
+        def _parse_fortran_float(s):
+            """Parse Fortran-style floats like '-0.281012-220' (missing 'E')."""
+            try:
+                return float(s)
+            except ValueError:
+                # Insert 'E' before the last sign: '-0.281012-220' → '-0.281012E-220'
+                for i in range(len(s) - 1, 0, -1):
+                    if s[i] in '+-' and s[i-1] not in 'eEdD':
+                        return float(s[:i] + 'E' + s[i:])
+                return 0.0  # fallback
+
         all_numbers = []
         nline = 0
         with open(file_name, 'r') as f:
             for line in f:
                 nline += 1
                 if nline % 2 == 0:
-                    numbers = [float(x) for x in line.strip().split()]
+                    numbers = [_parse_fortran_float(x) for x in line.strip().split()]
                     all_numbers.append(numbers)
 
         arr = np.array(all_numbers)
@@ -440,6 +489,140 @@ def process_station_files(ctl, dims):
     print(f"Station file created: {filesta} ({nsta} stations, {nstep} timesteps, {nver} levels)")
 
 
+def convert_schout_to_split():
+    """Convert combined schout_*.nc files to split format (out2d, temperature, etc.).
+
+    SCHISM combined output (schout_*.nc) contains all variables in one file.
+    This extracts them into the split format that process_field_files() expects:
+      - out2d_{i}.nc:           elevation, windSpeedX/Y, depth, coordinates
+      - temperature_{i}.nc:    temperature
+      - salinity_{i}.nc:       salinity
+      - horizontalVelX_{i}.nc: horizontalVelX
+      - horizontalVelY_{i}.nc: horizontalVelY
+    """
+    # Variable name mapping: schout name -> (split file prefix, split var name)
+    VAR_2D = {
+        'elev': ('elevation', 'out2d'),
+        'windSpeedX': ('windSpeedX', 'out2d'),
+        'windSpeedY': ('windSpeedY', 'out2d'),
+    }
+    VAR_3D = {
+        'temp': ('temperature', 'temperature'),
+        'salt': ('salinity', 'salinity'),
+        'horizontalVelX': ('horizontalVelX', 'horizontalVelX'),
+        'horizontalVelY': ('horizontalVelY', 'horizontalVelY'),
+    }
+
+    for i in range(1, 999):
+        schout_file = f"schout_{i}.nc"
+        if not os.path.exists(schout_file):
+            break
+
+        print(f"  Splitting {schout_file}...")
+        ds = Dataset(schout_file, 'r')
+
+        # Identify available variables
+        schout_vars = list(ds.variables.keys())
+        time_data = ds.variables['time'][:]
+        nstep = len(time_data)
+
+        # Get node dimension name
+        node_dim = None
+        for dname in ['nSCHISM_hgrid_node', 'node', 'nod2']:
+            if dname in ds.dimensions:
+                node_dim = dname
+                break
+        if node_dim is None:
+            # Fallback: use first spatial dimension of elevation
+            for vn in ['elev', 'elevation']:
+                if vn in ds.variables:
+                    node_dim = ds.variables[vn].dimensions[-1]
+                    break
+
+        n_nodes = len(ds.dimensions[node_dim]) if node_dim else 0
+
+        # --- Create out2d_{i}.nc ---
+        out2d_file = f"out2d_{i}.nc"
+        ds_out = Dataset(out2d_file, 'w', format='NETCDF4')
+
+        # Copy dimensions
+        ds_out.createDimension('time', None)
+        ds_out.createDimension('nSCHISM_hgrid_node', n_nodes)
+
+        # Time
+        tv = ds_out.createVariable('time', 'f8', ('time',))
+        tv[:] = time_data
+        if hasattr(ds.variables['time'], 'units'):
+            tv.units = ds.variables['time'].units
+
+        # Elevation
+        for src_name in ['elev', 'elevation']:
+            if src_name in ds.variables:
+                elev = ds_out.createVariable('elevation', 'f4',
+                                              ('time', 'nSCHISM_hgrid_node'))
+                elev[:] = ds.variables[src_name][:]
+                break
+
+        # Wind (optional)
+        for wvar in ['windSpeedX', 'windSpeedY']:
+            if wvar in ds.variables:
+                wv = ds_out.createVariable(wvar, 'f4',
+                                            ('time', 'nSCHISM_hgrid_node'))
+                wv[:] = ds.variables[wvar][:]
+
+        # Coordinates and depth (from first schout only, or from schout if present)
+        for coord in ['SCHISM_hgrid_node_x', 'SCHISM_hgrid_node_y']:
+            if coord in ds.variables:
+                cv = ds_out.createVariable(coord, 'f8', ('nSCHISM_hgrid_node',))
+                cv[:] = ds.variables[coord][:]
+        if 'depth' in ds.variables:
+            dv = ds_out.createVariable('depth', 'f4', ('nSCHISM_hgrid_node',))
+            dv[:] = ds.variables['depth'][:]
+
+        ds_out.close()
+
+        # --- Create 3D split files ---
+        # Determine vertical dimension
+        vert_dim = None
+        for dname in ['nSCHISM_vgrid_layers', 'nVert', 'sigma']:
+            if dname in ds.dimensions:
+                vert_dim = dname
+                break
+
+        n_vert = len(ds.dimensions[vert_dim]) if vert_dim else 0
+
+        for src_name, (split_var, split_prefix) in VAR_3D.items():
+            if src_name not in ds.variables:
+                continue
+            split_file = f"{split_prefix}_{i}.nc"
+            ds_split = Dataset(split_file, 'w', format='NETCDF4')
+
+            ds_split.createDimension('time', None)
+            ds_split.createDimension('nSCHISM_hgrid_node', n_nodes)
+            if n_vert > 0:
+                ds_split.createDimension('nSCHISM_vgrid_layers', n_vert)
+
+            tv = ds_split.createVariable('time', 'f8', ('time',))
+            tv[:] = time_data
+
+            if n_vert > 0:
+                var = ds_split.createVariable(
+                    split_var, 'f4',
+                    ('time', 'nSCHISM_hgrid_layers', 'nSCHISM_hgrid_node')
+                    if f'nSCHISM_hgrid_layers' in ds.variables[src_name].dimensions
+                    else ('time', 'nSCHISM_vgrid_layers', 'nSCHISM_hgrid_node'))
+                var[:] = ds.variables[src_name][:]
+            else:
+                var = ds_split.createVariable(split_var, 'f4',
+                                               ('time', 'nSCHISM_hgrid_node'))
+                var[:] = ds.variables[src_name][:]
+
+            ds_split.close()
+
+        ds.close()
+        print(f"    -> {out2d_file} + 3D split files created")
+
+
 def main():
     print("=" * 60)
     print("SCHISM Combine Outputs — CO-OPS Standard NetCDF Products")
@@ -453,21 +636,52 @@ def main():
     print(f"  Mode:      {ctl['mode']} ({'nowcast' if ctl['mode'] == 'n' else 'forecast'})")
     print(f"  TimeStart: {ctl['timestart']}")
 
+    # Check what output files are available
+    has_split_fields = os.path.exists("out2d_1.nc")
+    has_schout = os.path.exists("schout_1.nc")
+    has_fields = has_split_fields or has_schout
+    has_stations = os.path.exists("staout_1")
+
+    if not has_fields and not has_stations:
+        print("ERROR: No output files found (neither out2d_1.nc, schout_1.nc, nor staout_1)")
+        sys.exit(1)
+
+    if has_split_fields:
+        print("\n  Field output files detected (out2d_*.nc — split format)")
+    elif has_schout:
+        print("\n  Field output files detected (schout_*.nc — combined format)")
+        # Convert schout to split format for uniform processing
+        print("  Converting schout_*.nc to split format...")
+        convert_schout_to_split()
+        has_split_fields = True
+    else:
+        print("\n  No field output files (out2d_*.nc / schout_*.nc) — stations-only mode")
+
+    if has_stations:
+        print(f"  Station output files detected (staout_*)")
+
     # Get grid dimensions dynamically
     print("\nReading grid dimensions...")
-    dims = get_grid_dimensions(ctl['PREFIXNOS'])
-    print(f"  Nodes:    {dims['n_nodes']}")
-    print(f"  Elements: {dims['n_elements']}")
+    dims = get_grid_dimensions(ctl['PREFIXNOS'], fields_available=has_split_fields)
+    if has_split_fields:
+        print(f"  Nodes:    {dims['n_nodes']}")
+        print(f"  Elements: {dims['n_elements']}")
     print(f"  Stations: {dims['n_stations']}")
     print(f"  Levels:   {dims['n_levels']}")
 
-    # Process field files
-    print("\n--- Processing Field Files ---")
-    process_field_files(ctl, dims)
+    # Process field files (only if out2d_*.nc available)
+    if has_split_fields:
+        print("\n--- Processing Field Files ---")
+        process_field_files(ctl, dims)
+    else:
+        print("\n--- Skipping Field Files (no out2d_*.nc) ---")
 
-    # Process station files
-    print("\n--- Processing Station Files ---")
-    process_station_files(ctl, dims)
+    # Process station files (only if staout_* available)
+    if has_stations:
+        print("\n--- Processing Station Files ---")
+        process_station_files(ctl, dims)
+    else:
+        print("\n--- Skipping Station Files (no staout_*) ---")
 
     print("\n" + "=" * 60)
     print("SCHISM output combining completed successfully")

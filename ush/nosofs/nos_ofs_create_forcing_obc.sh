@@ -982,7 +982,15 @@ elif [ $OCEAN_MODEL == "SCHISM" -o $OCEAN_MODEL == "schism" ]; then
     export err=$?
 
 #    tar -cvf ${OBC_FORCING_FILE} elev3D.th temp_nu.in salt_nu.in
-    tar -cvf ${OBC_FORCING_FILE} TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc
+    # For barotropic (2D), only elev2D.th.nc is needed; skip 3D T/S/velocity
+    if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+        # Create empty T/S files so downstream tar doesn't fail
+        touch TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc uv3D.th.nc
+        tar -cvf ${OBC_FORCING_FILE} TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc
+        echo "Barotropic mode: T/S/velocity OBC files are empty placeholders"
+    else
+        tar -cvf ${OBC_FORCING_FILE} TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc
+    fi
 
 
 elif [ $OCEAN_MODEL == "FVCOM" -o $OCEAN_MODEL == "fvcom" ]; then

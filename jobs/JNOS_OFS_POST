@@ -160,16 +160,11 @@ case "${OFS_FRAMEWORK}" in
         echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
         ;;
     comf|*)
-        # nosofs/COMF SCHISM post-processing (separate from model job)
-        # Extracts raw SCHISM outputs from COMOUT tar, runs Python combiner,
-        # creates CO-OPS standard NetCDF field/station products.
-        # Works for both standalone SCHISM (secofs) and UFS-Coastal (secofs_ufs).
-        export RUNTYPE=${RUNTYPE:-nowcast}
+        # nosofs/COMF SCHISM post-processing: generate station NetCDF from staout files
         if [ -f "${SCRIPTSnos}/nosofs/exnos_ofs_post.sh" ]; then
             ${SCRIPTSnos}/nosofs/exnos_ofs_post.sh
         else
-            echo "ERROR: COMF post script not found: ${SCRIPTSnos}/nosofs/exnos_ofs_post.sh" >&2
-            exit 1
+            echo "WARNING: ${SCRIPTSnos}/nosofs/exnos_ofs_post.sh not found"
         fi
         ;;
 esac

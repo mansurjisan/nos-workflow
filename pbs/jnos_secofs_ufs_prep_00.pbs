@@ -53,11 +53,11 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export OFS=secofs_ufs
-export cyc=00
+export OFS=${OFS:-secofs_ufs}
+export cyc=${CYC:-00}
 export NET=nosofs
 export model=nosofs
-export job=secofs_ufs_prep_00_$envir
+export job=secofs_ufs_prep_${cyc}_$envir
 export platform=ptmp
 
 export KEEPDATA=YES

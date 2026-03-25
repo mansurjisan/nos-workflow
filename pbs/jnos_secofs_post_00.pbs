@@ -1,40 +1,30 @@
 #!/bin/bash
-#PBS  -N secofs_enspost_00
+#PBS  -N secofs_post_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_enspost_00.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_enspost_00.err
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_post_00.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_post_00.err
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=02:00:00
+#PBS  -l walltime=01:00:00
 
 # ------------------------------------------------------------------
-# SECOFS Ensemble Post-Processing PBS Job
+# SECOFS Standalone Post-Processing PBS Job
 #
-# Combines per-member SCHISM outputs into field/station products
-# (same format as deterministic), then computes ensemble statistics
-# (mean, spread, percentiles).
+# Generates station NetCDF and field products from SCHISM raw outputs.
+# Runs after both nowcast and forecast complete.
 #
-# Submit via launch_secofs_ensemble.sh or manually:
-#   qsub -v N_MEMBERS=5,CYC=00,OFS=secofs jnos_secofs_ensemble_post.pbs
+# Submit via launcher or manually:
+#   qsub -v "PDY=20260322,CYC=18,OFS=secofs" jnos_secofs_post_00.pbs
 # ------------------------------------------------------------------
 
-CYC=${CYC:-00}
-N_MEMBERS=${N_MEMBERS:-5}
-
-# PDY: accept from qsub -v, fall back to today
-export PDY=${PDY:-$(date +%Y%m%d)}
-
-# OFS: accept from qsub -v (launcher passes this), fall back to secofs
-export OFS=${OFS:-secofs}
-
-# Source version file
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
 
 # Working directory
+export OFS=${OFS:-secofs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}/ensemble
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
 cd ${WORKDIR}
 
@@ -60,24 +50,26 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export cyc=${CYC}
-export NET=nosofs
-export model=nosofs
-export N_MEMBERS=${N_MEMBERS}
-export job=${OFS}_enspost_${CYC}_$envir
+export OFS=${OFS:-secofs}
+export cyc=${CYC:-00}
+export PDY=${PDY:-$(date +%Y%m%d)}
+export job=secofs_post_${cyc}_$envir
 export platform=ptmp
 
 export KEEPDATA=YES
 export SENDCOM=NO
 export SENDDBN=NO
+export SENDSMS=NO
 
 export nosofs_ver=v3.7.0
+export nos_ofs_ver=${nosofs_ver}
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
+export COMPATH=/lfs/h1/ops/prod/com/nos
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
-export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}/ensemble
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 
 ################################################
 # CALL executable job script here
@@ -90,4 +82,4 @@ export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_POST
+${HOMEnos}/jobs/JNOS_OFS_POST

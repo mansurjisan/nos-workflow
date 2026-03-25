@@ -92,8 +92,9 @@ ensemble_stage_files() {
 ################################################################################
 # Step 3: Configure param.nml for this member
 #
-# Copies the forecast param.nml, sets ihot=1, updates start_year/month/day/hour
-# and rnday to match the forecast window, then applies LHS perturbations.
+# Copies the forecast param.nml, sets ihot (1 for UFS, 2 for standalone),
+# enforces nws/nscribes for UFS, updates start time and rnday, then applies
+# LHS perturbations.
 ################################################################################
 ensemble_configure_runtime() {
     echo "=== ensemble_configure_runtime: member ${MEMBER_ID} ==="
@@ -105,14 +106,41 @@ ensemble_configure_runtime() {
     local rc=$?
     if [ $rc -ne 0 ]; then return $rc; fi
 
-    # 3b: Ensemble uses ihot=2 for continuous nowcast+forecast timeseries.
-    # NOTE: Deterministic nowcast/forecast uses ihot=1 (time reset, rnday = stage duration).
-    # Ensemble intentionally uses ihot=2 so staout files contain the full timeseries
-    # (nowcast + forecast appended) for ensemble post-processing verification.
-    # ihot=2 requires real staout/mirror/flux files from the deterministic nowcast
-    # (restored in ensemble_prepare_restart). rnday must be cumulative (hindcast + forecast).
-    sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
-    echo "Set ihot=2 for ensemble hot restart with continuous timeseries"
+    # 3b: Set ihot for hot restart
+    # Standalone SCHISM: ihot=2 (continue from hotstart time, appends staout)
+    # UFS-Coastal: ihot=1 (NUOPC start_type=startup resets ESMF clock to t=0;
+    #   ihot=2 causes SCHISM/ESMF clock desync → ghost node pressure transient)
+    # Barotropic: use ihot=1 if a 2D hotstart exists (from 2D nowcast),
+    # otherwise ihot=0 (cold start, no 3D hotstart compatible with 2D grid)
+    if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+        # Check if hotstart will be staged (2D nowcast produced one)
+        local _has_2d_hotstart=false
+        for _hc in "${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc" \
+                    "${COMOUT}/${RUN}.${cycle}.${PDY}.rst.nowcast.nc"; do
+            if [ -f "$_hc" ]; then _has_2d_hotstart=true; break; fi
+        done
+        if [ "${_has_2d_hotstart}" == "true" ]; then
+            sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
+            echo "Set ihot=1 for barotropic hot start (2D hotstart from nowcast)"
+        else
+            sed -i 's/ihot *= *[0-9]*/ihot = 0/' ${MEMBER_DATA}/param.nml
+            echo "Set ihot=0 for barotropic cold start (no 2D hotstart available)"
+        fi
+    elif [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        sed -i 's/ihot *= *[0-9]*/ihot = 1/' ${MEMBER_DATA}/param.nml
+        echo "Set ihot=1 for UFS-Coastal (NUOPC clock sync requires reset)"
+    else
+        sed -i 's/ihot *= *[0-9]*/ihot = 2/' ${MEMBER_DATA}/param.nml
+        echo "Set ihot=2 for hot restart with continued output (nowcast+forecast staout)"
+    fi
+
+    # 3b2: Force UFS-Coastal param.nml overrides
+    # If param.nml came from standalone SCHISM (nws=2, nscribes>0), fix for NUOPC.
+    if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
+        sed -i 's/nws *= *[0-9]*/nws = 4/' ${MEMBER_DATA}/param.nml
+        sed -i 's/nscribes *= *[0-9]*/nscribes = 0/' ${MEMBER_DATA}/param.nml
+        echo "Forced nws=4 (NUOPC coupling) and nscribes=0 (CMEPS I/O) for UFS-Coastal"
+    fi
 
     # 3c: Update start time and rnday for forecast period
     _ensemble_update_start_time
@@ -132,6 +160,15 @@ ensemble_configure_runtime() {
 ################################################################################
 ensemble_prepare_restart() {
     echo "=== ensemble_prepare_restart: member ${MEMBER_ID} ==="
+
+    # Barotropic: skip restart staging only if no 2D hotstart exists
+    if ([ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]) && \
+       ! ls ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.rst.nowcast.nc 1>/dev/null 2>&1 && \
+       ! ls ${COMOUT}/${RUN}.${cycle}.${PDY}.rst.nowcast.nc 1>/dev/null 2>&1; then
+        echo "Barotropic cold start (ihot=0): no 2D hotstart, skipping restart file staging"
+        mkdir -p ${MEMBER_DATA}/outputs
+        return 0
+    fi
 
     # Search for hotstart file in COMOUT (archived by nowcast job)
     # STOFS naming: ${RUN}.t${cyc}z.hotstart.stofs3d.nc
@@ -359,7 +396,11 @@ _ensemble_execute_ufs_coastal() {
 
     # --- Verify critical input files ---
     local MISSING=0
-    for required in param.nml hotstart.nc bctides.in; do
+    local _required_files="param.nml bctides.in"
+    if [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ]; then
+        _required_files="param.nml hotstart.nc bctides.in"
+    fi
+    for required in ${_required_files}; do
         if [ ! -e "${MEMBER_DATA}/${required}" ]; then
             echo "MISSING: ${required}"
             MISSING=$((MISSING + 1))
@@ -397,20 +438,285 @@ _ensemble_execute_ufs_coastal() {
     done
 
     # Stage DATM INPUT directory
+    # Determine member-specific DATM input based on met_source_1 from params.json
     mkdir -p ${MEMBER_DATA}/INPUT
-    local datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
-    if [ -d "$datm_dir" ]; then
-        cp -p ${datm_dir}/*.nc ${MEMBER_DATA}/INPUT/ 2>/dev/null || true
-        echo "Staged DATM INPUT files"
-    else
+    local datm_dir=""
+    local met_source=""
+
+    if [ -f "${PARAM_FILE:-}" ]; then
+        met_source=$(python3 -c "
+import json, sys
+with open('${PARAM_FILE}') as f:
+    p = json.load(f)
+# met_source_1 is nested under atmospheric_source in params.json
+atm = p.get('atmospheric_source', {})
+ms = atm.get('met_source_1', '') or p.get('met_source_1', '')
+print(ms)
+" 2>/dev/null || echo "")
+    fi
+
+    case "${met_source}" in
+        GEFS_*)
+            local gefs_id=$(echo "${met_source}" | sed 's/GEFS_//')
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input_gefs_${gefs_id}"
+            ;;
+        RRFS)
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input_rrfs"
+            ;;
+        *)
+            # Control member (GFS+HRRR) uses the standard prep output
+            datm_dir="${COMOUT}/${RUN}.${cycle}.datm_input"
+            ;;
+    esac
+
+    echo "Met source: ${met_source:-GFS (control)}"
+    echo "DATM input dir: ${datm_dir}"
+
+    if [ ! -d "$datm_dir" ]; then
         echo "FATAL: DATM input directory not found: $datm_dir" >&2
         return 1
     fi
 
-    # Patch stop_n for ensemble phase (typically forecast length)
+    # Stage DATM files — check explicitly for datm_forcing.nc
+    if [ -s "${datm_dir}/datm_forcing.nc" ]; then
+        cp -p ${datm_dir}/datm_forcing.nc ${MEMBER_DATA}/INPUT/
+        echo "Staged datm_forcing.nc from ${datm_dir}"
+    else
+        echo "FATAL: datm_forcing.nc not found in ${datm_dir}" >&2
+        ls -la ${datm_dir}/ >&2 2>/dev/null
+        return 1
+    fi
+
+    # Stage ESMF mesh — use member-specific if available, else control
+    if [ -s "${datm_dir}/datm_esmf_mesh.nc" ]; then
+        cp -p ${datm_dir}/datm_esmf_mesh.nc ${MEMBER_DATA}/INPUT/
+        echo "Staged datm_esmf_mesh.nc from ${datm_dir}"
+    elif [ -s "${COMOUT}/${RUN}.${cycle}.datm_input/datm_esmf_mesh.nc" ]; then
+        cp -p ${COMOUT}/${RUN}.${cycle}.datm_input/datm_esmf_mesh.nc ${MEMBER_DATA}/INPUT/
+        echo "Staged datm_esmf_mesh.nc from control datm_input (member dir had none)"
+    fi
+
+    # Patch datm_in nx_global/ny_global if member forcing has different grid dims
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ] && [ -s "${MEMBER_DATA}/datm_in" ]; then
+        local mem_dims=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
+# Try 'x'/'y' dims first (blended output), then 'longitude'/'latitude' (raw GFS/GEFS)
+try:
+    print(len(ds.dimensions['x']), len(ds.dimensions['y']))
+except:
+    print(len(ds.dimensions['longitude']), len(ds.dimensions['latitude']))
+ds.close()
+" 2>/dev/null || echo "")
+        if [ -n "$mem_dims" ]; then
+            local mem_nx=$(echo $mem_dims | awk '{print $1}')
+            local mem_ny=$(echo $mem_dims | awk '{print $2}')
+            sed -i "s/nx_global[[:space:]]*=.*/nx_global = ${mem_nx}/" ${MEMBER_DATA}/datm_in
+            sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${mem_ny}/" ${MEMBER_DATA}/datm_in
+            echo "Patched datm_in: nx_global=${mem_nx}, ny_global=${mem_ny}"
+
+            # Verify ESMF mesh matches forcing dims. If the member's
+            # datm_input dir already had a matching mesh (e.g., from gefs_prep),
+            # no regeneration needed. Only regenerate if mesh node count != nx*ny.
+            local mem_total=$((mem_nx * mem_ny))
+            local staged_mesh="${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc"
+            local mesh_nodes="0"
+            if [ -s "$staged_mesh" ]; then
+                mesh_nodes=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${staged_mesh}', 'r')
+print(len(ds.dimensions.get('nodeCount', ds.dimensions.get('node_count', []))))
+ds.close()
+" 2>/dev/null || echo "0")
+            fi
+
+            # Also check elementMask exists — meshes generated before the
+            # elementMask fix will pass the nodeCount check but still crash.
+            local has_emask="false"
+            if [ -s "$staged_mesh" ] && [ "${mesh_nodes}" = "${mem_total}" ]; then
+                has_emask=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${staged_mesh}', 'r')
+print('true' if 'elementMask' in ds.variables else 'false')
+ds.close()
+" 2>/dev/null || echo "false")
+            fi
+
+            # Check if mesh was generated by ESMF_Scrip2Unstruct (has origGridRank dim)
+            # ESMF_Scrip2Unstruct meshes intentionally have more nodes than nx*ny (boundary nodes)
+            local is_esmf_mesh="false"
+            if [ -s "$staged_mesh" ]; then
+                is_esmf_mesh=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${staged_mesh}', 'r')
+print('true' if 'origGridRank' in ds.dimensions else 'false')
+ds.close()
+" 2>/dev/null || echo "false")
+            fi
+
+            if [ "${is_esmf_mesh}" == "true" ]; then
+                echo "ESMF mesh generated by ESMF_Scrip2Unstruct (nodeCount=${mesh_nodes}, grid=${mem_nx}x${mem_ny}=${mem_total}) — OK, skipping regeneration"
+            elif [ "${mesh_nodes}" != "${mem_total}" ]; then
+                # Node count mismatch AND not from ESMF_Scrip2Unstruct — regeneration needed
+                echo "ESMF mesh node mismatch: mesh=${mesh_nodes}, forcing=${mem_total} (${mem_nx}x${mem_ny})"
+                echo "Regenerating ESMF mesh (vectorized)..."
+                python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'r')
+try:
+    lons = ds.variables['longitude'][:]
+    lats = ds.variables['latitude'][:]
+    lon2d, lat2d = np.meshgrid(lons, lats)
+except:
+    lon2d = ds.variables['longitude'][:]
+    lat2d = ds.variables['latitude'][:]
+ds.close()
+
+ny, nx = lon2d.shape
+n_nodes = ny * nx
+n_elems = (ny - 1) * (nx - 1)
+
+out = Dataset('${MEMBER_DATA}/INPUT/datm_esmf_mesh.nc', 'w')
+out.createDimension('nodeCount', n_nodes)
+out.createDimension('elementCount', n_elems)
+out.createDimension('maxNodePElement', 4)
+out.createDimension('coordDim', 2)
+
+nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
+nodeCoords.units = 'degrees'
+coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
+nodeCoords[:] = coords
+
+# Vectorized element connectivity (no Python for-loop)
+j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
+n0 = (j_idx * nx + i_idx + 1).ravel()
+conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
+
+elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
+elemConn.long_name = 'Node indices that define the element connectivity'
+elemConn.start_index = 1
+elemConn[:] = conn
+
+numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
+numElemConn[:] = 4
+
+elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
+elementMask[:] = np.ones(n_elems, dtype=np.int32)
+
+centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
+centerCoords.units = 'degrees'
+clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
+clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
+centerCoords[:] = np.column_stack([clon, clat])
+
+out.title = 'ESMF unstructured mesh for DATM forcing'
+out.gridType = 'unstructured mesh'
+out.close()
+print('Generated ESMF mesh: ${mem_nx}x${mem_ny} = {} nodes, {} elements'.format(n_nodes, n_elems))
+" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "WARNING: ESMF mesh regeneration failed — model may crash" >&2
+                fi
+            elif [ "${has_emask}" != "true" ]; then
+                # Node count OK but elementMask missing — lightweight in-place patch
+                echo "ESMF mesh missing elementMask — patching in-place..."
+                python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+ds = Dataset('${staged_mesh}', 'a')
+n_elems = len(ds.dimensions['elementCount'])
+em = ds.createVariable('elementMask', 'i4', ('elementCount',))
+em[:] = np.ones(n_elems, dtype=np.int32)
+ds.close()
+print('Added elementMask ({} elements) to existing mesh'.format(n_elems))
+" 2>&1
+                if [ $? -ne 0 ]; then
+                    echo "WARNING: elementMask patch failed — model may crash" >&2
+                fi
+            else
+                echo "ESMF mesh OK: ${mesh_nodes} nodes matches forcing ${mem_nx}x${mem_ny}"
+            fi
+        fi
+    fi
+
+    # Ensure forcing NetCDF has all 8 variables expected by datm.streams.
+    # GEFS pgrb2sp25 lacks SPFH_2maboveground, PRATE_surface, and uses
+    # PRMSL_meansealevel instead of MSLMA_meansealevel.  Rather than
+    # stripping variables from datm.streams (which breaks SCHISM's
+    # atmospheric coupling), add missing variables as zeros and rename
+    # PRMSL→MSLMA so the config matches the working deterministic exactly.
+    if [ -s "${MEMBER_DATA}/INPUT/datm_forcing.nc" ]; then
+        echo "Checking forcing NetCDF for required variables..."
+        python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+
+ds = Dataset('${MEMBER_DATA}/INPUT/datm_forcing.nc', 'a')
+vnames = list(ds.variables.keys())
+time_dim = 'time'
+lat_dims = [d for d in ds.dimensions if d in ('latitude','lat','y')]
+lon_dims = [d for d in ds.dimensions if d in ('longitude','lon','x')]
+if not lat_dims or not lon_dims:
+    print('Forcing dims not recognized: {} — skipping variable check'.format(list(ds.dimensions.keys())))
+    ds.close()
+    import sys; sys.exit(0)
+lat_dim = lat_dims[0]
+lon_dim = lon_dims[0]
+shape_3d = (len(ds.dimensions[time_dim]), len(ds.dimensions[lat_dim]), len(ds.dimensions[lon_dim]))
+changed = False
+
+# Rename PRMSL → MSLMA if needed
+if 'PRMSL_meansealevel' in vnames and 'MSLMA_meansealevel' not in vnames:
+    ds.renameVariable('PRMSL_meansealevel', 'MSLMA_meansealevel')
+    print('Renamed PRMSL_meansealevel → MSLMA_meansealevel')
+    changed = True
+
+# Add missing SPFH as zeros
+if 'SPFH_2maboveground' not in vnames:
+    v = ds.createVariable('SPFH_2maboveground', 'f4', (time_dim, lat_dim, lon_dim))
+    v.long_name = '2m specific humidity'
+    v.units = 'kg/kg'
+    v[:] = np.zeros(shape_3d, dtype=np.float32)
+    print('Added SPFH_2maboveground (zeros) — GEFS pgrb2sp25 lacks this field')
+    changed = True
+
+# Add missing PRATE as zeros
+if 'PRATE_surface' not in vnames:
+    v = ds.createVariable('PRATE_surface', 'f4', (time_dim, lat_dim, lon_dim))
+    v.long_name = 'surface precipitation rate'
+    v.units = 'kg/m2/s'
+    v[:] = np.zeros(shape_3d, dtype=np.float32)
+    print('Added PRATE_surface (zeros) — GEFS pgrb2sp25 lacks this field')
+    changed = True
+
+ds.close()
+if not changed:
+    print('All 8 required variables present — no changes needed')
+" 2>&1
+    fi
+
+    # Patch model_configure for ensemble forecast: start time + duration
     local nhours=${LEN_FORECAST:-48}
+
+    # Derive forecast start time from time_nowcastend (= nowcast end = forecast begin)
+    local _time_ncend=""
+    [ -f "${COMOUT}/time_nowcastend.${cycle}" ] && read _time_ncend < "${COMOUT}/time_nowcastend.${cycle}"
+    _time_ncend=${_time_ncend:-${PDY}$(printf '%02d' "${cyc}")}
+
+    local sim_yyyy=${_time_ncend:0:4}
+    local sim_mm=${_time_ncend:4:2}
+    local sim_dd=${_time_ncend:6:2}
+    local sim_hh=${_time_ncend:8:2}
+
     if [ -s "${MEMBER_DATA}/model_configure" ]; then
-        sed -i "s/nhours_fcst:.*/nhours_fcst: ${nhours}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/nhours_fcst:.*/nhours_fcst:             ${nhours}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_year:.*/start_year:              ${sim_yyyy}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_month:.*/start_month:             ${sim_mm}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_day:.*/start_day:               ${sim_dd}/" ${MEMBER_DATA}/model_configure
+        sed -i "s/start_hour:.*/start_hour:              ${sim_hh}/" ${MEMBER_DATA}/model_configure
+        echo "Patched model_configure: start=${sim_yyyy}-${sim_mm}-${sim_dd}T${sim_hh}Z, nhours_fcst=${nhours}"
     fi
     if [ -s "${MEMBER_DATA}/ufs.configure" ]; then
         sed -i "s/stop_n = .*/stop_n = ${nhours}/" ${MEMBER_DATA}/ufs.configure
@@ -449,8 +755,10 @@ _ensemble_execute_ufs_coastal() {
 
     # --- Set UFS-Coastal runtime environment ---
     export OMP_STACKSIZE=${OMP_STACKSIZE:-512M}
-    export OMP_NUM_THREADS=${OMP_NUM_THREADS:-1}
-    export OMP_PLACES=${OMP_PLACES:-cores}
+    # Force OMP_NUM_THREADS=1 — Cray PBS sets it to ncpus (128) which
+    # causes massive oversubscription with 120 MPI ranks per node
+    export OMP_NUM_THREADS=1
+    export OMP_PLACES=cores
     export ESMF_RUNTIME_COMPLIANCECHECK=OFF:depth=4
     export ESMF_RUNTIME_PROFILE=ON
     export ESMF_RUNTIME_PROFILE_OUTPUT="SUMMARY"
@@ -588,7 +896,7 @@ _ensemble_stage_static_files() {
         [ -e "${MEMBER_DATA}/river_vsink.th" ] && \
             ln -sf "${MEMBER_DATA}/river_vsink.th" ${MEMBER_DATA}/vsink.th
         # tem_nudge.gr3 -> TEM_nudge.gr3 (SCHISM expects uppercase) — skip for barotropic
-        if [ "${BAROTROPIC:-false}" != "true" ]; then
+        if [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ]; then
             [ -e "${MEMBER_DATA}/tem_nudge.gr3" ] && [ ! -e "${MEMBER_DATA}/TEM_nudge.gr3" ] && \
                 ln -sf "${MEMBER_DATA}/tem_nudge.gr3" ${MEMBER_DATA}/TEM_nudge.gr3
             # sal_nudge.gr3 -> SAL_nudge.gr3 (SCHISM expects uppercase)
@@ -1090,7 +1398,7 @@ _ensemble_stofs_stage_obc_river() {
 
     # RTOFS OBC time-history files
     # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
-    if [ "${BAROTROPIC:-false}" = "true" ]; then
+    if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
         local _obc_pairs="elev2dth.nc:elev2D.th.nc"
     else
         local _obc_pairs="elev2dth.nc:elev2D.th.nc tem3dth.nc:TEM_3D.th.nc sal3dth.nc:SAL_3D.th.nc uv3dth.nc:uv3D.th.nc"
@@ -1119,7 +1427,7 @@ _ensemble_stofs_stage_obc_river() {
 
     # RTOFS nudging files (time-varying, generated by prep's obc_nudge script)
     # Skip for barotropic mode (no T/S nudging)
-    if [ "${BAROTROPIC:-false}" != "true" ]; then
+    if [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ]; then
         for pair in "temnu.nc:TEM_nu.nc" "salnu.nc:SAL_nu.nc"; do
             local src_suffix="${pair%%:*}"
             local dst_name="${pair##*:}"

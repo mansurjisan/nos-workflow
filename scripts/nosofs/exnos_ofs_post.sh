@@ -1,276 +1,246 @@
 #!/bin/bash
+set -x
 
-##############################################################################
-#  Name: exnos_ofs_post.sh
-#  Purpose: Post-processing ex-script for COMF SCHISM models.
+########################################
+# COMF SCHISM Post-Processing
 #
-#  Extracts raw SCHISM outputs from COMOUT tar archive (created by the
-#  model job's archive_outputs step), runs the Python combining script
-#  to create CO-OPS standard NetCDF products, and archives results.
+# Generates CO-OPS standard station timeseries NetCDF from staout files:
+#   {prefix}.t{cyc}z.{PDY}.stations.nowcast.nc
+#   {prefix}.t{cyc}z.{PDY}.stations.forecast.nc
 #
-#  Works for both standalone SCHISM (secofs) and UFS-Coastal (secofs_ufs).
+# Inputs (from COMOUT, produced by nowcast/forecast jobs):
+#   ${RUN}.${cycle}.restart_outputs/staout_{1..9}   (nowcast)
+#   ${RUN}.${cycle}.forecast_outputs/staout_{1..9}   (forecast)
 #
-#  Env vars required:
-#    RUNTYPE  — "nowcast" or "forecast"
-#    PREFIXNOS, cyc, PDY, FIXofs, COMOUT, DATA, USHnos
+# Uses schism_combine_outputs.py to convert staout text → NetCDF.
+########################################
+
+echo "============================================="
+echo "Starting COMF SCHISM post-processing"
+echo "  OFS:  ${OFS}"
+echo "  PDY:  ${PDY}"
+echo "  cyc:  ${cyc}"
+echo "  COMOUT: ${COMOUT}"
+echo "============================================="
+
+export err=0
+
+COMBINE_SCRIPT="${HOMEnos}/ush/nosofs/schism_combine_outputs.py"
+if [ ! -f "$COMBINE_SCRIPT" ]; then
+    echo "FATAL: schism_combine_outputs.py not found at $COMBINE_SCRIPT"
+    export err=1
+    exit $err
+fi
+
+# Station file for lat/lon extraction
+STA_IN="${FIXofs}/${PREFIXNOS}.station.in"
+if [ ! -f "$STA_IN" ]; then
+    STA_IN="${FIXofs}/${STA_OUT_CTL:-${PREFIXNOS}.station.in}"
+fi
+if [ ! -f "$STA_IN" ]; then
+    echo "FATAL: station.in not found"
+    export err=1
+    exit $err
+fi
+
+# Compute nowcast base time (cyc - LEN_NOWCAST hours)
+NC_HOUR=$(printf '%02d' $(( ${cyc#0} - ${LEN_NOWCAST:-6} )))
+# Handle day rollback if needed
+if [ ${NC_HOUR#0} -lt 0 ]; then
+    NC_HOUR=$(printf '%02d' $(( ${NC_HOUR#0} + 24 )))
+    # PDY would need adjustment too for cross-midnight — skip for now
+fi
+
+########################################
+# Process each phase (nowcast, forecast)
+########################################
+for phase in nowcast forecast; do
+
+    echo ""
+    echo "--- Processing $phase ---"
+
+    # Locate staout files
+    if [ "$phase" = "nowcast" ]; then
+        STAOUT_DIR="${COMOUT}/${RUN}.${cycle}.restart_outputs"
+        MODE_FLAG="n"
+        TIMESTART="${PDY}${NC_HOUR}"
+    else
+        STAOUT_DIR="${COMOUT}/${RUN}.${cycle}.forecast_outputs"
+        MODE_FLAG="f"
+        TIMESTART="${PDY}${cyc}"
+    fi
+
+    if [ ! -f "$STAOUT_DIR/staout_1" ]; then
+        echo "WARNING: $STAOUT_DIR/staout_1 not found, skipping $phase"
+        continue
+    fi
+
+    # Set up working directory
+    WORK_POST="$DATA/post_${phase}"
+    mkdir -p "$WORK_POST"
+
+    # Create control file
+    cat > "$WORK_POST/schism_standard_output.ctl" << EOF
+${PREFIXNOS}
+${cyc}
+${PDY}
+${MODE_FLAG}
+${TIMESTART}
+EOF
+
+    # Create station.lat.lon
+    awk 'NR>2 && NF>=3 {print NR-2, $2, $3}' "$STA_IN" \
+        > "$WORK_POST/${PREFIXNOS}.station.lat.lon"
+
+    # Symlink staout files
+    for f in staout_1 staout_2 staout_3 staout_4 staout_5 \
+             staout_6 staout_7 staout_8 staout_9; do
+        [ -f "$STAOUT_DIR/$f" ] && ln -sf "$STAOUT_DIR/$f" "$WORK_POST/$f"
+    done
+
+    # Run combine script
+    echo "Running schism_combine_outputs.py for $phase ..."
+    (cd "$WORK_POST" && LD_PRELOAD= python3 "$COMBINE_SCRIPT") >> $pgmout 2>&1
+    rc=$?
+
+    if [ $rc -ne 0 ]; then
+        echo "WARNING: schism_combine_outputs.py failed for $phase (rc=$rc)"
+        continue
+    fi
+
+    # Copy station NetCDF to COMOUT
+    STA_NC="$WORK_POST/${PREFIXNOS}.t${cyc}z.${PDY}.stations.${phase}.nc"
+    if [ -f "$STA_NC" ]; then
+        cp -p "$STA_NC" "${COMOUT}/"
+        echo "Created: $(basename $STA_NC)"
+    else
+        echo "WARNING: Expected station NetCDF not found: $STA_NC"
+    fi
+
+done
+
+########################################
+# Ensemble bias correction (2D barotropic only)
 #
-#  Called by: JNOS_OFS_POST (comf case)
-##############################################################################
+# If BAROTROPIC=true and ensemble member outputs exist, apply
+# anomaly-based bias correction using the 3D deterministic run:
+#
+#   WL_final(t) = WL_3d_det(t) + a_i * (WL_2d_member(t) - WL_2d_control(t))
+#
+# Requires:
+#   - 3D deterministic station NC (from the corresponding 3D OFS COMOUT)
+#   - 2D control (member_000) staout files
+#   - 2D perturbed member staout files
+########################################
+if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
 
-  seton='-xa'
-  setoff='+xa'
-  set $seton
+    BIAS_SCRIPT="${HOMEnos}/ush/python/nos_ofs/ensemble/ensemble_bias_correct.py"
+    # 3D deterministic OFS name (e.g., secofs_2d_ufs → secofs_ufs or secofs)
+    # Derive 3D OFS name: secofs_2d_ufs → secofs, stofs_2d_atl → stofs_3d_atl
+    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs//' | sed 's/_2d_/_3d_/')}
+    DET_COMOUT=${DET_COMOUT:-$(dirname $COMOUT)/${DET_OFS}.${PDY}}
 
-  fn_this_script="exnos_ofs_post.sh"
+    DET_NCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.nowcast.nc"
+    DET_FCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.forecast.nc"
 
-# Fallback if postmsg not provided by prod_util module
-  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+    ENS_DIR="${COMOUT}/ensemble/${cycle}"
+    CTL_NCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.restart_outputs/staout_1"
+    CTL_FCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.forecast_outputs/staout_1"
 
-  RUNTYPE=${RUNTYPE:-nowcast}
+    # Also check the deterministic (non-ensemble) staout locations as control
+    if [ ! -f "$CTL_NCAST" ]; then
+        CTL_NCAST="${COMOUT}/${RUN}.${cycle}.restart_outputs/staout_1"
+    fi
+    if [ ! -f "$CTL_FCAST" ]; then
+        CTL_FCAST="${COMOUT}/${RUN}.${cycle}.forecast_outputs/staout_1"
+    fi
 
-  msg="${fn_this_script} started (RUNTYPE=${RUNTYPE})"
-  echo "$msg"
-  postmsg "$msg"
+    if [ -f "$BIAS_SCRIPT" ] && [ -f "$DET_NCAST" ] && [ -f "$DET_FCAST" ] && \
+       [ -f "$CTL_NCAST" ] && [ -f "$CTL_FCAST" ]; then
 
-  echo "module list in ${fn_this_script}"
-  module list 2>&1 || true
-  echo; echo
+        echo ""
+        echo "============================================="
+        echo "Ensemble bias correction (2D → 3D anchored)"
+        echo "  3D det: $DET_OFS"
+        echo "  Control: member_000"
+        echo "============================================="
 
-# =========================================================================
-#  Setup
-# =========================================================================
+        COEFF_FILE="${COMOUT}/bias_coefficients.json"
 
-  mkdir -p $DATA
-  cd $DATA
+        # Step 1: Train coefficients (control vs 3D det)
+        echo "Training bias correction coefficients ..."
+        LD_PRELOAD= python3 "$BIAS_SCRIPT" train \
+            --ctl-ncast "$CTL_NCAST" \
+            --ctl-fcast "$CTL_FCAST" \
+            --det-ncast "$DET_NCAST" \
+            --det-fcast "$DET_FCAST" \
+            --station-in "$STA_IN" \
+            --nc-base "${PDY}${NC_HOUR}" \
+            --fc-base "${PDY}${cyc}" \
+            -o "$COEFF_FILE" >> $pgmout 2>&1
+        train_rc=$?
 
-  cycle=t${cyc}z
+        if [ $train_rc -ne 0 ] || [ ! -f "$COEFF_FILE" ]; then
+            echo "WARNING: Bias correction training failed (rc=$train_rc), skipping"
+        else
+            echo "Coefficients saved: $COEFF_FILE"
 
-  echo "========================================="
-  echo "=== COMF SCHISM POST-PROCESSING ==="
-  echo "========================================="
-  echo "  OFS:       ${OFS:-not set}"
-  echo "  PREFIXNOS: ${PREFIXNOS:-not set}"
-  echo "  RUNTYPE:   ${RUNTYPE}"
-  echo "  PDY:       ${PDY:-not set}"
-  echo "  cyc:       ${cyc:-not set}"
-  echo "  COMOUT:    ${COMOUT:-not set}"
-  echo "  FIXofs:    ${FIXofs:-not set}"
-  echo "========================================="
+            # Step 2: Apply correction to each perturbed member
+            for member_dir in ${ENS_DIR}/member_*; do
+                [ ! -d "$member_dir" ] && continue
+                MEMBER_ID=$(basename "$member_dir" | sed 's/member_//')
 
-# =========================================================================
-#  Step 1: Recover time variables from COMOUT (written by prep job)
-# =========================================================================
+                # Skip control member (anomaly = 0, result = 3D det)
+                [ "$MEMBER_ID" = "000" ] && continue
 
-  if [ -s "$COMOUT/time_hotstart.${cycle}" ]; then
-      read time_hotstart < "$COMOUT/time_hotstart.${cycle}"
-      export time_hotstart
-      echo "  time_hotstart: $time_hotstart"
-  else
-      echo "WARNING: time_hotstart not found in COMOUT"
-  fi
+                MEM_NCAST="$member_dir/${RUN}.${cycle}.restart_outputs/staout_1"
+                MEM_FCAST="$member_dir/${RUN}.${cycle}.forecast_outputs/staout_1"
 
-  if [ -s "$COMOUT/time_nowcastend.${cycle}" ]; then
-      read time_nowcastend < "$COMOUT/time_nowcastend.${cycle}"
-      export time_nowcastend
-      echo "  time_nowcastend: $time_nowcastend"
-  fi
+                # Also check flat layout
+                [ ! -f "$MEM_NCAST" ] && MEM_NCAST="$member_dir/staout_1_nowcast"
+                [ ! -f "$MEM_FCAST" ] && MEM_FCAST="$member_dir/staout_1_forecast"
 
-  if [ -s "$COMOUT/time_forecastend.${cycle}" ]; then
-      read time_forecastend < "$COMOUT/time_forecastend.${cycle}"
-      export time_forecastend
-      echo "  time_forecastend: $time_forecastend"
-  fi
+                if [ ! -f "$MEM_NCAST" ] || [ ! -f "$MEM_FCAST" ]; then
+                    echo "  Member $MEMBER_ID: staout files not found, skipping"
+                    continue
+                fi
 
-# =========================================================================
-#  Step 2: Extract raw SCHISM outputs from COMOUT tar
-# =========================================================================
+                CORR_OUT="$member_dir/corrected_wl.csv"
+                echo "  Correcting member $MEMBER_ID ..."
+                LD_PRELOAD= python3 "$BIAS_SCRIPT" apply \
+                    --coefficients "$COEFF_FILE" \
+                    --det-ncast "$DET_NCAST" \
+                    --det-fcast "$DET_FCAST" \
+                    --ctl-ncast "$CTL_NCAST" \
+                    --ctl-fcast "$CTL_FCAST" \
+                    --member-ncast "$MEM_NCAST" \
+                    --member-fcast "$MEM_FCAST" \
+                    --station-in "$STA_IN" \
+                    --nc-base "${PDY}${NC_HOUR}" \
+                    --fc-base "${PDY}${cyc}" \
+                    -o "$CORR_OUT" >> $pgmout 2>&1
 
-  RAW_TAR="${COMOUT}/${RUN}.${cycle}.raw_outputs.${RUNTYPE}.tar"
+                if [ $? -eq 0 ] && [ -f "$CORR_OUT" ]; then
+                    echo "  Member $MEMBER_ID: corrected → $(basename $CORR_OUT)"
+                else
+                    echo "  Member $MEMBER_ID: correction failed"
+                fi
+            done
+        fi
+    else
+        echo ""
+        echo "Skipping ensemble bias correction (missing inputs):"
+        [ ! -f "$BIAS_SCRIPT" ] && echo "  - bias correction script not found"
+        [ ! -f "$DET_NCAST" ] && echo "  - 3D det nowcast not found: $DET_NCAST"
+        [ ! -f "$DET_FCAST" ] && echo "  - 3D det forecast not found: $DET_FCAST"
+        [ ! -f "$CTL_NCAST" ] && echo "  - 2D control nowcast not found: $CTL_NCAST"
+        [ ! -f "$CTL_FCAST" ] && echo "  - 2D control forecast not found: $CTL_FCAST"
+    fi
+fi
 
-  if [ ! -s "$RAW_TAR" ]; then
-      msg="FATAL: Raw output tar not found: $RAW_TAR"
-      echo "$msg"
-      postmsg "$msg"
-      export err=1; err_chk
-  fi
+echo ""
+echo "============================================="
+echo "COMF SCHISM post-processing completed"
+echo "============================================="
 
-  mkdir -p $DATA/outputs
-  cd $DATA/outputs
-
-  echo "Extracting raw SCHISM outputs from $RAW_TAR"
-  tar xf "$RAW_TAR"
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: Failed to extract $RAW_TAR"
-      echo "$msg"; postmsg "$msg"
-      err_chk
-  fi
-
-  # Verify key files exist.
-  # For UFS-Coastal: if distributed schout files are present but out2d is missing,
-  # the combine step in the model job may have failed. Try combining here as fallback.
-  if [ ! -s "out2d_1.nc" ]; then
-      if ls schout_*_*.nc >/dev/null 2>&1; then
-          echo "out2d_1.nc not found but schout files present — running distributed combiner..."
-          python3 $USHnos/nosofs/schism_combine_distributed.py "$(pwd)" "$DATA" || true
-      fi
-  fi
-  if [ ! -s "out2d_1.nc" ]; then
-      msg="FATAL: out2d_1.nc not found after extraction (check if schout combine ran)"
-      echo "$msg"; postmsg "$msg"
-      export err=1; err_chk
-  fi
-  echo "  Extracted: $(ls out2d_*.nc 2>/dev/null | wc -l) out2d files"
-  echo "  Extracted: $(ls staout_* 2>/dev/null | wc -l) staout files"
-
-# =========================================================================
-#  Step 3: Copy FIX files needed by the Python combiner
-# =========================================================================
-
-  for fixfile in ${PREFIXNOS}.nv.nc ${PREFIXNOS}.hgrid.gr3 \
-                 ${PREFIXNOS}.station.lat.lon ${PREFIXNOS}.sigma.dat; do
-      if [ -s "$FIXofs/$fixfile" ]; then
-          cp -p "$FIXofs/$fixfile" $DATA/outputs/
-          echo "  Copied FIX file: $fixfile"
-      else
-          msg="FATAL: Required FIX file not found: $FIXofs/$fixfile"
-          echo "$msg"; postmsg "$msg"
-          export err=1; err_chk
-      fi
-  done
-
-# =========================================================================
-#  Step 4: Create control file for Python combiner
-# =========================================================================
-
-  cd $DATA/outputs
-
-  # Determine mode letter and timestart
-  if [ "$RUNTYPE" = "nowcast" ]; then
-      mode_letter="n"
-      # Timestart for nowcast: time_hotstart (YYYYMMDDHH)
-      timestart="${time_hotstart:-${PDY}${cyc}}"
-  else
-      mode_letter="f"
-      # Timestart for forecast: time_nowcastend (YYYYMMDDHH)
-      timestart="${time_nowcastend:-${PDY}${cyc}}"
-  fi
-
-  rm -f schism_standard_output.ctl
-  echo "${PREFIXNOS}"   >> schism_standard_output.ctl
-  echo "${cyc}"          >> schism_standard_output.ctl
-  echo "${PDY}"          >> schism_standard_output.ctl
-  echo "${mode_letter}"  >> schism_standard_output.ctl
-  echo "${timestart}"    >> schism_standard_output.ctl
-
-  echo "  Control file created:"
-  cat schism_standard_output.ctl
-
-# =========================================================================
-#  Step 5: Run Python combiner
-# =========================================================================
-
-  echo ""
-  echo "Running schism_combine_outputs.py..."
-
-  python3 $USHnos/nosofs/schism_combine_outputs.py
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: schism_combine_outputs.py failed (rc=$err)"
-      echo "$msg"; postmsg "$msg"
-      err_chk
-  fi
-
-# =========================================================================
-#  Step 6: Archive products to COMOUT
-# =========================================================================
-
-  echo ""
-  echo "Archiving post-processing products to COMOUT..."
-
-  # Field files (per-timestep)
-  field_count=0
-  for f in ${PREFIXNOS}.${cycle}.${PDY}.fields.${mode_letter}*.nc; do
-      if [ -s "$f" ]; then
-          mv "$f" ${COMOUT}/
-          field_count=$((field_count + 1))
-      fi
-  done
-  echo "  Archived $field_count field files"
-
-  # Station timeseries file
-  if [ "$RUNTYPE" = "nowcast" ]; then
-      sta_file="${PREFIXNOS}.${cycle}.${PDY}.stations.nowcast.nc"
-  else
-      sta_file="${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc"
-  fi
-  # Handle both naming conventions (t{cyc}z and plain cycle)
-  for pattern in "${PREFIXNOS}.t${cyc}z.${PDY}.stations.*.nc" \
-                 "${PREFIXNOS}.${cycle}.${PDY}.stations.*.nc"; do
-      for f in $pattern; do
-          if [ -s "$f" ]; then
-              mv "$f" ${COMOUT}/
-              echo "  Archived station file: $f"
-          fi
-      done
-  done
-
-  # Renamed raw files (nowcast only: out2d_1.nowcast.nc, etc.)
-  for f in ${PREFIXNOS}.t${cyc}z.${PDY}.out2d_*.nc \
-           ${PREFIXNOS}.t${cyc}z.${PDY}.zCoordinates_*.nc \
-           ${PREFIXNOS}.t${cyc}z.${PDY}.temperature_*.nc \
-           ${PREFIXNOS}.t${cyc}z.${PDY}.salinity_*.nc \
-           ${PREFIXNOS}.t${cyc}z.${PDY}.horizontalVelX_*.nc \
-           ${PREFIXNOS}.t${cyc}z.${PDY}.horizontalVelY_*.nc; do
-      if [ -s "$f" ]; then
-          mv "$f" ${COMOUT}/
-      fi
-  done
-
-  # Renamed staout files
-  for f in ${PREFIXNOS}.t${cyc}z.${PDY}.*.staout_*; do
-      if [ -s "$f" ]; then
-          mv "$f" ${COMOUT}/
-      fi
-  done
-
-  # Model log (mirror.out → named log)
-  if [ -s "mirror.out" ]; then
-      if [ "$RUNTYPE" = "nowcast" ]; then
-          log_name="${PREFIXNOS}.${cycle}.${PDY}.nowcast.log"
-      else
-          log_name="${PREFIXNOS}.${cycle}.${PDY}.forecast.log"
-      fi
-      cp -p mirror.out ${COMOUT}/${log_name}
-      echo "  Archived model log: ${log_name}"
-  fi
-
-# =========================================================================
-#  Step 7: DBN alerts (if enabled)
-# =========================================================================
-
-  if [ "${SENDDBN:-NO}" = "YES" ]; then
-      echo "Sending DBN alerts..."
-      DBN_ALERT_TYPE_NETCDF=${DBN_ALERT_TYPE_NETCDF:-NOS_OFS_NETCDF}
-      for f in ${COMOUT}/${PREFIXNOS}.t${cyc}z.${PDY}.fields.${mode_letter}*.nc; do
-          [ -s "$f" ] && $DBNROOT/bin/dbn_alert MODEL $DBN_ALERT_TYPE_NETCDF $job $f
-      done
-      for f in ${COMOUT}/${PREFIXNOS}.t${cyc}z.${PDY}.stations.*.nc; do
-          [ -s "$f" ] && $DBNROOT/bin/dbn_alert MODEL $DBN_ALERT_TYPE_NETCDF $job $f
-      done
-  fi
-
-# =========================================================================
-#  Done
-# =========================================================================
-
-  echo ""
-  echo "POST_${RUNTYPE^^} DONE 100" >> ${cormslogfile:-/dev/null} 2>/dev/null || true
-
-  msg="Finished ${fn_this_script} (${RUNTYPE}) SUCCESSFULLY"
-  postmsg "$msg"
-
-  echo
-  echo "$msg"
-  echo "Finished at $(date)"
-  echo
+exit $err

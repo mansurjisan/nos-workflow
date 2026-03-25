@@ -11,8 +11,9 @@ PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
 
 # Working directory
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/secofs_ufs
+export OFS=${OFS:-secofs_ufs}
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
 cd ${WORKDIR}
 
@@ -44,8 +45,9 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export OFS=secofs_ufs
-export cyc=00
+export OFS=${OFS:-secofs_ufs}
+export cyc=${CYC:-00}
+export PDY=${PDY:-$(date +%Y%m%d)}
 export job=secofs_ufs_fc_00_$envir
 export platform=ptmp
 
@@ -77,7 +79,7 @@ export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 
 # UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-1199
 # 10 nodes x 120 mpiprocs = 1200 tasks
-export TOTAL_TASKS=1200
+export TOTAL_TASKS=${TOTAL_TASKS:-1200}
 
 ################################################
 # CALL executable job script here

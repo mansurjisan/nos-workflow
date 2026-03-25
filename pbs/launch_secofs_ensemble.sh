@@ -33,6 +33,8 @@
 #   PDY=20260212 ./launch_secofs_ensemble.sh 00 3        # Explicit PDY
 #   ./launch_secofs_ensemble.sh 00 3 --pdy 20260212      # Explicit PDY (alt)
 #   ./launch_secofs_ensemble.sh 00 3 --skip-prep         # Skip prep, submit members only
+#   ./launch_secofs_ensemble.sh 00 --ufs                   # UFS-Coastal (secofs_ufs) ensemble
+#   ./launch_secofs_ensemble.sh 00 --ufs --gefs            # UFS-Coastal GEFS ensemble
 #   ./launch_secofs_ensemble.sh 00 --det-only             # Deterministic only (prep→nowcast→forecast)
 #   ./launch_secofs_ensemble.sh 00 --det-only --pdy 20260216
 #
@@ -63,6 +65,7 @@ SKIP_PREP=false
 ATMOS_ENSEMBLE=false
 GEFS_ENSEMBLE=false
 DET_ONLY=false
+UFS_MODE=false
 
 # Check for flags
 for arg in "$@"; do
@@ -71,6 +74,7 @@ for arg in "$@"; do
         --skip-prep)         SKIP_PREP=true ;;
         --atmos-ensemble)    ATMOS_ENSEMBLE=true ;;
         --gefs)              GEFS_ENSEMBLE=true; ATMOS_ENSEMBLE=true ;;
+        --ufs)               UFS_MODE=true; ATMOS_ENSEMBLE=true ;;
         --det-only)          DET_ONLY=true ;;
         --pdy)               _NEXT_IS_PDY=true ;;
         *)
@@ -83,9 +87,21 @@ for arg in "$@"; do
 done
 unset _NEXT_IS_PDY
 
-# GEFS defaults: 6 members for SECOFS (4 GEFS + 1 RRFS + 1 control)
+# UFS mode implies GEFS ensemble by default
+if [ "${UFS_MODE}" = true ]; then
+    GEFS_ENSEMBLE=true
+    ATMOS_ENSEMBLE=true
+fi
+
+# OFS: secofs_ufs for UFS-Coastal, secofs for standalone
+OFS=secofs
+if [ "${UFS_MODE}" = true ]; then
+    OFS=secofs_ufs
+fi
+
+# GEFS defaults: 7 members for SECOFS (5 GEFS + 1 RRFS + 1 control)
 if [ "${GEFS_ENSEMBLE}" = true ] && [ "${_USER_SET_MEMBERS}" = false ]; then
-    N_MEMBERS=6
+    N_MEMBERS=7
 fi
 unset _USER_SET_MEMBERS
 
@@ -100,12 +116,16 @@ echo " SECOFS Ensemble Launcher"
 echo "=============================================="
 echo " PDY:      ${PDY}"
 echo " Cycle:    ${CYC}"
+echo " OFS:      ${OFS}"
 if [ "${DET_ONLY}" = true ]; then
-echo " Mode:      DETERMINISTIC ONLY (prep→nowcast→forecast)"
+echo " Mode:      DETERMINISTIC ONLY (prep->nowcast->forecast)"
 else
 echo " Members:  ${N_MEMBERS} (1 control + $((N_MEMBERS - 1)) perturbed)"
 echo " Det run:  ${WITH_DET}"
 echo " Atmos ens: ${ATMOS_ENSEMBLE}"
+if [ "${UFS_MODE}" = true ]; then
+echo " UFS mode:  true (DATM+SCHISM coupled, per-member DATM forcing)"
+fi
 if [ "${GEFS_ENSEMBLE}" = true ]; then
 echo " GEFS ens:  true (0.25 deg pgrb2sp25, members gep01-gep$(printf '%02d' $((N_MEMBERS - 1))))"
 fi
@@ -115,7 +135,13 @@ echo " PBS dir:  ${PBS_DIR}"
 echo "=============================================="
 
 # ---- Validate PBS scripts exist --------------------------------------
-PREP_PBS="${PBS_DIR}/jnos_secofs_prep_${CYC}.pbs"
+# UFS mode uses UFS-specific prep scripts but the SAME ensemble scripts
+# PBS scripts use _00 naming; cycle is passed via -v CYC=
+if [ "${UFS_MODE}" = true ]; then
+    PREP_PBS="${PBS_DIR}/jnos_secofs_ufs_prep_00.pbs"
+else
+    PREP_PBS="${PBS_DIR}/jnos_secofs_prep_${CYC}.pbs"
+fi
 MEMBER_PBS="${PBS_DIR}/jnos_secofs_ensemble_member.pbs"
 POST_PBS="${PBS_DIR}/jnos_secofs_ensemble_post.pbs"
 ATMOS_PREP_PBS="${PBS_DIR}/jnos_secofs_ensemble_atmos_prep.pbs"
@@ -152,7 +178,7 @@ if [ "${SKIP_PREP}" = true ]; then
 else
     echo ""
     echo ">>> Submitting prep job..."
-    PREP_JOBID=$(qsub -v "PDY=${PDY}" "${PREP_PBS}")
+    PREP_JOBID=$(qsub -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" "${PREP_PBS}")
     PREP_JOBID_SHORT=${PREP_JOBID%%.*}
     echo "    Prep job: ${PREP_JOBID}"
 fi
@@ -162,8 +188,13 @@ if [ "${DET_ONLY}" = true ]; then
     echo ""
     echo ">>> Deterministic-only mode: submitting nowcast + forecast..."
 
-    NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
-    FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
+    if [ "${UFS_MODE}" = true ]; then
+        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_00.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_00.pbs"
+    else
+        NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
+    fi
 
     if [ ! -f "${NCST_PBS}" ] || [ ! -f "${FCST_PBS}" ]; then
         echo "ERROR: Deterministic PBS scripts not found:" >&2
@@ -173,18 +204,36 @@ if [ "${DET_ONLY}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_SHORT=${NCST_JOBID%%.*}
     echo "    Nowcast:  ${NCST_JOBID}"
 
     FCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         -W depend=afterok:${NCST_SHORT} \
         "${FCST_PBS}")
     FCST_SHORT=${FCST_JOBID%%.*}
     echo "    Forecast: ${FCST_JOBID}"
+
+    # Submit post-processing (depends on forecast completing)
+    POST_SHORT=""
+    if [ "${UFS_MODE}" = true ]; then
+        POST_PBS="${PBS_DIR}/jnos_secofs_ufs_post_00.pbs"
+    else
+        POST_PBS="${PBS_DIR}/jnos_secofs_post_00.pbs"
+    fi
+    if [ -f "${POST_PBS}" ]; then
+        POST_JOBID=$(qsub \
+            -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
+            -W depend=afterok:${FCST_SHORT} \
+            "${POST_PBS}")
+        POST_SHORT=${POST_JOBID%%.*}
+        echo "    Post:     ${POST_JOBID}"
+    else
+        echo "    Post:     (skipped — ${POST_PBS} not found)"
+    fi
 
     # Summary
     echo ""
@@ -194,11 +243,14 @@ if [ "${DET_ONLY}" = true ]; then
     echo ""
     echo " Dependency chain:"
     echo "   prep (${PREP_JOBID_SHORT:-skipped})"
-    echo "     └─> nowcast (${NCST_SHORT})"
-    echo "           └─> forecast (${FCST_SHORT})"
+    echo "     |-> nowcast (${NCST_SHORT})"
+    echo "           |-> forecast (${FCST_SHORT})"
+    if [ -n "${POST_SHORT}" ]; then
+    echo "                 |-> post (${POST_SHORT})"
+    fi
     echo ""
     echo " Monitor with:  qstat -u $LOGNAME"
-    echo " Cancel all:    qdel ${PREP_JOBID_SHORT:-} ${NCST_SHORT} ${FCST_SHORT}"
+    echo " Cancel all:    qdel ${PREP_JOBID_SHORT:-} ${NCST_SHORT} ${FCST_SHORT} ${POST_SHORT}"
     echo ""
     exit 0
 fi
@@ -211,16 +263,16 @@ if [ "${ATMOS_ENSEMBLE}" = true ]; then
         echo ">>> Submitting GEFS atmospheric ensemble prep job..."
         # Don't pass GEFS_MEMBERS — let the J-job read from YAML config.
         # YAML correctly distinguishes GEFS members from RRFS/other sources.
-        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true" \
-                          -N "secofs_gefs_prep_${CYC}" \
-                          -o "${RPTDIR}/secofs_gefs_prep_${CYC}.out" \
-                          -e "${RPTDIR}/secofs_gefs_prep_${CYC}.err")
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},GEFS_ENSEMBLE=true,OFS=${OFS}" \
+                          -N "${OFS}_gefs_prep_${CYC}" \
+                          -o "${RPTDIR}/${OFS}_gefs_prep_${CYC}.${PDY}.out" \
+                          -e "${RPTDIR}/${OFS}_gefs_prep_${CYC}.${PDY}.err")
     else
         echo ">>> Submitting atmospheric ensemble prep job..."
-        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY}" \
-                          -N "secofs_atmos_prep_${CYC}" \
-                          -o "${RPTDIR}/secofs_atmos_prep_${CYC}.out" \
-                          -e "${RPTDIR}/secofs_atmos_prep_${CYC}.err")
+        ATMOS_QSUB_ARGS=(-v "CYC=${CYC},PDY=${PDY},OFS=${OFS}" \
+                          -N "${OFS}_atmos_prep_${CYC}" \
+                          -o "${RPTDIR}/${OFS}_atmos_prep_${CYC}.${PDY}.out" \
+                          -e "${RPTDIR}/${OFS}_atmos_prep_${CYC}.${PDY}.err")
     fi
     if [ -n "${PREP_JOBID_SHORT}" ]; then
         ATMOS_QSUB_ARGS+=(-W "depend=afterok:${PREP_JOBID_SHORT}")
@@ -241,8 +293,13 @@ if [ "${WITH_DET}" = true ]; then
     echo ""
     echo ">>> Submitting deterministic nowcast (required for ensemble ihot=2)..."
 
-    NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
-    FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
+    if [ "${UFS_MODE}" = true ]; then
+        NCST_PBS="${PBS_DIR}/jnos_secofs_ufs_nowcast_00.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_ufs_forecast_00.pbs"
+    else
+        NCST_PBS="${PBS_DIR}/jnos_secofs_nowcast_${CYC}.pbs"
+        FCST_PBS="${PBS_DIR}/jnos_secofs_forecast_${CYC}.pbs"
+    fi
 
     if [ ! -f "${NCST_PBS}" ]; then
         echo "ERROR: Nowcast PBS script not found: ${NCST_PBS}" >&2
@@ -250,7 +307,7 @@ if [ "${WITH_DET}" = true ]; then
     fi
 
     NCST_JOBID=$(qsub \
-        -v "PDY=${PDY},cyc=${CYC}" \
+        -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
         ${PREP_JOBID_SHORT:+-W depend=afterok:${PREP_JOBID_SHORT}} \
         "${NCST_PBS}")
     NCST_JOBID_SHORT=${NCST_JOBID%%.*}
@@ -259,7 +316,7 @@ if [ "${WITH_DET}" = true ]; then
     # Submit forecast (depends on nowcast, runs in parallel with ensemble members)
     if [ -f "${FCST_PBS}" ]; then
         FCST_JOBID=$(qsub \
-            -v "PDY=${PDY},cyc=${CYC}" \
+            -v "PDY=${PDY},CYC=${CYC},OFS=${OFS}" \
             -W depend=afterok:${NCST_JOBID_SHORT} \
             "${FCST_PBS}")
         FCST_JOBID_SHORT=${FCST_JOBID%%.*}
@@ -299,16 +356,17 @@ fi
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
     # Base variables for every member
-    MEMBER_VARS="MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY}"
+    MEMBER_VARS="MEMBER_ID=${MID},CYC=${CYC},PDY=${PDY},OFS=${OFS}"
     # Pass GEFS_ENSEMBLE flag so J-job knows to stage GEFS sflux files
     if [ "${GEFS_ENSEMBLE}" = true ]; then
         GEFS_MEM_ID=$(printf '%02d' $i)
         MEMBER_VARS="${MEMBER_VARS},GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=${GEFS_MEM_ID}"
     fi
+    _PBSID_TAG=".${PDY}"  # PDY tag to distinguish runs on different dates
     QSUB_ARGS=(-v "${MEMBER_VARS}" \
-               -N "secofs_ens${MID}_${CYC}" \
-               -o "${RPTDIR}/secofs_ens${MID}_${CYC}.out" \
-               -e "${RPTDIR}/secofs_ens${MID}_${CYC}.err")
+               -N "${OFS}_ens${MID}_${CYC}" \
+               -o "${RPTDIR}/${OFS}_ens${MID}_${CYC}${_PBSID_TAG}.out" \
+               -e "${RPTDIR}/${OFS}_ens${MID}_${CYC}${_PBSID_TAG}.err")
     if [ -n "${MEMBER_DEP_STR}" ]; then
         QSUB_ARGS+=(-W "depend=${MEMBER_DEP_STR}")
     fi
@@ -333,8 +391,10 @@ for mjob in "${MEMBER_JOBIDS[@]}"; do
 done
 
 ENSPOST_JOBID=$(qsub \
-    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY}" \
-    -N "secofs_enspost_${CYC}" \
+    -v "N_MEMBERS=${N_MEMBERS},CYC=${CYC},PDY=${PDY},OFS=${OFS}" \
+    -N "${OFS}_enspost_${CYC}" \
+    -o "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.out" \
+    -e "${RPTDIR}/${OFS}_enspost_${CYC}.${PDY}.err" \
     -W depend=${DEP_STR} \
     "${POST_PBS}")
 echo "    Ensemble post: ${ENSPOST_JOBID}"

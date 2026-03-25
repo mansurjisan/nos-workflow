@@ -115,12 +115,19 @@ export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
 export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 ##############################################
+# FIX directory
+##############################################
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+
+##############################################
 # Build member directory list
 ##############################################
 MEMBER_DIRS=""
 for i in $(seq 0 $((N_MEMBERS - 1))); do
     MID=$(printf '%03d' $i)
-    MDIR="${COMOUT}/ensemble/member_${MID}"
+    # Check cycle-specific path first, fall back to legacy flat layout
+    MDIR="${COMOUT}/ensemble/${cycle}/member_${MID}"
+    [ ! -d "${MDIR}" ] && MDIR="${COMOUT}/ensemble/member_${MID}"
     if [ -d "${MDIR}" ]; then
         MEMBER_DIRS="${MEMBER_DIRS} ${MDIR}"
     else
@@ -137,13 +144,256 @@ echo "Found member directories:"
 echo "${MEMBER_DIRS}" | tr ' ' '\n'
 
 ########################################################
-# Run ensemble post-processing
+# Step 1: Per-member SCHISM output combining
+#
+# Same approach as nos_ofs_nowcast_forecast.sh inline combining:
+#   1. Copy FIX files to outputs directory
+#   2. Create schism_standard_output.ctl (5-line control file)
+#   3. Run python schism_combine_outputs.py
+#   4. Move products to member COMOUT
+#
+# Produces deterministic-format outputs per member:
+#   {PREFIXNOS}.t{cyc}z.{PDY}.fields.fNNN.nc
+#   {PREFIXNOS}.t{cyc}z.{PDY}.stations.forecast.nc
 ########################################################
-echo "=== Computing ensemble statistics ==="
+echo "=== Per-member SCHISM output combining ==="
 
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-STATS_DIR="${COMOUT}/ensemble/stats"
+# Determine forecast start time (= nowcast end)
+TIMESTART=${PDY}$(printf '%02d' "${cyc}")
+if [ -f "${COMOUT}/time_nowcastend.${cycle}" ]; then
+    read TIMESTART < "${COMOUT}/time_nowcastend.${cycle}"
+    echo "  Forecast start time from nowcast: ${TIMESTART}"
+fi
+
+COMBINE_SCRIPT="${USHnos}/nosofs/schism_combine_outputs.py"
+if [ ! -f "${COMBINE_SCRIPT}" ]; then
+    echo "WARNING: ${COMBINE_SCRIPT} not found — skipping per-member combining"
+else
+    for MDIR in ${MEMBER_DIRS}; do
+        MID=$(basename ${MDIR} | sed 's/member_//')
+        OUTPUTS_DIR="${MDIR}/outputs"
+
+        if [ ! -d "${OUTPUTS_DIR}" ]; then
+            echo "  Member ${MID}: no outputs/ directory, skipping"
+            continue
+        fi
+
+        # Skip if already combined (check both field and station files)
+        if ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 1>/dev/null 2>&1 || \
+           ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc 1>/dev/null 2>&1; then
+            echo "  Member ${MID}: already combined, skipping"
+            continue
+        fi
+
+        # Check for ANY SCHISM outputs (split out2d, combined schout, or raw staout)
+        if [ ! -f "${OUTPUTS_DIR}/out2d_1.nc" ] && \
+           [ ! -f "${OUTPUTS_DIR}/schout_1.nc" ] && \
+           [ ! -f "${OUTPUTS_DIR}/staout_1" ]; then
+            echo "  Member ${MID}: no out2d_1.nc, schout_1.nc, or staout_1, skipping"
+            continue
+        fi
+
+        echo "  Combining outputs for member ${MID}..."
+        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ]; then
+            echo "    Mode: field + station files (split format)"
+        elif [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
+            echo "    Mode: field + station files (combined schout format)"
+        else
+            echo "    Mode: station files only (no out2d_*.nc or schout_*.nc)"
+        fi
+        cd ${OUTPUTS_DIR}
+
+        # Remove stale sigma.dat from previous runs (wrong level count for 2D)
+        if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
+            rm -f ${PREFIXNOS}.sigma.dat secofs.sigma.dat 2>/dev/null
+        fi
+
+        # Step 1a: Copy FIX files to outputs dir
+        # station.lat.lon always needed; sigma.dat needed for 3D only
+        # nv.nc and hgrid.gr3 needed only for field files (out2d_*.nc present)
+        # Handle UFS-Coastal prefix variants: secofs_ufs grid files
+        # may be named secofs.* in FIXofs
+        # Skip sigma.dat for barotropic — the 3D sigma.dat has wrong level count
+        if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
+            _FIX_EXTS="station.lat.lon"
+        else
+            _FIX_EXTS="station.lat.lon sigma.dat"
+        fi
+        if [ -f "${OUTPUTS_DIR}/out2d_1.nc" ] || [ -f "${OUTPUTS_DIR}/schout_1.nc" ]; then
+            _FIX_EXTS="${_FIX_EXTS} nv.nc hgrid.gr3"
+            [ "${BAROTROPIC:-false}" != "true" ] && [ "${BAROTROPIC:-0}" != "1" ] && _FIX_EXTS="${_FIX_EXTS} sigma.dat"
+        fi
+        for _ext in ${_FIX_EXTS}; do
+            _target="${PREFIXNOS}.${_ext}"
+            if [ ! -f "${_target}" ]; then
+                if [ -f "${FIXofs}/${PREFIXNOS}.${_ext}" ]; then
+                    cp -p "${FIXofs}/${PREFIXNOS}.${_ext}" .
+                else
+                    _base=${PREFIXNOS%_ufs}
+                    if [ "${_base}" != "${PREFIXNOS}" ] && \
+                       [ -f "${FIXofs}/${_base}.${_ext}" ]; then
+                        cp -p "${FIXofs}/${_base}.${_ext}" "${_target}"
+                    fi
+                fi
+            fi
+        done
+
+        # Step 1b: Create 5-line control file
+        # (same as nos_ofs_nowcast_forecast.sh lines 1103-1108)
+        rm -f schism_standard_output.ctl
+        echo ${PREFIXNOS}  >> schism_standard_output.ctl
+        echo $(printf '%02d' "${cyc}")  >> schism_standard_output.ctl
+        echo ${PDY}         >> schism_standard_output.ctl
+        echo "f"            >> schism_standard_output.ctl
+        echo ${TIMESTART}   >> schism_standard_output.ctl
+
+        # Step 1c: Run combining script
+        python3 ${COMBINE_SCRIPT}
+        combine_err=$?
+
+        if [ $combine_err -ne 0 ]; then
+            echo "WARNING: Combining failed for member ${MID} (rc=${combine_err})"
+            cd ${DATA}
+            continue
+        fi
+
+        # Step 1d: Move products from outputs/ to member directory
+        mv ${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc ${MDIR}/ 2>/dev/null
+        mv ${PREFIXNOS}.${cycle}.${PDY}.stations.forecast.nc ${MDIR}/ 2>/dev/null
+        mv ${PREFIXNOS}.${cycle}.${PDY}.stations.nowcast.nc ${MDIR}/ 2>/dev/null
+
+        cd ${DATA}
+
+        N_FIELDS=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.fields.f*.nc 2>/dev/null | wc -l)
+        HAS_STA=$(ls ${MDIR}/${PREFIXNOS}.${cycle}.${PDY}.stations.*.nc 2>/dev/null | wc -l)
+        echo "  Member ${MID}: ${N_FIELDS} field files, ${HAS_STA} station file(s) created"
+    done
+fi
+
+########################################################
+# Step 1.5: Bias correction (2D barotropic only)
+#
+# Anchors 2D ensemble anomalies to 3D deterministic:
+#   WL_final(t) = WL_3d_det(t) + a_i * (WL_2d_member(t) - WL_2d_control(t))
+#
+# Requires: 3D det station NC for same cycle, 2D control staout
+########################################################
+if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
+
+    BIAS_SCRIPT="${HOMEnos}/ush/python/nos_ofs/ensemble/ensemble_bias_correct.py"
+
+    # 3D deterministic OFS paths
+    # Derive 3D OFS name: secofs_2d_ufs → secofs, stofs_2d_atl → stofs_3d_atl
+    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs//' | sed 's/_2d_/_3d_/')}
+    DET_COMOUT=${DET_COMOUT:-$(dirname $COMOUT)/${DET_OFS}.${PDY}}
+    DET_NCAST="${DET_COMOUT}/${DET_OFS}.${cycle}.${PDY}.stations.nowcast.nc"
+    DET_FCAST="${DET_COMOUT}/${DET_OFS}.${cycle}.${PDY}.stations.forecast.nc"
+
+    # Station file
+    STA_IN="${FIXofs}/${PREFIXNOS}.station.in"
+    [ ! -f "$STA_IN" ] && STA_IN="${FIXofs}/${STA_OUT_CTL:-${PREFIXNOS}.station.in}"
+
+    # Control member (000) staout files
+    CTL_DIR=""
+    for _cdir in ${MEMBER_DIRS}; do
+        if echo "$_cdir" | grep -q "member_000"; then
+            CTL_DIR="$_cdir"
+            break
+        fi
+    done
+    CTL_NCAST="${CTL_DIR}/outputs/staout_1"
+    CTL_FCAST="${CTL_DIR}/outputs/staout_1"
+
+    # Also check deterministic (non-ensemble) staout locations
+    if [ ! -f "$CTL_NCAST" ]; then
+        CTL_NCAST="${COMOUT}/${RUN}.${cycle}.restart_outputs/staout_1"
+    fi
+    if [ ! -f "$CTL_FCAST" ]; then
+        CTL_FCAST="${COMOUT}/${RUN}.${cycle}.forecast_outputs/staout_1"
+    fi
+
+    # Compute nowcast base time
+    NC_HOUR=$(printf '%02d' $(( ${cyc#0} - ${LEN_NOWCAST:-6} )))
+    [ ${NC_HOUR#0} -lt 0 ] && NC_HOUR=$(printf '%02d' $(( ${NC_HOUR#0} + 24 )))
+
+    if [ -f "$BIAS_SCRIPT" ] && [ -f "$DET_NCAST" ] && [ -f "$DET_FCAST" ] && \
+       [ -f "$CTL_NCAST" ] && [ -f "$CTL_FCAST" ] && [ -f "$STA_IN" ]; then
+
+        echo "=== Ensemble bias correction (2D → 3D anchored) ==="
+        echo "  3D det: $DET_OFS ($DET_COMOUT)"
+        echo "  Control: $CTL_DIR"
+
+        COEFF_FILE="${COMOUT}/ensemble/${cycle}/bias_coefficients.json"
+        mkdir -p "$(dirname $COEFF_FILE)"
+
+        # Train: control vs 3D det
+        echo "  Training bias correction coefficients ..."
+        LD_PRELOAD= python3 "$BIAS_SCRIPT" train \
+            --ctl-ncast "$CTL_NCAST" \
+            --ctl-fcast "$CTL_FCAST" \
+            --det-ncast "$DET_NCAST" \
+            --det-fcast "$DET_FCAST" \
+            --station-in "$STA_IN" \
+            --nc-base "${PDY}${NC_HOUR}" \
+            --fc-base "${PDY}${cyc}" \
+            -o "$COEFF_FILE" >> $pgmout 2>&1
+        train_rc=$?
+
+        if [ $train_rc -ne 0 ] || [ ! -f "$COEFF_FILE" ]; then
+            echo "  WARNING: Bias correction training failed (rc=$train_rc)"
+        else
+            echo "  Coefficients: $COEFF_FILE"
+
+            # Apply: correct each perturbed member
+            for MDIR in ${MEMBER_DIRS}; do
+                MID=$(basename ${MDIR} | sed 's/member_//')
+                [ "$MID" = "000" ] && continue  # skip control
+
+                MEM_FCAST="${MDIR}/outputs/staout_1"
+                if [ ! -f "$MEM_FCAST" ]; then
+                    echo "  Member $MID: staout_1 not found, skipping"
+                    continue
+                fi
+
+                CORR_OUT="${MDIR}/corrected_wl.csv"
+                echo "  Correcting member $MID ..."
+                LD_PRELOAD= python3 "$BIAS_SCRIPT" apply \
+                    --coefficients "$COEFF_FILE" \
+                    --det-ncast "$DET_NCAST" \
+                    --det-fcast "$DET_FCAST" \
+                    --ctl-ncast "$CTL_NCAST" \
+                    --ctl-fcast "$CTL_FCAST" \
+                    --member-ncast "$CTL_NCAST" \
+                    --member-fcast "$MEM_FCAST" \
+                    --station-in "$STA_IN" \
+                    --nc-base "${PDY}${NC_HOUR}" \
+                    --fc-base "${PDY}${cyc}" \
+                    -o "$CORR_OUT" >> $pgmout 2>&1
+
+                [ $? -eq 0 ] && [ -f "$CORR_OUT" ] && \
+                    echo "  Member $MID: → $(basename $CORR_OUT)" || \
+                    echo "  Member $MID: correction failed"
+            done
+        fi
+    else
+        echo "=== Skipping bias correction (missing inputs) ==="
+        [ ! -f "$BIAS_SCRIPT" ] && echo "  - Script not found: $BIAS_SCRIPT"
+        [ ! -f "$DET_NCAST" ] && echo "  - 3D det nowcast: $DET_NCAST"
+        [ ! -f "$DET_FCAST" ] && echo "  - 3D det forecast: $DET_FCAST"
+        [ ! -f "$CTL_NCAST" ] && echo "  - 2D control nowcast: $CTL_NCAST"
+        [ ! -f "$CTL_FCAST" ] && echo "  - 2D control forecast: $CTL_FCAST"
+        [ ! -f "$STA_IN" ] && echo "  - station.in: $STA_IN"
+    fi
+fi
+
+########################################################
+# Step 2: Ensemble statistics (mean, spread, percentiles)
+########################################################
+echo "=== Computing ensemble statistics ==="
+
+STATS_DIR="${COMOUT}/ensemble/${cycle}/stats"
 
 # VARIABLES env var: space-separated list (e.g., "elevation temperature")
 # If not set, defaults to elevation, temperature, salinity
@@ -159,11 +409,14 @@ python3 -m nos_ofs.ensemble.ensemble_post \
 export err=$?
 
 if [ $err -ne 0 ]; then
-    echo "ERROR: Ensemble post-processing failed (exit code: ${err})" >&2
-    exit $err
+    echo "WARNING: Ensemble statistics failed (exit code: ${err})" >&2
+    echo "Per-member combined outputs may still be valid."
 fi
 
-echo "Ensemble statistics written to ${STATS_DIR}"
+echo "Ensemble post-processing complete"
+if [ -d "${STATS_DIR}" ]; then
+    echo "Statistics written to ${STATS_DIR}"
+fi
 
 ########################################################
 # Post-processing

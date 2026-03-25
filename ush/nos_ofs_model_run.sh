@@ -192,9 +192,9 @@ _stofs_stage_files() {
         cp -p "$FIXstofs3d/${RUN}_sflux_inputs.txt" "$DATA/sflux/sflux_inputs.txt"
 
     # RTOFS OBC time-history files
-    # Barotropic mode: only stage elev2D (SSH), skip T/S/velocity 3D OBC
+    # Barotropic mode: skip all OBC (tidal-only boundaries, no subtidal files)
     if [ "${BAROTROPIC:-false}" = "true" ]; then
-        local obc_pairs=("elev2dth.nc:elev2D.th.nc")
+        local obc_pairs=()
     else
         local obc_pairs=("elev2dth.nc:elev2D.th.nc" "tem3dth.nc:TEM_3D.th.nc" "sal3dth.nc:SAL_3D.th.nc" "uv3dth.nc:uv3D.th.nc")
     fi
@@ -707,10 +707,26 @@ _comf_stage_files() {
             sed -i "s/start_month_value/${sim_mm#0}/" ${DATA}/param.nml
             sed -i "s/start_day_value/${sim_dd#0}/" ${DATA}/param.nml
             sed -i "s/start_hour_value/${sim_hh}/" ${DATA}/param.nml
-            # Also handle case where start_hour already has a numeric value
+            # Also handle case where start values already have numeric values
+            sed -i "s/^\(\s*start_year\s*=\s*\)[0-9]*\(.*\)/\1${sim_yyyy}\2/" ${DATA}/param.nml
+            sed -i "s/^\(\s*start_month\s*=\s*\)[0-9]*\(.*\)/\1${sim_mm#0}\2/" ${DATA}/param.nml
+            sed -i "s/^\(\s*start_day\s*=\s*\)[0-9]*\(.*\)/\1${sim_dd#0}\2/" ${DATA}/param.nml
             sed -i "s/^\(\s*start_hour\s*=\s*\)[0-9]*\(.*\)/\1${sim_hh#0}\2/" ${DATA}/param.nml
             sed -i "s/ihot = [0-9]*/ihot = ${ihot_val}/" ${DATA}/param.nml
             echo "  Patched param.nml: rnday=${rnday}, start=${sim_yyyy}-${sim_mm}-${sim_dd} ${sim_hh}Z, ihot=${ihot_val}"
+        fi
+
+        # Patch datm_in nx_global/ny_global to match actual forcing grid
+        if [ -s "${DATA}/datm_in" ] && [ -s "${DATA}/${DATM_DIR:-INPUT}/datm_forcing.nc" ]; then
+            local _dims=$(ncdump -h "${DATA}/${DATM_DIR:-INPUT}/datm_forcing.nc" 2>/dev/null | \
+                grep -oP '(x|y|longitude|latitude)\s*=\s*\K[0-9]+' | head -2)
+            local _nx=$(echo $_dims | awk '{print $1}')
+            local _ny=$(echo $_dims | awk '{print $2}')
+            if [ -n "$_nx" ] && [ -n "$_ny" ]; then
+                sed -i "s/nx_global = [0-9]*/nx_global = ${_nx}/" ${DATA}/datm_in
+                sed -i "s/ny_global = [0-9]*/ny_global = ${_ny}/" ${DATA}/datm_in
+                echo "  Patched datm_in: nx_global=${_nx}, ny_global=${_ny}"
+            fi
         fi
 
         # SCHISM expects bare-name input files (hgrid.gr3, vgrid.in, etc.)
@@ -732,7 +748,7 @@ _comf_stage_files() {
 
             # Optional grid property files
             for bare in shapiro.gr3 diffmax.gr3 diffmin.gr3 watertype.gr3 \
-                        windrot_geo2proj.gr3 albedo.gr3 rough.gr3 \
+                        windrot_geo2proj.gr3 albedo.gr3 rough.gr3 drag.gr3 \
                         SAL_nudge.gr3 TEM_nudge.gr3 elev.ic hgrid.ll; do
                 if [ -s "${FIXofs}/${PREFIXNOS}.${bare}" ]; then
                     cp -p ${FIXofs}/${PREFIXNOS}.${bare} ${DATA}/${bare}
@@ -761,6 +777,27 @@ _comf_stage_files() {
             elif [ -s "${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in}" ]; then
                 cp -p ${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in} ${DATA}/bctides.in
                 echo "  WARNING: Using FIXofs bctides.in (prep-generated not found)"
+            fi
+
+            # Barotropic: convert bctides.in at point of use (strip 3D T/S)
+            # Uses --needs-conversion to check if already converted by prep
+            if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+                local _cvt="${FIXofs}/convert_bctides_2d.py"
+                [ ! -f "$_cvt" ] && _cvt="${HOMEnos:-}/fix/${OFS}/convert_bctides_2d.py"
+                if [ -f "$_cvt" ] && [ -s "${DATA}/bctides.in" ]; then
+                    python3 $_cvt --needs-conversion ${DATA}/bctides.in
+                    local _nc_rc=$?
+                    if [ $_nc_rc -eq 0 ]; then
+                        python3 $_cvt ${DATA}/bctides.in ${DATA}/bctides.in.2d
+                        mv ${DATA}/bctides.in.2d ${DATA}/bctides.in
+                        echo "  Converted bctides.in for barotropic (tidal only, 3 3 0 0)"
+                    elif [ $_nc_rc -eq 1 ]; then
+                        echo "  bctides.in already converted for barotropic (skipping)"
+                    else
+                        echo "FATAL: bctides.in --needs-conversion check failed (rc=$_nc_rc)" >&2
+                        return 1
+                    fi
+                fi
             fi
 
             # Hotstart/initial condition file
@@ -1003,6 +1040,106 @@ _comf_execute_ufs_coastal() {
         echo "WARNING: fd_ufs.yaml not found in ${DATA}/"
     fi
 
+    # ------------------------------------------------------------------
+    # Sync datm_in and ESMF mesh with actual forcing file dimensions.
+    # The datm_in template may have stale nx_global/ny_global values
+    # (e.g., raw GFS 0.25° grid) that don't match the actual forcing
+    # file (e.g., blended HRRR+GFS grid). Mismatched dimensions cause
+    # CDEPS to scramble the atmospheric forcing distribution.
+    # ------------------------------------------------------------------
+    local _forcing_file="${DATA}/${DATM_DIR}/datm_forcing.nc"
+    if [ -s "${_forcing_file}" ] && [ -s "${DATA}/datm_in" ]; then
+        local _fdims=$(python3 -c "
+from netCDF4 import Dataset
+ds = Dataset('${_forcing_file}', 'r')
+try:
+    print(len(ds.dimensions['x']), len(ds.dimensions['y']))
+except:
+    print(len(ds.dimensions['longitude']), len(ds.dimensions['latitude']))
+ds.close()
+" 2>/dev/null || echo "")
+
+        if [ -n "$_fdims" ]; then
+            local _fnx=$(echo $_fdims | awk '{print $1}')
+            local _fny=$(echo $_fdims | awk '{print $2}')
+            local _old_nx=$(grep -oP 'nx_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
+            local _old_ny=$(grep -oP 'ny_global\s*=\s*\K[0-9]+' ${DATA}/datm_in 2>/dev/null || echo "0")
+
+            if [ "${_old_nx}" != "${_fnx}" ] || [ "${_old_ny}" != "${_fny}" ]; then
+                echo "Patching datm_in: nx_global ${_old_nx}->${_fnx}, ny_global ${_old_ny}->${_fny}"
+            fi
+            sed -i "s/nx_global[[:space:]]*=.*/nx_global = ${_fnx}/" ${DATA}/datm_in
+            sed -i "s/ny_global[[:space:]]*=.*/ny_global = ${_fny}/" ${DATA}/datm_in
+
+            # Regenerate ESMF mesh from forcing file to guarantee consistency.
+            # This ensures mesh dimensions, elementMask, and coordinates all
+            # match the actual forcing data — no stale template meshes.
+            local _ftotal=$((_fnx * _fny))
+            echo "Generating ESMF mesh from forcing (${_fnx}x${_fny} = ${_ftotal} nodes)..."
+            python3 -c "
+from netCDF4 import Dataset
+import numpy as np
+
+ds = Dataset('${_forcing_file}', 'r')
+try:
+    lons = ds.variables['longitude'][:]
+    lats = ds.variables['latitude'][:]
+    if lons.ndim == 1:
+        lon2d, lat2d = np.meshgrid(lons, lats)
+    else:
+        lon2d, lat2d = lons, lats
+except:
+    lon2d = ds.variables['x'][:]
+    lat2d = ds.variables['y'][:]
+ds.close()
+
+ny, nx = lon2d.shape
+n_nodes = ny * nx
+n_elems = (ny - 1) * (nx - 1)
+
+out = Dataset('${DATA}/${DATM_DIR}/datm_esmf_mesh.nc', 'w')
+out.createDimension('nodeCount', n_nodes)
+out.createDimension('elementCount', n_elems)
+out.createDimension('maxNodePElement', 4)
+out.createDimension('coordDim', 2)
+
+nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
+nodeCoords.units = 'degrees'
+coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
+nodeCoords[:] = coords
+
+j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
+n0 = (j_idx * nx + i_idx + 1).ravel()
+conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
+
+elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
+elemConn.long_name = 'Node indices that define the element connectivity'
+elemConn.start_index = 1
+elemConn[:] = conn
+
+numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
+numElemConn[:] = 4
+
+elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
+elementMask[:] = np.ones(n_elems, dtype=np.int32)
+
+centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
+centerCoords.units = 'degrees'
+clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
+clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
+centerCoords[:] = np.column_stack([clon, clat])
+
+out.title = 'ESMF mesh generated from DATM forcing file'
+out.gridType = 'unstructured mesh'
+out.close()
+print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
+" 2>&1
+            if [ $? -ne 0 ]; then
+                echo "WARNING: ESMF mesh generation failed — using existing mesh" >&2
+            fi
+        fi
+    fi
+
     # Determine executable
     local UFS_EXEC=""
     if [ -x "${DATA}/fv3_coastalS.exe" ]; then
@@ -1071,36 +1208,67 @@ _comf_execute_ufs_coastal() {
         echo "WARNING: mirror.out not found — UFS-Coastal may not have completed properly"
     fi
 
-    # After nowcast: combine distributed hotstart files and archive for forecast
-    if [ "$phase" = "nowcast" ] && [ -d "${DATA}/outputs" ]; then
+    # After nowcast or forecast: combine distributed hotstart files and archive
+    # Nowcast hotstart → used by forecast in the same cycle
+    # Forecast hotstart → used by next cycle's nowcast
+    if ([ "$phase" = "nowcast" ] || [ "$phase" = "forecast" ]) && [ -d "${DATA}/outputs" ]; then
         echo "Combining distributed hotstart files..."
         cd ${DATA}/outputs
 
         # Calculate the hotstart timestep (total nowcast steps)
         local dt_val=$(grep -m1 '^\s*dt\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9.]//g')
-        local nhot_write_val=$(grep -m1 '^\s*nhot_write\s*=' ${DATA}/param.nml | sed 's/.*=\s*//;s/[^0-9]//g')
+        local nhot_write_val=$(grep -m1 'nhot_write' ${DATA}/param.nml | sed 's/!.*//;s/.*=//;s/[^0-9]//g')
         local nsteps=${nhot_write_val:-180}
-        echo "  Hotstart timestep: $nsteps (dt=${dt_val:-unknown})"
+        # Find the actual last hotstart step from distributed files
+        # Files are named: hotstart_RANK_STEP.nc (e.g., hotstart_000000_180.nc)
+        local _last_step=$(ls hotstart_000000_*.nc 2>/dev/null | sort -t_ -k3 -n | tail -1 | sed 's/.*_\([0-9]*\)\.nc/\1/')
+        nsteps=${_last_step:-$nsteps}
+        echo "  Hotstart timestep: $nsteps (nhot_write=${nhot_write_val:-unknown}, dt=${dt_val:-unknown})"
 
         # Run combine_hotstart7 executable
-        local COMBINE_EXE="${EXECnos:-}/schism_combine_hotstart7.exe"
-        if [ -x "$COMBINE_EXE" ]; then
+        # Search multiple locations: EXECnos, HOMEnos/exec, STOFS exec
+        local COMBINE_EXE=""
+        for _cand in \
+            "${EXECnos:-}/schism_combine_hotstart7.exe" \
+            "${HOMEnos:-}/exec/schism_combine_hotstart7.exe" \
+            "${EXECnos:-}/nos_ofs_combine_hotstart" \
+            "${EXECstofs3d:-}/stofs_3d_atl_combine_hotstart"; do
+            if [ -x "$_cand" ]; then
+                COMBINE_EXE="$_cand"
+                break
+            fi
+        done
+
+        if [ -n "$COMBINE_EXE" ]; then
+            echo "  Using combine executable: $COMBINE_EXE"
+            # Set LD_LIBRARY_PATH for hpc-stack NetCDF/HDF5 libs
+            # combine_hotstart7 links against /apps/prod/hpc-stack/intel-*/netcdf/4.7.4
+            # (serial hpc-stack build, no cray-mpich level)
+            for _lib in \
+                /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+                /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+                /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+                /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
+                [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
+            done
             $COMBINE_EXE -i $nsteps
             local combine_err=$?
             if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
                 echo "  Hotstart combined successfully: hotstart_it=${nsteps}.nc"
-                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
-                echo "  Archived to ${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
+                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${_rst_name}"
+                echo "  Archived to ${COMOUT}/${_rst_name}"
             else
                 echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
             fi
         else
-            echo "WARNING: schism_combine_hotstart7.exe not found at $COMBINE_EXE"
+            echo "WARNING: schism_combine_hotstart7.exe not found in EXECnos or HOMEnos/exec"
             # Fallback: check if a combined hotstart already exists
             local combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
             if [ -n "$combined" ] && [ -s "$combined" ]; then
-                cp -p "$combined" "${COMOUT}/${RST_OUT_NOWCAST:-${RUN}.${cycle}.${PDY}.rst.nowcast.nc}"
-                echo "  Found pre-combined hotstart: $combined, archived to COMOUT"
+                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+                cp -p "$combined" "${COMOUT}/${_rst_name}"
+                echo "  Found pre-combined hotstart: $combined, archived as ${_rst_name}"
             fi
         fi
         cd ${DATA}
@@ -1168,51 +1336,18 @@ _comf_archive_outputs() {
         fi
     fi
 
-    # Archive raw SCHISM outputs for separate post-processing job (JNOS_OFS_POST).
-    # Standalone SCHISM uses new I/O (out2d_*.nc, temperature_*.nc, etc.).
-    # UFS-Coastal SCHISM uses old I/O (schout_RRRRRR_N.nc per MPI rank).
-    # For UFS-Coastal, combine distributed files to new I/O format before tarring.
-    if [ "${OCEAN_MODEL,,}" = "schism" ] || [ "${OCEAN_MODEL,,}" = "selfe" ]; then
-        local raw_outputs_dir=""
-        if [ "$phase" = "nowcast" ]; then
-            if [ -d "$DATA/outputs_nowcast" ]; then
-                raw_outputs_dir="$DATA/outputs_nowcast"
-            elif [ -d "$DATA/outputs" ]; then
-                raw_outputs_dir="$DATA/outputs"
-            fi
-        else
-            [ -d "$DATA/outputs" ] && raw_outputs_dir="$DATA/outputs"
-        fi
-        if [ -n "$raw_outputs_dir" ]; then
-            # UFS-Coastal: combine distributed schout files to new I/O format
-            # so that the post-processing job can use them directly.
-            if [ "${USE_DATM:-false}" == "true" ] || [ "${USE_DATM:-0}" == "1" ]; then
-                if ls "$raw_outputs_dir"/schout_*_*.nc >/dev/null 2>&1 && \
-                   ! ls "$raw_outputs_dir"/out2d_*.nc >/dev/null 2>&1; then
-                    echo "UFS-Coastal: Combining distributed schout files to new I/O format..."
-                    python3 $USHnos/nosofs/schism_combine_distributed.py \
-                        "$raw_outputs_dir" "$DATA"
-                    local combine_rc=$?
-                    if [ $combine_rc -ne 0 ]; then
-                        echo "WARNING: schism_combine_distributed.py failed (rc=$combine_rc)"
-                        echo "Post-processing may not produce field products"
-                    else
-                        echo "Successfully combined distributed schout files"
-                    fi
-                fi
-            fi
-
-            local raw_tar="${COMOUT}/${RUN}.${cycle}.raw_outputs.${phase}.tar"
-            echo "Archiving raw SCHISM outputs from $raw_outputs_dir to $raw_tar"
-            cd "$raw_outputs_dir"
-            tar cf "$raw_tar" \
-                out2d_*.nc temperature_*.nc salinity_*.nc \
-                horizontalVelX_*.nc horizontalVelY_*.nc zCoordinates_*.nc \
-                staout_* mirror.out 2>/dev/null || true
-            echo "Archived raw SCHISM outputs to $raw_tar ($(du -sh "$raw_tar" 2>/dev/null | cut -f1))"
-            cd $DATA
-        else
-            echo "WARNING: No SCHISM outputs directory found, skipping raw output archive"
+    # Archive forecast staout files to COMOUT for post-processing
+    if [ "$phase" = "forecast" ]; then
+        local outputs_dir=""
+        [ -d "$DATA/outputs" ] && outputs_dir="$DATA/outputs"
+        if [ -n "$outputs_dir" ]; then
+            local fcast_staout_dir="${COMOUT}/${RUN}.${cycle}.forecast_outputs"
+            mkdir -p "$fcast_staout_dir"
+            for f in staout_1 staout_2 staout_3 staout_4 staout_5 \
+                     staout_6 staout_7 staout_8 staout_9; do
+                [ -f "$outputs_dir/$f" ] && cp -p "$outputs_dir/$f" "$fcast_staout_dir/"
+            done
+            echo "Archived forecast staout files to $fcast_staout_dir"
         fi
     fi
 }

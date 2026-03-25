@@ -11,12 +11,15 @@
 # ------------------------------------------------------------------
 # SECOFS Ensemble Atmospheric Prep PBS Job
 #
-# Creates sflux tar archives for extra atmospheric forcing sources
-# (e.g., NAM) needed by atmospheric ensemble members.  Runs between
+# Creates atmospheric forcing for ensemble members. Runs between
 # the regular prep job and ensemble member jobs.
+#
+# For standalone SECOFS: creates sflux tar archives
+# For UFS-Coastal (OFS=secofs_ufs): creates per-member DATM forcing
 #
 # Submit via launch_secofs_ensemble.sh --atmos-ensemble or manually:
 #   qsub -v CYC=00,PDY=20260213 jnos_secofs_ensemble_atmos_prep.pbs
+#   qsub -v CYC=00,PDY=20260213,OFS=secofs_ufs jnos_secofs_ensemble_atmos_prep.pbs
 # ------------------------------------------------------------------
 
 CYC=${CYC:-00}
@@ -24,15 +27,22 @@ CYC=${CYC:-00}
 # PDY: accept from qsub -v, fall back to today
 export PDY=${PDY:-$(date +%Y%m%d)}
 
-. /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/versions/run.ver
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+
+# OFS: accept from launcher (default: secofs)
+export OFS=${OFS:-secofs}
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS:-secofs}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 if [ ! -r $WORKDIR ]; then
   mkdir -p -m 755 $WORKDIR
 fi
 cd ${WORKDIR}
+
+# Save PACKAGEROOT before module loads (prod_envir overrides it)
+_SAVED_PACKAGEROOT=${PACKAGEROOT}
 
 module purge
 module load envvar/${envvars_ver}
@@ -60,22 +70,30 @@ module load wgrib2/${wgrib2_ver}
 
 module list
 
+# Restore PACKAGEROOT (prod_envir sets it to /lfs/h1/ops/prod/packages)
+PACKAGEROOT=${_SAVED_PACKAGEROOT}
+unset _SAVED_PACKAGEROOT
+
 # EXPORT list
 set +x
 export envir=dev
-export OFS=secofs
 export cyc=${CYC}
 export NET=nosofs
 export model=nosofs
-export job=secofs_atmos_prep_${CYC}_$envir
+export job=${OFS}_atmos_prep_${CYC}_$envir
 export platform=ptmp
+
+# UFS-Coastal DATM coupling (auto-detect from OFS name)
+if [[ "${OFS}" == *_ufs* ]]; then
+    export USE_DATM=${USE_DATM:-true}
+fi
 
 export KEEPDATA=YES
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT
 export COMPATH=/lfs/h1/ops/prod/com/nos
 export com_ver=v3.7
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
@@ -90,6 +108,8 @@ export COMINetss=/lfs/h1/ops/prod/com/petss/${petss_ver}
 export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+export COMINgefs=/lfs/h1/ops/prod/com/gefs/${gefs_ver:-v12.3}
+export COMINrrfs=/lfs/h1/ops/para/com/rrfs/${rrfs_ver:-v1.0}
 export COMIN=/lfs/h1/ops/prod/com
 
 ################################################
@@ -99,7 +119,8 @@ export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-export OFS_CONFIG=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/parm/systems/${OFS}.yaml
-export PYTHONPATH=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.v3.7.0/ush/python:${PYTHONPATH:-}
+export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nosofs.${nosofs_ver}/jobs/JNOS_OFS_ENSEMBLE_ATMOS_PREP
+${HOMEnos}/jobs/JNOS_OFS_ENSEMBLE_ATMOS_PREP

@@ -391,6 +391,26 @@ fi
 if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
   echo "The script nos_ofs_create_forcing_obc.sh starts at time: " `date `
   echo "Generating the open boundary forcing"
+  if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+      # Barotropic: skip all 3D OBC (T/S/velocity/subtidal SSH).
+      # elev2D.th.nc is NOT generated because the 2D converter uses
+      # tidal-only boundaries (iettype=3, ifltype=3). Using iettype=5
+      # (subtidal SSH) with ifltype=3 (tidal-only velocity) caused a
+      # domain-wide drawdown of ~1m/2d due to mass imbalance.
+      echo "  Barotropic mode: skipping 3D OBC (T/S/velocity/subtidal SSH)"
+
+      # NOTE: bctides.in conversion moved to final step at end of prep (line ~865)
+      # to avoid double-conversion corruption
+
+      # Create OBC tar (elev2D.th.nc is real if generated, empty placeholders for T/S)
+      touch ${DATA}/TEM_nu.nc ${DATA}/TEM_3D.th.nc ${DATA}/SAL_nu.nc \
+            ${DATA}/SAL_3D.th.nc ${DATA}/uv3D.th.nc
+      [ ! -f "${DATA}/elev2D.th.nc" ] && touch ${DATA}/elev2D.th.nc
+      tar -C ${DATA} -cvf ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.obc.tar \
+          TEM_nu.nc TEM_3D.th.nc SAL_nu.nc SAL_3D.th.nc elev2D.th.nc uv3D.th.nc 2>/dev/null || true
+      echo "  Created OBC tar (elev2D.th.nc: $($_elev2d_ok && echo 'from RTOFS' || echo 'placeholder'))"
+      export err=0
+  else
   export pgm=nos_ofs_create_forcing_obc.sh
   . prep_step
   $USHnos/nos_ofs_create_forcing_obc.sh
@@ -409,6 +429,9 @@ if [ "${OFS,,}" != "lsofs" -a "${OFS,,}" != "loofs" ]; then
     postmsg "$jlogfile" "$msg"
     postmsg "$nosjlogfile" "$msg"
   fi
+  fi  # end else (non-barotropic OBC)
+  # NOTE: bctides.in conversion for barotropic moved to final step at end of prep
+  # to avoid double-conversion corruption
 fi
 TS_NUDGING=${TS_NUDGING:-0}
 if [ $TS_NUDGING -eq 1 ]; then
@@ -765,6 +788,31 @@ cp ${NWM_SOURCE_SINK_FORE} ${COMOUT}/${NWM_SOURCE_SINK_FORE}
 fi
 
 cp -p $jlogfile $COMOUT
+
+# Final barotropic bctides conversion — must be LAST to prevent overwrites
+if [ "${BAROTROPIC:-false}" == "true" ] || [ "${BAROTROPIC:-0}" == "1" ]; then
+    _convert_script="${FIXofs}/convert_bctides_2d.py"
+    [ ! -f "$_convert_script" ] && _convert_script="${HOMEnos}/fix/${OFS}/convert_bctides_2d.py"
+    if [ -f "$_convert_script" ]; then
+        for _bct in ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.nowcast \
+                    ${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.bctides.in.forecast; do
+            if [ -f "$_bct" ]; then
+                python3 $_convert_script --needs-conversion "$_bct"
+                _nc_rc=$?
+                if [ $_nc_rc -eq 0 ]; then
+                    python3 $_convert_script "$_bct" "${_bct}.2d"
+                    mv "${_bct}.2d" "$_bct"
+                    echo "  Final converted: $(basename $_bct) (tidal only, 3 3 0 0)"
+                elif [ $_nc_rc -eq 1 ]; then
+                    echo "  Already converted: $(basename $_bct) (skipping)"
+                else
+                    echo "  ERROR: --needs-conversion check failed for $(basename $_bct) (rc=$_nc_rc)"
+                fi
+            fi
+        done
+    fi
+fi
+
 	   echo "			  "
 	   echo "END OF PREP SUCCESSFULLY "
 	   echo "			  "

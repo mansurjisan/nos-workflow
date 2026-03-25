@@ -1,44 +1,51 @@
-# SECOFS UFS-Coastal Configuration
-# Southeast Coastal Ocean Forecast System - UFS-Coastal (DATM+SCHISM coupled)
+# SECOFS 2D Barotropic UFS-Coastal Configuration
+# Southeast Coastal Ocean Forecast System - 2D Barotropic (DATM+SCHISM coupled)
 #
-# Derived from secofs.yaml with UFS-Coastal DATM coupling additions.
-# Key differences from standalone secofs:
-#   - nws=4 (NUOPC coupling instead of sflux files)
-#   - Executable: fv3_coastalS.exe (coupled DATM+SCHISM binary)
-#   - Total tasks: 1200 (MED+ATM share PETs 0-119, OCN PETs 120-1199)
-#   - Additional UFS config files: model_configure, datm_in, datm.streams, ufs.configure
-#   - Atmospheric forcing via CDEPS DATM (blended HRRR+GFS on ESMF mesh)
+# Derived from secofs_ufs.yaml (3D baroclinic) with barotropic simplifications.
+# Key differences from the 3D version:
+#   - n_levels: 2 (barotropic, was 63)
+#   - itur: 0 (no turbulence closure needed for 2D)
+#   - No T/S ocean boundary conditions (ts_source: null)
+#   - No T/S nudging (nudging.enabled: false)
+#   - No 3D field output (fields_3d.enabled: false)
+#   - Reduced task count: 560 total (60 DATM + 500 SCHISM, was 1200)
+#   - 15-member GEFS atmospheric ensemble (14 GEFS perturbation members + 1 control)
+#   - No physics perturbation (atmospheric-only ensemble)
+#
+# The horizontal grid is identical to the 3D SECOFS UFS system (1.68M nodes).
+# Barotropic mode drastically reduces memory and runtime since no tracer arrays
+# are allocated and no vertical mixing/transport is computed.
 
 _base: schism
 
 system:
-  name: secofs_ufs
-  description: "Southeast Coastal Ocean Forecast System (UFS-Coastal)"
+  name: secofs_2d_ufs
+  description: "Southeast Coastal Ocean Forecast System - 2D Barotropic (UFS-Coastal)"
   region: southeast_coast
   framework: comf
   version: "3.7.0"
-  prefix: secofs_ufs
+  prefix: secofs_2d_ufs
 
-# Grid configuration - identical to standalone secofs
+# Grid configuration - identical horizontal grid to 3D secofs_ufs, 2 vertical levels
 # Values from secofs.ctl
 grid:
   type: unstructured
   n_nodes: 1684786
   n_elements: 3322329
   n_sides: 5007180
-  n_levels: 63
+  n_levels: 3                    # Barotropic: nvrt=3 (kz=1 + 2 sigma, was 63 in 3D)
   files:
-    horizontal: secofs_ufs.hgrid.gr3
-    vertical: secofs_ufs.vgrid.in
-    vertical_nu: secofs_ufs.vgrid.nu.in
-    vertical_fake: secofs_ufs.vgrid.fake.in
-    horizontal_ll: secofs_ufs.hgrid.ll
-    shapiro: secofs_ufs.shapiro.gr3
-    diffmin: secofs_ufs.diffmin.gr3
-    diffmax: secofs_ufs.diffmax.gr3
-    albedo: secofs_ufs.albedo.gr3
-    rough: secofs_ufs.rough.gr3
-    station: secofs_ufs.station.in
+    horizontal: secofs_2d_ufs.hgrid.gr3
+    vertical: secofs_2d_ufs.vgrid.in
+    vertical_nu: secofs_2d_ufs.vgrid.nu.in
+    vertical_fake: secofs_2d_ufs.vgrid.fake.in
+    horizontal_ll: secofs_2d_ufs.hgrid.ll
+    shapiro: secofs_2d_ufs.shapiro.gr3
+    diffmin: secofs_2d_ufs.diffmin.gr3
+    diffmax: secofs_2d_ufs.diffmax.gr3
+    albedo: secofs_2d_ufs.albedo.gr3
+    rough: secofs_2d_ufs.rough.gr3
+    station: secofs_2d_ufs.station.in
   domain:
     lon_min: -88.0
     lon_max: -63.0
@@ -72,25 +79,20 @@ forcing:
     enabled: true
     primary: nwm
     files:
-      ctl_file: secofs_ufs.river.ctl
+      ctl_file: secofs_2d_ufs.river.ctl
       clim_file: nosofs.river.clim.usgs.nc
-      nwm_reach: secofs_ufs.nwm.reach.dat
+      nwm_reach: secofs_2d_ufs.nwm.reach.dat
 
   ocean:
     enabled: true
     primary: rtofs
     obc:
       wl_source: RTOFS
-      ts_source: RTOFS
+      ts_source: null            # No T/S OBC for barotropic mode
       files:
-        obc_ctl: secofs_ufs.obc.ctl
         obc_clim: nosofs.clim.WOA05.nc
     nudging:
-      enabled: true
-      timescale_seconds: 10800.0
-      files:
-        nudge_weight: secofs_ufs.nudge.gr3
-        nudge_index: secofs_ufs.nobc_nudge_index.dat
+      enabled: false             # No T/S nudging in barotropic mode
 
   tidal:
     enabled: true
@@ -106,8 +108,8 @@ forcing:
       - P1
       - Q1
     files:
-      harmonic_constants_obc: secofs_ufs.bctides.in
-      harmonic_constants_ofs: secofs_ufs.bctides.in_template
+      harmonic_constants_obc: secofs_2d_ufs.bctides.in
+      harmonic_constants_ofs: secofs_2d_ufs.bctides.in_template
       harmonic_nwlon: nosofs.HC_NWLON.nc
 
 # Model physics and runtime configuration
@@ -115,6 +117,7 @@ model:
   # UFS-Coastal coupled executable (DATM+SCHISM via NUOPC)
   executable: fv3_coastalS.exe
   ocean_model: SCHISM
+  barotropic: true               # Flag for scripts to skip T/S forcing staging
   physics:
     dt: 120.0
     extstep_seconds: 120.0
@@ -145,6 +148,9 @@ model:
     dcrit: 0.10
     dstart: 151.0
     tide_start: 0.0
+    # Barotropic-specific physics overrides
+    itur: 0                      # No turbulence closure for 2D (was 3 in 3D)
+    nvrt: 3                      # nvrt=3 (kz=1 + 2 sigma, was 63 in 3D)
   run:
     hindcast_days: 0.25
     forecast_days: 2.0
@@ -153,28 +159,29 @@ model:
     base_date: "2011010100"
     time_start: "2011090100"
   runtime:
-    ctl_file: secofs_ufs.param.nml
-    met_ctl_file: secofs_ufs.sflux_inputs.txt
+    ctl_file: secofs_2d_ufs.param.nml
+    met_ctl_file: secofs_2d_ufs.sflux_inputs.txt
 
 # UFS-Coastal coupling configuration
+# Reduced task counts for barotropic mode (less computation per timestep)
 ufs_coastal:
   enabled: true
   # DATM domain label (used by blending scripts)
   datm_domain: ATLANTIC
   # Coupling interval in seconds (must match runSeq @120 in ufs.configure and dt in param.nml)
   coupling_interval: 120
-  # MED+ATM share PETs 0-119 (120 PETs)
-  datm_tasks: 120
-  # OCN PETs 120-1199 (1080 PETs)
-  schism_tasks: 1080
-  # Total MPI tasks (MED+ATM overlap, so total = 120 + 1080 = 1200)
-  total_tasks: 1200
+  # MED+ATM share PETs 0-59 (60 PETs, was 120 in 3D)
+  datm_tasks: 60
+  # OCN PETs 60-599 (540 PETs, was 1080 in 3D)
+  schism_tasks: 540
+  # Total MPI tasks (MED+ATM overlap, so total = 60 + 540 = 600)
+  total_tasks: 600
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
   #   grib2: Extract from raw GRIB2 files (default, wgrib2+Python blend pipeline)
   #   sflux: Run COMF sflux generation first, then convert to DATM format
-  #          (strict validation — identical forcing as standalone SCHISM)
+  #          (strict validation -- identical forcing as standalone SCHISM)
   datm_forcing_source: grib2
   # Blended HRRR+GFS atmospheric forcing
   blend_hrrr_gfs: true
@@ -184,12 +191,12 @@ ufs_coastal:
   blend_buffer_deg: 0.5
   # Forecast length (hours) for model_configure
   nhours_fcst: 48
-  # Atmospheric coupling timestep (seconds) — matches actual run
+  # Atmospheric coupling timestep (seconds) -- matches actual run
   dt_atmos: 720
-  # DATM grid dimensions — fallback values only.
+  # DATM grid dimensions -- fallback values only.
   # The orchestrator reads actual dims from the forcing file after blending,
   # so these are only used if the dimension extraction fails.
-  # ATLANTIC domain: (-98,-55,10,53) at 0.025° → 1721x1721
+  # ATLANTIC domain: (-98,-55,10,53) at 0.025 deg -> 1721x1721
   nx_global: 1721
   ny_global: 1721
   # Template files (in FIXofs)
@@ -199,18 +206,21 @@ ufs_coastal:
     datm_streams: datm.streams.template
     ufs_configure: ufs.configure
 
-# Output configuration - same as standalone secofs
+# Output configuration
+# No 3D field output for barotropic mode
 output:
   format: netcdf
-  prefix: secofs_ufs
+  prefix: secofs_2d_ufs
   nstation: 97
   stations:
     enabled: true
     interval: 360
-    file: secofs_ufs.station.in
+    file: secofs_2d_ufs.station.in
   fields:
     interval: 3600
     def_interval: 86400
+  fields_3d:
+    enabled: false               # No 3D output for barotropic mode
   quicksave:
     interval: 3600
     def_interval: 86400
@@ -222,10 +232,11 @@ output:
     interval: 21600
 
 # Computational resources (DATM + SCHISM)
+# 5 nodes x 120 mpiprocs = 600 total (60 DATM + 540 SCHISM) vs 1200 in 3D
 resources:
-  nprocs: 1200
+  nprocs: 600
   nscribes: 0
-  memory_gb: 1500
+  memory_gb: 500                 # Much less memory than 3D (no tracer arrays)
   walltime_hours: 2
 
 # Workflow stages
@@ -305,7 +316,6 @@ shell_mappings:
     EXTSTEP_SECONDS: model.physics.extstep_seconds
     NDTFAST: model.physics.ndtfast
     NWS_VALUE: model.physics.nws
-    STEP_NU_VALUE: forcing.ocean.nudging.timescale_seconds
     MIN_DEPTH: model.physics.min_depth
     BASE_DATE: model.run.base_date
     TIME_START: model.run.time_start
@@ -334,6 +344,9 @@ shell_mappings:
     DCRIT: model.physics.dcrit
     DSTART: model.physics.dstart
     TIDE_START: model.physics.tide_start
+    ITUR_VALUE: model.physics.itur
+    NVRT_VALUE: model.physics.nvrt
+    BAROTROPIC: model.barotropic
 
     # Run length
     LEN_NOWCAST: _computed.len_nowcast_hours
@@ -372,13 +385,14 @@ shell_mappings:
     NY_GLOBAL: ufs_coastal.ny_global
 
 # GEFS atmospheric ensemble for UFS-Coastal (DATM forcing)
-# 7-member atmospheric-only ensemble (no physics perturbation).
+# 15-member atmospheric-only ensemble (no physics perturbation).
 # Member 000 is the control run (GFS+HRRR blended DATM forcing + default params)
-# Members 001-005 use GEFS perturbation members (GEFS-only DATM, no HRRR blend)
-# Member 006 uses RRFS (3km regridded to regular lat/lon)
+# Members 001-014 use GEFS perturbation members (GEFS-only DATM, no HRRR blend)
+# Barotropic mode is ideal for rapid ensemble generation: same grid, much cheaper
+# per member due to no tracer transport.
 ensemble:
   enabled: true
-  n_members: 7
+  n_members: 15
   method: gefs
   seed: 42                          # Reproducible sampling
   # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
@@ -387,7 +401,7 @@ ensemble:
   # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
   gefs:
     enabled: true
-    n_gefs_members: 5
+    n_gefs_members: 14
     resolution: "0p25"
     product: "pgrb2sp25"
     control_member: "gec00"
@@ -418,8 +432,40 @@ ensemble:
         met_source_1: GEFS_05
         met_source_2: null
       "006":
-        label: "RRFS"
-        met_source_1: RRFS
+        label: "GEFS p06"
+        met_source_1: GEFS_06
+        met_source_2: null
+      "007":
+        label: "GEFS p07"
+        met_source_1: GEFS_07
+        met_source_2: null
+      "008":
+        label: "GEFS p08"
+        met_source_1: GEFS_08
+        met_source_2: null
+      "009":
+        label: "GEFS p09"
+        met_source_1: GEFS_09
+        met_source_2: null
+      "010":
+        label: "GEFS p10"
+        met_source_1: GEFS_10
+        met_source_2: null
+      "011":
+        label: "GEFS p11"
+        met_source_1: GEFS_11
+        met_source_2: null
+      "012":
+        label: "GEFS p12"
+        met_source_1: GEFS_12
+        met_source_2: null
+      "013":
+        label: "GEFS p13"
+        met_source_1: GEFS_13
+        met_source_2: null
+      "014":
+        label: "GEFS p14"
+        met_source_1: GEFS_14
         met_source_2: null
     extra_sources:
       - GEFS_01
@@ -427,46 +473,24 @@ ensemble:
       - GEFS_03
       - GEFS_04
       - GEFS_05
-      - RRFS
-  # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
-  # 3km resolution, North America domain, available on WCOSS2 at para status
-  # Path: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/rrfs.tHHz.prslev.3km.fFFF.na.grib2
-  # Note: RRFS does NOT have PRMSL — uses MSLET instead (forcing script handles this)
-  # SECOFS forecast is 48h — RRFS covers 84h at main cycles, no fallback needed.
-  rrfs:
-    enabled: true
-    resolution: "3km"
-    domain: "na"                    # North America
-    max_forecast_hours: 84          # At main cycles (00/06/12/18Z)
-    fallback_source: null           # 48h forecast fits within RRFS 84h coverage
-    version: "v1.0"
-    status: "para"                  # Not yet in prod
-  # No physics perturbation — atmospheric forcing differences only
+      - GEFS_06
+      - GEFS_07
+      - GEFS_08
+      - GEFS_09
+      - GEFS_10
+      - GEFS_11
+      - GEFS_12
+      - GEFS_13
+      - GEFS_14
+  # No physics perturbation -- atmospheric forcing differences only
   perturb_physics: false
-  # Member 000 (control) always uses default physics values
-  parameters:
-    rdrg2:
-      min: 0.001
-      max: 0.01
-      default: 0.005
-      distribution: uniform
-      description: "Bottom drag coefficient"
-    zob:
-      min: 0.0001
-      max: 0.001
-      default: 0.0005
-      distribution: log_uniform
-      description: "Bottom roughness length (m)"
-    akt_bak:
-      min: 1.0e-6
-      max: 1.0e-5
-      default: 5.0e-6
-      distribution: log_uniform
-      description: "Background tracer diffusivity (m2/s)"
+  # Empty parameters block -- no physics perturbation for barotropic ensemble
+  parameters: {}
   # Ensemble-specific resources (per member)
+  # Reduced from 3D: 560 tasks per member (vs 1200 in 3D)
   resources:
-    select: "select=10:ncpus=128:mpiprocs=120"
-    walltime: "05:30:00"
+    select: "select=5:ncpus=128:mpiprocs=112"
+    walltime: "01:00:00"
   # Ensemble post-processing resources
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"

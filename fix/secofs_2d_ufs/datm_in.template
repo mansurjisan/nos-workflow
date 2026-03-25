@@ -1,0 +1,17 @@
+&datm_nml
+  datamode = "ATMMESH"
+  factorfn_data = "null"
+  factorfn_mesh = "null"
+  flds_co2 = .false.
+  flds_presaero = .false.
+  flds_wiso = .false.
+  iradsw = 1
+  model_maskfile = "@[DATM_INPUT_DIR]/datm_esmf_mesh.nc"
+  model_meshfile = "@[DATM_INPUT_DIR]/datm_esmf_mesh.nc"
+  nx_global = @[NX_GLOBAL]
+  ny_global = @[NY_GLOBAL]
+! NOTE: nx_global/ny_global are patched at runtime by ensemble_run.sh
+! to match actual datm_forcing.nc dimensions (blended: ~1721x1721, GEFS: 1440x721)
+  restfilm = "null"
+  export_all = .true.
+/

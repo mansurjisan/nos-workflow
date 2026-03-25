@@ -1,26 +1,23 @@
 #!/bin/bash
-#PBS  -N secofs_ens_00
+#PBS  -N secofs_2d_ufs_ens_MID
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_ens_00.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/v3.7.0/secofs_ens_00.err
-#PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
-#PBS  -l walltime=05:30:00
+#PBS  -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.out
+#PBS  -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_2d_ufs/secofs_2d_ufs_ens_MID.err
+#PBS  -l place=vscatter:excl,select=5:ncpus=128:mpiprocs=120
+#PBS  -l walltime=01:00:00
 
 # ------------------------------------------------------------------
-# SECOFS Ensemble Member PBS Job
+# SECOFS 2D Barotropic UFS-Coastal Ensemble Member PBS Job
 #
-# Runs a single ensemble member. Submit via launch_secofs_ensemble.sh
-# or manually with:
-#   qsub -v MEMBER_ID=000,CYC=00,PDY=20260213 \
-#        -N secofs_ens000_00 \
-#        -o /lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0/secofs_ens000_00.out \
-#        -e /lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0/secofs_ens000_00.err \
-#        jnos_secofs_ensemble_member.pbs
+# Runs a single 2D barotropic ensemble member using DATM+SCHISM
+# coupling. 560 total MPI tasks (60 DATM + 500 SCHISM).
+# Much faster than 3D (no tracer transport, 2 vertical levels).
 #
-# For UFS-Coastal (DATM+SCHISM), pass OFS=secofs_ufs:
-#   qsub -v MEMBER_ID=000,CYC=00,PDY=20260213,OFS=secofs_ufs \
-#        jnos_secofs_ensemble_member.pbs
+# Submit via launch_secofs_2d_ufs_ensemble.sh or manually:
+#   qsub -v MEMBER_ID=001,CYC=00,PDY=20260313,OFS=secofs_2d_ufs,BAROTROPIC=true,ATMOS_ENSEMBLE=true,GEFS_ENSEMBLE=true,GEFS_MEMBER_ID=01 \
+#        -N secofs_2d_ufs_ens001_00 \
+#        jnos_secofs_2d_ufs_ensemble_member.pbs
 #
 # The launcher script overrides -N, -o, -e per member via qsub flags.
 # The #PBS defaults above are fallbacks for direct submission.
@@ -28,7 +25,7 @@
 
 # Validate required variables
 if [ -z "${MEMBER_ID:-}" ]; then
-    echo "ERROR: MEMBER_ID not set. Use: qsub -v MEMBER_ID=001,CYC=00,PDY=20260213 $0" >&2
+    echo "ERROR: MEMBER_ID not set. Use: qsub -v MEMBER_ID=001,CYC=00,PDY=20260313,OFS=secofs_2d_ufs $0" >&2
     exit 1
 fi
 CYC=${CYC:-00}
@@ -39,11 +36,11 @@ export PDY=${PDY:-$(date +%Y%m%d)}
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
 
-# OFS: accept from launcher (default: secofs for standalone SCHISM)
-export OFS=${OFS:-secofs}
+# OFS: accept from launcher (default: secofs_2d_ufs)
+export OFS=${OFS:-secofs_2d_ufs}
 
 # Working directory
-RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/v3.7.0
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
 if [ ! -r $WORKDIR ]; then
   mkdir -p -m 755 $WORKDIR
@@ -51,47 +48,21 @@ fi
 cd ${WORKDIR}
 
 # ----------------------------------------------------------------
-# Module setup: UFS-Coastal requires hpc-stack libraries, standalone
-# SCHISM uses standard WCOSS2 modules.
+# Module setup: UFS-Coastal hpc-stack libraries
+# (hdf5-D/1.14.0, netcdf-D/4.9.2, esmf-D/8.8.0)
 # Save PACKAGEROOT before module loads (prod_envir overrides it)
 # ----------------------------------------------------------------
 _SAVED_PACKAGEROOT=${PACKAGEROOT}
 
-if [[ "${OFS}" == *_ufs* ]]; then
-    # UFS-Coastal: hpc-stack modules (hdf5-D/1.14.0, netcdf-D/4.9.2, esmf-D/8.8.0)
-    module purge
-    module reset
-    unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
-    module use ${PACKAGEROOT}/nosofs.${nosofs_ver}/modulefiles
-    module load modules.fv3
-    module load cray-pals
-    module load python/${python_ver:-3.8.6}
-    module load prod_envir/${prod_envir_ver:-2.0.6}
-    module load prod_util/${prod_util_ver:-2.0.17}
-else
-    # Standalone SCHISM: standard WCOSS2 modules
-    module purge
-    module load envvar/${envvars_ver}
-    module load PrgEnv-intel/${PrgEnv_intel_ver}
-    module load craype/${craype_ver}
-    module load intel/${intel_ver}
-    module load cray-mpich/${cray_mpich_ver}
-    module load cray-pals/${cray_pals_ver}
-    module load netcdf/${netcdf_ver}
-    module load hdf5/${hdf5_ver}
-    module load libjpeg/${libjpeg_ver}
-    module load subversion/${subversion_ver}
-    module load python/${python_ver}
-    module load prod_envir/${prod_envir_ver}
-    module load prod_util/${prod_util_ver}
-    module load grib_util/${grib_util_ver}
-    module load cfp/${cfp_ver}
-    module load gsl/${gsl_ver}
-    module load udunits/${udunits_ver}
-    module load nco/${nco_ver}
-    module load cdo/${cdo_ver}
-    module load metis/${metis_ver}
-fi
+module purge
+module reset
+unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
+module use ${PACKAGEROOT}/nosofs.${nosofs_ver}/modulefiles
+module load modules.fv3
+module load cray-pals
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
 
 module list
 
@@ -99,7 +70,7 @@ module list
 PACKAGEROOT=${_SAVED_PACKAGEROOT}
 unset _SAVED_PACKAGEROOT
 
-# MPI tuning for large-core SCHISM runs on Cray
+# MPI tuning for SCHISM runs on Cray
 export MPICH_OFI_STARTUP_CONNECT=1
 export MPICH_COLL_SYNC=MPI_Bcast
 export MPICH_REDUCE_NO_SMP=1
@@ -115,11 +86,16 @@ export MEMBER_ID=${MEMBER_ID}
 export job=${OFS}_ens${MEMBER_ID}_${CYC}_$envir
 export platform=ptmp
 
-# UFS-Coastal DATM coupling (auto-detect from OFS name)
-if [[ "${OFS}" == *_ufs* ]]; then
-    export USE_DATM=${USE_DATM:-true}
-    export TOTAL_TASKS=${TOTAL_TASKS:-1200}
-fi
+# Barotropic mode (2 vertical levels, no tracer transport)
+export BAROTROPIC=true
+
+# UFS-Coastal DATM coupling
+export USE_DATM=${USE_DATM:-true}
+# 5 nodes x 112 mpiprocs = 560 tasks (60 DATM + 500 SCHISM)
+export TOTAL_TASKS=${TOTAL_TASKS:-600}
+
+# Atmospheric ensemble flags
+export ATMOS_ENSEMBLE=${ATMOS_ENSEMBLE:-true}
 
 export KEEPDATA=YES
 export SENDCOM=NO
@@ -144,7 +120,7 @@ export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 export COMIN=/lfs/h1/ops/prod/com
 
 # Pass GEFS ensemble flags from launcher
-export GEFS_ENSEMBLE=${GEFS_ENSEMBLE:-false}
+export GEFS_ENSEMBLE=${GEFS_ENSEMBLE:-true}
 export GEFS_MEMBER_ID=${GEFS_MEMBER_ID:-}
 
 ################################################
