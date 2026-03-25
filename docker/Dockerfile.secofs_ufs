@@ -119,7 +119,7 @@ RUN dnf update -y && \
         gcc gcc-c++ gcc-gfortran make cmake git wget \
         python3 python3-pip python3-devel \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
-        jasper zlib-devel libpng-devel
+        jasper zlib-devel libpng-devel libpng libjpeg-turbo
 
 # Build wgrib2
 ARG WGRIB2_VERSION=2.0.8
@@ -127,17 +127,29 @@ RUN cd /tmp && \
     wget -q https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
     tar -xzf wgrib2.tgz && cd grib2 && \
     export CC=gcc FC=gfortran && \
-    make -j$(nproc) && \
+    sed -i \
+        -e 's/USE_AEC=1/USE_AEC=0/' \
+        -e 's/USE_OPENJPEG=1/USE_OPENJPEG=0/' \
+        -e 's/USE_NETCDF4=1/USE_NETCDF4=0/' \
+        -e 's/USE_NETCDF3=1/USE_NETCDF3=0/' \
+        -e 's/USE_PROJ4=1/USE_PROJ4=0/' \
+        -e 's/USE_IPOLATES=3/USE_IPOLATES=0/' \
+        -e 's/USE_SPECTRAL=1/USE_SPECTRAL=0/' \
+        makefile && \
+    make && \
     mkdir -p /opt/wgrib2/bin && \
     cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
     cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
 
-# Build prod_util (provides ndate, postmsg, err_chk, err_exit)
-RUN git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-prod_util.git && \
-    cd NCEPLIBS-prod_util && mkdir build && cd build && \
-    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/prod_util -DBUILD_TESTING=OFF && \
-    make -j$(nproc) && make install && \
-    cd / && rm -rf NCEPLIBS-prod_util
+# Create prod_util shims (ndate, postmsg, err_chk, err_exit)
+# Full NCEPLIBS-prod_util requires w3emc; these minimal shims suffice for testing
+RUN mkdir -p /opt/prod_util/bin && \
+    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\nhrs = int(sys.argv[1])\ndt = datetime.strptime(sys.argv[2], "%%Y%%m%%d%%H")\nprint((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
+    printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
+    printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
+    printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
+    printf '#!/bin/bash\n. /opt/prod_util/bin/err_chk\n' > /opt/prod_util/bin/prep_step && \
+    chmod +x /opt/prod_util/bin/*
 
 # Install Python packages
 RUN pip3 install --no-cache-dir \
@@ -201,7 +213,7 @@ RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
 
 # Set up paths
 ENV PATH="/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-}" \
+    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64/openmpi/lib" \
     PYTHONPATH="/opt/nosofs/ush/python" \
     HOMEnos="/opt/nosofs" \
     HOMEstofs="/opt/nosofs"
