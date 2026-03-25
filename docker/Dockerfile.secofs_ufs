@@ -1,0 +1,243 @@
+# ============================================================================
+# Dockerfile.secofs_ufs - UFS-Coastal SECOFS Deterministic Testing Container
+#
+# Multi-stage build:
+#   Stage 1 (comf-build):  NCEP libs + COMF Fortran executables (GCC)
+#   Stage 2 (tools):       wgrib2, prod_util, Python packages
+#   Stage 3 (runtime):     Final image with nos_ofs workflow
+#
+# UFS-Coastal (fv3_coastalS.exe) is NOT built here — it requires
+# spack-stack (ESMF 8.8.0) which adds ~2h build time. Options:
+#   a) Mount pre-built binary from WCOSS2 via volume
+#   b) Extend this Dockerfile with spack-stack stage (see comments)
+#
+# Build:
+#   docker build -f docker/Dockerfile.secofs_ufs -t nosofs/secofs-ufs:latest .
+#
+# Run:
+#   docker run -v ./data:/data nosofs/secofs-ufs:latest prep
+# ============================================================================
+
+# ===========================================================================
+# Stage 1: Build NCEP libraries and COMF Fortran executables with GCC
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS comf-build
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc gcc-c++ gcc-gfortran make cmake git \
+        openmpi openmpi-devel \
+        netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
+        hdf5 hdf5-devel \
+        jasper jasper-devel libpng libpng-devel \
+        libjpeg-turbo libjpeg-turbo-devel \
+        zlib-devel bzip2-devel \
+        blas-devel lapack-devel openblas-devel \
+        wget hostname which diffutils
+
+# Build NCEP libraries with GCC
+# Pattern from ush/python/Dockerfile lines 57-113
+RUN set -x \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git \
+    && cd NCEPLIBS-bacio && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bacio \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3emc.git \
+    && cd NCEPLIBS-w3emc && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-w3emc \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3nco.git \
+    && cd NCEPLIBS-w3nco && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-w3nco \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-sp.git \
+    && cd NCEPLIBS-sp && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-sp \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-ip.git \
+    && cd NCEPLIBS-ip && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-ip \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2c.git \
+    && cd NCEPLIBS-g2c && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2c \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2.git \
+    && cd NCEPLIBS-g2 && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2 \
+    \
+    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bufr.git \
+    && cd NCEPLIBS-bufr && mkdir build && cd build \
+    && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+    && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bufr
+
+# Set NCEP library environment for COMF Fortran makefiles
+ENV G2_INC4=/opt/ncep/include \
+    G2_LIB4=/opt/ncep/lib64/libg2_4.a \
+    W3NCO_LIB4=/opt/ncep/lib/libw3nco_4.a \
+    W3EMC_LIB4=/opt/ncep/lib64/libw3emc_4.a \
+    BACIO_LIB4=/opt/ncep/lib64/libbacio.a \
+    BUFR_LIB4=/opt/ncep/lib64/libbufr_4.a \
+    SP_LIB4=/opt/ncep/lib64/libsp_4.a \
+    IP_LIB4=/opt/ncep/lib64/libip_4.a \
+    JASPER_LIB=-ljasper \
+    PNG_LIB=-lpng \
+    Z_LIB=-lz \
+    Z_LIB4=-lz \
+    NETCDF=/usr \
+    COMP_F=gfortran \
+    COMP_CC=gcc \
+    LIBnos=/opt/nosofs/lib \
+    EXECnos=/opt/nosofs/exec
+
+# Copy COMF Fortran source and build script
+COPY ush/python/sorc/ /opt/nosofs/sorc/
+COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
+
+RUN mkdir -p /opt/nosofs/lib /opt/nosofs/exec && \
+    chmod +x /opt/nosofs/docker/build_comf_gcc.sh && \
+    SORC_DIR=/opt/nosofs/sorc /opt/nosofs/docker/build_comf_gcc.sh
+
+# ===========================================================================
+# Stage 2: Build wgrib2 and install Python packages
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS tools
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc gcc-c++ gcc-gfortran make cmake git wget \
+        python3 python3-pip python3-devel \
+        netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
+        jasper zlib-devel libpng-devel
+
+# Build wgrib2
+ARG WGRIB2_VERSION=2.0.8
+RUN cd /tmp && \
+    wget -q https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
+    tar -xzf wgrib2.tgz && cd grib2 && \
+    export CC=gcc FC=gfortran && \
+    make -j$(nproc) && \
+    mkdir -p /opt/wgrib2/bin && \
+    cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
+    cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
+
+# Build prod_util (provides ndate, postmsg, err_chk, err_exit)
+RUN git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-prod_util.git && \
+    cd NCEPLIBS-prod_util && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/prod_util -DBUILD_TESTING=OFF && \
+    make -j$(nproc) && make install && \
+    cd / && rm -rf NCEPLIBS-prod_util
+
+# Install Python packages
+RUN pip3 install --no-cache-dir \
+    numpy xarray pyyaml netCDF4 scipy pandas \
+    matplotlib pyproj shapely cftime \
+    pytest pytz more-itertools termcolor geopy attrs schema
+
+# ===========================================================================
+# Stage 3: Runtime image
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS runtime
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc-gfortran openmpi openmpi-devel \
+        netcdf netcdf-fortran \
+        hdf5 \
+        nco udunits2 \
+        jasper libpng libjpeg-turbo zlib \
+        python3 python3-pip python3-devel \
+        hostname which diffutils procps-ng \
+        environment-modules && \
+    dnf clean all
+
+# Copy compiled artifacts from build stages
+COPY --from=comf-build /opt/nosofs/exec/ /opt/nosofs/exec/
+COPY --from=comf-build /opt/nosofs/lib/ /opt/nosofs/lib/
+COPY --from=comf-build /opt/ncep/ /opt/ncep/
+COPY --from=tools /opt/wgrib2/ /opt/wgrib2/
+COPY --from=tools /opt/prod_util/ /opt/prod_util/
+
+# Install Python packages (runtime)
+RUN pip3 install --no-cache-dir \
+    numpy xarray pyyaml netCDF4 scipy pandas \
+    matplotlib pyproj shapely cftime \
+    pytest pytz more-itertools termcolor geopy attrs schema
+
+# Copy the entire nos_ofs workflow
+COPY jobs/ /opt/nosofs/jobs/
+COPY scripts/ /opt/nosofs/scripts/
+COPY ush/ /opt/nosofs/ush/
+COPY parm/ /opt/nosofs/parm/
+COPY versions/ /opt/nosofs/versions/
+COPY modulefiles/ /opt/nosofs/modulefiles/
+
+# Copy fix templates (large grid files bind-mounted at runtime)
+COPY fix/secofs_ufs/*.template fix/secofs_ufs/ufs.configure \
+     fix/secofs_ufs/fd_ufs.yaml fix/secofs_ufs/noahmptable.tbl \
+     fix/secofs_ufs/secofs_ufs.param.nml \
+     /opt/nosofs/fix/secofs_ufs/
+
+# Copy Docker scripts
+COPY docker/run_secofs_ufs.sh /opt/nosofs/docker/
+COPY docker/mpiexec_wrapper.sh /opt/nosofs/docker/
+COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
+
+# Install nos_ofs Python package
+RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
+
+# Set up paths
+ENV PATH="/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64/openmpi/lib:${LD_LIBRARY_PATH:-}" \
+    PYTHONPATH="/opt/nosofs/ush/python" \
+    HOMEnos="/opt/nosofs" \
+    HOMEstofs="/opt/nosofs"
+
+# MPI wrapper: translate mpiexec (Cray) to mpirun (OpenMPI)
+RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
+    ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec && \
+    chmod +x /opt/nosofs/docker/run_secofs_ufs.sh
+
+# Make all scripts executable
+RUN chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
+
+# Create working directories
+RUN mkdir -p /work /data/com /data/hotstart
+
+# Ensure OpenMPI binaries are on PATH
+RUN ln -sf /usr/lib64/openmpi/bin/mpirun /usr/local/bin/mpirun
+
+# ============================================================================
+# To add UFS-Coastal (fv3_coastalS.exe), either:
+#
+# Option A: Mount pre-built binary
+#   docker run -v /path/to/fv3_coastalS.exe:/opt/nosofs/exec/fv3_coastalS.exe ...
+#
+# Option B: Build from spack-stack (add these stages before runtime):
+#   FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS spack-deps
+#   RUN spack install parmetis
+#
+#   FROM spack-deps AS ufs-build
+#   RUN git clone --recursive https://github.com/oceanmodeling/ufs-coastal-app.git
+#   RUN cd ufs-coastal-app && mkdir build && cd build && \
+#       cmake ../sorc/ufs_coastal.fd -DAPP=CSTLS -DCMAKE_C_COMPILER=gcc \
+#       -DCMAKE_Fortran_COMPILER=gfortran && make -j$(nproc)
+#   # Then COPY --from=ufs-build /path/to/fv3_coastalS.exe /opt/nosofs/exec/
+# ============================================================================
+
+WORKDIR /work
+ENTRYPOINT ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+CMD ["all"]

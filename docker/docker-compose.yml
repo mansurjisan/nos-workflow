@@ -1,0 +1,56 @@
+version: '3.8'
+
+# ============================================================================
+# SECOFS UFS-Coastal Deterministic Testing
+#
+# Bind-mount test data (not in image):
+#   DATA_ROOT=./data docker compose up secofs-ufs
+#
+# Run specific stages:
+#   docker compose run secofs-ufs prep
+#   docker compose run secofs-ufs nowcast
+#   docker compose run secofs-ufs all
+# ============================================================================
+
+services:
+  secofs-ufs:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.secofs_ufs
+    image: nosofs/secofs-ufs:latest
+    volumes:
+      # Input forcing data (read-only)
+      - ${DATA_ROOT:-./data}/com:/data/com:ro
+      # Fix files: grid, bctides, station, etc. (read-only)
+      - ${DATA_ROOT:-./data}/fix:/opt/nosofs/fix:ro
+      # Previous cycle hotstart (read-only)
+      - ${DATA_ROOT:-./data}/hotstart:/data/hotstart:ro
+      # Working directory (ephemeral, read-write)
+      - ${WORK_ROOT:-./work}:/work
+      # Output products (read-write)
+      - ${OUTPUT_ROOT:-./output}:/data/com/nosofs
+    environment:
+      - OFS=${OFS:-secofs_ufs}
+      - PDY=${PDY:-20260322}
+      - CYC=${CYC:-18}
+      - TOTAL_TASKS=${TOTAL_TASKS:-12}
+    shm_size: '8g'
+    ulimits:
+      stack: 67108864    # 64MB stack for Fortran
+      memlock: -1        # Unlimited locked memory for MPI
+    entrypoint: ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+    command: ["all"]
+
+  # Prep-only service (lighter, no MPI needed)
+  secofs-prep:
+    extends:
+      service: secofs-ufs
+    command: ["prep"]
+    shm_size: '2g'
+
+  # Post-only service (lightest, just Python)
+  secofs-post:
+    extends:
+      service: secofs-ufs
+    command: ["post"]
+    shm_size: '1g'

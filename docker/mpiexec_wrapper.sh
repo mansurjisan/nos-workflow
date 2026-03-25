@@ -1,0 +1,71 @@
+#!/bin/bash
+# ============================================================================
+# mpiexec_wrapper.sh - Translate Cray MPICH mpiexec args to OpenMPI mpirun
+#
+# WCOSS2 scripts call: mpiexec -n N -ppn P --cpu-bind core <executable>
+# Docker OpenMPI needs: mpirun --allow-run-as-root -np N --oversubscribe <executable>
+#
+# Install as: ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec
+# ============================================================================
+
+NPROCS=""
+EXECUTABLE=""
+ARGS=()
+
+# Parse Cray MPICH-style arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n|-np)
+            NPROCS="$2"
+            shift 2
+            ;;
+        -ppn|--ppn)
+            # Ignore processes-per-node (OpenMPI handles this automatically)
+            shift 2
+            ;;
+        --cpu-bind|--cpu_bind)
+            # Ignore CPU binding (not needed in container)
+            shift 2
+            ;;
+        --depth)
+            # Ignore depth (Cray-specific)
+            shift 2
+            ;;
+        -l|--line-buffer)
+            # Ignore line buffering flag
+            shift
+            ;;
+        -*)
+            # Pass unknown flags through
+            ARGS+=("$1")
+            shift
+            ;;
+        *)
+            # First non-flag argument is the executable
+            EXECUTABLE="$1"
+            shift
+            # Everything after executable is its arguments
+            ARGS+=("$@")
+            break
+            ;;
+    esac
+done
+
+if [ -z "$NPROCS" ] || [ -z "$EXECUTABLE" ]; then
+    echo "ERROR: mpiexec wrapper requires -n <nprocs> <executable>" >&2
+    echo "Usage: mpiexec -n 12 ./fv3_coastalS.exe" >&2
+    exit 1
+fi
+
+# Find the real mpirun (OpenMPI)
+MPIRUN=$(command -v mpirun 2>/dev/null || echo "/usr/lib64/openmpi/bin/mpirun")
+
+if [ ! -x "$MPIRUN" ]; then
+    echo "ERROR: mpirun not found" >&2
+    exit 1
+fi
+
+echo "[mpiexec_wrapper] Translating: mpiexec -n $NPROCS $EXECUTABLE ${ARGS[*]:-}"
+echo "[mpiexec_wrapper] Executing:   $MPIRUN --allow-run-as-root -np $NPROCS --oversubscribe $EXECUTABLE ${ARGS[*]:-}"
+
+exec "$MPIRUN" --allow-run-as-root -np "$NPROCS" --oversubscribe "$EXECUTABLE" "${ARGS[@]}"
