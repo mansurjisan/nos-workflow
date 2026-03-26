@@ -1,56 +1,61 @@
 version: '3.8'
 
 # ============================================================================
-# SECOFS UFS-Coastal Deterministic Testing
+# SECOFS Standalone Prep Testing (WCOSS2-mirrored paths)
 #
-# Bind-mount test data (not in image):
-#   DATA_ROOT=./data docker compose up secofs-ufs
+# Usage:
+#   OFS=secofs PDY=20260324 CYC=18 docker compose run secofs-prep
 #
-# Run specific stages:
-#   docker compose run secofs-ufs prep
-#   docker compose run secofs-ufs nowcast
-#   docker compose run secofs-ufs all
+# Data layout (mirrors WCOSS2):
+#   DATA_ROOT/com/gfs/v16.3/...  → /lfs/h1/ops/prod/com/gfs/v16.3/...
+#   DATA_ROOT/com/hrrr/v4.1/... → /lfs/h1/ops/prod/com/hrrr/v4.1/...
+#   DATA_ROOT/fix/secofs/...    → /lfs/h1/.../nosofs.v3.7.0/fix/secofs/...
 # ============================================================================
 
+x-common: &common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.secofs_ufs
+  image: nosofs/secofs-ufs:latest
+  volumes:
+    # Production input data → WCOSS2 paths
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/gfs:/lfs/h1/ops/prod/com/gfs:ro
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/hrrr:/lfs/h1/ops/prod/com/hrrr:ro
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nwm:/lfs/h1/ops/prod/com/nwm:ro
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/rtofs:/lfs/h1/ops/prod/com/rtofs:ro
+    # Fix files → WCOSS2 package path
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/secofs:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/secofs:ro
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/shared:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/shared:ro
+    # COMROOT (hotstart input + output products) → read-write
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nosofs:/lfs/h1/nos/ptmp/nosuser/com/nosofs
+    # Working directory
+    - ${WORK_ROOT:-./work}:/lfs/h1/nos/ptmp/nosuser/work
+  environment:
+    - OFS=${OFS:-secofs}
+    - PDY=${PDY:-20260324}
+    - CYC=${CYC:-18}
+    - TOTAL_TASKS=${TOTAL_TASKS:-12}
+    - LOGNAME=nosuser
+  shm_size: '4g'
+  ulimits:
+    stack: 67108864
+    memlock: -1
+  entrypoint: ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+
 services:
-  secofs-ufs:
-    build:
-      context: ..
-      dockerfile: docker/Dockerfile.secofs_ufs
-    image: nosofs/secofs-ufs:latest
-    volumes:
-      # Input forcing data (read-only)
-      - ${DATA_ROOT:-./data}/com:/data/com:ro
-      # Fix files: grid, bctides, station, etc. (read-only)
-      - ${DATA_ROOT:-./data}/fix:/opt/nosofs/fix:ro
-      # Previous cycle hotstart (read-only)
-      - ${DATA_ROOT:-./data}/hotstart:/data/hotstart:ro
-      # Working directory (ephemeral, read-write)
-      - ${WORK_ROOT:-./work}:/work
-      # Output products (read-write)
-      - ${OUTPUT_ROOT:-./output}:/data/com/nosofs
-    environment:
-      - OFS=${OFS:-secofs_ufs}
-      - PDY=${PDY:-20260322}
-      - CYC=${CYC:-18}
-      - TOTAL_TASKS=${TOTAL_TASKS:-12}
-    shm_size: '8g'
-    ulimits:
-      stack: 67108864    # 64MB stack for Fortran
-      memlock: -1        # Unlimited locked memory for MPI
-    entrypoint: ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+  # Full workflow: prep → nowcast → forecast → post
+  secofs-all:
+    <<: *common
     command: ["all"]
 
-  # Prep-only service (lighter, no MPI needed)
+  # Prep only (no MPI needed)
   secofs-prep:
-    extends:
-      service: secofs-ufs
+    <<: *common
     command: ["prep"]
     shm_size: '2g'
 
-  # Post-only service (lightest, just Python)
+  # Post only (Python/NCO)
   secofs-post:
-    extends:
-      service: secofs-ufs
+    <<: *common
     command: ["post"]
     shm_size: '1g'

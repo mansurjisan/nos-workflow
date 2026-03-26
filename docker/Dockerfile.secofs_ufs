@@ -226,8 +226,15 @@ RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
 # Make all scripts executable
 RUN chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
 
-# Create working directories
-RUN mkdir -p /work /data/com /data/hotstart
+# Create WCOSS2-mirrored directory structure
+# Scripts use /lfs/h1/... paths — symlink to container's /opt/nosofs
+RUN mkdir -p /lfs/h1/nos/nosofs/packages \
+             /lfs/h1/nos/ptmp/nosuser/com \
+             /lfs/h1/nos/ptmp/nosuser/work \
+             /lfs/h1/ops/prod/com \
+             /lfs/h1/ops/prod/dcom \
+             /work /data/com /data/hotstart && \
+    ln -sf /opt/nosofs /lfs/h1/nos/nosofs/packages/nosofs.v3.7.0
 
 # Ensure OpenMPI binaries are on PATH
 RUN ln -sf /usr/lib64/openmpi/bin/mpirun /usr/local/bin/mpirun
