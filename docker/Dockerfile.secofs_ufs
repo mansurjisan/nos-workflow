@@ -149,7 +149,7 @@ RUN mkdir -p /opt/prod_util/bin && \
     printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
     printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
     printf '#!/bin/bash\nexport err=0\n' > /opt/prod_util/bin/prep_step && \
-    printf '#!/bin/bash\n# CFP shim: run commands from file sequentially (WCOSS2 runs them via MPI)\nCMDFILE="${1:-}"\nif [ -z "$CMDFILE" ] || [ ! -f "$CMDFILE" ]; then echo "cfp: no command file"; exit 1; fi\nwhile IFS= read -r cmd; do\n  [ -z "$cmd" ] && continue\n  [[ "$cmd" == "#"* ]] && continue\n  eval "$cmd" || true\ndone < "$CMDFILE"\n' > /opt/prod_util/bin/cfp && \
+    printf '#!/bin/bash\n# CFP shim: distribute commands across MPI ranks (like WCOSS2 cfp)\n# OpenMPI sets OMPI_COMM_WORLD_RANK and OMPI_COMM_WORLD_SIZE\nCMDFILE="${1:-}"\nif [ -z "$CMDFILE" ] || [ ! -f "$CMDFILE" ]; then echo "cfp: no command file"; exit 1; fi\nRANK=${OMPI_COMM_WORLD_RANK:-0}\nSIZE=${OMPI_COMM_WORLD_SIZE:-1}\nLINE=0\nwhile IFS= read -r cmd; do\n  [ -z "$cmd" ] && continue\n  [[ "$cmd" == "#"* ]] && continue\n  if [ $((LINE %% SIZE)) -eq $RANK ]; then\n    eval "$cmd" || true\n  fi\n  LINE=$((LINE + 1))\ndone < "$CMDFILE"\n' > /opt/prod_util/bin/cfp && \
     chmod +x /opt/prod_util/bin/*
 
 # Install Python packages
