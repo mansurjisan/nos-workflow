@@ -26,9 +26,10 @@ x-common: &common
     # Fix files → WCOSS2 package path
     - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/secofs:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/secofs:ro
     - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/shared:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/shared:ro
-    # COMROOT (hotstart input + output products) → read-write
+    # COMROOT: contains hotstart (input) and prep outputs (written here)
+    # Mount the raw data's nosofs/ as read-write so prep can write alongside hotstart
     - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nosofs:/lfs/h1/nos/ptmp/nosuser/com/nosofs
-    # Working directory
+    # Working directory (ephemeral, read-write)
     - ${WORK_ROOT:-./work}:/lfs/h1/nos/ptmp/nosuser/work
   environment:
     - OFS=${OFS:-secofs}

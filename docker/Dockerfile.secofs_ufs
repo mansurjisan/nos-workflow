@@ -148,7 +148,7 @@ RUN mkdir -p /opt/prod_util/bin && \
     printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
     printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
     printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
-    printf '#!/bin/bash\n. /opt/prod_util/bin/err_chk\n' > /opt/prod_util/bin/prep_step && \
+    printf '#!/bin/bash\nexport err=0\n' > /opt/prod_util/bin/prep_step && \
     chmod +x /opt/prod_util/bin/*
 
 # Install Python packages
@@ -225,6 +225,17 @@ RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
 
 # Make all scripts executable
 RUN chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
+
+# WCOSS2 has flat ush/ layout; repo has nested ush/nosofs/.
+# Create symlinks so $USHnos/nos_ofs_launch.sh works (points to ush/nosofs/)
+RUN for f in /opt/nosofs/ush/nosofs/*.sh; do \
+        base=$(basename "$f"); \
+        [ ! -e "/opt/nosofs/ush/$base" ] && ln -sf "nosofs/$base" "/opt/nosofs/ush/$base"; \
+    done
+
+# Disable LD_PRELOAD of WCOSS2 Intel NetCDF (doesn't exist in container)
+# The J-job sets this for COMF Fortran; container uses system NetCDF instead
+ENV LD_PRELOAD=""
 
 # Create WCOSS2-mirrored directory structure
 # Scripts use /lfs/h1/... paths — symlink to container's /opt/nosofs

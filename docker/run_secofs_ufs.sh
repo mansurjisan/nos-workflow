@@ -90,6 +90,10 @@ export COMPATH=/lfs/h1/ops/prod/com/nos
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
+# ---- prod_util variables (WCOSS2 sets these via module load prod_util) ----
+export NDATE=$(command -v ndate)
+export NHOUR=${NHOUR:-$(command -v nhour 2>/dev/null || echo "$NDATE")}
+
 # ---- Job control ----
 export NET=nosofs
 export RUN=${OFS}
@@ -103,6 +107,15 @@ export TOTAL_TASKS=${TOTAL_TASKS:-12}
 
 # ---- Create WCOSS2 directory structure ----
 mkdir -p "${COMOUT}" "${DATAROOT}" /lfs/h1/ops/prod/dcom
+
+# Match nos_ofs_ver to whatever version directory exists with hotstart data
+# WCOSS2 uses v3.7 for COMOUT, but run.ver sets nosofs_ver=v3.7.0
+if [ -d "${COMROOT}/nosofs/v3.7" ] && [ ! -f "${COMROOT}/nosofs/${nos_ofs_ver}/secofs.${PDY}/"*.rst.*.nc 2>/dev/null ]; then
+    export nos_ofs_ver=v3.7
+    export COMOUTroot=${COMROOT}/nosofs/${nos_ofs_ver}
+    export COMOUT=${COMOUTroot}/${OFS}.${PDY}
+    echo "  Using nos_ofs_ver=v3.7 (hotstart found in v3.7/)"
+fi
 
 echo "=============================================="
 echo " SECOFS Docker Test Runner (WCOSS2 paths)"
