@@ -85,6 +85,14 @@ for dir in "${SORC_DIR}"/*.fd; do
     fi
 done
 
+# ---- Create aliases for executables with alternate names ----
+# SCHISM/FVCOM use nos_ofs_create_forcing_met_fvcom (same binary as nos_ofs_create_forcing_met)
+[ -f "${EXECnos}/nos_ofs_create_forcing_met" ] && \
+    ln -sf nos_ofs_create_forcing_met "${EXECnos}/nos_ofs_create_forcing_met_fvcom"
+# combine_hotstart has alternate names on WCOSS2
+[ -f "${EXECnos}/nos_ofs_combine_hotstart_schism" ] && \
+    ln -sf nos_ofs_combine_hotstart_schism "${EXECnos}/schism_combine_hotstart7.exe"
+
 # ---- Summary ----
 echo ""
 echo "=============================================="

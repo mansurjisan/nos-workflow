@@ -70,7 +70,7 @@ RUN set -x \
     && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
     && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2c \
     \
-    && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2.git \
+    && git clone --depth 1 --branch v3.4.5 https://github.com/NOAA-EMC/NCEPLIBS-g2.git \
     && cd NCEPLIBS-g2 && mkdir build && cd build \
     && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
     && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2 \
@@ -81,7 +81,7 @@ RUN set -x \
     && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bufr
 
 # Set NCEP library environment for COMF Fortran makefiles
-ENV G2_INC4=/opt/ncep/include \
+ENV G2_INC4=/opt/ncep/include_4 \
     G2_LIB4=/opt/ncep/lib64/libg2_4.a \
     W3NCO_LIB4=/opt/ncep/lib/libw3nco_4.a \
     W3EMC_LIB4=/opt/ncep/lib64/libw3emc_4.a \
@@ -149,6 +149,7 @@ RUN mkdir -p /opt/prod_util/bin && \
     printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
     printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
     printf '#!/bin/bash\nexport err=0\n' > /opt/prod_util/bin/prep_step && \
+    printf '#!/bin/bash\n# CFP shim: run commands from file sequentially (WCOSS2 runs them via MPI)\nCMDFILE="${1:-}"\nif [ -z "$CMDFILE" ] || [ ! -f "$CMDFILE" ]; then echo "cfp: no command file"; exit 1; fi\nwhile IFS= read -r cmd; do\n  [ -z "$cmd" ] && continue\n  [[ "$cmd" == "#"* ]] && continue\n  eval "$cmd" || true\ndone < "$CMDFILE"\n' > /opt/prod_util/bin/cfp && \
     chmod +x /opt/prod_util/bin/*
 
 # Install Python packages
@@ -212,7 +213,7 @@ COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
 RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
 
 # Set up paths
-ENV PATH="/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin:${PATH}" \
+ENV PATH="/usr/local/bin:/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64/openmpi/lib" \
     PYTHONPATH="/opt/nosofs/ush/python" \
     HOMEnos="/opt/nosofs" \

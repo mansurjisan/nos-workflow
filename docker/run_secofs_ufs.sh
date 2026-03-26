@@ -94,6 +94,10 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 export NDATE=$(command -v ndate)
 export NHOUR=${NHOUR:-$(command -v nhour 2>/dev/null || echo "$NDATE")}
 
+# ---- Tool paths (WCOSS2 sets these via modules) ----
+export WGRIB2=$(command -v wgrib2)
+export NCODIR=$(dirname "$(command -v ncap2 2>/dev/null || echo /usr/bin/ncap2)")
+
 # ---- Job control ----
 export NET=nosofs
 export RUN=${OFS}
