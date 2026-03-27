@@ -14,6 +14,9 @@
 #   OFS=secofs PDY=20260324 CYC=18 docker compose run secofs-prep
 # ============================================================================
 
+# Global build args (must be before first FROM)
+ARG UFS_IMAGE=nosofs/ufs-coastal:latest
+
 # ===========================================================================
 # Stage 1: Build COMF Fortran executables with GCC
 # ===========================================================================
@@ -103,7 +106,6 @@ RUN mkdir -p /opt/nosofs/lib /opt/nosofs/exec && \
 # ===========================================================================
 # Stage 2: Build UFS-Coastal (fv3_coastalS.exe) from EPIC spack-stack
 # ===========================================================================
-ARG UFS_IMAGE=nosofs/ufs-coastal:latest
 FROM ${UFS_IMAGE} AS ufs-build
 # This image was built by Dockerfile.ufs_coastal and contains:
 #   /opt/ufs/bin/ufs_model (= fv3_coastalS.exe)
