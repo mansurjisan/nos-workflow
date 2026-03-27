@@ -189,11 +189,7 @@ jobs:
             FAIL=0
             for y in /opt/nosofs/parm/systems/*.yaml; do
                 name=$(basename $y)
-                python3 -c "
-import yaml, sys
-c = yaml.safe_load(open(\"$y\"))
-assert \"system\" in c or \"_base\" in c, \"Missing system or _base key\"
-print(f\"  OK: {\"$name\"}\")" 2>&1 || { echo "  FAIL: $name"; FAIL=1; }
+                python3 -c "import yaml; c=yaml.safe_load(open(\"$y\")); assert \"system\" in c or \"_base\" in c; print(\"  OK: $name\")" 2>&1 || { echo "  FAIL: $name"; FAIL=1; }
             done
             [ $FAIL -eq 0 ] || exit 1
           '
