@@ -111,6 +111,8 @@ jobs:
           file: docker/Dockerfile.secofs_ufs
           push: true
           tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            UFS_IMAGE=${{ env.UFS_IMAGE_NAME }}:latest
           cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:gcc-buildcache
           cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:gcc-buildcache,mode=max
 
