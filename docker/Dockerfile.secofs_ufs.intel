@@ -1,0 +1,334 @@
+# ============================================================================
+# Dockerfile.secofs_ufs.intel - SECOFS UFS-Coastal Container (Intel Compilers)
+#
+# Multi-stage build:
+#   Stage 1 (comf-build-intel):  Intel oneAPI 2023.2.1 + NetCDF-Fortran (Intel)
+#                                + NCEP libs (Intel) + COMF Fortran executables
+#   Stage 2 (ufs-build):        UFS-Coastal fv3_coastalS.exe from EPIC spack-stack
+#                                (GCC-built — an Intel UFS build would require
+#                                Intel-based spack-stack which EPIC does not ship)
+#   Stage 3 (tools):            wgrib2, prod_util shims, cfp shim
+#   Stage 4 (runtime):          EPIC spack-stack base + all artifacts + nos_ofs workflow
+#
+# The key difference from Dockerfile.secofs_ufs (GCC):
+#   - COMF Fortran executables are built with Intel ifort/icc
+#   - No GCC flag translation needed (makefiles are Intel-native)
+#   - NetCDF-Fortran must be rebuilt with ifort (system version is GCC-built)
+#   - Intel runtime libs added to LD_LIBRARY_PATH
+#
+# Build (~10 min, cached layers):
+#   docker build -f docker/Dockerfile.secofs_ufs.intel -t nosofs/secofs-ufs:intel .
+#
+# Run:
+#   OFS=secofs PDY=20260324 CYC=18 docker compose run secofs-prep
+# ============================================================================
+
+# ===========================================================================
+# Stage 1: Build COMF Fortran executables with Intel ifort/icc
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS comf-build-intel
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc gcc-c++ make cmake git \
+        openmpi openmpi-devel \
+        netcdf netcdf-devel \
+        hdf5 hdf5-devel \
+        jasper jasper-devel libpng libpng-devel \
+        libjpeg-turbo libjpeg-turbo-devel \
+        zlib-devel bzip2-devel \
+        blas-devel lapack-devel openblas-devel \
+        wget hostname which diffutils m4
+
+# --- Intel oneAPI 2023.2.1 (ifort + icc) ---
+# Import Intel GPG key (required for non-interactive build)
+RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB
+
+# Add Intel oneAPI repository
+RUN printf '[oneAPI]\n\
+name=Intel oneAPI repository\n\
+baseurl=https://yum.repos.intel.com/oneapi\n\
+enabled=1\n\
+gpgcheck=1\n\
+repo_gpgcheck=0\n\
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB\n' > /etc/yum.repos.d/oneAPI.repo \
+    && dnf makecache
+
+# Install Intel classic compilers (ifort 2021.10.0, icc)
+# Using 2023.2.1 which is compatible with WCOSS2's intel-19.1.3.304 codebase
+RUN dnf install -y \
+    intel-oneapi-compiler-fortran-2023.2.1 \
+    intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic-2023.2.1
+
+# Verify Intel compilers
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    ifort --version && icc --version'
+
+# --- Build NetCDF-Fortran from source with Intel compilers ---
+# The system netcdf-fortran RPM is built with gfortran; its .mod files are
+# incompatible with ifort. We rebuild against the system libnetcdf (C library).
+ARG NETCDF_FORTRAN_VERSION=4.6.1
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    cd /tmp && \
+    wget -q https://github.com/Unidata/netcdf-fortran/archive/refs/tags/v${NETCDF_FORTRAN_VERSION}.tar.gz && \
+    tar -xzf v${NETCDF_FORTRAN_VERSION}.tar.gz && \
+    cd netcdf-fortran-${NETCDF_FORTRAN_VERSION} && \
+    export CC=icc FC=ifort F77=ifort && \
+    export CPPFLAGS="-I/usr/include" && \
+    export LDFLAGS="-L/usr/lib64" && \
+    ./configure --prefix=/usr --libdir=/usr/lib64 && \
+    make -j$(nproc) && \
+    make install && \
+    cd /tmp && rm -rf netcdf-fortran-${NETCDF_FORTRAN_VERSION} v${NETCDF_FORTRAN_VERSION}.tar.gz'
+
+# --- Build NCEP libraries with Intel ---
+RUN bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    set -x && \
+    export CC=icc FC=ifort F77=ifort && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git && \
+    cd NCEPLIBS-bacio && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bacio && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3emc.git && \
+    cd NCEPLIBS-w3emc && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-w3emc && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-w3nco.git && \
+    cd NCEPLIBS-w3nco && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-w3nco && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-sp.git && \
+    cd NCEPLIBS-sp && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-sp && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-ip.git && \
+    cd NCEPLIBS-ip && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-ip && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-g2c.git && \
+    cd NCEPLIBS-g2c && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2c && \
+    \
+    git clone --depth 1 --branch v3.4.5 https://github.com/NOAA-EMC/NCEPLIBS-g2.git && \
+    cd NCEPLIBS-g2 && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-g2 && \
+    \
+    git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bufr.git && \
+    cd NCEPLIBS-bufr && mkdir build && cd build && \
+    cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
+        -DCMAKE_C_COMPILER=icc -DCMAKE_Fortran_COMPILER=ifort && \
+    make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bufr'
+
+# --- NCEP lib environment for COMF makefiles ---
+ENV G2_INC4=/opt/ncep/include_4 \
+    G2_LIB4=/opt/ncep/lib64/libg2_4.a \
+    W3NCO_LIB4=/opt/ncep/lib/libw3nco_4.a \
+    W3EMC_LIB4=/opt/ncep/lib64/libw3emc_4.a \
+    BACIO_LIB4=/opt/ncep/lib64/libbacio.a \
+    BUFR_LIB4=/opt/ncep/lib64/libbufr_4.a \
+    SP_LIB4=/opt/ncep/lib64/libsp_4.a \
+    IP_LIB4=/opt/ncep/lib64/libip_4.a \
+    JASPER_LIB=-ljasper \
+    PNG_LIB=-lpng \
+    Z_LIB=-lz \
+    Z_LIB4=-lz \
+    NETCDF=/usr \
+    COMP_F=ifort \
+    COMP_CC=icc \
+    LIBnos=/opt/nosofs/lib \
+    EXECnos=/opt/nosofs/exec
+
+COPY ush/python/sorc/ /opt/nosofs/sorc/
+COPY docker/build_comf_intel.sh /opt/nosofs/docker/
+
+# Build COMF executables with Intel — no flag patching needed
+RUN mkdir -p /opt/nosofs/lib /opt/nosofs/exec && \
+    chmod +x /opt/nosofs/docker/build_comf_intel.sh && \
+    bash -c 'source /opt/intel/oneapi/compiler/2023.2.1/env/vars.sh && \
+    SORC_DIR=/opt/nosofs/sorc /opt/nosofs/docker/build_comf_intel.sh'
+
+# ===========================================================================
+# Stage 2: UFS-Coastal (fv3_coastalS.exe) from EPIC spack-stack
+# ===========================================================================
+FROM nosofs/ufs-coastal:latest AS ufs-build
+# This image was built by Dockerfile.ufs_coastal and contains:
+#   /opt/ufs/bin/ufs_model (= fv3_coastalS.exe)
+# If not pre-built, build it first:
+#   docker build -f docker/Dockerfile.ufs_coastal -t nosofs/ufs-coastal:latest docker/
+#
+# NOTE: The UFS executable is GCC-built against the EPIC spack-stack.
+# An Intel-native UFS build would require an Intel-based spack-stack image
+# (with ESMF, FMS, CDEPS, CMEPS, etc. all built with ifort/icc), which
+# EPIC does not currently provide. The GCC UFS binary is ABI-compatible
+# at runtime since it does not link against COMF libraries.
+
+# ===========================================================================
+# Stage 3: Build wgrib2 + prod_util shims + cfp shim
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS tools
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc gcc-c++ gcc-gfortran make cmake git wget \
+        python3 python3-pip python3-devel \
+        netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
+        jasper zlib-devel libpng-devel libpng libjpeg-turbo
+
+ARG WGRIB2_VERSION=2.0.8
+RUN cd /tmp && \
+    wget -q https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
+    tar -xzf wgrib2.tgz && cd grib2 && \
+    export CC=gcc FC=gfortran && \
+    sed -i \
+        -e 's/USE_AEC=1/USE_AEC=0/' \
+        -e 's/USE_OPENJPEG=1/USE_OPENJPEG=0/' \
+        -e 's/USE_NETCDF4=1/USE_NETCDF4=0/' \
+        -e 's/USE_NETCDF3=1/USE_NETCDF3=0/' \
+        -e 's/USE_PROJ4=1/USE_PROJ4=0/' \
+        -e 's/USE_IPOLATES=3/USE_IPOLATES=0/' \
+        -e 's/USE_SPECTRAL=1/USE_SPECTRAL=0/' \
+        makefile && \
+    make && \
+    mkdir -p /opt/wgrib2/bin && \
+    cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
+    cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
+
+RUN mkdir -p /opt/prod_util/bin && \
+    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\nhrs = int(sys.argv[1])\ndt = datetime.strptime(sys.argv[2], "%%Y%%m%%d%%H")\nprint((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
+    printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
+    printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
+    printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
+    printf '#!/bin/bash\nexport err=0\n' > /opt/prod_util/bin/prep_step && \
+    printf '#!/bin/bash\n# CFP shim: distribute commands across MPI ranks (like WCOSS2 cfp)\n# OpenMPI sets OMPI_COMM_WORLD_RANK and OMPI_COMM_WORLD_SIZE\nCMDFILE="${1:-}"\nif [ -z "$CMDFILE" ] || [ ! -f "$CMDFILE" ]; then echo "cfp: no command file"; exit 1; fi\nRANK=${OMPI_COMM_WORLD_RANK:-0}\nSIZE=${OMPI_COMM_WORLD_SIZE:-1}\nLINE=0\nwhile IFS= read -r cmd; do\n  [ -z "$cmd" ] && continue\n  [[ "$cmd" == "#"* ]] && continue\n  if [ $((LINE %% SIZE)) -eq $RANK ]; then\n    eval "$cmd" || true\n  fi\n  LINE=$((LINE + 1))\ndone < "$CMDFILE"\n' > /opt/prod_util/bin/cfp && \
+    chmod +x /opt/prod_util/bin/*
+
+# ===========================================================================
+# Stage 4: Runtime — EPIC spack-stack base + everything else
+# ===========================================================================
+FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS runtime
+
+# Install additional runtime packages not in EPIC image
+RUN dnf install -y nco hostname which diffutils procps-ng python3-pip && \
+    dnf clean all
+
+# --- Intel oneAPI runtime libraries ---
+# COMF executables were built with ifort and need libifcore, libifport, etc.
+RUN rpm --import https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB && \
+    printf '[oneAPI]\n\
+name=Intel oneAPI repository\n\
+baseurl=https://yum.repos.intel.com/oneapi\n\
+enabled=1\n\
+gpgcheck=1\n\
+repo_gpgcheck=0\n\
+gpgkey=https://yum.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB\n' > /etc/yum.repos.d/oneAPI.repo && \
+    dnf makecache && \
+    dnf install -y \
+        intel-oneapi-compiler-fortran-runtime-2023.2.1 \
+        intel-oneapi-compiler-dpcpp-cpp-and-cpp-classic-runtime-2023.2.1 \
+        intel-oneapi-compiler-shared-runtime-2023.2.1 \
+        intel-oneapi-openmp-2023.2.1 && \
+    dnf clean all
+
+# Copy Intel-built COMF executables + libs + NCEP libs from Stage 1
+COPY --from=comf-build-intel /opt/nosofs/exec/ /opt/nosofs/exec/
+COPY --from=comf-build-intel /opt/nosofs/lib/ /opt/nosofs/lib/
+COPY --from=comf-build-intel /opt/ncep/ /opt/ncep/
+
+# Copy Intel-built NetCDF-Fortran libraries and .mod files from Stage 1
+# (needed at runtime for libnetcdff.so linkage)
+COPY --from=comf-build-intel /usr/lib64/libnetcdff.* /usr/lib64/
+COPY --from=comf-build-intel /usr/include/netcdf*.mod /usr/include/
+COPY --from=comf-build-intel /usr/include/typesizes.mod /usr/include/
+
+# Copy UFS-Coastal executable from Stage 2
+COPY --from=ufs-build /opt/ufs/bin/ufs_model /opt/nosofs/exec/fv3_coastalS.exe
+
+# Copy wgrib2 + prod_util from Stage 3
+COPY --from=tools /opt/wgrib2/ /opt/wgrib2/
+COPY --from=tools /opt/prod_util/ /opt/prod_util/
+
+# Install Python packages
+RUN pip3 install --no-cache-dir \
+    numpy xarray pyyaml netCDF4 scipy pandas \
+    matplotlib pyproj shapely cftime \
+    pytest pytz more-itertools termcolor geopy attrs schema
+
+# Copy nos_ofs workflow
+COPY jobs/ /opt/nosofs/jobs/
+COPY scripts/ /opt/nosofs/scripts/
+COPY ush/ /opt/nosofs/ush/
+COPY parm/ /opt/nosofs/parm/
+COPY versions/ /opt/nosofs/versions/
+COPY modulefiles/ /opt/nosofs/modulefiles/
+
+# Copy fix templates
+COPY fix/secofs_ufs/*.template fix/secofs_ufs/ufs.configure \
+     fix/secofs_ufs/fd_ufs.yaml fix/secofs_ufs/noahmptable.tbl \
+     fix/secofs_ufs/secofs_ufs.param.nml \
+     /opt/nosofs/fix/secofs_ufs/
+
+# Copy Docker scripts
+COPY docker/run_secofs_ufs.sh /opt/nosofs/docker/
+COPY docker/mpiexec_wrapper.sh /opt/nosofs/docker/
+COPY docker/build_comf_intel.sh /opt/nosofs/docker/
+
+# Install nos_ofs Python package
+RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
+
+# Set up paths — spack bins + MPI + COMF executables + tools + Intel runtime libs
+ENV SI=/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1
+ENV PATH="/usr/local/bin:/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/opt/openmpi/4.1.6/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/opt/openmpi/4.1.6/lib:/opt/intel/oneapi/compiler/2023.2.1/linux/compiler/lib/intel64_lin" \
+    PYTHONPATH="/opt/nosofs/ush/python" \
+    HOMEnos="/opt/nosofs" \
+    HOMEstofs="/opt/nosofs"
+
+# MPI wrapper + scripts
+RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
+    ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec && \
+    chmod +x /opt/nosofs/docker/run_secofs_ufs.sh && \
+    chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
+
+# Flat ush/ symlinks for WCOSS2 layout
+RUN for f in /opt/nosofs/ush/nosofs/*.sh; do \
+        base=$(basename "$f"); \
+        [ ! -e "/opt/nosofs/ush/$base" ] && ln -sf "nosofs/$base" "/opt/nosofs/ush/$base"; \
+    done
+
+# Disable WCOSS2 Intel LD_PRELOAD (we set LD_LIBRARY_PATH instead for runtime libs)
+ENV LD_PRELOAD=""
+
+# WCOSS2-mirrored directory structure
+RUN mkdir -p /lfs/h1/nos/nosofs/packages \
+             /lfs/h1/nos/ptmp/nosuser/com \
+             /lfs/h1/nos/ptmp/nosuser/work \
+             /lfs/h1/ops/prod/com \
+             /lfs/h1/ops/prod/dcom \
+             /work /data/com /data/hotstart && \
+    ln -sf /opt/nosofs /lfs/h1/nos/nosofs/packages/nosofs.v3.7.0
+
+# Ensure mpirun accessible
+RUN ln -sf /opt/openmpi/4.1.6/bin/mpirun /usr/local/bin/mpirun
+
+WORKDIR /work
+ENTRYPOINT ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+CMD ["all"]
