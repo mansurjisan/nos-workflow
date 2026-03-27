@@ -18,19 +18,18 @@ x-common: &common
     dockerfile: docker/Dockerfile.secofs_ufs
   image: nosofs/secofs-ufs:latest
   volumes:
-    # Production input data → WCOSS2 paths
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/gfs:/lfs/h1/ops/prod/com/gfs:ro
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/hrrr:/lfs/h1/ops/prod/com/hrrr:ro
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nwm:/lfs/h1/ops/prod/com/nwm:ro
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/rtofs:/lfs/h1/ops/prod/com/rtofs:ro
-    # Fix files → WCOSS2 package path
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/secofs:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/secofs:ro
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/shared:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/shared:ro
-    # COMROOT: contains hotstart (input) and prep outputs (written here)
-    # Mount the raw data's nosofs/ as read-write so prep can write alongside hotstart
-    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nosofs:/lfs/h1/nos/ptmp/nosuser/com/nosofs
-    # Working directory (ephemeral, read-write)
-    - ${WORK_ROOT:-./work}:/lfs/h1/nos/ptmp/nosuser/work
+    # Fast I/O data (native Linux ext4) → WCOSS2 paths
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/com/gfs:/lfs/h1/ops/prod/com/gfs:ro
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/com/hrrr:/lfs/h1/ops/prod/com/hrrr:ro
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/com/nwm:/lfs/h1/ops/prod/com/nwm:ro
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/com/rtofs:/lfs/h1/ops/prod/com/rtofs:ro
+    # Fix files (native Linux ext4)
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/fix/secofs:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/secofs:ro
+    - ${FAST_ROOT:-/home/mjisan/secofs_data}/fix/shared:/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/fix/shared:ro
+    # COMROOT: hotstart on D: drive (read once), prep outputs written here
+    - ${DATA_ROOT:-/mnt/d/secofs_docker_data}/com/nosofs:/lfs/h1/nos/ptmp/nosuser/com/nosofs
+    # Working directory on native Linux (fast intermediate I/O)
+    - ${WORK_ROOT:-/home/mjisan/secofs_work}:/lfs/h1/nos/ptmp/nosuser/work
   environment:
     - OFS=${OFS:-secofs}
     - PDY=${PDY:-20260324}
