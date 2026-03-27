@@ -1,25 +1,21 @@
 # ============================================================================
-# Dockerfile.secofs_ufs - UFS-Coastal SECOFS Deterministic Testing Container
+# Dockerfile.secofs_ufs - Complete SECOFS UFS-Coastal Testing Container
 #
 # Multi-stage build:
 #   Stage 1 (comf-build):  NCEP libs + COMF Fortran executables (GCC)
-#   Stage 2 (tools):       wgrib2, prod_util, Python packages
-#   Stage 3 (runtime):     Final image with nos_ofs workflow
+#   Stage 2 (ufs-build):   UFS-Coastal fv3_coastalS.exe from EPIC spack-stack
+#   Stage 3 (tools):       wgrib2, prod_util shims
+#   Stage 4 (runtime):     EPIC spack-stack base + all artifacts + nos_ofs workflow
 #
-# UFS-Coastal (fv3_coastalS.exe) is NOT built here — it requires
-# spack-stack (ESMF 8.8.0) which adds ~2h build time. Options:
-#   a) Mount pre-built binary from WCOSS2 via volume
-#   b) Extend this Dockerfile with spack-stack stage (see comments)
-#
-# Build:
+# Build (~5 min, cached layers):
 #   docker build -f docker/Dockerfile.secofs_ufs -t nosofs/secofs-ufs:latest .
 #
 # Run:
-#   docker run -v ./data:/data nosofs/secofs-ufs:latest prep
+#   OFS=secofs PDY=20260324 CYC=18 docker compose run secofs-prep
 # ============================================================================
 
 # ===========================================================================
-# Stage 1: Build NCEP libraries and COMF Fortran executables with GCC
+# Stage 1: Build COMF Fortran executables with GCC
 # ===========================================================================
 FROM rockylinux/rockylinux:9 AS comf-build
 
@@ -38,7 +34,6 @@ RUN dnf update -y && \
         wget hostname which diffutils
 
 # Build NCEP libraries with GCC
-# Pattern from ush/python/Dockerfile lines 57-113
 RUN set -x \
     && git clone --depth 1 https://github.com/NOAA-EMC/NCEPLIBS-bacio.git \
     && cd NCEPLIBS-bacio && mkdir build && cd build \
@@ -80,7 +75,6 @@ RUN set -x \
     && cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/ncep -DBUILD_TESTING=OFF -DCMAKE_PREFIX_PATH=/opt/ncep \
     && make -j$(nproc) && make install && cd / && rm -rf NCEPLIBS-bufr
 
-# Set NCEP library environment for COMF Fortran makefiles
 ENV G2_INC4=/opt/ncep/include_4 \
     G2_LIB4=/opt/ncep/lib64/libg2_4.a \
     W3NCO_LIB4=/opt/ncep/lib/libw3nco_4.a \
@@ -99,7 +93,6 @@ ENV G2_INC4=/opt/ncep/include_4 \
     LIBnos=/opt/nosofs/lib \
     EXECnos=/opt/nosofs/exec
 
-# Copy COMF Fortran source and build script
 COPY ush/python/sorc/ /opt/nosofs/sorc/
 COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
 
@@ -108,7 +101,16 @@ RUN mkdir -p /opt/nosofs/lib /opt/nosofs/exec && \
     SORC_DIR=/opt/nosofs/sorc /opt/nosofs/docker/build_comf_gcc.sh
 
 # ===========================================================================
-# Stage 2: Build wgrib2 and install Python packages
+# Stage 2: Build UFS-Coastal (fv3_coastalS.exe) from EPIC spack-stack
+# ===========================================================================
+FROM nosofs/ufs-coastal:latest AS ufs-build
+# This image was built by Dockerfile.ufs_coastal and contains:
+#   /opt/ufs/bin/ufs_model (= fv3_coastalS.exe)
+# If not pre-built, build it first:
+#   docker build -f docker/Dockerfile.ufs_coastal -t nosofs/ufs-coastal:latest docker/
+
+# ===========================================================================
+# Stage 3: Build wgrib2 + prod_util shims
 # ===========================================================================
 FROM rockylinux/rockylinux:9 AS tools
 
@@ -121,7 +123,6 @@ RUN dnf update -y && \
         netcdf netcdf-fortran netcdf-devel netcdf-fortran-devel \
         jasper zlib-devel libpng-devel libpng libjpeg-turbo
 
-# Build wgrib2
 ARG WGRIB2_VERSION=2.0.8
 RUN cd /tmp && \
     wget -q https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
@@ -141,8 +142,6 @@ RUN cd /tmp && \
     cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
     cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
 
-# Create prod_util shims (ndate, postmsg, err_chk, err_exit)
-# Full NCEPLIBS-prod_util requires w3emc; these minimal shims suffice for testing
 RUN mkdir -p /opt/prod_util/bin && \
     printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\nhrs = int(sys.argv[1])\ndt = datetime.strptime(sys.argv[2], "%%Y%%m%%d%%H")\nprint((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
     printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
@@ -152,45 +151,34 @@ RUN mkdir -p /opt/prod_util/bin && \
     printf '#!/bin/bash\n# CFP shim: distribute commands across MPI ranks (like WCOSS2 cfp)\n# OpenMPI sets OMPI_COMM_WORLD_RANK and OMPI_COMM_WORLD_SIZE\nCMDFILE="${1:-}"\nif [ -z "$CMDFILE" ] || [ ! -f "$CMDFILE" ]; then echo "cfp: no command file"; exit 1; fi\nRANK=${OMPI_COMM_WORLD_RANK:-0}\nSIZE=${OMPI_COMM_WORLD_SIZE:-1}\nLINE=0\nwhile IFS= read -r cmd; do\n  [ -z "$cmd" ] && continue\n  [[ "$cmd" == "#"* ]] && continue\n  if [ $((LINE %% SIZE)) -eq $RANK ]; then\n    eval "$cmd" || true\n  fi\n  LINE=$((LINE + 1))\ndone < "$CMDFILE"\n' > /opt/prod_util/bin/cfp && \
     chmod +x /opt/prod_util/bin/*
 
+# ===========================================================================
+# Stage 4: Runtime — EPIC spack-stack base + everything else
+# ===========================================================================
+FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS runtime
+
+# Install additional runtime packages not in EPIC image
+RUN dnf install -y nco hostname which diffutils procps-ng python3-pip && \
+    dnf clean all
+
+# Copy COMF executables + NCEP libs from Stage 1
+COPY --from=comf-build /opt/nosofs/exec/ /opt/nosofs/exec/
+COPY --from=comf-build /opt/nosofs/lib/ /opt/nosofs/lib/
+COPY --from=comf-build /opt/ncep/ /opt/ncep/
+
+# Copy UFS-Coastal executable from Stage 2
+COPY --from=ufs-build /opt/ufs/bin/ufs_model /opt/nosofs/exec/fv3_coastalS.exe
+
+# Copy wgrib2 + prod_util from Stage 3
+COPY --from=tools /opt/wgrib2/ /opt/wgrib2/
+COPY --from=tools /opt/prod_util/ /opt/prod_util/
+
 # Install Python packages
 RUN pip3 install --no-cache-dir \
     numpy xarray pyyaml netCDF4 scipy pandas \
     matplotlib pyproj shapely cftime \
     pytest pytz more-itertools termcolor geopy attrs schema
 
-# ===========================================================================
-# Stage 3: Runtime image
-# ===========================================================================
-FROM rockylinux/rockylinux:9 AS runtime
-
-RUN dnf update -y && \
-    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
-    /usr/bin/crb enable && \
-    dnf install -y --nobest \
-        gcc-gfortran openmpi openmpi-devel \
-        netcdf netcdf-fortran \
-        hdf5 \
-        nco udunits2 \
-        jasper libpng libjpeg-turbo zlib \
-        python3 python3-pip python3-devel \
-        hostname which diffutils procps-ng \
-        environment-modules && \
-    dnf clean all
-
-# Copy compiled artifacts from build stages
-COPY --from=comf-build /opt/nosofs/exec/ /opt/nosofs/exec/
-COPY --from=comf-build /opt/nosofs/lib/ /opt/nosofs/lib/
-COPY --from=comf-build /opt/ncep/ /opt/ncep/
-COPY --from=tools /opt/wgrib2/ /opt/wgrib2/
-COPY --from=tools /opt/prod_util/ /opt/prod_util/
-
-# Install Python packages (runtime)
-RUN pip3 install --no-cache-dir \
-    numpy xarray pyyaml netCDF4 scipy pandas \
-    matplotlib pyproj shapely cftime \
-    pytest pytz more-itertools termcolor geopy attrs schema
-
-# Copy the entire nos_ofs workflow
+# Copy nos_ofs workflow
 COPY jobs/ /opt/nosofs/jobs/
 COPY scripts/ /opt/nosofs/scripts/
 COPY ush/ /opt/nosofs/ush/
@@ -198,7 +186,7 @@ COPY parm/ /opt/nosofs/parm/
 COPY versions/ /opt/nosofs/versions/
 COPY modulefiles/ /opt/nosofs/modulefiles/
 
-# Copy fix templates (large grid files bind-mounted at runtime)
+# Copy fix templates
 COPY fix/secofs_ufs/*.template fix/secofs_ufs/ufs.configure \
      fix/secofs_ufs/fd_ufs.yaml fix/secofs_ufs/noahmptable.tbl \
      fix/secofs_ufs/secofs_ufs.param.nml \
@@ -212,34 +200,30 @@ COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
 # Install nos_ofs Python package
 RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
 
-# Set up paths
-ENV PATH="/usr/local/bin:/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/usr/lib64/openmpi/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64/openmpi/lib" \
+# Set up paths — spack bins + MPI + COMF executables + tools
+ENV SI=/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1
+ENV PATH="/usr/local/bin:/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/opt/openmpi/4.1.6/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/opt/openmpi/4.1.6/lib" \
     PYTHONPATH="/opt/nosofs/ush/python" \
     HOMEnos="/opt/nosofs" \
     HOMEstofs="/opt/nosofs"
 
-# MPI wrapper: translate mpiexec (Cray) to mpirun (OpenMPI)
+# MPI wrapper + scripts
 RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
     ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec && \
-    chmod +x /opt/nosofs/docker/run_secofs_ufs.sh
+    chmod +x /opt/nosofs/docker/run_secofs_ufs.sh && \
+    chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
 
-# Make all scripts executable
-RUN chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
-
-# WCOSS2 has flat ush/ layout; repo has nested ush/nosofs/.
-# Create symlinks so $USHnos/nos_ofs_launch.sh works (points to ush/nosofs/)
+# Flat ush/ symlinks for WCOSS2 layout
 RUN for f in /opt/nosofs/ush/nosofs/*.sh; do \
         base=$(basename "$f"); \
         [ ! -e "/opt/nosofs/ush/$base" ] && ln -sf "nosofs/$base" "/opt/nosofs/ush/$base"; \
     done
 
-# Disable LD_PRELOAD of WCOSS2 Intel NetCDF (doesn't exist in container)
-# The J-job sets this for COMF Fortran; container uses system NetCDF instead
+# Disable WCOSS2 Intel LD_PRELOAD
 ENV LD_PRELOAD=""
 
-# Create WCOSS2-mirrored directory structure
-# Scripts use /lfs/h1/... paths — symlink to container's /opt/nosofs
+# WCOSS2-mirrored directory structure
 RUN mkdir -p /lfs/h1/nos/nosofs/packages \
              /lfs/h1/nos/ptmp/nosuser/com \
              /lfs/h1/nos/ptmp/nosuser/work \
@@ -248,26 +232,8 @@ RUN mkdir -p /lfs/h1/nos/nosofs/packages \
              /work /data/com /data/hotstart && \
     ln -sf /opt/nosofs /lfs/h1/nos/nosofs/packages/nosofs.v3.7.0
 
-# Ensure OpenMPI binaries are on PATH
-RUN ln -sf /usr/lib64/openmpi/bin/mpirun /usr/local/bin/mpirun
-
-# ============================================================================
-# To add UFS-Coastal (fv3_coastalS.exe), either:
-#
-# Option A: Mount pre-built binary
-#   docker run -v /path/to/fv3_coastalS.exe:/opt/nosofs/exec/fv3_coastalS.exe ...
-#
-# Option B: Build from spack-stack (add these stages before runtime):
-#   FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS spack-deps
-#   RUN spack install parmetis
-#
-#   FROM spack-deps AS ufs-build
-#   RUN git clone --recursive https://github.com/oceanmodeling/ufs-coastal-app.git
-#   RUN cd ufs-coastal-app && mkdir build && cd build && \
-#       cmake ../sorc/ufs_coastal.fd -DAPP=CSTLS -DCMAKE_C_COMPILER=gcc \
-#       -DCMAKE_Fortran_COMPILER=gfortran && make -j$(nproc)
-#   # Then COPY --from=ufs-build /path/to/fv3_coastalS.exe /opt/nosofs/exec/
-# ============================================================================
+# Ensure mpirun accessible
+RUN ln -sf /opt/openmpi/4.1.6/bin/mpirun /usr/local/bin/mpirun
 
 WORKDIR /work
 ENTRYPOINT ["/opt/nosofs/docker/run_secofs_ufs.sh"]
