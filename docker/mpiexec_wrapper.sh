@@ -65,7 +65,12 @@ if [ ! -x "$MPIRUN" ]; then
     exit 1
 fi
 
-echo "[mpiexec_wrapper] Translating: mpiexec -n $NPROCS $EXECUTABLE ${ARGS[*]:-}"
-echo "[mpiexec_wrapper] Executing:   $MPIRUN --allow-run-as-root -np $NPROCS --oversubscribe $EXECUTABLE ${ARGS[*]:-}"
-
-exec "$MPIRUN" --allow-run-as-root -np "$NPROCS" --oversubscribe "$EXECUTABLE" "${ARGS[@]}"
+# For cfp: run serially (avoids 8x redundant work from MPI rank duplication)
+# For model executables: use real MPI
+if [ "$(basename "$EXECUTABLE")" = "cfp" ]; then
+    echo "[mpiexec_wrapper] Running cfp serially (no MPI overhead)"
+    exec "$EXECUTABLE" "${ARGS[@]}"
+else
+    echo "[mpiexec_wrapper] Executing: $MPIRUN --allow-run-as-root -np $NPROCS --oversubscribe $EXECUTABLE ${ARGS[*]:-}"
+    exec "$MPIRUN" --allow-run-as-root -np "$NPROCS" --oversubscribe "$EXECUTABLE" "${ARGS[@]}"
+fi
