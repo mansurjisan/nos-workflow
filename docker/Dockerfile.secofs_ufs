@@ -113,6 +113,45 @@ FROM ${UFS_IMAGE} AS ufs-build
 #   docker build -f docker/Dockerfile.ufs_coastal -t nosofs/ufs-coastal:latest docker/
 
 # ===========================================================================
+# Stage 2.5: Build standalone SCHISM (pschism_TVD-VL)
+# ===========================================================================
+FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS schism-build
+
+RUN dnf install -y git && dnf clean all
+
+ENV SI=/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1
+
+# Discover spack-stack paths for CMake
+RUN BINDIRS=$(find ${SI} -maxdepth 2 -name bin -type d | tr '\n' ':') && \
+    LIBDIRS=$(find ${SI} -maxdepth 2 -name lib -type d | tr '\n' ':') && \
+    PREFIXES=$(ls -d ${SI}/*/ | tr '\n' ';') && \
+    echo "export PATH=/opt/openmpi/4.1.6/bin:${BINDIRS}\$PATH" > /opt/spack_env.sh && \
+    echo "export LD_LIBRARY_PATH=/opt/openmpi/4.1.6/lib:${LIBDIRS}\$LD_LIBRARY_PATH" >> /opt/spack_env.sh && \
+    echo "export CMAKE_PREFIX_PATH=\"${PREFIXES}\"" >> /opt/spack_env.sh
+
+ARG SCHISM_VERSION=5.11.0
+RUN git clone --depth 1 --branch v${SCHISM_VERSION} \
+        https://github.com/schism-dev/schism /opt/schism-src
+
+SHELL ["/bin/bash", "-c"]
+RUN source /opt/spack_env.sh && \
+    PREFIXES=$(ls -d ${SI}/*/ | tr '\n' ';') && \
+    mkdir /opt/schism-build && cd /opt/schism-build && \
+    cmake /opt/schism-src/src \
+        -DCMAKE_INSTALL_PREFIX=/opt/schism \
+        -DBLD_STANDALONE=ON \
+        -DTVD_LIM=VL \
+        -DUSE_PAHM=OFF \
+        -DNO_PARMETIS=OFF \
+        -DCMAKE_Fortran_FLAGS="-fallow-argument-mismatch" \
+        -DCMAKE_C_COMPILER=mpicc \
+        -DCMAKE_Fortran_COMPILER=mpifort \
+        -DCMAKE_PREFIX_PATH="${PREFIXES}" && \
+    make -j$(nproc) && \
+    mkdir -p /opt/schism/bin && \
+    cp bin/pschism_* /opt/schism/bin/
+
+# ===========================================================================
 # Stage 3: Build wgrib2 + prod_util shims
 # ===========================================================================
 FROM rockylinux/rockylinux:9 AS tools
@@ -173,6 +212,9 @@ COPY --from=comf-build /opt/ncep/ /opt/ncep/
 # Copy UFS-Coastal executable from Stage 2
 COPY --from=ufs-build /opt/ufs/bin/ufs_model /opt/nosofs/exec/fv3_coastalS.exe
 
+# Copy standalone SCHISM from Stage 2.5
+COPY --from=schism-build /opt/schism/bin/pschism_TVD-VL /opt/nosofs/exec/pschism_TVD-VL
+
 # Copy wgrib2 + prod_util from Stage 3
 COPY --from=tools /opt/wgrib2/ /opt/wgrib2/
 COPY --from=tools /opt/prod_util/ /opt/prod_util/
@@ -201,6 +243,7 @@ COPY fix/secofs_ufs/*.template fix/secofs_ufs/ufs.configure \
 COPY docker/run_secofs_ufs.sh /opt/nosofs/docker/
 COPY docker/mpiexec_wrapper.sh /opt/nosofs/docker/
 COPY docker/build_comf_gcc.sh /opt/nosofs/docker/
+COPY docker/generate_partition.py /opt/nosofs/docker/
 
 # Install nos_ofs Python package
 RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
@@ -218,6 +261,9 @@ RUN chmod +x /opt/nosofs/docker/mpiexec_wrapper.sh && \
     ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec && \
     chmod +x /opt/nosofs/docker/run_secofs_ufs.sh && \
     chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ /opt/nosofs/ush/ /opt/nosofs/docker/
+
+# SCHISM executable symlinks (COMF expects schism_secofs, STOFS expects pschism_TVD-VL)
+RUN ln -sf pschism_TVD-VL /opt/nosofs/exec/schism_secofs
 
 # Flat ush/ symlinks for WCOSS2 layout
 RUN for f in /opt/nosofs/ush/nosofs/*.sh; do \

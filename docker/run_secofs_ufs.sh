@@ -160,7 +160,34 @@ echo "--- Path verification ---"
 which nos_ofs_create_forcing_met >/dev/null 2>&1 && echo "  OK: COMF executables in PATH" || echo "  WARN: COMF executables not in PATH"
 which wgrib2 >/dev/null 2>&1 && echo "  OK: wgrib2" || echo "  MISSING: wgrib2"
 which ndate >/dev/null 2>&1 && echo "  OK: ndate" || echo "  MISSING: ndate"
+which pschism_TVD-VL >/dev/null 2>&1 && echo "  OK: pschism_TVD-VL" || echo "  WARN: pschism not built"
 echo ""
+
+# ---- Generate partition.prop for container core count ----
+# SCHISM needs partition.prop matching the compute proc count.
+# WCOSS2 uses pre-generated partition for 960+ procs.
+# Container uses round-robin partition for TOTAL_TASKS - NSCRIBES procs.
+NSCRIBES=${NSCRIBES:-1}
+NCOMPUTE=$((TOTAL_TASKS - NSCRIBES))
+if [ "$NCOMPUTE" -lt 2 ]; then
+    NCOMPUTE=2
+    TOTAL_TASKS=$((NCOMPUTE + NSCRIBES))
+fi
+export TOTAL_TASKS NSCRIBES NCOMPUTE
+
+# Pre-generate partition.prop if grid file exists and we'll run model
+if [ "$STAGE" != "prep" ] && [ "$STAGE" != "post" ]; then
+    GRID_FILE="${FIXofs}/${PREFIXNOS}.hgrid.gr3"
+    if [ -f "$GRID_FILE" ]; then
+        PARTITION_DIR="${FIXofs}"
+        PARTITION_FILE="${PARTITION_DIR}/partition.prop"
+        if [ ! -f "$PARTITION_FILE" ] || [ "$(head -1 "$PARTITION_FILE" 2>/dev/null)" = "" ]; then
+            echo "--- Generating partition.prop for ${NCOMPUTE} compute procs ---"
+            python3 /opt/nosofs/docker/generate_partition.py "$GRID_FILE" "$NCOMPUTE" "$PARTITION_FILE" 2>&1 || \
+                echo "  WARNING: Could not generate partition.prop"
+        fi
+    fi
+fi
 
 run_stage() {
     local stage=$1
