@@ -36,7 +36,7 @@ mkdir -p "${LIBnos}" "${EXECnos}"
 
 # ---- Patch all makefiles: Intel flags -> GCC flags ----
 echo "=== Patching makefiles for GCC compilation ==="
-for mkfile in "${SORC_DIR}"/*/makefile; do
+for mkfile in "${SORC_DIR}"/*/makefile "${SORC_DIR}"/*/*/makefile; do
     [ -f "$mkfile" ] || continue
     # -extend-source -> -ffixed-line-length-none -ffree-line-length-none
     sed -i 's/-extend-source/-ffixed-line-length-none -ffree-line-length-none/g' "$mkfile"
@@ -85,10 +85,25 @@ for dir in "${SORC_DIR}"/*.fd; do
     fi
 done
 
+# ---- Step 3: Build nested executables (inside subdirectories of .fd dirs) ----
+for nested in "${SORC_DIR}"/*.fd/*.fd; do
+    [ ! -d "$nested" ] && continue
+    [ ! -f "$nested/makefile" ] && continue
+    name=$(basename "$nested")
+    echo ""
+    echo "=== Building ${name} (nested) ==="
+    cd "$nested"
+    if make clean 2>/dev/null && make 2>&1; then
+        make install 2>/dev/null || cp -p "$(echo "$name" | sed 's/\.fd$//')" "${EXECnos}/" 2>/dev/null || true
+        SUCCEEDED+=("$name")
+        echo "  -> OK"
+    else
+        FAILED+=("$name")
+        echo "  -> FAILED (non-fatal, continuing)"
+    fi
+done
+
 # ---- Create aliases for executables with alternate names ----
-# SCHISM/FVCOM use nos_ofs_create_forcing_met_fvcom (same binary as nos_ofs_create_forcing_met)
-[ -f "${EXECnos}/nos_ofs_create_forcing_met" ] && \
-    ln -sf nos_ofs_create_forcing_met "${EXECnos}/nos_ofs_create_forcing_met_fvcom"
 # combine_hotstart has alternate names on WCOSS2
 [ -f "${EXECnos}/nos_ofs_combine_hotstart_schism" ] && \
     ln -sf nos_ofs_combine_hotstart_schism "${EXECnos}/schism_combine_hotstart7.exe"
