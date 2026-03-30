@@ -98,6 +98,14 @@ export NHOUR=${NHOUR:-$(command -v nhour 2>/dev/null || echo "$NDATE")}
 export WGRIB2=$(command -v wgrib2)
 export NCODIR=$(dirname "$(command -v ncap2 2>/dev/null || echo /usr/bin/ncap2)")
 
+# ---- spack-stack runtime libraries (for COMF Fortran executables) ----
+# COMF execs link against libnetcdff.so.7, libnetcdf.so.19, libhdf5.so etc.
+SI=${SI:-/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1}
+if [ -d "$SI" ]; then
+    SPACK_LIBS=$(find "$SI" -maxdepth 2 -name lib -type d 2>/dev/null | tr '\n' ':')
+    export LD_LIBRARY_PATH="${SPACK_LIBS}${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+fi
+
 # ---- Job control ----
 export NET=nosofs
 export RUN=${OFS}
