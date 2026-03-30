@@ -55,6 +55,10 @@ if [ ! -e "${HOMEnos}" ]; then
     ln -sf /opt/nosofs ${HOMEnos}
 fi
 
+# ---- Spack library paths for COMF Fortran executables ----
+SI=/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1
+export LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/usr/lib64:${SI}/netcdf-fortran-4.6.1-r7upznh/lib:${SI}/netcdf-c-4.9.2-xmkcipz/lib:${SI}/hdf5-1.14.3-zeqevsc/lib:${LD_LIBRARY_PATH:-}"
+
 # ---- WCOSS2-identical directory paths ----
 export EXECnos=${HOMEnos}/exec
 export FIXnos=${HOMEnos}/fix/shared

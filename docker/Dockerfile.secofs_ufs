@@ -160,7 +160,9 @@ RUN mkdir -p /opt/prod_util/bin && \
 FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS runtime
 
 # Install additional runtime packages not in EPIC image
-RUN dnf install -y nco hostname which diffutils procps-ng python3-pip && \
+# jasper + libpng needed by COMF Fortran executables (linked dynamically in comf-build)
+RUN dnf install -y nco hostname which diffutils procps-ng python3-pip \
+        jasper libpng libjpeg-turbo zlib openblas-serial && \
     dnf clean all
 
 # Copy COMF executables + NCEP libs from Stage 1
@@ -206,7 +208,7 @@ RUN pip3 install --no-cache-dir /opt/nosofs/ush/python/
 # Set up paths — spack bins + MPI + COMF executables + tools
 ENV SI=/opt/spack-stack/spack-stack-1.9.2/envs/ufs-wm-env/install/gcc/13.3.1
 ENV PATH="/usr/local/bin:/opt/nosofs/exec:/opt/prod_util/bin:/opt/ncep/bin:/opt/wgrib2/bin:/opt/openmpi/4.1.6/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/opt/openmpi/4.1.6/lib" \
+    LD_LIBRARY_PATH="/opt/nosofs/lib:/opt/ncep/lib64:/opt/openmpi/4.1.6/lib:/usr/lib64:${SI}/netcdf-fortran-4.6.1-r7upznh/lib:${SI}/netcdf-c-4.9.2-xmkcipz/lib:${SI}/hdf5-1.14.3-zeqevsc/lib" \
     PYTHONPATH="/opt/nosofs/ush/python" \
     HOMEnos="/opt/nosofs" \
     HOMEstofs="/opt/nosofs"
