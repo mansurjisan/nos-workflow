@@ -146,7 +146,7 @@ RUN cd /tmp && \
     cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
 
 RUN mkdir -p /opt/prod_util/bin && \
-    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\nhrs = int(sys.argv[1])\ndt = datetime.strptime(sys.argv[2], "%%Y%%m%%d%%H")\nprint((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
+    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\na1, a2 = sys.argv[1], sys.argv[2]\nif len(a1) == 10 and len(a2) == 10:\n    d1 = datetime.strptime(a1, "%%Y%%m%%d%%H")\n    d2 = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print(int((d1 - d2).total_seconds() // 3600))\nelse:\n    hrs = int(a1)\n    dt = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
     printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
     printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
     printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
