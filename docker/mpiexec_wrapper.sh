@@ -66,11 +66,16 @@ if [ ! -x "$MPIRUN" ]; then
 fi
 
 # For cfp: run serially (avoids 8x redundant work from MPI rank duplication)
-# For model executables: use real MPI
+# For model executables: use real MPI, capped to MPI_MAX_TASKS if set
 if [ "$(basename "$EXECUTABLE")" = "cfp" ]; then
     echo "[mpiexec_wrapper] Running cfp serially (no MPI overhead)"
     exec "$EXECUTABLE" "${ARGS[@]}"
 else
+    # Cap MPI ranks to available resources (container has fewer cores than WCOSS2)
+    if [ -n "${MPI_MAX_TASKS:-}" ] && [ "$NPROCS" -gt "$MPI_MAX_TASKS" ]; then
+        echo "[mpiexec_wrapper] Capping MPI ranks from $NPROCS to $MPI_MAX_TASKS (MPI_MAX_TASKS)"
+        NPROCS=$MPI_MAX_TASKS
+    fi
     echo "[mpiexec_wrapper] Executing: $MPIRUN --allow-run-as-root -np $NPROCS --oversubscribe $EXECUTABLE ${ARGS[*]:-}"
     exec "$MPIRUN" --allow-run-as-root -np "$NPROCS" --oversubscribe "$EXECUTABLE" "${ARGS[@]}"
 fi
