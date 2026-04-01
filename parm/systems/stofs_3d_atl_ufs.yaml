@@ -1,0 +1,539 @@
+# STOFS-3D-ATL UFS-Coastal Configuration
+# Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)
+#
+# Derived from stofs_3d_atl.yaml with UFS-Coastal DATM coupling additions.
+# Modeled after secofs_ufs.yaml which is running successfully on WCOSS2.
+#
+# Key differences from standalone stofs_3d_atl:
+#   - framework: comf (routes to _comf_execute_ufs_coastal() for DATM+SCHISM)
+#   - nws=4 (NUOPC coupling instead of sflux files)
+#   - Executable: fv3_coastalS.exe (coupled DATM+SCHISM binary)
+#   - Total tasks: 5120 (MED+ATM share PETs 0-119, OCN PETs 120-5119)
+#   - Additional UFS config files: model_configure, datm_in, datm.streams, ufs.configure
+#   - Atmospheric forcing via CDEPS DATM (blended HRRR+GFS on ESMF mesh)
+#   - legacy.enabled=true: river/OBC/tidal prep still use STOFS shell scripts
+
+_base: schism
+
+system:
+  name: stofs_3d_atl_ufs
+  description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
+  region: atlantic
+  framework: comf
+  version: "3.1.1"
+  prefix: stofs_3d_atl_ufs
+
+# Grid configuration - identical to standalone stofs_3d_atl
+grid:
+  type: unstructured
+  n_nodes: 1813443
+  n_elements: 3564104
+  n_sides: 5377546
+  n_levels: 51
+  files:
+    horizontal: stofs_3d_atl_ufs.hgrid.gr3
+    vertical: stofs_3d_atl_ufs.vgrid.in
+    horizontal_ll: stofs_3d_atl_ufs.hgrid.ll
+    station: stofs_3d_atl_ufs.station.in
+  domain:
+    lon_min: -98.5035
+    lon_max: -52.4867
+    lat_min: 7.347
+    lat_max: 52.5904
+  igrd_met: 0
+  igrd_obc: 1
+
+# Forcing configuration
+# Atmospheric forcing is handled by DATM (not sflux), but we keep the full
+# config for the prep job's river/OBC/tidal forcing generation via legacy scripts.
+forcing:
+  atmospheric:
+    met_num: 2
+    primary: GFS
+    secondary: HRRR
+    forecast_source: GFS
+    forecast_source2: HRRR
+    scale_hflux: 1.0
+    gfs:
+      resolution: "0.25"
+      levels: [10, 2]
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+    hrrr_blend:
+      enabled: true
+      domain: conus
+      resolution: "3km"
+      lon_min: -98.5
+      lon_max: -49.5
+      lat_min: 5.5
+      lat_max: 50.0
+
+  river:
+    enabled: true
+    primary: nwm
+    n_rivers: 7690
+    version: "v3.0"
+    n_list_target: 121
+    n_list_min: 97
+    files:
+      sources_json: stofs_3d_atl_river_sources_conus.json
+    st_lawrence:
+      enabled: true
+      source: DCOMROOT
+      clim_file: stofs_3d_atl_st_lawrence_river_clim.nc
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+      ssh_offset: 0.04
+      obc_mode: dynamic_adjust
+      n_list_target_2d: 21
+      n_list_target_3d: 21
+      roi_2ds:
+        x1: 2805
+        x2: 2923
+        y1: 1598
+        y2: 2325
+      roi_3dz:
+        x1: 482
+        x2: 600
+        y1: 94
+        y2: 821
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+      roi_3dz:
+        x1: 422
+        x2: 600
+        y1: 94
+        y2: 835
+      files:
+        sal_nudge: stofs_3d_atl.SAL_nudge.gr3
+        tem_nudge: stofs_3d_atl.TEM_nudge.gr3
+    adt:
+      enabled: true
+      satellite: jason3
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    create_forcing: 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      bctides_template: bctides.in_template
+      harmonic_constants_obc: stofs_3d_atl.tidal_hc.nc
+      harmonic_constants_ofs: bctides.in_template
+
+# Model physics and runtime configuration
+model:
+  executable: fv3_coastalS.exe
+  ocean_model: SCHISM
+  physics:
+    dt: 150.0
+    extstep_seconds: 150.0
+    cpp_lon: -77
+    cpp_lat: 35
+    # nws=4: NUOPC atmospheric coupling (vs nws=2 for sflux files)
+    nws: 4
+    nrampwind: 1
+    drampwind: 0.0
+    iwindoff: 0
+    ndtfast: 20
+    ihorcon: 2
+    ihdif: 0
+    idrag: 2
+    bfric: 0
+    ihhat: 1
+    inunfl: 0
+    min_depth: 0.01
+    slam0: -77.0
+    sfea0: 35.0
+    rdrg: 3.0e-03
+    rdrg2: 0.005
+    zob: 0.0005
+    visc2: 0.0
+    visc4: 0.0
+    akt_bak: 5.0e-6
+    akv_bak: 5.0e-5
+    akk_bak: 5.0e-6
+    akp_bak: 5.0e-6
+    dcrit: 0.10
+    dstart: 151.0
+    tide_start: 0.0
+    wtiminc: 3600
+  run:
+    hindcast_days: 1.0
+    forecast_days: 4.5
+    nowcast_hours: 24
+    forecast_hours: 108
+    base_date: "2011010100"
+    time_start: "2011090100"
+  runtime:
+    ctl_file: stofs_3d_atl_ufs.param.nml
+    met_ctl_file: stofs_3d_atl_ufs.sflux_inputs.txt
+
+# UFS-Coastal coupling configuration
+ufs_coastal:
+  enabled: true
+  # DATM domain label (must match preset in blend_hrrr_gfs.py: STOFS3D_ATL)
+  datm_domain: STOFS3D_ATL
+  # Coupling interval in seconds (must match runSeq @150 in ufs.configure and dt in param.nml)
+  coupling_interval: 150
+  # MED+ATM share PETs 0-119 (120 PETs)
+  datm_tasks: 120
+  # OCN PETs 120-5119 (5000 PETs)
+  schism_tasks: 5000
+  # Total MPI tasks (MED+ATM overlap, so total = 120 + 5000 = 5120)
+  total_tasks: 5120
+  # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
+  nscribes: 0
+  # Source for DATM atmospheric forcing:
+  #   grib2: Extract from raw GRIB2 files (default, wgrib2+Python blend pipeline)
+  #   sflux: Run COMF sflux generation first, then convert to DATM format
+  datm_forcing_source: grib2
+  # Blended HRRR+GFS atmospheric forcing
+  blend_hrrr_gfs: true
+  # Blended grid resolution in degrees (~3km, matches HRRR native resolution)
+  blend_resolution: 0.025
+  # Transition zone width in degrees at HRRR boundary
+  blend_buffer_deg: 0.5
+  # Forecast length (hours) for model_configure — overridden per stage at runtime
+  nhours_fcst: 108
+  # Atmospheric coupling timestep (seconds)
+  dt_atmos: 900
+  # DATM grid dimensions — fallback values only.
+  # The orchestrator reads actual dims from the forcing file after blending,
+  # so these are only used if the dimension extraction fails.
+  # STOFS3D_ATL domain: (-99,-52,7,53) at 0.025 deg → 1881x1841
+  nx_global: 1881
+  ny_global: 1841
+  # Template files (in FIXofs)
+  templates:
+    model_configure: model_configure.template
+    datm_in: datm_in.template
+    datm_streams: datm.streams.template
+    ufs_configure: ufs.configure
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: stofs_3d_atl_ufs
+  nstation: 184
+  stations:
+    enabled: true
+    interval: 300
+    file: stofs_3d_atl_ufs.station.in
+  fields:
+    interval: 3600
+    def_interval: 86400
+  quicksave:
+    interval: 3600
+    def_interval: 86400
+  average:
+    interval: 3600
+  float:
+    interval: 3600
+  restart:
+    interval: 86400
+
+# Computational resources (DATM + SCHISM)
+resources:
+  nprocs: 5120
+  nscribes: 0
+  memory_gb: 5000
+  walltime_hours: 6
+
+# Workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    # Model identification
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    # Grid files
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+
+    # Grid dimensions
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    NNODE: grid.n_nodes
+    NELE: grid.n_elements
+
+    # Domain bounds (used by both COMF framework and STOFS legacy scripts)
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+    IGRD_MET: grid.igrd_met
+    IGRD_OBC: grid.igrd_obc
+
+    # Atmospheric forcing
+    MET_NUM: forcing.atmospheric.met_num
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
+    SCALE_HFLUX: forcing.atmospheric.scale_hflux
+
+    # HRRR domain bounds (for blending)
+    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.lon_min
+    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
+    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
+    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
+
+    # Ocean forcing
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset
+    OBC_MODE: forcing.ocean.obc.obc_mode
+
+    # RTOFS OBC parameters (for legacy STOFS scripts)
+    N_list_target_2D: forcing.ocean.obc.n_list_target_2d
+    N_list_target_3D: forcing.ocean.obc.n_list_target_3d
+    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
+    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
+    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
+    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
+    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
+    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
+    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
+    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
+
+    # RTOFS nudge parameters
+    idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
+    idx_x2_3dz_nudge: forcing.ocean.nudging.roi_3dz.x2
+    idx_y1_3dz_nudge: forcing.ocean.nudging.roi_3dz.y1
+    idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
+
+    # Tidal
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
+
+    # River forcing parameters (for legacy STOFS scripts)
+    N_RIVERS: forcing.river.n_rivers
+    N_list_target: forcing.river.n_list_target
+    N_list_min: forcing.river.n_list_min
+
+    # Runtime control
+    RUNTIME_CTL: model.runtime.ctl_file
+    RUNTIME_MET_CTL: model.runtime.met_ctl_file
+    DELT_MODEL: model.physics.dt
+    EXTSTEP_SECONDS: model.physics.extstep_seconds
+    NDTFAST: model.physics.ndtfast
+    NWS_VALUE: model.physics.nws
+    MIN_DEPTH: model.physics.min_depth
+    BASE_DATE: model.run.base_date
+    TIME_START: model.run.time_start
+
+    # Physics parameters
+    CPP_LON_VALUE: model.physics.cpp_lon
+    CPP_LAT_VALUE: model.physics.cpp_lat
+    SLAM0: model.physics.slam0
+    SFEA0: model.physics.sfea0
+    IHORCON_VALUE: model.physics.ihorcon
+    IHDIF_VALUE: model.physics.ihdif
+    IDRAG_VALUE: model.physics.idrag
+    BFRIC_VALUE: model.physics.bfric
+    IHHAT_VALUE: model.physics.ihhat
+    INUNFL_VALUE: model.physics.inunfl
+    NRAMPWIND_VALUE: model.physics.nrampwind
+    DRAMPWIND_VALUE: model.physics.drampwind
+    IWINDOFF_VALUE: model.physics.iwindoff
+    RDRG: model.physics.rdrg
+    RDRG2: model.physics.rdrg2
+    Zob: model.physics.zob
+    VISC2: model.physics.visc2
+    VISC4: model.physics.visc4
+    AKT_BAK: model.physics.akt_bak
+    AKV_BAK: model.physics.akv_bak
+    AKK_BAK: model.physics.akk_bak
+    AKP_BAK: model.physics.akp_bak
+    DCRIT: model.physics.dcrit
+    DSTART: model.physics.dstart
+    TIDE_START: model.physics.tide_start
+
+    # Run length
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+
+    # Output intervals
+    NSTA: output.stations.interval
+    NSTATION: output.nstation
+    NHIS: output.fields.interval
+    NDEFHIS: output.fields.def_interval
+    NQCK: output.quicksave.interval
+    NDEFQCK: output.quicksave.def_interval
+    NAVG: output.average.interval
+    NFLT: output.float.interval
+    NRST: output.restart.interval
+
+    # Resources
+    TOTAL_TASKS: resources.nprocs
+
+    # UFS-Coastal specific variables
+    USE_DATM: ufs_coastal.enabled
+    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
+    DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
+    DATM_DOMAIN: ufs_coastal.datm_domain
+    DATM_TASKS: ufs_coastal.datm_tasks
+    SCHISM_TASKS: ufs_coastal.schism_tasks
+    NSCRIBES: ufs_coastal.nscribes
+    BLEND_RESOLUTION: ufs_coastal.blend_resolution
+    BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
+    DT_ATMOS: ufs_coastal.dt_atmos
+    NHOURS_FCST: ufs_coastal.nhours_fcst
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    NX_GLOBAL: ufs_coastal.nx_global
+    NY_GLOBAL: ufs_coastal.ny_global
+
+# Ensemble configuration (same structure as standalone, DATM-based for UFS)
+ensemble:
+  enabled: true
+  n_members: 6
+  method: gefs
+  seed: 42
+  gefs:
+    enabled: true
+    n_gefs_members: 5
+    resolution: "0p25"
+    product: "pgrb2sp25"
+    control_member: "gec00"
+    perturbation_prefix: "gep"
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GEFS p01"
+        met_source_1: GEFS_01
+        met_source_2: null
+      "002":
+        label: "GEFS p02"
+        met_source_1: GEFS_02
+        met_source_2: null
+      "003":
+        label: "GEFS p03"
+        met_source_1: GEFS_03
+        met_source_2: null
+      "004":
+        label: "GEFS p04"
+        met_source_1: GEFS_04
+        met_source_2: null
+      "005":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
+    extra_sources:
+      - GEFS_01
+      - GEFS_02
+      - GEFS_03
+      - GEFS_04
+      - RRFS
+  rrfs:
+    enabled: true
+    resolution: "3km"
+    domain: "na"
+    max_forecast_hours: 84
+    fallback_source: GFS
+    version: "v1.0"
+    status: "para"
+  perturb_physics: true
+  parameters:
+    rdrg2:
+      min: 0.001
+      max: 0.01
+      default: 0.005
+      distribution: uniform
+      description: "Bottom drag coefficient"
+    zob:
+      min: 0.0001
+      max: 0.001
+      default: 0.0005
+      distribution: log_uniform
+      description: "Bottom roughness length (m)"
+    akt_bak:
+      min: 1.0e-6
+      max: 1.0e-5
+      default: 5.0e-6
+      distribution: log_uniform
+      description: "Background tracer diffusivity (m2/s)"
+  resources:
+    select: "select=40:ncpus=128:mpiprocs=128"
+    walltime: "08:00:00"
+    total_tasks: 5120
+    nscribes: 0
+  post_resources:
+    select: "select=1:ncpus=8:mpiprocs=8"
+    walltime: "01:00:00"
+
+# Legacy shell script execution configuration
+# For UFS-Coastal: atmospheric forcing is handled by DATM, so legacy GFS/HRRR
+# scripts are DISABLED. Only river/OBC/tidal scripts remain active.
+legacy:
+  enabled: true
+  ush_dir: ""
+  pysh_dir: ""
+  fix_dir: ""
+  exec_dir: ""
+  scripts:
+    gfs: false                    # DISABLED: atmospheric forcing handled by DATM
+    hrrr: false                   # DISABLED: atmospheric forcing handled by DATM
+    nam: false                    # DISABLED: atmospheric forcing handled by DATM
+    rrfs: false                   # DISABLED: atmospheric forcing handled by DATM
+    river: true                   # stofs_3d_atl_create_river_forcing_nwm.sh
+    obc: true                     # stofs_3d_atl_create_obc_3d_th_{non,dynamic}_adjust.sh
+    tides: true                   # stofs_3d_atl_create_bctides_in.sh
+  script_names:
+    gfs: stofs_3d_atl_create_surface_forcing_gfs.sh
+    hrrr: stofs_3d_atl_create_surface_forcing_hrrr.sh
+    nam: stofs_3d_atl_create_surface_forcing_nam.sh
+    rrfs: stofs_3d_atl_create_surface_forcing_rrfs.sh
+    river: stofs_3d_atl_create_river_forcing_nwm.sh
+    obc_non_adjust: stofs_3d_atl_create_obc_3d_th_non_adjust.sh
+    obc_dynamic_adjust: stofs_3d_atl_create_obc_3d_th_dynamic_adjust.sh
+    tides: stofs_3d_atl_create_bctides_in.sh

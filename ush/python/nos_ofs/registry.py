@@ -33,6 +33,7 @@ class OFSRegistry:
     OFS_MODEL_TYPES: Dict[str, ModelType] = {
         # SCHISM-based systems
         "stofs_3d_atl": ModelType.SCHISM,
+        "stofs_3d_atl_ufs": ModelType.SCHISM,
         "stofs_3d_pac": ModelType.SCHISM,
         "secofs": ModelType.SCHISM,
         "creofs": ModelType.SCHISM,
