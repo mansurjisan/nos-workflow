@@ -2,15 +2,6 @@
 
 Unified operational workflow for NOAA ocean forecast systems (SCHISM, FVCOM, ROMS). Runs on WCOSS2 via PBS.
 
-## Quick Start
-
-```bash
-git clone --recurse-submodules https://github.com/mansurjisan/nos-workflow.git
-
-# Submit SECOFS on WCOSS2
-qsub pbs/jnos_secofs_prep_00.pbs
-```
-
 ## Configuration
 
 YAML configs in `parm/systems/` with inheritance from `parm/base/`:
