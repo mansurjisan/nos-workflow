@@ -1,6 +1,6 @@
 # NOS-OFS Workflow
 
-Unified operational workflow for NOAA ocean forecast systems (SCHISM, FVCOM, ROMS). Runs on WCOSS2 via PBS.
+Unified operational workflow for NOAA's ocean forecast systems.
 
 ## Configuration
 
