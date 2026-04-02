@@ -5,33 +5,11 @@ Unified operational workflow for NOAA ocean forecast systems (SCHISM, FVCOM, ROM
 ## Quick Start
 
 ```bash
-# Clone
-git clone --recurse-submodules -b feature/python-prep https://github.com/mansurjisan/nos-workflow.git
+git clone --recurse-submodules https://github.com/mansurjisan/nos-workflow.git
 
-# Submit SECOFS prep on WCOSS2
-qsub pbs/jnos_secofs_prep_python_00.pbs
+# Submit SECOFS on WCOSS2
+qsub pbs/jnos_secofs_prep_00.pbs
 ```
-
-## Workflow
-
-```
-prep → nowcast → forecast → post
-```
-
-Each stage is a PBS job calling `jobs/JNOS_OFS_{PREP,NOWCAST,FORECAST,POST}`.
-
-Prep generates all forcing inputs: atmospheric (GFS/HRRR), river (NWM), ocean boundary (RTOFS), tidal (TPXO9), and model config (param.nml).
-
-## Python Prep
-
-Set `USE_PYTHON_PREP=YES` to use Python processors ([nos-utils](https://github.com/mansurjisan/nos-utils)) instead of shell+Fortran:
-
-```bash
-export USE_PYTHON_PREP=YES
-${HOMEnos}/jobs/JNOS_OFS_PREP
-```
-
-Default (`NO`) runs the legacy shell scripts unchanged.
 
 ## Configuration
 
