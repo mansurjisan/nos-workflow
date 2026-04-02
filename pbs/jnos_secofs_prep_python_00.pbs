@@ -1,0 +1,87 @@
+#!/bin/bash
+#PBS  -N secofs_prep_py_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_prep_python_00.out
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs/secofs_prep_python_00.err
+#PBS  -l select=1:ncpus=1:mpiprocs=1
+#PBS  -l place=vscatter
+#PBS  -l walltime=01:00:00
+
+########################################
+# Python-based SECOFS prep (nos-utils)
+#
+# Same as jnos_secofs_prep_00.pbs but uses Python forcing processors
+# instead of Fortran executables. Needs fewer resources (1 CPU, no MPI).
+#
+# Launch: qsub jnos_secofs_prep_python_00.pbs
+########################################
+
+# Source nosofs version file
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+
+# Working directory
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs
+mkdir -p -m 755 $RPTDIR $WORKDIR
+cd ${WORKDIR}
+
+# Modules — lighter set than Fortran prep (no intel, no MPI)
+module purge
+module load envvar/${envvar_ver:-1.0}
+module load PrgEnv-intel/${PrgEnv_intel_ver:-8.1.0}
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module load wgrib2/${wgrib2_ver:-2.0.8}
+module load nco/${nco_ver:-5.0.6}
+
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=secofs
+export cyc=00
+export NET=nosofs
+export model=nosofs
+export job=secofs_prep_python_00_$envir
+export platform=ptmp
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+# Package root
+export nosofs_ver=v3.7.0
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+
+# Job identity
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration
+export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+##############################################
+# KEY DIFFERENCE: Enable Python prep mode
+##############################################
+export USE_PYTHON_PREP=YES
+
+# nos-utils package (add to PYTHONPATH)
+# Option 1: Symlink/copy in ush/python/nos-utils
+export PYTHONPATH=${HOMEnos}/ush/python/nos-utils:${PYTHONPATH}
+# Option 2: Standalone install
+# export PYTHONPATH=/path/to/nos-utils:${PYTHONPATH}
+
+${HOMEnos}/jobs/JNOS_OFS_PREP

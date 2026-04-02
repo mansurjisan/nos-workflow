@@ -1,0 +1,3 @@
+[submodule "ush/python/nos-utils"]
+	path = ush/python/nos-utils
+	url = https://github.com/mansurjisan/nos-utils.git

@@ -273,12 +273,19 @@ case "${OFS_FRAMEWORK}" in
         $SCRIstofs3d/exnos_ofs_prep.sh
         ;;
     comf|*)
-        # COMF Fortran executables need NetCDF Fortran library preloaded
-        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+        # Python-based prep (nos-utils) — opt-in via USE_PYTHON_PREP=YES
+        USE_PYTHON_PREP=${USE_PYTHON_PREP:-NO}
+        if [ "${USE_PYTHON_PREP^^}" = "YES" ]; then
+            echo "Using Python-based prep (nos-utils package)"
+            $SCRIPTSnos/nosofs/exnos_ofs_prep_python.sh
+        else
+            # COMF Fortran executables need NetCDF Fortran library preloaded
+            if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
+                export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
+            fi
+            # nosofs/COMF prep script (legacy shell + Fortran)
+            $SCRIPTSnos/nosofs/exnos_ofs_prep.sh $OFS
         fi
-        # nosofs/COMF prep script
-        $SCRIPTSnos/nosofs/exnos_ofs_prep.sh $OFS
         ;;
 esac
 
