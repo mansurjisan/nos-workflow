@@ -83,6 +83,7 @@ forcing:
     obc:
       wl_source: RTOFS        # -> DBASE_WL_NOW, DBASE_WL_FOR (water level)
       ts_source: RTOFS        # -> DBASE_TS_NOW, DBASE_TS_FOR (temp/salt)
+      ssh_offset: 1.25        # Geoid-to-MSL datum offset (from Fortran line 3133)
       # Control files (from secofs.ctl)
       files:
         obc_ctl: secofs.obc.ctl           # -> OBC_CTL_FILE
