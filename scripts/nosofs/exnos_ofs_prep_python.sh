@@ -56,16 +56,29 @@ python3 -c "from nos_utils.nco_bridge import run_prep; print('nos-utils OK')" ||
     export err=99; err_chk
 }
 
+# FULL_PYTHON_PREP=YES: Python handles ALL steps (met, OBC, river, tidal, param)
+# FULL_PYTHON_PREP=NO (default): Python handles met/param/tidal, legacy handles OBC/river
+FULL_PYTHON_PREP=${FULL_PYTHON_PREP:-NO}
+
+if [ "${FULL_PYTHON_PREP^^}" = "YES" ]; then
+    SKIP_LEGACY="False"
+    echo "  Mode: FULL PYTHON (all steps including OBC/river)"
+else
+    SKIP_LEGACY="True"
+    echo "  Mode: HYBRID (Python met/param/tidal + legacy OBC/river)"
+fi
+
 echo ""
 echo "========================================="
-echo "  Nowcast: Python (met + param + tidal)"
+echo "  Nowcast Prep"
 echo "========================================="
 
-python3 << 'PYEOF'
-import sys, logging
+python3 << PYEOF
+import sys, os, logging
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 from nos_utils.nco_bridge import run_prep
-success = run_prep(phase="nowcast", skip_legacy=True)
+skip = ${SKIP_LEGACY}
+success = run_prep(phase="nowcast", skip_legacy=skip)
 sys.exit(0 if success else 1)
 PYEOF
 export err=$?
@@ -76,14 +89,15 @@ fi
 
 echo ""
 echo "========================================="
-echo "  Forecast: Python (met + param + tidal)"
+echo "  Forecast Prep"
 echo "========================================="
 
-python3 << 'PYEOF'
-import sys, logging
+python3 << PYEOF
+import sys, os, logging
 logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
 from nos_utils.nco_bridge import run_prep
-success = run_prep(phase="forecast", skip_legacy=True)
+skip = ${SKIP_LEGACY}
+success = run_prep(phase="forecast", skip_legacy=skip)
 sys.exit(0 if success else 1)
 PYEOF
 export err=$?
