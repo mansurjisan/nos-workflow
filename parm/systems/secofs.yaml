@@ -157,7 +157,7 @@ model:
   run:
     hindcast_days: 0.25       # 6-hour nowcast -> LEN_NOWCAST = 6
     forecast_days: 2.0        # 2-day forecast -> LEN_FORECAST = 48 (from .ctl)
-    nowcast_hours: 12
+    nowcast_hours: 6
     forecast_hours: 48
     base_date: "2011010100"   # -> BASE_DATE (from .ctl)
     time_start: "2011090100"  # -> TIME_START (from .ctl)
