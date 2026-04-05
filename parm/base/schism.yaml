@@ -34,7 +34,7 @@ model:
     hindcast_days: 0.25       # 6-hour hindcast -> LEN_NOWCAST = hindcast_days * 24
     forecast_days: 5.0        # 5-day forecast -> LEN_FORECAST = forecast_days * 24
     # Explicit nowcast/forecast hours (computed from days if not set)
-    nowcast_hours: 6
+    nowcast_hours: 12
     forecast_hours: 120
 
 # Default forcing sources for SCHISM

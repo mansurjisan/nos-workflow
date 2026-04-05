@@ -154,7 +154,7 @@ model:
   run:
     hindcast_days: 0.25
     forecast_days: 2.0
-    nowcast_hours: 6
+    nowcast_hours: 12
     forecast_hours: 48
     base_date: "2011010100"
     time_start: "2011090100"
