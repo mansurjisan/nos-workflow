@@ -1,4 +1,4 @@
-# NOS-OFS Workflow
+# NOS Workflow
 
 Unified operational workflow for NOAA's ocean forecast systems.
 
