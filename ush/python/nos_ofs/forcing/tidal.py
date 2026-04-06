@@ -136,7 +136,11 @@ class TidalProcessor(ForcingProcessor):
 
             # Method 3: Generate from Python (simplified nodal corrections)
             if not output_files:
-                log.info("Generating bctides.in using Python nodal corrections")
+                log.warning(
+                    "Falling back to Python nodal corrections — these are approximate. "
+                    "For production, ensure FORTRAN tide_fac executable is available "
+                    "(nos_ofs_create_tide_fac_schism for COMF, {RUN}_tide_fac for STOFS)."
+                )
                 bctides_file = self._generate_bctides()
                 if bctides_file:
                     output_files.append(bctides_file)
@@ -173,39 +177,59 @@ class TidalProcessor(ForcingProcessor):
         """
         Call existing FORTRAN tide_fac executable.
 
-        This is the production method used in STOFS shell scripts.
-        The executable reads a template file and applies accurate nodal
-        corrections for the specified start time.
+        Searches for the executable under multiple naming conventions:
+        - COMF SCHISM: nos_ofs_create_tide_fac_schism (in EXECnos)
+        - STOFS: {RUN}_tide_fac or stofs_3d_atl_tide_fac (in EXECstofs3d)
 
-        Shell script reference: stofs_3d_atl_create_bctides_in.sh
+        The executable reads a bctides.in_template and applies accurate nodal
+        corrections for the specified start time.
 
         Returns:
             Path to generated bctides.in or None if failed
         """
+        import os
         import subprocess
         import shutil
 
-        # Find the executable
-        exe_name = f"{self.config.RUN}_tide_fac"
-        exe = self.config.get_exec_file(exe_name)
+        # Search for the executable under multiple names and directories
+        # COMF uses EXECnos, STOFS uses EXECstofs3d
+        exe_candidates = [
+            (f"{self.config.RUN}_tide_fac", None),           # {RUN}_tide_fac in default dir
+            ("nos_ofs_create_tide_fac_schism", None),         # COMF SCHISM name in default dir
+            ("nos_ofs_create_tide_fac_schism", "EXECnos"),    # COMF SCHISM name in EXECnos
+            ("stofs_3d_atl_tide_fac", None),                  # STOFS fallback
+        ]
 
-        if not exe.exists():
-            # Try alternative name
-            exe = self.config.get_exec_file("stofs_3d_atl_tide_fac")
+        exe = None
+        for exe_name, env_var in exe_candidates:
+            if env_var and os.environ.get(env_var):
+                candidate = Path(os.environ[env_var]) / exe_name
+            else:
+                candidate = self.config.get_exec_file(exe_name)
+            if candidate.exists():
+                exe = candidate
+                break
+            log.debug(f"tide_fac candidate not found: {candidate}")
 
-        if not exe.exists():
-            log.debug(f"FORTRAN tide_fac not found: {exe}")
+        if exe is None:
+            log.debug("No FORTRAN tide_fac executable found")
             return None
 
-        # Find the template file
-        template_name = f"{self.config.RUN}_bctides.in_template"
-        template = self.config.get_fix_file(template_name)
+        # Search for the template file under multiple names
+        template_candidates = [
+            f"{self.config.RUN}_bctides.in_template",
+            "stofs_3d_atl_bctides.in_template",
+        ]
 
-        if not template.exists():
-            template = self.config.get_fix_file("stofs_3d_atl_bctides.in_template")
+        template = None
+        for tmpl_name in template_candidates:
+            candidate = self.config.get_fix_file(tmpl_name)
+            if candidate.exists():
+                template = candidate
+                break
 
-        if not template.exists():
-            log.debug(f"bctides.in template not found: {template}")
+        if template is None:
+            log.debug(f"bctides.in template not found in {self.input_path}")
             return None
 
         try:
