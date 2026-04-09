@@ -32,11 +32,22 @@ C W1 is a linear function of P which satisfies W1 = 1 at P = P1 and W1 = 0 if P 
 C the triangle side P2-P3.  Also, W1 < 0 if and only if P is to the right of P2->P3
 C (and thus exterior to the triangle).  W2 and W3 satisfy similar properties.
 
-      real*4 XTMP(Ndata+4), YTMP(Ndata+4),ZTMP(NDATA+4) 
-C ---------------------------------------------------------------      
+      real*4 XTMP(Ndata+4), YTMP(Ndata+4),ZTMP(NDATA+4)
+C ---------------------------------------------------------------
       integer weightnodes(NINP,3),n3(3)
       real*4 weights(NINP,3),w3(3)
-      REAL*4 SUMW 
+      REAL*4 SUMW
+C     SSH weight export variables
+      LOGICAL SSH_REMESH_ACTIVE
+      COMMON /EXPORT_CTL/ SSH_REMESH_ACTIVE
+      LOGICAL FALLBACK_FLAG(NINP)
+      INTEGER DONOR_IDX(NINP)
+      LOGICAL EXPORTED_ALREADY
+      SAVE EXPORTED_ALREADY
+      DATA EXPORTED_ALREADY /.FALSE./
+      CHARACTER*16 ENVVAL
+      INTEGER IUNIT_EXPORT, IMODE
+      PARAMETER (IUNIT_EXPORT=88)
       IF(MODE .EQ. 0)THEN
 !        xdatamin=minval(XDATA)
 !        xdatamax=maxval(XDATA)
@@ -109,22 +120,82 @@ C ---------------------------------------------------------------
         ENDDO
 CZAJ For remesh, if interpolated point is not covered by data points, weight values
 C    might be negative and large. So a good value from its nearest model grid (not
-C    the nearest data point) is used for those points. 
+C    the nearest data point) is used for those points.
+C    Modified: capture fallback donors for weight export
          DO I=1,NINP
-            IF (ZINP(I) .EQ. -99999.9)THEN  
-  	      dismin=9999.0
-              DO K=1,NINP
-               IF (ZINP(K) .NE. -99999.9)THEN 
-	          CALL DIST(YINP(I),XINP(I),YINP(K),XINP(K),D)   
-                  if(d .lt. dismin)then
-                     dismin=d
-		     I0=K
-	          endif
-		ENDIF   
-              ENDDO
-	      ZINP(I)=ZINP(I0)
-	    ENDIF         	 
-         ENDDO  
+           FALLBACK_FLAG(I)=.FALSE.
+           DONOR_IDX(I)=-1
+         ENDDO
+         DO I=1,NINP
+            IF (ZINP(I) .EQ. -99999.9) THEN
+               FALLBACK_FLAG(I)=.TRUE.
+               dismin=9999.0
+               I0=-1
+               DO K=1,NINP
+                  IF (ZINP(K) .NE. -99999.9) THEN
+                     CALL DIST(YINP(I),XINP(I),YINP(K),XINP(K),D)
+                     IF (D .LT. dismin) THEN
+                        dismin=D
+                        I0=K
+                     ENDIF
+                  ENDIF
+               ENDDO
+               IF (I0 .GT. 0) THEN
+                  ZINP(I)=ZINP(I0)
+                  DONOR_IDX(I)=I0
+               ENDIF
+            ENDIF
+         ENDDO
+C-----------------------------------------------------------------------
+C     Export SSH REMESH mapping (one-time, env-var gated)
+C-----------------------------------------------------------------------
+      IF (SSH_REMESH_ACTIVE .AND. .NOT. EXPORTED_ALREADY) THEN
+         CALL GETENV('NOS_EXPORT_WEIGHTS', ENVVAL)
+         IF (TRIM(ENVVAL) .EQ. 'YES') THEN
+
+            OPEN(IUNIT_EXPORT, FILE='obc_ssh_remesh_export.txt',
+     &           STATUS='REPLACE')
+
+            WRITE(IUNIT_EXPORT,'(A)') '## OBC_SSH_REMESH_EXPORT_V1'
+            WRITE(IUNIT_EXPORT,'(A,I8)') '## n_target=', NINP
+            WRITE(IUNIT_EXPORT,'(A,I8)') '## n_source_total=',NDATA+4
+            WRITE(IUNIT_EXPORT,'(A,I8)') '## n_source_data=', NDATA
+            WRITE(IUNIT_EXPORT,'(A,ES24.16)') '## corner_mean=',
+     &         DBLE(AVG)
+
+            WRITE(IUNIT_EXPORT,'(A)') '## SOURCE_POINTS'
+            WRITE(IUNIT_EXPORT,'(A)') '## idx lon lat is_corner'
+            DO I=1,NDATA+4
+               WRITE(IUNIT_EXPORT,'(I8,2ES25.16,I3)') I,
+     &            DBLE(XTMP(I)), DBLE(YTMP(I)),
+     &            MERGE(1,0,I.LE.4)
+            ENDDO
+
+            WRITE(IUNIT_EXPORT,'(A)') '## TARGET_MAPPING'
+            WRITE(IUNIT_EXPORT,'(A)')
+     &      '## target idx1 idx2 idx3 w1 w2 w3 mode donor'
+
+            DO I=1,NINP
+               IMODE=0
+               DO K=1,3
+                  IF (weightnodes(I,K) .LE. 4) IMODE=1
+               ENDDO
+               IF (FALLBACK_FLAG(I)) IMODE=2
+
+               WRITE(IUNIT_EXPORT,
+     &         '(I8,3I8,3ES25.16,I3,I8)') I,
+     &         weightnodes(I,1), weightnodes(I,2), weightnodes(I,3),
+     &         DBLE(weights(I,1)), DBLE(weights(I,2)),
+     &         DBLE(weights(I,3)),
+     &         IMODE, DONOR_IDX(I)
+            ENDDO
+
+            CLOSE(IUNIT_EXPORT)
+            EXPORTED_ALREADY = .TRUE.
+            WRITE(*,*) 'Exported SSH REMESH map:', NINP, ' targets, ',
+     &        NDATA+4, ' sources'
+         ENDIF
+      ENDIF
       ENDIF
       RETURN
       END

@@ -78,6 +78,9 @@ C-------------------------------------------------------------------------------
       real*8 jday,jdays,jdaye,jday0,js_etss,je_etss
       real minlon,minlat,maxlat,maxlon,missvalue
       LOGICAL FEXIST,USGS_L
+C     SSH weight export control
+      LOGICAL SSH_REMESH_ACTIVE
+      COMMON /EXPORT_CTL/ SSH_REMESH_ACTIVE
       CHARACTER (LEN=10) BIG_BEN(3),CURRENT_TIME*20
       CHARACTER globalstr(9)*120
       INTEGER DATE_TIME(8)
@@ -254,7 +257,8 @@ CC variables for OBC_CTL_FILE
 !-----------------------------------------------------------------------
 !  read parameters from the Fortran control "Fortran_OBC.ctl"
 !-----------------------------------------------------------------------
-      
+      SSH_REMESH_ACTIVE = .FALSE.
+
       read(5,'(a200)')OFS
       read(5,'(a10)')OCEAN_MODEL
       read(5,'(a20)')DBASE_WL
@@ -3255,10 +3259,12 @@ c------------------------------------------------------------------
              ENDDO	
 	     NDATA=NDUM
              IF (IGRD .EQ. 1 )THEN                                  !! using remesh
+                SSH_REMESH_ACTIVE = .TRUE.
                 call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT,weightnodes,weights,0)
                 call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT,weightnodes,weights,1)
+                SSH_REMESH_ACTIVE = .FALSE.
     	     ELSEIF (IGRD .EQ. 4)THEN                               !! using nature neighbors
                 call INTERP_NNEIGHBORS(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT)
