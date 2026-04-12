@@ -40,14 +40,21 @@ C ---------------------------------------------------------------
 C     SSH weight export variables
       LOGICAL SSH_REMESH_ACTIVE
       COMMON /EXPORT_CTL/ SSH_REMESH_ACTIVE
+C     Nudge weight export variables
+      LOGICAL NUDGE_REMESH_ACTIVE
+      COMMON /NUDGE_EXPORT_CTL/ NUDGE_REMESH_ACTIVE
       LOGICAL FALLBACK_FLAG(NINP)
       INTEGER DONOR_IDX(NINP)
       LOGICAL EXPORTED_ALREADY
       SAVE EXPORTED_ALREADY
       DATA EXPORTED_ALREADY /.FALSE./
+      LOGICAL NUDGE_EXPORTED
+      SAVE NUDGE_EXPORTED
+      DATA NUDGE_EXPORTED /.FALSE./
       CHARACTER*16 ENVVAL
-      INTEGER IUNIT_EXPORT, IMODE
+      INTEGER IUNIT_EXPORT, IUNIT_NUDGE_EXP, IMODE
       PARAMETER (IUNIT_EXPORT=88)
+      PARAMETER (IUNIT_NUDGE_EXP=89)
       IF(MODE .EQ. 0)THEN
 !        xdatamin=minval(XDATA)
 !        xdatamax=maxval(XDATA)
@@ -193,6 +200,60 @@ C-----------------------------------------------------------------------
             CLOSE(IUNIT_EXPORT)
             EXPORTED_ALREADY = .TRUE.
             WRITE(*,*) 'Exported SSH REMESH map:', NINP, ' targets, ',
+     &        NDATA+4, ' sources'
+         ENDIF
+      ENDIF
+C-----------------------------------------------------------------------
+C     Export NUDGE REMESH mapping (one-time, env-var gated)
+C-----------------------------------------------------------------------
+      IF (NUDGE_REMESH_ACTIVE .AND. .NOT. NUDGE_EXPORTED) THEN
+         CALL GETENV('NOS_EXPORT_WEIGHTS', ENVVAL)
+         IF (TRIM(ENVVAL) .EQ. 'YES') THEN
+
+            OPEN(IUNIT_NUDGE_EXP,
+     &           FILE='obc_nudge_remesh_export.txt',
+     &           STATUS='REPLACE')
+
+            WRITE(IUNIT_NUDGE_EXP,'(A)')
+     &         '## OBC_NUDGE_REMESH_EXPORT_V1'
+            WRITE(IUNIT_NUDGE_EXP,'(A,I8)') '## n_target=', NINP
+            WRITE(IUNIT_NUDGE_EXP,'(A,I8)')
+     &         '## n_source_total=',NDATA+4
+            WRITE(IUNIT_NUDGE_EXP,'(A,I8)')
+     &         '## n_source_data=', NDATA
+            WRITE(IUNIT_NUDGE_EXP,'(A,ES24.16)')
+     &         '## corner_mean=', DBLE(AVG)
+
+            WRITE(IUNIT_NUDGE_EXP,'(A)') '## SOURCE_POINTS'
+            WRITE(IUNIT_NUDGE_EXP,'(A)') '## idx lon lat is_corner'
+            DO I=1,NDATA+4
+               WRITE(IUNIT_NUDGE_EXP,'(I8,2ES25.16,I3)') I,
+     &            DBLE(XTMP(I)), DBLE(YTMP(I)),
+     &            MERGE(1,0,I.LE.4)
+            ENDDO
+
+            WRITE(IUNIT_NUDGE_EXP,'(A)') '## TARGET_MAPPING'
+            WRITE(IUNIT_NUDGE_EXP,'(A)')
+     &      '## target idx1 idx2 idx3 w1 w2 w3 mode donor'
+
+            DO I=1,NINP
+               IMODE=0
+               DO K=1,3
+                  IF (weightnodes(I,K) .LE. 4) IMODE=1
+               ENDDO
+               IF (FALLBACK_FLAG(I)) IMODE=2
+
+               WRITE(IUNIT_NUDGE_EXP,
+     &         '(I8,3I8,3ES25.16,I3,I8)') I,
+     &         weightnodes(I,1), weightnodes(I,2), weightnodes(I,3),
+     &         DBLE(weights(I,1)), DBLE(weights(I,2)),
+     &         DBLE(weights(I,3)),
+     &         IMODE, DONOR_IDX(I)
+            ENDDO
+
+            CLOSE(IUNIT_NUDGE_EXP)
+            NUDGE_EXPORTED = .TRUE.
+            WRITE(*,*) 'Exported NUDGE REMESH map:',NINP,' targets, ',
      &        NDATA+4, ' sources'
          ENDIF
       ENDIF

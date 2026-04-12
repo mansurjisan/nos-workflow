@@ -81,6 +81,9 @@ C-------------------------------------------------------------------------------
 C     SSH weight export control
       LOGICAL SSH_REMESH_ACTIVE
       COMMON /EXPORT_CTL/ SSH_REMESH_ACTIVE
+C     Nudge weight export control
+      LOGICAL NUDGE_REMESH_ACTIVE
+      COMMON /NUDGE_EXPORT_CTL/ NUDGE_REMESH_ACTIVE
       CHARACTER (LEN=10) BIG_BEN(3),CURRENT_TIME*20
       CHARACTER globalstr(9)*120
       INTEGER DATE_TIME(8)
@@ -258,6 +261,7 @@ CC variables for OBC_CTL_FILE
 !  read parameters from the Fortran control "Fortran_OBC.ctl"
 !-----------------------------------------------------------------------
       SSH_REMESH_ACTIVE = .FALSE.
+      NUDGE_REMESH_ACTIVE = .FALSE.
 
       read(5,'(a200)')OFS
       read(5,'(a10)')OCEAN_MODEL
@@ -2543,16 +2547,17 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
               ENDDO
               GOTO 778
              ENDIF 
-    	     IF (IGRD .EQ. 1 )THEN                                  
+    	     IF (IGRD .EQ. 1 )THEN
                 write(*,*)'COMPUTE WEIGHTS AND NODES FOR REMESH !!!'
+                NUDGE_REMESH_ACTIVE = .TRUE.
                  call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &           NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,0)
              ENDIF
-         ENDIF 
+         ENDIF
          DO N=NSTR,NEND
 	     N0=N-NSTR+1
   	     IF (IGRD .EQ. 1 .OR. IGRD .EQ. 4 )THEN   !! using remesh routine
-                NDUM=0                                     !! nature neighbors spatial interpolation 
+                NDUM=0                                     !! nature neighbors spatial interpolation
                 DO I=1,ISUB
                 DO J=1,JSUB
                    IF( TEMP(I,J,K,N) .GT. -9999.0 )THEN
@@ -2560,23 +2565,24 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
 	                XINP(ndum)=lonsub(i,j)
                         YINP(ndum)=latsub(i,j)
 	                ZINP(ndum)=TEMP(I,J,K,N)
-                   ENDIF	
-                ENDDO	
+                   ENDIF
+                ENDDO
                 ENDDO
 	        IF(NDUM .NE. NDATA)THEN
 	           WRITE(*,*)'NDATA is not equal to NDUM TEMP!'
 	           WRITE(*,*)'NDATA=',NDATA,'NDUM=',NDUM
 	           WRITE(*,*)'N=',N,'K=',K
-	    	   NDATA=NDUM	
-  	           IF (IGRD .EQ. 1 )THEN                                  
+	    	   NDATA=NDUM
+  	           IF (IGRD .EQ. 1 )THEN
                        call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &             NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,0)
                    ENDIF
 
-	        ENDIF   
+	        ENDIF
   	        IF (IGRD .EQ. 1 )THEN                                  !! using remesh
                        call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &             NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,1)
+                       NUDGE_REMESH_ACTIVE = .FALSE.
     	        ELSEIF (IGRD .EQ. 4)THEN                               !! using nature neighbors
                        call INTERP_NNEIGHBORS(NDATA,XINP,YINP,ZINP,
      &                 NOBC,lon_nudge,lat_nudge,ZOUT)
