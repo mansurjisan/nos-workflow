@@ -9,8 +9,8 @@
 #PBS  -l walltime=02:00:00
 
 # Source nosofs version file (COMF systems)
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nosofs.v3.7.0/versions/run.ver
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs
@@ -67,7 +67,7 @@ export SENDSMS=NO
 
 # Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
 export nosofs_ver=v3.7.0
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME
 
 # Data and COM paths
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
@@ -88,7 +88,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for secofs_ufs
-export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
+export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
