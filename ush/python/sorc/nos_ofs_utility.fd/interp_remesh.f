@@ -43,6 +43,9 @@ C     SSH weight export variables
 C     Nudge weight export variables
       LOGICAL NUDGE_REMESH_ACTIVE
       COMMON /NUDGE_EXPORT_CTL/ NUDGE_REMESH_ACTIVE
+C     3D T/S boundary weight export variables
+      LOGICAL TS3D_REMESH_ACTIVE
+      COMMON /TS3D_EXPORT_CTL/ TS3D_REMESH_ACTIVE
       LOGICAL FALLBACK_FLAG(NINP)
       INTEGER DONOR_IDX(NINP)
       LOGICAL EXPORTED_ALREADY
@@ -51,10 +54,14 @@ C     Nudge weight export variables
       LOGICAL NUDGE_EXPORTED
       SAVE NUDGE_EXPORTED
       DATA NUDGE_EXPORTED /.FALSE./
+      LOGICAL TS3D_EXPORTED
+      SAVE TS3D_EXPORTED
+      DATA TS3D_EXPORTED /.FALSE./
       CHARACTER*16 ENVVAL
-      INTEGER IUNIT_EXPORT, IUNIT_NUDGE_EXP, IMODE
+      INTEGER IUNIT_EXPORT, IUNIT_NUDGE_EXP, IUNIT_TS3D_EXP, IMODE
       PARAMETER (IUNIT_EXPORT=88)
       PARAMETER (IUNIT_NUDGE_EXP=89)
+      PARAMETER (IUNIT_TS3D_EXP=90)
       IF(MODE .EQ. 0)THEN
 !        xdatamin=minval(XDATA)
 !        xdatamax=maxval(XDATA)
@@ -254,6 +261,60 @@ C-----------------------------------------------------------------------
             CLOSE(IUNIT_NUDGE_EXP)
             NUDGE_EXPORTED = .TRUE.
             WRITE(*,*) 'Exported NUDGE REMESH map:',NINP,' targets, ',
+     &        NDATA+4, ' sources'
+         ENDIF
+      ENDIF
+C-----------------------------------------------------------------------
+C     Export 3D T/S boundary REMESH mapping (one-time, env-var gated)
+C-----------------------------------------------------------------------
+      IF (TS3D_REMESH_ACTIVE .AND. .NOT. TS3D_EXPORTED) THEN
+         CALL GETENV('NOS_EXPORT_WEIGHTS', ENVVAL)
+         IF (TRIM(ENVVAL) .EQ. 'YES') THEN
+
+            OPEN(IUNIT_TS3D_EXP,
+     &           FILE='obc_3d_remesh_export.txt',
+     &           STATUS='REPLACE')
+
+            WRITE(IUNIT_TS3D_EXP,'(A)')
+     &         '## OBC_3D_REMESH_EXPORT_V1'
+            WRITE(IUNIT_TS3D_EXP,'(A,I8)') '## n_target=', NINP
+            WRITE(IUNIT_TS3D_EXP,'(A,I8)')
+     &         '## n_source_total=',NDATA+4
+            WRITE(IUNIT_TS3D_EXP,'(A,I8)')
+     &         '## n_source_data=', NDATA
+            WRITE(IUNIT_TS3D_EXP,'(A,ES24.16)')
+     &         '## corner_mean=', DBLE(AVG)
+
+            WRITE(IUNIT_TS3D_EXP,'(A)') '## SOURCE_POINTS'
+            WRITE(IUNIT_TS3D_EXP,'(A)') '## idx lon lat is_corner'
+            DO I=1,NDATA+4
+               WRITE(IUNIT_TS3D_EXP,'(I8,2ES25.16,I3)') I,
+     &            DBLE(XTMP(I)), DBLE(YTMP(I)),
+     &            MERGE(1,0,I.LE.4)
+            ENDDO
+
+            WRITE(IUNIT_TS3D_EXP,'(A)') '## TARGET_MAPPING'
+            WRITE(IUNIT_TS3D_EXP,'(A)')
+     &      '## target idx1 idx2 idx3 w1 w2 w3 mode donor'
+
+            DO I=1,NINP
+               IMODE=0
+               DO K=1,3
+                  IF (weightnodes(I,K) .LE. 4) IMODE=1
+               ENDDO
+               IF (FALLBACK_FLAG(I)) IMODE=2
+
+               WRITE(IUNIT_TS3D_EXP,
+     &         '(I8,3I8,3ES25.16,I3,I8)') I,
+     &         weightnodes(I,1), weightnodes(I,2), weightnodes(I,3),
+     &         DBLE(weights(I,1)), DBLE(weights(I,2)),
+     &         DBLE(weights(I,3)),
+     &         IMODE, DONOR_IDX(I)
+            ENDDO
+
+            CLOSE(IUNIT_TS3D_EXP)
+            TS3D_EXPORTED = .TRUE.
+            WRITE(*,*) 'Exported 3D T/S REMESH map:',NINP,' targets, ',
      &        NDATA+4, ' sources'
          ENDIF
       ENDIF

@@ -84,6 +84,9 @@ C     SSH weight export control
 C     Nudge weight export control
       LOGICAL NUDGE_REMESH_ACTIVE
       COMMON /NUDGE_EXPORT_CTL/ NUDGE_REMESH_ACTIVE
+C     3D T/S boundary weight export control
+      LOGICAL TS3D_REMESH_ACTIVE
+      COMMON /TS3D_EXPORT_CTL/ TS3D_REMESH_ACTIVE
       CHARACTER (LEN=10) BIG_BEN(3),CURRENT_TIME*20
       CHARACTER globalstr(9)*120
       INTEGER DATE_TIME(8)
@@ -262,6 +265,7 @@ CC variables for OBC_CTL_FILE
 !-----------------------------------------------------------------------
       SSH_REMESH_ACTIVE = .FALSE.
       NUDGE_REMESH_ACTIVE = .FALSE.
+      TS3D_REMESH_ACTIVE = .FALSE.
 
       read(5,'(a200)')OFS
       read(5,'(a10)')OCEAN_MODEL
@@ -2550,6 +2554,7 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
     	     IF (IGRD .EQ. 1 )THEN
                 write(*,*)'COMPUTE WEIGHTS AND NODES FOR REMESH !!!'
                 NUDGE_REMESH_ACTIVE = .TRUE.
+                TS3D_REMESH_ACTIVE = .TRUE.
                  call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &           NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,0)
              ENDIF
@@ -2583,6 +2588,7 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
                        call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &             NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,1)
                        NUDGE_REMESH_ACTIVE = .FALSE.
+                       TS3D_REMESH_ACTIVE = .FALSE.
     	        ELSEIF (IGRD .EQ. 4)THEN                               !! using nature neighbors
                        call INTERP_NNEIGHBORS(NDATA,XINP,YINP,ZINP,
      &                 NOBC,lon_nudge,lat_nudge,ZOUT)
