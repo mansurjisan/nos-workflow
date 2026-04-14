@@ -2415,10 +2415,12 @@ c------------------------------------------------------------------
             ENDDO	
 	    NDATA=NDUM
             IF (IGRD .EQ. 1 )THEN                                  !! using remesh
+                TS3D_REMESH_ACTIVE = .TRUE.
                 call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT,weightnodes,weights,0)
                 call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT,weightnodes,weights,1)
+                TS3D_REMESH_ACTIVE = .FALSE.
     	    ELSEIF (IGRD .EQ. 4)THEN                               !! using nature neighbors
                 call INTERP_NNEIGHBORS(NDATA,XINP,YINP,ZINP,
      *               NOBC,lonOBC,latOBC,ZOUT)
@@ -2554,7 +2556,6 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
     	     IF (IGRD .EQ. 1 )THEN
                 write(*,*)'COMPUTE WEIGHTS AND NODES FOR REMESH !!!'
                 NUDGE_REMESH_ACTIVE = .TRUE.
-                TS3D_REMESH_ACTIVE = .TRUE.
                  call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &           NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,0)
              ENDIF
@@ -2588,7 +2589,6 @@ CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC
                        call INTERP_REMESH(NDATA,XINP,YINP,ZINP,
      &             NOBC,lon_nudge,lat_nudge,ZOUT,weightnodes,weights,1)
                        NUDGE_REMESH_ACTIVE = .FALSE.
-                       TS3D_REMESH_ACTIVE = .FALSE.
     	        ELSEIF (IGRD .EQ. 4)THEN                               !! using nature neighbors
                        call INTERP_NNEIGHBORS(NDATA,XINP,YINP,ZINP,
      &                 NOBC,lon_nudge,lat_nudge,ZOUT)
