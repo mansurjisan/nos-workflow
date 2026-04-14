@@ -1,0 +1,104 @@
+#!/bin/bash
+#PBS  -N secofs_ufs_run
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
+#PBS  -l walltime=01:30:00
+
+#==========================================================================
+# Standalone UFS-Coastal launcher
+#
+# Copy this script into any prepared WORKDIR and submit:
+#   cp run_ufs.pbs /path/to/workdir/
+#   cd /path/to/workdir
+#   qsub run_ufs.pbs
+#
+# Runs fv3_coastalS.exe in the directory from which qsub was called.
+# All stdout/stderr land in that workdir as secofs_ufs_run.o<jobid> / .e<jobid>.
+#
+# Requirements in WORKDIR:
+#   fv3_coastalS.exe, param.nml, model_configure,
+#   datm_in, datm.streams, ufs.configure, INPUT/
+#==========================================================================
+
+# Path to nos-workflow checkout (for modulefiles/modules.fv3.lua)
+NOS_WORKFLOW=${NOS_WORKFLOW:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/nos-workflow}
+
+set -eu
+
+cd $PBS_O_WORKDIR
+echo "Workdir:  $PWD"
+echo "Host:     $(hostname)"
+echo "Date:     $(date -u)"
+echo "Workflow: $NOS_WORKFLOW"
+
+# ---- Module setup: UFS-Coastal hpc-stack ----
+module purge
+module reset
+unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
+module use ${NOS_WORKFLOW}/modulefiles
+module load modules.fv3
+module load cray-pals
+module list
+
+# ---- Verify required files ----
+for f in param.nml fv3_coastalS.exe model_configure datm_in datm.streams ufs.configure; do
+    [ -f "$f" ] || { echo "FATAL: missing $f"; exit 1; }
+done
+[ -d INPUT ] || { echo "FATAL: missing INPUT directory"; exit 1; }
+
+echo ""
+echo "=== Key param.nml settings ==="
+grep -E 'dramp|nramp_elev|ihot|nws|rnday' param.nml | head -10
+echo ""
+
+# ---- Clean previous outputs (ihot-aware) ----
+IHOT=$(awk '/^[[:space:]]*ihot[[:space:]]*=/{print $3}' param.nml)
+echo "Detected ihot=${IHOT:-not found}"
+
+if [ "${IHOT:-0}" = "2" ]; then
+    # ihot=2 restart: preserve staout_*/flux.out/mirror.out from nowcast
+    echo "ihot=2: preserving staout_*/flux.out/mirror.out"
+    rm -f outputs/schout_*.nc outputs/out2d_*.nc outputs/horizontalVel*.nc \
+          outputs/salinity_*.nc outputs/temperature_*.nc outputs/zCoordinates_*.nc \
+          outputs/verticalVel*.nc outputs/diffusivity_*.nc 2>/dev/null || true
+    [ -s outputs/staout_1 ] && echo "staout_1 has $(wc -l < outputs/staout_1) lines" || \
+        echo "WARNING: staout_1 empty or missing — ihot=2 will crash"
+else
+    echo "ihot=${IHOT:-0}: cleaning outputs/ for fresh start"
+    rm -rf outputs/
+    mkdir -p outputs
+fi
+rm -f mirror.out fatal.error PET*.ESMF_LogFile datm.log mediator.log JCG.out
+
+# ---- Run UFS-Coastal ----
+# 10 nodes x 120 mpiprocs = 1200 tasks (MED+ATM: 0-119, OCN: 120-1199)
+TOTAL_TASKS=1200
+PPN=120
+EXE=./fv3_coastalS.exe
+
+echo ""
+echo "============================================"
+echo "UFS-Coastal Execution"
+echo "============================================"
+echo "mpiexec -n $TOTAL_TASKS -ppn $PPN --cpu-bind core $EXE"
+echo "Starting: $(date -u)"
+echo ""
+
+mpiexec -n $TOTAL_TASKS -ppn $PPN --cpu-bind core $EXE
+rc=$?
+
+echo ""
+echo "Finished: $(date -u)  rc=$rc"
+
+# ---- Check completion ----
+if [ $rc -eq 0 ] && [ -f mirror.out ]; then
+    echo "SUCCESS: UFS-Coastal completed"
+    ls -lh staout_* 2>/dev/null | head -5
+    ls -lh outputs/ 2>/dev/null | head -5
+else
+    echo "FAILED: rc=$rc"
+    [ -f fatal.error ] && echo "=== fatal.error ===" && cat fatal.error
+    [ -f PET0000.ESMF_LogFile ] && echo "=== tail PET0000 ===" && tail -20 PET0000.ESMF_LogFile
+    exit 1
+fi
