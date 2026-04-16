@@ -233,8 +233,18 @@ case "${OFS_FRAMEWORK}" in
         # Prevent user site-packages from interfering with STOFS Python scripts
         export PYTHONNOUSERSITE=1
 
-        # Execute unified prep script (STOFS path)
-        $SCRIstofs3d/exnos_ofs_prep.sh
+        # v3.1.1 ops-parity prep for STOFS-3D-ATL uses the split OBC path
+        # (_non_adjust + _dynamic_adjust) and param.nml_8globaloutput, matching
+        # operational. STOFS-3D-PAC and STOFS-2D-ATL stay on the shared-library
+        # path (exnos_ofs_prep.sh -> nos_ofs_prep_run.sh, v3.1.0 monolithic OBC).
+        # Set USE_STOFS_LIB_PREP=YES in the PBS file to force the shared-lib path.
+        if [ "${OFS,,}" = "stofs_3d_atl" ] && \
+           [ "${USE_STOFS_LIB_PREP:-NO}" != "YES" ] && \
+           [ -f "$SCRIstofs3d/exstofs_3d_atl_prep_processing.sh" ]; then
+            $SCRIstofs3d/exstofs_3d_atl_prep_processing.sh
+        else
+            $SCRIstofs3d/exnos_ofs_prep.sh
+        fi
         ;;
     adcirc)
         # ADCIRC-specific paths (alias stofs3d paths for 2D variable names)

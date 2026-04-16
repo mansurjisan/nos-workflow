@@ -37,8 +37,13 @@ fi
   echo; echo
 
 # ---------------------------> Conda Environment Setup
-# Required for Fortran executables compiled with conda libraries
-if [ -n "$CONDA_PREFIX" ] || [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; then
+# Required for Fortran executables compiled with conda libraries.
+# Gated so it only runs when ALLOW_CONDA_ACTIVATE=YES is set.
+# On WCOSS2 this block is intentionally skipped because the module-loaded
+# ve/stofs Python env (from the PBS job) is the correct runtime; if miniconda
+# happens to be installed on the user's account, conda activate would silently
+# replace the loaded modules and break Fortran runtime linkage.
+if [ "${ALLOW_CONDA_ACTIVATE:-NO}" = "YES" ] && { [ -n "$CONDA_PREFIX" ] || [ -f "${HOME}/miniconda3/etc/profile.d/conda.sh" ]; }; then
     source ${HOME}/miniconda3/etc/profile.d/conda.sh 2>/dev/null || true
     conda activate nos_ofs_prep
     # export LD_LIBRARY_PATH=${CONDA_PREFIX}/lib:$LD_LIBRARY_PATH  # Optional
