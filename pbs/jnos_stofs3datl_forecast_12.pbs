@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_forecast_12.out
 #PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/stofs_3d_atl/stofs3datl_forecast_12.err
-#PBS  -l select=34:ncpus=128:mpiprocs=128
+#PBS  -l select=39:ncpus=128:mpiprocs=128
 #PBS  -l place=vscatter:exclhost
 #PBS  -l walltime=04:00:00
 
@@ -82,9 +82,13 @@ export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 
 ################################################
 # MPI configuration for SCHISM model
-# Total CPUs = 34 nodes x 128 cores = 4352
-# STOFS uses 4320 (4314 compute + 6 scribes)
-export NCPU_PBS=4320
+# Total cores allocated: 39 nodes x 128 = 4992
+# MPI ranks used (set by YAML via yaml_to_env.py in the J-job):
+#   TOTAL_TASKS = nprocs_compute (4912, == partition.prop) + NSCRIBES (8) = 4920
+# Do NOT hardcode NCPU_PBS here — it's driven by parm/systems/${OFS}.yaml
+# (section: resources). If YAML load fails, mpiexec falls back to 960,
+# which will fail the partition check loudly (intended — better than
+# silently running with a stale/wrong value).
 
 ################################################
 # CALL executable job script here
