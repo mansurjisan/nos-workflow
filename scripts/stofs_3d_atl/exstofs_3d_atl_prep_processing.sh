@@ -336,6 +336,23 @@ else   # COLDSTART=NO
 
 
 # ------------------------
+# Fast-path: if ${fn_restart_rerun} is already in place (e.g., pre-staged
+# from a prev-cycle operational archive for a dev run), accept it and skip
+# the hotstart search. Validates with the same >20GB threshold the search
+# uses.
+  flag_skip_hotstart_search=0
+  if [ -s "${fn_restart_rerun}" ]; then
+      if [[ $(find "${fn_restart_rerun}" -type f -size +20G 2>/dev/null) ]]; then
+          echo "OK: restart already staged at ${fn_restart_rerun} (>20GB); skipping hotstart search"
+          echo "OK: restart already staged at ${fn_restart_rerun} (>20GB); skipping hotstart search" >> ${file_log}
+          flag_skip_hotstart_search=1
+      else
+          echo "WARNING: ${fn_restart_rerun} exists but is <20GB; falling through to hotstart search"
+      fi
+  fi
+
+if [[ ${flag_skip_hotstart_search} -eq 0 ]]; then
+
   LIST_fn_fnl_hotstart=''
   LIST_fn_fnl_hotstart_all_to_be_searched=''
   days=(0 1 2 3 4)
@@ -344,23 +361,27 @@ else   # COLDSTART=NO
   for k in ${days[@]}; do
       date_k=`date -d "${PDYHH_NCAST_BEGIN:0:8} ${k} days ago" +%Y%m%d`
 
-      fn_hotstart_oper=$COMINstofs/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc
+      # v3.1.1 operational layout: rerun/restart.nc
+      # v3.0 legacy layout: hotstart.stofs3d.nc in the cycle root
+      fn_restart_ops="${COMINstofs}/${RUN}.${date_k}/rerun/${RUN}.${cycle}.restart.nc"
+      fn_hotstart_oper="${COMINstofs}/${RUN}.${date_k}/${RUN}.${cycle}.hotstart.stofs3d.nc"
 
-      LIST_fn_fnl_hotstart_all_to_be_searched+="${fn_hotstart_oper} \n "
+      LIST_fn_fnl_hotstart_all_to_be_searched+="${fn_restart_ops} \n ${fn_hotstart_oper} \n "
 
-      if [ -s $fn_hotstart_oper ]; then
-        if [[ $(find ${fn_hotstart_oper} -type f -size  +20G 2>/dev/null) ]];
-        then
-           LIST_fn_fnl_hotstart+="${fn_hotstart_oper} "
-           echo "OK: $fn_hotstart_oper : filesize $filesize (GT 22GB)"
-           cnt_files=$((cnt_files+1))
-	   break
+      for _cand in "${fn_restart_ops}" "${fn_hotstart_oper}"; do
+        if [ -s "${_cand}" ]; then
+          if [[ $(find "${_cand}" -type f -size +20G 2>/dev/null) ]]; then
+             LIST_fn_fnl_hotstart+="${_cand} "
+             echo "OK: ${_cand} : filesize (GT 20GB)"
+             cnt_files=$((cnt_files+1))
+             break 2
+          else
+             echo "WARNING: ${_cand}: filesize less than 20GB"
+          fi
         else
-           echo "WARNING: " $fn_hotstart_oper ": filesize less than 22GB"
+          echo "WARNING: ${_cand} does not exist"
         fi
-      else
-        echo "WARNING: "  $fn_hotstart_oper " does not exist"
-      fi
+      done
   done
   echo "cnt_files = " ${cnt_files}
 
@@ -378,11 +399,18 @@ else   # COLDSTART=NO
      msg="${msg}\n This script checked for the following files and NONE was found:\n"
      msg="${msg}\n ${LIST_fn_fnl_hotstart_all_to_be_searched}"
      msg="${msg}\n If WCOSS2 recently switched machines, data mirroring may be delayed."
-     msg="${msg}\n Please ensure data mirroring is complete before re-running.\n"
+     msg="${msg}\n Please ensure data mirroring is complete before re-running."
+     msg="${msg}\n"
+     msg="${msg}\n For a dev run, you can pre-stage the restart file at:"
+     msg="${msg}\n   ${fn_restart_rerun}"
+     msg="${msg}\n (symlink from /lfs/h1/ops/prod/com/stofs/v2.1/stofs_3d_atl.<PDYm1>/rerun/stofs_3d_atl.t12z.restart.nc)"
+     msg="${msg}\n"
 
      echo -e "${msg}"; echo -e "${msg}" >> ${file_log}
      err_exit "RESTART FILE NOT FOUND. See above message for details."
   fi
+
+fi  # flag_skip_hotstart_search
 fi  # COLDSTART == YES
 
 
