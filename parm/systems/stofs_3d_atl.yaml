@@ -203,16 +203,16 @@ output:
     interval_days: 1.0        # Daily restart files -> NRST
 
 # Computational resources for STOFS-3D-ATL
-# Total MPI ranks must be nprocs_compute + nscribes, and nprocs_compute
-# MUST equal the partition.prop's compute-rank count (offline METIS decomposition).
-# v3.1.1 operational: partition.prop = 4912 compute ranks, so total_tasks = 4920.
+# nprocs is the TOTAL mpiexec -n rank count (compute + scribes), matching
+# the legacy semantic used by SECOFS/creofs/stofs_2d_atl.
+# Constraint: nprocs - nscribes MUST equal partition.prop's compute-rank
+# count (offline METIS decomposition). For v3.1.1 partition.prop = 4912
+# compute ranks, so nprocs = 4912 + 8 = 4920.
+# PBS allocation must provide at least nprocs cores (39x128=4992 satisfies).
 resources:
-  nprocs_compute: 4912        # Compute ranks (== partition.prop nproc)
-  nscribes: 8                 # SCHISM scribed-I/O ranks (v3.1.1: was 6 pre-split)
-  total_tasks: 4920           # mpiexec -n <this>; = nprocs_compute + nscribes
-  # PBS allocation must provide >= total_tasks cores.
-  # 39 nodes * 128 = 4992 cores satisfies 4920 with 72 idle slots.
-  pbs_select: "select=39:ncpus=128:mpiprocs=128"
+  nprocs: 4920                # total mpiexec -n (compute + scribes)
+  nscribes: 8                 # SCHISM scribed-I/O ranks (v3.1.1)
+  pbs_select: "select=39:ncpus=128:mpiprocs=128"   # documentation only; PBS file must match
   walltime_hours: 2
   memory_gb: 2000
 
