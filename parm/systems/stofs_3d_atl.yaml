@@ -203,11 +203,18 @@ output:
     interval_days: 1.0        # Daily restart files -> NRST
 
 # Computational resources for STOFS-3D-ATL
+# Total MPI ranks must be nprocs_compute + nscribes, and nprocs_compute
+# MUST equal the partition.prop's compute-rank count (offline METIS decomposition).
+# v3.1.1 operational: partition.prop = 4912 compute ranks, so total_tasks = 4920.
 resources:
-  nprocs: 960                 # Number of MPI processes
-  nscribes: 8                 # SCHISM I/O server processes (v3.1.1: increased from 6 to 8)
+  nprocs_compute: 4912        # Compute ranks (== partition.prop nproc)
+  nscribes: 8                 # SCHISM scribed-I/O ranks (v3.1.1: was 6 pre-split)
+  total_tasks: 4920           # mpiexec -n <this>; = nprocs_compute + nscribes
+  # PBS allocation must provide >= total_tasks cores.
+  # 39 nodes * 128 = 4992 cores satisfies 4920 with 72 idle slots.
+  pbs_select: "select=39:ncpus=128:mpiprocs=128"
+  walltime_hours: 2
   memory_gb: 2000
-  walltime_hours: 3
 
 # STOFS workflow stages (different from nosofs)
 stages:
@@ -307,10 +314,11 @@ ensemble:
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
   # Ensemble-specific resources (per member)
+  # Must match partition.prop's compute-rank count + nscribes.
   resources:
-    select: "select=34:ncpus=128:mpiprocs=128"
+    select: "select=39:ncpus=128:mpiprocs=128"
     walltime: "06:00:00"
-    total_tasks: 4320   # 4312 compute + 8 scribes (v3.1.1), must match partition.prop
+    total_tasks: 4920   # 4912 compute (== partition.prop) + 8 scribes
     nscribes: 8
   # Ensemble post-processing resources
   post_resources:

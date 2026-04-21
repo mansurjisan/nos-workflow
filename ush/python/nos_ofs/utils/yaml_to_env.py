@@ -294,9 +294,31 @@ def get_standard_exports(
         exports['CREATE_TIDEFORCING'] = tidal.get('create_forcing', 1)
 
     # Resources
+    # - TOTAL_TASKS drives `mpiexec -n <N>` in ush/nos_ofs_model_run.sh.
+    #   For SCHISM scribed-I/O builds, TOTAL_TASKS = nprocs_compute + nscribes,
+    #   where nprocs_compute MUST equal the offline partition.prop count.
+    # - NSCRIBES is the I/O-rank count passed as argv[1] to pschism.
+    # - NPROCS kept for backward compatibility with older shell scripts that
+    #   read it directly (treated as the compute-rank count).
     resources = data.get('resources', {})
-    exports['NPROCS'] = resources.get('nprocs', '')
-    exports['NSCRIBES'] = resources.get('nscribes', '')
+    _total_tasks = resources.get('total_tasks')
+    _nprocs_compute = resources.get('nprocs_compute')
+    _nprocs_legacy = resources.get('nprocs')  # old schema; same as compute rank count
+    # Prefer explicit total_tasks; fall back to compute + scribes; then legacy nprocs.
+    _nscribes_val = resources.get('nscribes', '')
+    if _total_tasks in (None, ''):
+        if _nprocs_compute not in (None, '') and _nscribes_val not in (None, ''):
+            try:
+                _total_tasks = int(_nprocs_compute) + int(_nscribes_val)
+            except (TypeError, ValueError):
+                _total_tasks = ''
+        else:
+            _total_tasks = _nprocs_legacy or ''
+    exports['TOTAL_TASKS'] = _total_tasks if _total_tasks is not None else ''
+    exports['NCPU_PBS'] = exports['TOTAL_TASKS']    # legacy alias
+    exports['NPROCS'] = _nprocs_compute if _nprocs_compute not in (None, '') \
+                        else (_nprocs_legacy if _nprocs_legacy is not None else '')
+    exports['NSCRIBES'] = _nscribes_val
 
     # Include runtime environment variables
     exports.update(runtime_env)
