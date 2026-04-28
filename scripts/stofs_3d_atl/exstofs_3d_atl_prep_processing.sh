@@ -75,7 +75,7 @@ ln -sf $FIXstofs3d/${RUN}_station.in  station.in
 #ln -sf $FIXstofs3d/${RUN}_river_source_sink.in  source_sink.in
 ln -sf $FIXstofs3d/${RUN}_shapiro.gr3  shapiro.gr3
 ln -sf $FIXstofs3d/${RUN}_sal_nudge.gr3  SAL_nudge.gr3
-ln -sf $FIXstofs3d/${RUN}_param.nml_8globaloutput param.nml_template
+ln -sf $FIXstofs3d/${RUN}_param.nml_6globaloutput param.nml_template
 ln -sf $FIXstofs3d/${RUN}_river_msource.th  msource.th
 ln -sf $FIXstofs3d/${RUN}_hgrid.ll  hgrid.ll
 ln -sf $FIXstofs3d/${RUN}_hgrid.gr3  hgrid.gr3
