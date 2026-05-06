@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_rerun.out
 #PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_rerun.err
-#PBS  -l place=vscatter:excl,select=10:ncpus=128:mpiprocs=120
+#PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120
 #PBS  -l walltime=01:30:00
 
 #==========================================================================

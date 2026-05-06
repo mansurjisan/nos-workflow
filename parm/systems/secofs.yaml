@@ -21,10 +21,10 @@ system:
 grid:
   type: unstructured
   # SCHISM grid dimensions for SECOFS (from secofs.ctl)
-  n_nodes: 1684786            # -> np_global (from .ctl)
-  n_elements: 3322329         # -> ne_global (from .ctl)
-  n_sides: 5007180            # -> ns_global (from .ctl)
-  n_levels: 63                # -> nvrt, KBm (from .ctl)
+  n_nodes: 1686665            # -> np_global (v3.9 mesh, was 1684786)
+  n_elements: 3325055         # -> ne_global (v3.9 mesh, was 3322329)
+  n_sides: 5007180            # -> ns_global (placeholder; SCHISM prints actual at startup)
+  n_levels: 63                # -> nvrt, KBm (unchanged in v3.9)
   files:
     horizontal: secofs.hgrid.gr3       # -> GRIDFILE
     vertical: secofs.vgrid.in          # -> VGRID_CTL
@@ -190,7 +190,7 @@ output:
 
 # Computational resources (from secofs.ctl)
 resources:
-  nprocs: 1200                # -> TOTAL_TASKS (from .ctl: 1200)
+  nprocs: 2800                # -> TOTAL_TASKS (v3.9: 2794 compute + 6 scribes; was 1200 for old mesh)
   nscribes: 6                 # SCHISM I/O server processes (must be >= number of output variables)
   memory_gb: 1500
   walltime_hours: 2
@@ -414,7 +414,7 @@ ensemble:
       description: "Background tracer diffusivity (m2/s)"
   # Ensemble-specific resources (per member)
   resources:
-    select: "select=10:ncpus=128:mpiprocs=120"
+    select: "select=24:ncpus=128:mpiprocs=120"   # v3.9: 24*120=2880 ≥ nprocs 2800 (was select=10)
     walltime: "05:30:00"
   # Ensemble post-processing resources
   post_resources:
