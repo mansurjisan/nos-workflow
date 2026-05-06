@@ -23,10 +23,10 @@ system:
 # Values from secofs.ctl
 grid:
   type: unstructured
-  n_nodes: 1684786
-  n_elements: 3322329
-  n_sides: 5007180
-  n_levels: 63
+  n_nodes: 1686665            # v3.9 mesh, was 1684786
+  n_elements: 3325055         # v3.9 mesh, was 3322329
+  n_sides: 5007180            # placeholder; SCHISM prints actual at startup
+  n_levels: 63                # unchanged in v3.9
   files:
     horizontal: secofs_ufs.hgrid.gr3
     vertical: secofs_ufs.vgrid.in
@@ -165,10 +165,10 @@ ufs_coastal:
   coupling_interval: 120
   # MED+ATM share PETs 0-119 (120 PETs)
   datm_tasks: 120
-  # OCN PETs 120-1199 (1080 PETs)
-  schism_tasks: 1080
-  # Total MPI tasks (MED+ATM overlap, so total = 120 + 1080 = 1200)
-  total_tasks: 1200
+  # OCN PETs 120-2913 (2794 PETs, v3.9 mesh — was 1080 for old mesh)
+  schism_tasks: 2794
+  # Total MPI tasks (MED+ATM overlap, so total = 120 + 2794 = 2914)
+  total_tasks: 2914
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
@@ -222,8 +222,9 @@ output:
     interval: 21600
 
 # Computational resources (DATM + SCHISM)
+# v3.9 mesh: schism_tasks=2794 + datm_tasks=120 = total_tasks=2914 (was 1200)
 resources:
-  nprocs: 1200
+  nprocs: 2914
   nscribes: 0
   memory_gb: 1500
   walltime_hours: 2
@@ -465,7 +466,7 @@ ensemble:
       description: "Background tracer diffusivity (m2/s)"
   # Ensemble-specific resources (per member)
   resources:
-    select: "select=10:ncpus=128:mpiprocs=120"
+    select: "select=25:ncpus=128:mpiprocs=120"   # v3.9: 25*120=3000 ≥ total_tasks 2914 (was select=10)
     walltime: "05:30:00"
   # Ensemble post-processing resources
   post_resources:
