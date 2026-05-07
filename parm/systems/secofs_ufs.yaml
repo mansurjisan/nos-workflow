@@ -58,6 +58,11 @@ forcing:
     forecast_source: GFS
     forecast_source2: HRRR
     scale_hflux: 1.0
+    # GFS resolution: 0.25 for UFS-Coastal DATM (hourly cadence).
+    # 0.50 (default) gives 3-hourly cadence and was the cause of nx=51,
+    # ny=47, nt=19 output before the fix.
+    gfs:
+      resolution: "0.25"
     variables:
       - PRMSL
       - TMP
