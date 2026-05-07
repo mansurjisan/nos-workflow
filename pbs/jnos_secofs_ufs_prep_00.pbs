@@ -92,4 +92,17 @@ export HOMEnos=${PACKAGEROOT}/nosofs.${nosofs_ver}
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
+# Use nos-utils (Python) for the full prep pipeline. The J-job's comf
+# branch routes to scripts/nosofs/exnos_ofs_prep_python.sh which calls
+# nos_utils.nco_bridge.run_prep. config_from_env reads OFS_CONFIG (set
+# above) so the YAML drives nws=4, the ATLANTIC datm_domain, and the
+# ufs_coastal task layout. Outputs:
+#   $DATA/datm_forcing.nc, $DATA/esmf_mesh.nc
+#   $DATA/{model_configure,datm_in,datm.streams,ufs.configure,
+#          fd_ufs.yaml,noahmptable.tbl}
+#   $DATA/bctides.in, $DATA/param.nml
+# Legacy OBC/river run after the Python step (still need Fortran for those).
+# Set to NO to fall back to the legacy all-shell exnos_ofs_prep.sh path.
+export USE_PYTHON_PREP=YES
+
 ${HOMEnos}/jobs/JNOS_OFS_PREP
