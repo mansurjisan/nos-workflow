@@ -96,13 +96,24 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 # branch routes to scripts/nosofs/exnos_ofs_prep_python.sh which calls
 # nos_utils.nco_bridge.run_prep. config_from_env reads OFS_CONFIG (set
 # above) so the YAML drives nws=4, the ATLANTIC datm_domain, and the
-# ufs_coastal task layout. Outputs:
-#   $DATA/datm_forcing.nc, $DATA/esmf_mesh.nc
-#   $DATA/{model_configure,datm_in,datm.streams,ufs.configure,
-#          fd_ufs.yaml,noahmptable.tbl}
-#   $DATA/bctides.in, $DATA/param.nml
-# Legacy OBC/river run after the Python step (still need Fortran for those).
-# Set to NO to fall back to the legacy all-shell exnos_ofs_prep.sh path.
+# ufs_coastal task layout.
+#
+# USE_PYTHON_PREP=YES   - route prep through Python (vs legacy all-shell)
+# FULL_PYTHON_PREP=YES  - also run NWM river / RTOFS OBC / nudging in Python
+#                         (SECOFS V18 byte-identical to COMF v3.7). When NO,
+#                         legacy Fortran nos_ofs_create_forcing_{river,obc}.sh
+#                         runs at the end instead.
+#
+# Python outputs (FULL_PYTHON_PREP=YES):
+#   atmospheric:  $DATA/{datm_forcing.nc, esmf_mesh.nc}
+#   UFS configs:  $DATA/{model_configure, datm_in, datm.streams,
+#                        ufs.configure, fd_ufs.yaml, noahmptable.tbl}
+#   tidal:        $DATA/bctides.in
+#   model ctl:    $DATA/param.nml
+#   river:        $DATA/{source_sink.in, vsource.th, vsink.th, msource.th}
+#   OBC:          $DATA/{elev2D.th.nc, TEM_3D.th.nc, SAL_3D.th.nc, uv3D.th.nc}
+#   nudging:      $DATA/{TEM_nu.nc, SAL_nu.nc}
 export USE_PYTHON_PREP=YES
+export FULL_PYTHON_PREP=YES
 
 ${HOMEnos}/jobs/JNOS_OFS_PREP

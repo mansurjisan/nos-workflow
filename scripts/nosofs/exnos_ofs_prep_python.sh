@@ -107,28 +107,40 @@ if [ $err -ne 0 ]; then
 fi
 
 # =========================================
-#  STEP 2: Legacy shell (OBC + river)
+#  STEP 2: Legacy shell (OBC + river) — only when NOT in full Python mode
 # =========================================
-# Restore LD_PRELOAD for Fortran executables
+# When FULL_PYTHON_PREP=YES, run_prep already produced river/OBC/nudging
+# via the Python orchestrator (NWMProcessor, RTOFSProcessor, NudgingProcessor —
+# byte-identical to COMF v3.7 per SECOFS V18). Re-running the legacy
+# Fortran here would overwrite those outputs.
 
-if [ -n "${_SAVED_LD_PRELOAD}" ]; then
-    export LD_PRELOAD=${_SAVED_LD_PRELOAD}
+if [ "${FULL_PYTHON_PREP^^}" = "YES" ]; then
+    echo ""
+    echo "========================================="
+    echo "  Skipping legacy OBC/river (FULL_PYTHON_PREP=YES)"
+    echo "  Python orchestrator already produced river + OBC + nudging."
+    echo "========================================="
+else
+    # Restore LD_PRELOAD for Fortran executables (lesson #6)
+    if [ -n "${_SAVED_LD_PRELOAD}" ]; then
+        export LD_PRELOAD=${_SAVED_LD_PRELOAD}
+    fi
+
+    echo ""
+    echo "========================================="
+    echo "  OBC + River: Legacy shell + Fortran"
+    echo "========================================="
+
+    # River forcing
+    echo "Running legacy river forcing..."
+    ${USHnos}/nos_ofs_create_forcing_river.sh
+    export err=$?; err_chk
+
+    # OBC forcing (needs Fortran gen_3Dth_from_hycom for boundary interpolation)
+    echo "Running legacy OBC forcing..."
+    ${USHnos}/nos_ofs_create_forcing_obc.sh
+    export err=$?; err_chk
 fi
-
-echo ""
-echo "========================================="
-echo "  OBC + River: Legacy shell + Fortran"
-echo "========================================="
-
-# River forcing
-echo "Running legacy river forcing..."
-${USHnos}/nos_ofs_create_forcing_river.sh
-export err=$?; err_chk
-
-# OBC forcing (needs Fortran gen_3Dth_from_hycom for boundary interpolation)
-echo "Running legacy OBC forcing..."
-${USHnos}/nos_ofs_create_forcing_obc.sh
-export err=$?; err_chk
 
 echo ""
 echo "exnos_ofs_prep_python.sh completed at $(date)"
