@@ -77,6 +77,12 @@ forcing:
     enabled: true
     primary: nwm
     files:
+      # STOFS-style element-to-NWM-reach mapping (preferred by Python NWMProcessor).
+      # The legacy `ctl_file` only lists 6 USGS-fallback rivers; the actual NWM
+      # source/sink mapping for the v3.9 mesh lives in sources.json / sinks.json
+      # (symlinked from ../secofs/secofs.{sources,sinks}.json).
+      sources_json: secofs_ufs.sources.json
+      sinks_json: secofs_ufs.sinks.json
       ctl_file: secofs_ufs.river.ctl
       clim_file: nosofs.river.clim.usgs.nc
       nwm_reach: secofs_ufs.nwm.reach.dat
