@@ -70,6 +70,12 @@ forcing:
   river:
     enabled: true
     primary: nwm              # National Water Model
+    # Production COMF (nos_ofs_create_forcing_river.sh:86) anchors the NWM
+    # hourly grid at time_hotstart + 72h. For SECOFS (cyc + 6h nowcast + 48h
+    # forecast = 54h) that extends vsource/vsink/msource.th 18h past forecast
+    # end. schism_*.th boundary forcing extends 1h past forecast end.
+    hourly_extra_hours: 18
+    th_extra_hours: 1
     # nosofs river control files (from secofs.ctl)
     files:
       ctl_file: secofs.river.ctl          # -> RIVER_CTL_FILE

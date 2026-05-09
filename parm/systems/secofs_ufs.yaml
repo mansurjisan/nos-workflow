@@ -76,6 +76,14 @@ forcing:
   river:
     enabled: true
     primary: nwm
+    # Production COMF (nos_ofs_create_forcing_river.sh:86) anchors the NWM
+    # hourly grid at time_hotstart + 72h, so the NWM source/sink files extend
+    # 18h past the SECOFS forecast end (cyc + 6h nowcast + 48h forecast = 54h
+    # → 72h total). schism_*.th boundary forcing extends 1h past the forecast
+    # end. These match the V17a-passed reference; without them vsource/vsink/
+    # msource.th truncate at 54h and SCHISM aborts on long runs.
+    hourly_extra_hours: 18
+    th_extra_hours: 1
     files:
       # STOFS-style element-to-NWM-reach mapping (preferred by Python NWMProcessor).
       # The legacy `ctl_file` only lists 6 USGS-fallback rivers; the actual NWM
