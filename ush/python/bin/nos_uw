@@ -1,0 +1,3 @@
+#!/bin/bash
+# nos_uw — CLI shim. Operators get a clean command without pip install.
+exec python3 -m nos_workflow "$@"
