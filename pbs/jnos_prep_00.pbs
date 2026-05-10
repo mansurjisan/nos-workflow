@@ -55,7 +55,7 @@ set +x
 export envir=dev
 export OFS=${OFS:-secofs_ufs}
 export cyc=${CYC:-00}
-export NET=nosofs
+export NET=nos
 export model=nosofs
 export job=secofs_ufs_prep_${cyc}_$envir
 export platform=ptmp
@@ -66,7 +66,7 @@ export SENDDBN=NO
 export SENDSMS=NO
 
 # Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
-export nosofs_ver=v3.7.0
+# nosofs_ver removed: tree is unversioned (was v3.7.0)
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths

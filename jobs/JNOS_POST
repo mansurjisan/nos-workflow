@@ -18,7 +18,7 @@ export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 ###################################
 # Specify NET and RUN Name
 ####################################
-export NET=${NET:-nosofs}
+export NET=${NET:-nos}
 export RUN=${RUN:-$OFS}
 export PREFIXNOS=${PREFIXNOS:-$OFS}
 export SENDDBN=${SENDDBN:-NO}
@@ -98,20 +98,11 @@ export PDY=${PDY:-$(date +%Y%m%d)}
 ##############################################
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 
-# Use appropriate version for COM paths (match JNOS_NOWCAST pattern)
-case "${OFS_FRAMEWORK}" in
-    stofs|adcirc)  _com_ver=${stofs_ver:-v2.1.0} ;;
-    *)             _com_ver=${nosofs_ver} ;;
-esac
-
-if command -v compath.py &> /dev/null; then
-    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
-    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
-fi
-
-# Fall back to COMROOT-based paths if compath.py failed or unavailable
-export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
-export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+# COM layout: ${COMROOT}/${NET}/${RUN}.${PDY}
+# = e.g. /lfs/h1/nos/ptmp/$LOGNAME/com/nos/secofs_ufs.20260507
+# (unversioned — drops the legacy nosofs/v3.7.0 segment)
+export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}}
+export COMIN=${COMIN:-${COMOUTroot}/${RUN}.${PDY}}
 export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 mkdir -m 775 -p $COMOUT

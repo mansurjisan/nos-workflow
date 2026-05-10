@@ -24,7 +24,7 @@ PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 # Working directory
 export OFS=${OFS:-secofs_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
-WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
 cd ${WORKDIR}
 
@@ -61,15 +61,15 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-export nosofs_ver=v3.7.0
-export nos_ofs_ver=${nosofs_ver}
+# nosofs_ver removed: tree is unversioned (was v3.7.0)
+# nos_ofs_ver removed (tree unversioned)
 export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
 export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
 export DCOMROOT=/lfs/h1/ops/prod/dcom
-export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${nosofs_ver}/${OFS}
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 
 ################################################
 # CALL executable job script here

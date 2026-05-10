@@ -20,8 +20,6 @@ export LD_PRELOAD=${LD_PRELOAD:-}
 ########################################
 # Set HOME directories
 ########################################
-# Support both nosofs_ver (production) and nos_ofs_ver (unified) naming
-export nosofs_ver=${nosofs_ver:-${nos_ofs_ver:-}}
 export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos_secofs_ufs}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
@@ -34,7 +32,7 @@ case "${OFS,,}" in
         export NET=${NET:-stofs}
         ;;
     *)
-        export NET=${NET:-nosofs}
+        export NET=${NET:-nos}
         ;;
 esac
 export RUN=${RUN:-$OFS}
@@ -144,21 +142,12 @@ export time_nowcastend=${PDY}${cyc}
 export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
 export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/${envir}/dcom}
 
-# Use appropriate version for COM paths
-case "${OFS_FRAMEWORK}" in
-    stofs|adcirc)  _com_ver=${stofs_ver:-v2.1.0} ;;
-    *)             _com_ver=${nosofs_ver} ;;
-esac
-
-if command -v compath.py &> /dev/null; then
-    export COMIN=${COMIN:-$(compath.py ${NET}/${_com_ver})/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-$(compath.py -o ${NET}/${_com_ver})}
-    export COMOUT=${COMOUT:-$(compath.py -o ${NET}/${_com_ver})/${RUN}.${PDY}}
-else
-    export COMIN=${COMIN:-${COMROOT}/${NET}/${_com_ver}/${RUN}.${PDY}}
-    export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}/${_com_ver}}
-    export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
-fi
+# COM layout: ${COMROOT}/${NET}/${RUN}.${PDY}
+# = e.g. /lfs/h1/nos/ptmp/$LOGNAME/com/nos/secofs_ufs.20260507
+# (unversioned — drops the legacy nosofs/v3.7.0 segment)
+export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}}
+export COMIN=${COMIN:-${COMOUTroot}/${RUN}.${PDY}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
 
 mkdir -m 775 -p $COMOUT
 
