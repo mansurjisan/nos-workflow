@@ -1,103 +1,93 @@
 #!/bin/bash
-
-##############################################################################
-#  Name: exnos_nowcast.sh
-#  Purpose: Nowcast-only ex-script for split-job production mode.
+###############################################################################
+#  exnos_nowcast.sh — nos_workflow shim
 #
-#  Sources the shared model run library (nos_run.sh) and calls
-#  the 4-step interface for the nowcast phase only.
+#  This file used to drive the SECOFS-UFS nowcast directly: source nos_run.sh,
+#  then call the 4-step interface (stage_model_files / prepare_restart /
+#  execute_model / archive_outputs) inline. The orchestration has migrated
+#  to ``nos_workflow.stages.nowcast`` so the same behavior is reachable from
+#  the CLI (``nos_uw run nowcast --ofs <name>``) and from any Python caller.
+#  The pre-migration shell is preserved at
+#  ``scripts/legacy/exnos_nowcast.sh.preY-mig`` so we can revert in one cycle.
 #
-#  The nowcast archives a combined hotstart to $COMOUT so the independent
-#  forecast job (exnos_forecast.sh) can retrieve it.
+#  What stayed in shell: the actual ``mpiexec ... fv3_coastalS.exe`` MPI
+#  launch, combine_hotstart7, the nccopy NETCDF4_CLASSIC conversion, and
+#  the COMOUT archive. They all live inside ``_schism_execute_ufs_coastal``
+#  and ``_schism_archive_outputs`` in ``ush/nos_run.sh`` and are invoked
+#  from the Python stage via ``bash_compat.run_shell_function``. Reason:
+#  ``module load`` (MPI / netCDF / ESMF) doesn't persist into a Python
+#  ``subprocess`` re-exec, so MPI launches must stay in shell. The
+#  migration philosophy doc (#220) is explicit about this case.
 #
-#  Usage:
-#    Called by JNOS_NOWCAST (STOFS): $SCRIstofs3d/exnos_nowcast.sh
-#    Called by JNOS_NOWCAST (COMF):  $SCRIPTSnos/exnos_nowcast.sh $OFS
-##############################################################################
+#  Rollback escape hatch: set NOS_USE_LEGACY_SHELL=YES (e.g. via
+#  ``qsub -v NOS_USE_LEGACY_SHELL=YES JNOS_NOWCAST``) to short-circuit the
+#  Python path and re-route through the preserved legacy shell. Same-cycle
+#  revert without editing tracked files.
+#
+#  Why we still source nos_run.sh: it populates env vars the Python
+#  nowcast stage reads (and forwards into each shell function call) —
+#  PREFIXNOS, GRIDFILE, OCEAN_MODEL, time_hotstart, time_nowcastend,
+#  TOTAL_TASKS, PPN, EXECnos, DATM_INPUT_DIR, RNDAY_NOWCAST,
+#  PDYHH_NCAST_BEGIN, plus the standard DBASE_*/time_* set.
+#  Replacing that in Python would mean reimplementing module-load-style
+#  env wiring; not worth it.
+#
+#  Rolled out at: <commit migrated-secofs_ufs-nowcast-v1>
+###############################################################################
 
-  seton='-xa'
-  setoff='+xa'
-  set $seton
+set -x
 
-  fn_this_script="exnos_nowcast.sh"
+# ----- Rollback escape hatch ------------------------------------------------
+if [ "${NOS_USE_LEGACY_SHELL:-NO}" = "YES" ]; then
+    echo "NOS_USE_LEGACY_SHELL=YES — routing through preserved pre-migration shell"
+    exec "${SCRIPTSnos}/legacy/exnos_nowcast.sh.preY-mig"
+fi
 
-# Fallback if postmsg not provided by prod_util module
-  command -v postmsg >/dev/null 2>&1 || postmsg() { echo "[postmsg] $*"; }
+echo "exnos_nowcast.sh (nos_workflow shim) started at $(date)"
+echo "  OFS=${RUN}  PDY=${PDY}  cyc=${cyc}"
 
-  msg="${fn_this_script} started (nowcast-only split-job mode)"
-  echo "$msg"
-  postmsg "$msg"
+# ----- STEP 0: env setup via nos_run.sh -------------------------------------
+# Sources every var nos_run.sh's helpers consult when the Python stage
+# invokes them: PREFIXNOS, GRIDFILE, OCEAN_MODEL, time_hotstart,
+# time_nowcastend, TOTAL_TASKS, PPN, EXECnos, RNDAY_NOWCAST, etc.
+. ${USHnos}/nos_run.sh ${OFS} nowcast
+export err=$?
+if [ $err -ne 0 ]; then
+    echo "FATAL: nos_run.sh failed (rc=${err})"
+    err_chk
+fi
 
-  pgmout=pgmout_nowcast.$$
+# ----- STEP 1: PYTHONPATH wiring --------------------------------------------
+# Convention is git-pull, no pip install. Both nos-utils (forcing library)
+# and nos_workflow (driver) live under ush/python; expose both.
+NOS_UTILS_DIR=${NOS_UTILS_DIR:-${USHnos}/python/nos-utils}
+NOS_WORKFLOW_DIR=${NOS_WORKFLOW_DIR:-${USHnos}/python}
+export PYTHONPATH="${NOS_WORKFLOW_DIR}:${NOS_UTILS_DIR}:${PYTHONPATH:-}"
 
-  echo "module list in ${fn_this_script}"
-  module list 2>&1 || true
-  echo; echo
+# LD_PRELOAD is scoped on the Python side via bash_compat.preserve_preload
+# and is also unset inside ``_schism_execute_ufs_coastal`` before the
+# mpiexec call (UFS-Coastal links its own hpc-stack libraries via modules,
+# not the system netcdf libnetcdff.so the J-job preloads for Fortran
+# helpers). We unset here too so the pre-call import probe is clean
+# (lesson #6).
+unset LD_PRELOAD
 
-# -----------------------> Source shared model run library
+# Quick import probe — fail loudly with a useful message if PYTHONPATH is
+# wrong or netCDF4 is missing on the compute node. nos_utils import is not
+# required for the nowcast stage itself (we go directly into nos_run.sh)
+# but we keep the probe consistent with the prep/post shims.
+python3 -c "import nos_workflow" || {
+    echo "FATAL: nos_workflow not importable from PYTHONPATH=${PYTHONPATH}"
+    export err=99; err_chk
+}
 
-  source ${USHnos}/nos_run.sh
-
-# -----------------------> Setup working directory
-
-  mkdir -p $DATA
-  cd $DATA
-
-# =========================================================================
-#  NOWCAST PHASE
-# =========================================================================
-
-  echo "========================================="
-  echo "=== NOWCAST PHASE (split-job mode) ==="
-  echo "========================================="
-  echo "  RNDAY_NOWCAST=${RNDAY_NOWCAST:-not set}"
-  echo "  PDYHH_NCAST_BEGIN=${PDYHH_NCAST_BEGIN:-not set}"
-  echo "========================================="
-
-  # Step 1: Stage static files and nowcast forcing to $DATA
-  stage_model_files "nowcast"
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: stage_model_files nowcast failed"
-      echo "$msg"; postmsg "$msg"
-      err_exit
-  fi
-
-  # Step 2: Find and stage hotstart from previous cycle
-  prepare_restart "nowcast"
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: prepare_restart nowcast failed"
-      echo "$msg"; postmsg "$msg"
-      err_exit
-  fi
-
-  # Step 3: Run model (SCHISM for STOFS, ROMS/FVCOM/SCHISM for COMF)
-  execute_model "nowcast"
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: execute_model nowcast failed"
-      echo "$msg"; postmsg "$msg"
-      err_exit
-  fi
-
-  # Step 4: Archive nowcast outputs + combined hotstart to $COMOUT
-  archive_outputs "nowcast"
-  export err=$?
-  if [ $err -ne 0 ]; then
-      msg="FATAL: archive_outputs nowcast failed"
-      echo "$msg"; postmsg "$msg"
-      err_exit
-  fi
-
-# =========================================================================
-#  Done
-# =========================================================================
-
-  msg="Finished ${fn_this_script} SUCCESSFULLY"
-  postmsg "$msg"
-
-  echo
-  echo "$msg"
-  echo "Finished at $(date)"
-  echo
+# ----- STEP 2: run nowcast through nos_workflow -----------------------------
+# Invokes nos_workflow.stages.nowcast.run() which drives the 4-step contract
+# (stage_model_files / prepare_restart / execute_model / archive_outputs)
+# against ush/nos_run.sh. The MPI launch + combine_hotstart7 + nccopy
+# classic conversion all run inside _schism_execute_ufs_coastal (shell);
+# Python only owns orchestration + structured error propagation.
+#
+# The CLI surfaces a structured FATAL one-liner on failure with full
+# traceback in $DATA/nos_uw.nowcast.<ts>.traceback.
+exec python3 -m nos_workflow run nowcast --ofs "${OFS}"

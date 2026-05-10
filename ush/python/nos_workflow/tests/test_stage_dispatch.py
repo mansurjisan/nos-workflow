@@ -64,11 +64,6 @@ def fake_env() -> object:
     return object()
 
 
-def test_nowcast_stub_raises_not_implemented(fake_env):
-    with pytest.raises(NotImplementedError):
-        nowcast_stage.run(_secofs_ufs_desc(), fake_env)
-
-
 def test_forecast_stub_raises_not_implemented(fake_env):
     with pytest.raises(NotImplementedError):
         forecast_stage.run(_secofs_ufs_desc(), fake_env)
