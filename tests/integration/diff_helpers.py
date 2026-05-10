@@ -16,6 +16,8 @@ Public surface
 --------------
 - ``sha256(path)`` — stream-hash a file
 - ``classify(name)`` — bucket a filename into text/netcdf/log/other
+- ``classify_nowcast(name)`` — stage-aware classifier (nowcast outputs
+  with FP noise / wall-clock timestamps fall into ``log``)
 - ``walk_relative(root)`` — sorted list of files relative to ``root``
 - ``diff_netcdf(a, b, rtol)`` — in-process NetCDF allclose diff
 - ``text_diff_snippet(a, b, max_lines)`` — preview first diverging lines
@@ -24,12 +26,13 @@ Public surface
 - ``build_manifest_entries(comout)`` — manifest entry list from a COMOUT
 - ``assert_against_manifest(comout, mpath, stage)`` — manifest gate
 - Constants: ``NETCDF_RTOL``, ``SIZE_TOLERANCE_PCT``,
-  ``TEXT_ARTIFACT_PATTERNS``, ``LOG_PATTERNS``, ``NETCDF_PATTERN``
+  ``TEXT_ARTIFACT_PATTERNS``, ``LOG_PATTERNS``, ``NETCDF_PATTERN``,
+  ``NOWCAST_NONDETERMINISTIC_PATTERNS``
 
 The ``stage`` argument on ``format_failure`` / ``assert_against_manifest``
-controls the failure marker so the same helper can serve as both
-``PREP_PARITY FAIL`` and ``POST_PARITY FAIL`` — operators grep CI logs
-for those markers.
+controls the failure marker so the same helper can serve as
+``PREP_PARITY FAIL``, ``POST_PARITY FAIL``, and ``NOWCAST_PARITY FAIL``
+— operators grep CI logs for those markers.
 """
 from __future__ import annotations
 
@@ -106,6 +109,32 @@ LOG_PATTERNS = (
     "pgmout.*",
 )
 
+# Nowcast-stage non-deterministic artifacts.
+#
+# SCHISM model outputs that vary at byte/text level between otherwise
+# equivalent runs:
+#
+#   * ``mirror.out`` — SCHISM's per-rank console log; embeds wall-clock
+#     timestamps and hostnames at line head, so byte-equal diff fails
+#     even when the simulation was numerically identical.
+#   * ``flux.out``   — periodic flux accounting log; floating-point
+#     totals can drift in the last 1–2 ULPs across MPI rank orderings.
+#   * ``staout_*``   — SCHISM station timeseries (ASCII float columns).
+#     These are *outputs* of the nowcast (vs prep, where they're staged
+#     inputs that must be byte-equal). Bit-noise from FMA ordering and
+#     MPI partitioning makes line-by-line diff unreliable; size-only is
+#     the safe gate for the parity test. The forecast test will inherit
+#     the same rule.
+#
+# Used only by ``classify_nowcast`` — the global ``classify`` keeps the
+# prep-stage rule that ``staout_*`` is byte-equal text (because prep
+# stages, not produces, them).
+NOWCAST_NONDETERMINISTIC_PATTERNS = (
+    "mirror.out",
+    "flux.out",
+    "staout_*",
+)
+
 # NetCDF artifacts — diff via netCDF4 (allclose); the file may be huge.
 NETCDF_PATTERN = "*.nc"
 
@@ -147,6 +176,30 @@ def classify(name: str) -> str:
     if _matches_any(name, TEXT_ARTIFACT_PATTERNS):
         return "text"
     return "other"
+
+
+def classify_nowcast(name: str) -> str:
+    """Stage-aware classifier for nowcast model outputs.
+
+    Identical to ``classify`` except that ``mirror.out``, ``flux.out``,
+    and ``staout_*`` get bucketed into ``log`` (size-only) rather than
+    ``text`` (byte-equal). See ``NOWCAST_NONDETERMINISTIC_PATTERNS`` for
+    the rationale — these files vary across MPI rank orderings and wall-
+    clock timestamps even when the simulation is bit-equivalent on the
+    physics side.
+
+    The prep test continues to use plain ``classify``; staout files are
+    staged (not produced) during prep, so byte-equality is the right
+    gate there. The two stages need different rules, and a stage-keyed
+    classifier is cleaner than runtime-switching the global tables.
+
+    The forecast parity test (next migration) inherits this helper —
+    forecast also writes ``staout_*`` as a model output, with the same
+    rank-ordering noise.
+    """
+    if _matches_any(name, NOWCAST_NONDETERMINISTIC_PATTERNS):
+        return "log"
+    return classify(name)
 
 
 def walk_relative(root: Path) -> List[Path]:
@@ -356,11 +409,13 @@ def assert_against_manifest(
 __all__ = [
     "NETCDF_PATTERN",
     "NETCDF_RTOL",
+    "NOWCAST_NONDETERMINISTIC_PATTERNS",
     "SIZE_TOLERANCE_PCT",
     "TEXT_ARTIFACT_PATTERNS",
     "LOG_PATTERNS",
     "sha256",
     "classify",
+    "classify_nowcast",
     "walk_relative",
     "diff_netcdf",
     "text_diff_snippet",

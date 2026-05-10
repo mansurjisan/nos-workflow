@@ -1,0 +1,11 @@
+{
+  "cyc": "18",
+  "files": [],
+  "generated_at": "2026-05-10T20:00:00+00:00",
+  "generated_by": "tests/integration/test_nowcast_artifact_parity.py",
+  "git_commit": "0096e6d",
+  "note": "schema stub - populated after first WCOSS2 parity drill for nowcast.",
+  "notes": "Schema-only stub for SECOFS-UFS nowcast cycle. Regenerate after first successful Docker run via REGENERATE=1 pytest tests/integration/test_nowcast_artifact_parity.py. The parallel migration agent will land scripts/legacy/exnos_nowcast.sh.preY-mig and port nos_workflow.stages.nowcast.run; the stub is in place so the test_nowcast_golden_manifest_well_formed schema gate stays green until then. Per the task prompt: schema-only stub acceptable here, no prior-cycle COMOUT data staged for the manifest bootstrap path. Real entries land after the first WCOSS2 nowcast parity drill (post-migration validation).",
+  "ofs": "secofs_ufs",
+  "pdy": "20260324"
+}
