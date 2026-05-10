@@ -2,8 +2,8 @@
 #PBS  -N secofs_ufs_fc_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/
+#PBS  -o /dev/null
+#PBS  -e /dev/null
 #PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120
 #PBS  -l walltime=05:30:00
 
@@ -15,6 +15,13 @@ export OFS=${OFS:-secofs_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
+
+# Per-job log files (PBS jobid as suffix). PBS -o/-e are pointed at
+# /dev/null above; this redirect is what populates forecast logs.
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/secofs_ufs_forecast_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== secofs_ufs_forecast_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
 # ----------------------------------------------------------------
