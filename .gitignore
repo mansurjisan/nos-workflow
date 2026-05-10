@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build artifacts
+docs/_build/
+*.so
+*.o
+*.mod
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Runtime
+*.log
+*.tmp
+*.bak
+
+# Mesh / NetCDF (these stay on WCOSS2 — too large for git)
+*.nc
+fix/secofs_ufs/*.gr3
+fix/secofs_ufs/*.ll
+fix/secofs_ufs/*.in
+fix/secofs_ufs/*.dat
+fix/secofs_ufs/*.json
+fix/secofs_ufs/*.bp
+fix/secofs_ufs/*.csv
+fix/secofs_ufs/*.txt
+fix/secofs_ufs/*.nco
+# But DO keep the templates and configs we copied
+!fix/secofs_ufs/*.template
+!fix/secofs_ufs/secofs_ufs.param.nml
+!fix/secofs_ufs/fd_ufs.yaml
+!fix/secofs_ufs/ufs.configure
+!fix/secofs_ufs/noahmptable.tbl

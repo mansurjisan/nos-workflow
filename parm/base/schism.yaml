@@ -1,0 +1,106 @@
+# Base configuration for all SCHISM-based OFS systems
+# Systems inherit from this via _base: schism
+#
+# SCHISM systems: STOFS-3D-ATL, STOFS-3D-PAC, SECOFS, CREOFS
+
+model:
+  type: schism
+  version: "5.10"
+
+  # Shell script variable mapping
+  # OCEAN_MODEL = "SCHISM"
+  ocean_model: SCHISM
+
+  # Default physics parameters
+  physics:
+    dt: 150.0                 # Timestep (seconds) - override per system -> DELT_MODEL
+    ibc: 0                    # Baroclinic mode
+    ibtp: 1                   # Implicit barotropic
+    itur: 3                   # GLS turbulence closure
+    ics: 2                    # Coordinate system (2=lon/lat)
+    nchi: -1                  # Chezy friction
+    hmin_man: 1.0             # Minimum depth for Manning
+    ncor: 1                   # Coriolis (1=spatially varying)
+    nramp: 1                  # Ramp-up enabled
+    dramp: 1.0                # Ramp-up period (days)
+
+  # Default vertical grid settings
+  vertical:
+    ivcor: 1                  # Localized sigma coordinate
+    nvrt: 51                  # Number of vertical levels -> nvrt, KBm
+
+  # Default run configuration
+  run:
+    hindcast_days: 0.25       # 6-hour hindcast -> LEN_NOWCAST = hindcast_days * 24
+    forecast_days: 5.0        # 5-day forecast -> LEN_FORECAST = forecast_days * 24
+    # Explicit nowcast/forecast hours (computed from days if not set)
+    nowcast_hours: 6
+    forecast_hours: 120
+
+# Default forcing sources for SCHISM
+forcing:
+  atmospheric:
+    primary: gfs              # Global Forecast System
+    fallback: nam             # North American Mesoscale as fallback
+    variables:
+      - PRMSL                 # Pressure at mean sea level
+      - TMP                   # Temperature
+      - SPFH                  # Specific humidity
+      - UGRD                  # U-component wind
+      - VGRD                  # V-component wind
+      - PRATE                 # Precipitation rate
+      - DSWRF                 # Downward shortwave radiation
+      - DLWRF                 # Downward longwave radiation
+
+  ocean:
+    enabled: true
+    primary: rtofs            # Real-Time Ocean Forecast System
+    nudging:
+      enabled: true
+      timescale_days: 1.0     # Nudging timescale
+
+  river:
+    enabled: true
+    primary: nwm              # National Water Model
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Default output configuration
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    interval: 360.0           # Station output every 6 minutes
+  fields_2d:
+    enabled: true
+    variables:
+      - elevation
+      - dahv                  # Depth-averaged velocity
+  fields_3d:
+    enabled: true
+    variables:
+      - salinity
+      - temperature
+      - horizontalVelX
+      - horizontalVelY
+  intervals:
+    hotstart_days: 1.0
+    history_hours: 1.0
+
+# Default computational resources
+resources:
+  nprocs: 480                 # Override per system
+  nscribes: 4                 # SCHISM I/O processes
+  memory_gb: 500
+  walltime_hours: 3

@@ -1,0 +1,188 @@
+#!/bin/bash
+set -x
+
+########################################
+# NOS_OFS_POST - Unified Post-Processing Job
+#
+# Supports both nosofs/COMF and STOFS frameworks with YAML configuration
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Set HOME directories
+########################################
+export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_secofs_ufs}}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name
+####################################
+export NET=${NET:-nosofs}
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths
+export EXECstofs3d=${EXECstofs3d:-${HOMEstofs}/exec}
+export FIXstofs3d=${FIXstofs3d:-${HOMEstofs}/fix/${RUN}}
+export USHstofs3d=${USHstofs3d:-${HOMEstofs}/ush/${RUN}}
+export PYstofs3d=${PYstofs3d:-${HOMEstofs}/ush/python}
+
+####################################
+# Determine framework and load config
+####################################
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+# Load YAML configuration using unified config loader
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+if [ -f "${USHnos}/nos_config.sh" ]; then
+    source "${USHnos}/nos_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+# Post-processing stage (for STOFS two-phase post)
+export POST_STAGE=${POST_STAGE:-1}
+
+###########################################
+# PDY variables
+###########################################
+if command -v setpdy.sh &> /dev/null; then
+    setpdy.sh
+    . PDY
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+# Use appropriate version for COM paths (match JNOS_NOWCAST pattern)
+case "${OFS_FRAMEWORK}" in
+    stofs|adcirc)  _com_ver=${stofs_ver:-v2.1.0} ;;
+    *)             _com_ver=${nosofs_ver} ;;
+esac
+
+if command -v compath.py &> /dev/null; then
+    _comin_root=$(compath.py ${NET}/${_com_ver} 2>/dev/null) || _comin_root=""
+    _comout_root=$(compath.py -o ${NET}/${_com_ver} 2>/dev/null) || _comout_root=""
+fi
+
+# Fall back to COMROOT-based paths if compath.py failed or unavailable
+export COMIN=${COMIN:-${_comin_root:-${COMROOT}/${NET}/${_com_ver}}/${RUN}.${PDY}}
+export COMOUTroot=${COMOUTroot:-${_comout_root:-${COMROOT}/${NET}/${_com_ver}}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute appropriate post-processing script
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # STOFS has two-phase post-processing
+        case "${POST_STAGE}" in
+            1)
+                if [ -f "${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh" ]; then
+                    ${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh
+                else
+                    echo "ERROR: STOFS post_1 script not found: ${SCRIPTSnos}/${RUN}/ex${RUN}_post_1.sh" >&2
+                    exit 1
+                fi
+                ;;
+            2)
+                if [ -f "${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh" ]; then
+                    ${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh
+                else
+                    echo "ERROR: STOFS post_2 script not found: ${SCRIPTSnos}/${RUN}/ex${RUN}_post_2.sh" >&2
+                    exit 1
+                fi
+                ;;
+            *)
+                echo "ERROR: Invalid POST_STAGE: ${POST_STAGE}" >&2
+                exit 1
+                ;;
+        esac
+        ;;
+    adcirc)
+        # ADCIRC post-processing is handled inline during execute_model
+        # (outputs archived to $COMOUT in nowcast/forecast sub-phases)
+        echo "INFO: ADCIRC post-processing completed inline during model execution"
+        echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
+        ;;
+    comf|*)
+        # nosofs/COMF SCHISM post-processing: generate station NetCDF from staout files
+        if [ -f "${SCRIPTSnos}/exnos_post.sh" ]; then
+            ${SCRIPTSnos}/exnos_post.sh
+        else
+            echo "WARNING: ${SCRIPTSnos}/exnos_post.sh not found"
+        fi
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date
