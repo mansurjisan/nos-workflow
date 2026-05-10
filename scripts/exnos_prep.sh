@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_prep_python.sh
+#  exnos_prep.sh
 #
 #  Hybrid prep: Python (nos-utils) for met/param/tidal,
 #               legacy shell for OBC/river.
@@ -16,7 +16,7 @@
 
 set -x
 
-echo "exnos_prep_python.sh started at $(date)"
+echo "exnos_prep.sh started at $(date)"
 echo "  OFS=${RUN}  PDY=${PDY}  cyc=${cyc}"
 echo "  Mode: HYBRID (Python met/param/tidal + legacy OBC/river)"
 
@@ -121,4 +121,4 @@ echo "  (nos_secofs_ufs branch is FULL_PYTHON_PREP-only — no legacy fallback)"
 echo "========================================="
 
 echo ""
-echo "exnos_prep_python.sh completed at $(date)"
+echo "exnos_prep.sh completed at $(date)"

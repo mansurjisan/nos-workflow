@@ -285,7 +285,7 @@ case "${OFS_FRAMEWORK}" in
     comf|*)
         # Python-based prep (nos-utils) — the only supported path on this branch
         echo "Using Python-based prep (nos-utils package)"
-        $SCRIPTSnos/exnos_prep_python.sh
+        $SCRIPTSnos/exnos_prep.sh
         ;;
 esac
 

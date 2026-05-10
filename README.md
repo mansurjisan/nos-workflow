@@ -9,7 +9,7 @@ Operational workflow for nowcast and forecast on WCOSS2.
 ```
 nos_secofs_ufs/
 ├── jobs/             J-jobs (JNOS_PREP, JNOS_NOWCAST, JNOS_FORECAST, JNOS_POST)
-├── scripts/          ex-scripts (exnos_prep_python.sh, exnos_nowcast.sh, exnos_forecast.sh, exnos_post.sh)
+├── scripts/          ex-scripts (exnos_prep.sh, exnos_nowcast.sh, exnos_forecast.sh, exnos_post.sh)
 ├── pbs/              PBS launchers (jnos_*.pbs)
 ├── ush/              shell + Python utilities
 │   ├── nos_run.sh    consolidated 4-step run library

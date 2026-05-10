@@ -93,7 +93,7 @@ export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 # Use nos-utils (Python) for the full prep pipeline. The J-job's comf
-# branch routes to scripts/exnos_prep_python.sh which calls
+# branch routes to scripts/exnos_prep.sh which calls
 # nos_utils.nco_bridge.run_prep. config_from_env reads OFS_CONFIG (set
 # above) so the YAML drives nws=4, the ATLANTIC datm_domain, and the
 # ufs_coastal task layout.
