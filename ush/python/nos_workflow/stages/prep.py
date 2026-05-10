@@ -88,9 +88,16 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             msg=f"nos_utils.nco_bridge import failed: {exc}",
         ) from exc
 
+    # The nos-unified-workflow branch is FULL_PYTHON_PREP-only — NWM /
+    # RTOFS / nudging are produced by the Python orchestrator, not the
+    # legacy Fortran scripts. The default `skip_legacy=True` in
+    # nco_bridge.run_prep dates from the older HYBRID mode and would
+    # skip those steps; pass False explicitly so the new shim's COMOUT
+    # matches the legacy preY-mig shell's COMOUT (which sets
+    # FULL_PYTHON_PREP=YES → skip_legacy=False).
     for phase in ("nowcast", "forecast"):
         try:
-            result: Any = run_prep(phase=phase)
+            result: Any = run_prep(phase=phase, skip_legacy=False)
         except Exception as exc:  # noqa: BLE001 — wrap to StageFailedError
             raise StageFailedError(
                 stage=_STAGE,

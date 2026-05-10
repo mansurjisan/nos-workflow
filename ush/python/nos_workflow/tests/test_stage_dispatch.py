@@ -114,7 +114,7 @@ def _install_stub_nco_bridge(run_prep_callable):
 def test_prep_comf_calls_run_prep_for_both_phases(fake_env):
     calls: list = []
 
-    def fake_run_prep(phase: str = "nowcast"):
+    def fake_run_prep(phase: str = "nowcast", skip_legacy: bool = True):
         calls.append(phase)
         return True  # nco_bridge.run_prep returns bool
 
@@ -128,10 +128,19 @@ def test_prep_comf_calls_run_prep_for_both_phases(fake_env):
     assert rc == 0
     assert calls == ["nowcast", "forecast"]
     assert mock_rp.call_count == 2
+    # The nos-unified-workflow branch must always pass skip_legacy=False
+    # so NWM / RTOFS / nudging are produced by the Python orchestrator.
+    # Defaulting to True (the nco_bridge default) silently dropped 11
+    # artifacts per phase — caught by the WCOSS2 prep parity drill, not
+    # by tests. Lock it down here so a future revert hits the wall.
+    for call in mock_rp.call_args_list:
+        assert call.kwargs.get("skip_legacy") is False, (
+            f"run_prep must be called with skip_legacy=False, got {call.kwargs}"
+        )
 
 
 def test_prep_comf_returns_nonzero_when_run_prep_fails(fake_env):
-    def fake_run_prep(phase: str = "nowcast"):
+    def fake_run_prep(phase: str = "nowcast", skip_legacy: bool = True):
         return False  # nowcast fails
 
     stubs = _install_stub_nco_bridge(fake_run_prep)
@@ -143,7 +152,7 @@ def test_prep_comf_returns_nonzero_when_run_prep_fails(fake_env):
 
 def test_prep_comf_passes_through_int_rc(fake_env):
     """If a future ``run_prep`` returns an int, propagate it unchanged."""
-    def fake_run_prep(phase: str = "nowcast"):
+    def fake_run_prep(phase: str = "nowcast", skip_legacy: bool = True):
         return 0 if phase == "nowcast" else 7
 
     stubs = _install_stub_nco_bridge(fake_run_prep)
@@ -154,7 +163,7 @@ def test_prep_comf_passes_through_int_rc(fake_env):
 
 
 def test_prep_comf_wraps_run_prep_exception_as_stage_failed(fake_env):
-    def fake_run_prep(phase: str = "nowcast"):
+    def fake_run_prep(phase: str = "nowcast", skip_legacy: bool = True):
         raise RuntimeError("boom")
 
     stubs = _install_stub_nco_bridge(fake_run_prep)
