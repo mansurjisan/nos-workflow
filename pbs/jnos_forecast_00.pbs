@@ -2,8 +2,8 @@
 #PBS  -N secofs_ufs_fc_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_fc_00.out
-#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/secofs_ufs_fc_00.err
+#PBS  -o /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/
+#PBS  -e /lfs/h1/nos/ptmp/mansur.jisan/rpt/secofs_ufs/
 #PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120
 #PBS  -l walltime=05:30:00
 
