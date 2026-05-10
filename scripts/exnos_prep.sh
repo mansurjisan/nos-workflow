@@ -1,37 +1,44 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_prep.sh
+#  exnos_prep.sh — nos_workflow shim
 #
-#  Hybrid prep: Python (nos-utils) for met/param/tidal,
-#               legacy shell for OBC/river.
+#  This file used to do the prep work directly via heredoc Python; the body
+#  has migrated to ``nos_workflow.stages.prep`` so the same behavior is
+#  reachable from the CLI (``nos_uw run prep --ofs <name>``) and from any
+#  Python caller. The pre-migration shell is preserved at
+#  ``scripts/legacy/exnos_prep.sh.preY-mig`` so we can revert in one cycle.
 #
-#  Python handles: hotstart, GFS, HRRR, tidal (bctides.in), param.nml
-#  Legacy handles: OBC (needs Fortran gen_3Dth_from_hycom), river (NWM)
+#  Rollback escape hatch: set NOS_USE_LEGACY_SHELL=YES (e.g. via
+#  ``qsub -v NOS_USE_LEGACY_SHELL=YES JNOS_PREP``) to short-circuit the
+#  Python path and re-route through the preserved legacy shell. Same-cycle
+#  revert without editing tracked files.
 #
-#  Sources nos_run.sh first to set up all env vars needed by
-#  both Python and legacy paths (DBASE_*, time_hotstart, GRIDFILE, etc.)
+#  Why we still source nos_run.sh: it populates env vars Python prep reads
+#  (DBASE_MET_NOW, DBASE_TS_NOW, time_hotstart, time_nowcastend,
+#  time_forecastend, GRIDFILE, OCEAN_MODEL, …). Replacing that in Python
+#  would mean reimplementing module-load-style env wiring; not worth it.
 #
-#  Environment: Standard NCO variables (PDY, cyc, COMINgfs, FIXofs, etc.)
+#  Rolled out at: <commit migrated-secofs_ufs-prep-v1>
 ###############################################################################
 
 set -x
 
-echo "exnos_prep.sh started at $(date)"
+# ----- Rollback escape hatch ------------------------------------------------
+if [ "${NOS_USE_LEGACY_SHELL:-NO}" = "YES" ]; then
+    echo "NOS_USE_LEGACY_SHELL=YES — routing through preserved pre-migration shell"
+    exec "${SCRIPTSnos}/legacy/exnos_prep.sh.preY-mig"
+fi
+
+echo "exnos_prep.sh (nos_workflow shim) started at $(date)"
 echo "  OFS=${RUN}  PDY=${PDY}  cyc=${cyc}"
-echo "  Mode: HYBRID (Python met/param/tidal + legacy OBC/river)"
 
-# =========================================
-#  STEP 0: Source nos_run.sh
-# =========================================
-# This sets up ALL env vars needed by both Python and legacy paths:
-#   DBASE_MET_NOW, DBASE_TS_NOW, time_hotstart, time_nowcastend,
-#   time_forecastend, GRIDFILE, OCEAN_MODEL, FIXofs, EXECnos, etc.
-# Without this, legacy OBC/river scripts will fail.
-
+# ----- STEP 0: env setup via nos_run.sh -------------------------------------
+# Sources DBASE_*, time_hotstart, time_nowcastend, time_forecastend, GRIDFILE,
+# OCEAN_MODEL, and other vars the Python prep reads.
 . ${USHnos}/nos_run.sh ${OFS} prep
 export err=$?
 if [ $err -ne 0 ]; then
-    echo "FATAL: nos_run.sh failed"
+    echo "FATAL: nos_run.sh failed (rc=${err})"
     err_chk
 fi
 
@@ -39,86 +46,28 @@ echo "  time_hotstart=${time_hotstart}"
 echo "  time_nowcastend=${time_nowcastend}"
 echo "  time_forecastend=${time_forecastend}"
 
-# =========================================
-#  STEP 1: Python prep (met/param/tidal)
-# =========================================
-
+# ----- STEP 1: PYTHONPATH wiring --------------------------------------------
+# Convention is git-pull, no pip install. Both nos-utils (forcing library)
+# and nos_workflow (driver) live under ush/python; expose both.
 NOS_UTILS_DIR=${NOS_UTILS_DIR:-${USHnos}/python/nos-utils}
-export PYTHONPATH="${NOS_UTILS_DIR}:${PYTHONPATH}"
+NOS_WORKFLOW_DIR=${NOS_WORKFLOW_DIR:-${USHnos}/python}
+export PYTHONPATH="${NOS_WORKFLOW_DIR}:${NOS_UTILS_DIR}:${PYTHONPATH:-}"
 
-# Save and unset LD_PRELOAD for Python (lesson #6)
-_SAVED_LD_PRELOAD=${LD_PRELOAD}
+# LD_PRELOAD is scoped on the Python side via bash_compat.preserve_preload
+# but we unset here too so the pre-call import probe is clean (lesson #6).
 unset LD_PRELOAD
 
-# Verify nos-utils
-python3 -c "from nos_utils.nco_bridge import run_prep; print('nos-utils OK')" || {
-    echo "FATAL: nos-utils package not found at ${NOS_UTILS_DIR}"
+# Quick import probe — fail loudly with a useful message if PYTHONPATH is
+# wrong or netCDF4 is missing on the compute node.
+python3 -c "import nos_workflow; from nos_utils.nco_bridge import run_prep" || {
+    echo "FATAL: nos_workflow / nos_utils not importable from PYTHONPATH=${PYTHONPATH}"
     export err=99; err_chk
 }
 
-# FULL_PYTHON_PREP=YES: Python handles ALL steps (met, OBC, river, tidal, param)
-# FULL_PYTHON_PREP=NO (default): Python handles met/param/tidal, legacy handles OBC/river
-FULL_PYTHON_PREP=${FULL_PYTHON_PREP:-NO}
-
-if [ "${FULL_PYTHON_PREP^^}" = "YES" ]; then
-    SKIP_LEGACY="False"
-    echo "  Mode: FULL PYTHON (all steps including OBC/river)"
-else
-    SKIP_LEGACY="True"
-    echo "  Mode: HYBRID (Python met/param/tidal + legacy OBC/river)"
-fi
-
-echo ""
-echo "========================================="
-echo "  Nowcast Prep"
-echo "========================================="
-
-python3 << PYEOF
-import sys, os, logging
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
-from nos_utils.nco_bridge import run_prep
-skip = ${SKIP_LEGACY}
-success = run_prep(phase="nowcast", skip_legacy=skip)
-sys.exit(0 if success else 1)
-PYEOF
-export err=$?
-if [ $err -ne 0 ]; then
-    echo "FATAL: Python nowcast prep failed with exit code $err"
-    err_chk
-fi
-
-echo ""
-echo "========================================="
-echo "  Forecast Prep"
-echo "========================================="
-
-python3 << PYEOF
-import sys, os, logging
-logging.basicConfig(level=logging.INFO, format="%(name)s: %(message)s")
-from nos_utils.nco_bridge import run_prep
-skip = ${SKIP_LEGACY}
-success = run_prep(phase="forecast", skip_legacy=skip)
-sys.exit(0 if success else 1)
-PYEOF
-export err=$?
-if [ $err -ne 0 ]; then
-    echo "FATAL: Python forecast prep failed with exit code $err"
-    err_chk
-fi
-
-# =========================================
-#  STEP 2: Legacy shell (OBC + river) — only when NOT in full Python mode
-# =========================================
-# When FULL_PYTHON_PREP=YES, run_prep already produced river/OBC/nudging
-# via the Python orchestrator (NWMProcessor, RTOFSProcessor, NudgingProcessor —
-# byte-identical to COMF v3.7 per SECOFS V18). Re-running the legacy
-# Fortran here would overwrite those outputs.
-
-echo ""
-echo "========================================="
-echo "  Python orchestrator produced river + OBC + nudging."
-echo "  (nos_secofs_ufs branch is FULL_PYTHON_PREP-only — no legacy fallback)"
-echo "========================================="
-
-echo ""
-echo "exnos_prep.sh completed at $(date)"
+# ----- STEP 2: run prep through nos_workflow --------------------------------
+# Invokes nos_workflow.stages.prep.run() which calls
+#   nos_utils.nco_bridge.run_prep(phase="nowcast")
+#   nos_utils.nco_bridge.run_prep(phase="forecast")
+# The CLI surfaces a structured FATAL one-liner on failure with full
+# traceback in $DATA/nos_uw.prep.<ts>.traceback.
+exec python3 -m nos_workflow run prep --ofs "${OFS}"
