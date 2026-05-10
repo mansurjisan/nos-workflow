@@ -1,246 +1,84 @@
 #!/bin/bash
+###############################################################################
+#  exnos_post.sh — nos_workflow shim
+#
+#  This file used to drive COMF SCHISM post-processing directly (combine
+#  per-phase staout text into station NetCDFs via schism_combine_outputs.py,
+#  plus the optional 2D-barotropic ensemble bias correction). The body has
+#  migrated to ``nos_workflow.stages.post`` so the same behavior is
+#  reachable from the CLI (``nos_uw run post --ofs <name>``) and from any
+#  Python caller. The pre-migration shell is preserved at
+#  ``scripts/legacy/exnos_post.sh.preY-mig`` so we can revert in one cycle.
+#
+#  Rollback escape hatch: set NOS_USE_LEGACY_SHELL=YES (e.g. via
+#  ``qsub -v NOS_USE_LEGACY_SHELL=YES JNOS_POST``) to short-circuit the
+#  Python path and re-route through the preserved legacy shell. Same-cycle
+#  revert without editing tracked files.
+#
+#  Why we still source nos_run.sh: it populates env vars the Python post
+#  reads (PREFIXNOS, LEN_NOWCAST, STA_OUT_CTL — plus the standard
+#  DBASE_*/time_* set, which post itself doesn't consume but other
+#  downstream callers may depend on). Replacing that in Python would
+#  mean reimplementing module-load-style env wiring; not worth it.
+#
+#  Why the two Python sub-tools stay as ``subprocess.run`` instead of
+#  imports: schism_combine_outputs.py and ensemble_bias_correct.py are
+#  deployed under ``${HOMEnos}/ush/...`` at install time (they are NOT
+#  in this repository tree) and have CLI-style argparse glue at module
+#  top level, so importing them would execute that glue at import time.
+#  Subprocess keeps the contract identical to the legacy shell.
+#
+#  Rolled out at: <commit migrated-secofs_ufs-post-v1>
+###############################################################################
+
 set -x
 
-########################################
-# COMF SCHISM Post-Processing
-#
-# Generates CO-OPS standard station timeseries NetCDF from staout files:
-#   {prefix}.t{cyc}z.{PDY}.stations.nowcast.nc
-#   {prefix}.t{cyc}z.{PDY}.stations.forecast.nc
-#
-# Inputs (from COMOUT, produced by nowcast/forecast jobs):
-#   ${RUN}.${cycle}.restart_outputs/staout_{1..9}   (nowcast)
-#   ${RUN}.${cycle}.forecast_outputs/staout_{1..9}   (forecast)
-#
-# Uses schism_combine_outputs.py to convert staout text → NetCDF.
-########################################
-
-echo "============================================="
-echo "Starting COMF SCHISM post-processing"
-echo "  OFS:  ${OFS}"
-echo "  PDY:  ${PDY}"
-echo "  cyc:  ${cyc}"
-echo "  COMOUT: ${COMOUT}"
-echo "============================================="
-
-export err=0
-
-COMBINE_SCRIPT="${HOMEnos}/ush/nosofs/schism_combine_outputs.py"
-if [ ! -f "$COMBINE_SCRIPT" ]; then
-    echo "FATAL: schism_combine_outputs.py not found at $COMBINE_SCRIPT"
-    export err=1
-    exit $err
+# ----- Rollback escape hatch ------------------------------------------------
+if [ "${NOS_USE_LEGACY_SHELL:-NO}" = "YES" ]; then
+    echo "NOS_USE_LEGACY_SHELL=YES — routing through preserved pre-migration shell"
+    exec "${SCRIPTSnos}/legacy/exnos_post.sh.preY-mig"
 fi
 
-# Station file for lat/lon extraction
-STA_IN="${FIXofs}/${PREFIXNOS}.station.in"
-if [ ! -f "$STA_IN" ]; then
-    STA_IN="${FIXofs}/${STA_OUT_CTL:-${PREFIXNOS}.station.in}"
-fi
-if [ ! -f "$STA_IN" ]; then
-    echo "FATAL: station.in not found"
-    export err=1
-    exit $err
-fi
+echo "exnos_post.sh (nos_workflow shim) started at $(date)"
+echo "  OFS=${RUN}  PDY=${PDY}  cyc=${cyc}"
 
-# Compute nowcast base time (cyc - LEN_NOWCAST hours)
-NC_HOUR=$(printf '%02d' $(( ${cyc#0} - ${LEN_NOWCAST:-6} )))
-# Handle day rollback if needed
-if [ ${NC_HOUR#0} -lt 0 ]; then
-    NC_HOUR=$(printf '%02d' $(( ${NC_HOUR#0} + 24 )))
-    # PDY would need adjustment too for cross-midnight — skip for now
+# ----- STEP 0: env setup via nos_run.sh -------------------------------------
+# Sources PREFIXNOS, LEN_NOWCAST, STA_OUT_CTL and the standard
+# DBASE_*/time_* set. nos_run.sh tolerates being called with a "post" stage
+# tag the same way it tolerates "prep" — it only branches on OFS for the
+# fixed-file resolution.
+. ${USHnos}/nos_run.sh ${OFS} post
+export err=$?
+if [ $err -ne 0 ]; then
+    echo "FATAL: nos_run.sh failed (rc=${err})"
+    err_chk
 fi
 
-########################################
-# Process each phase (nowcast, forecast)
-########################################
-for phase in nowcast forecast; do
+# ----- STEP 1: PYTHONPATH wiring --------------------------------------------
+# Convention is git-pull, no pip install. Both nos-utils (forcing library)
+# and nos_workflow (driver) live under ush/python; expose both.
+NOS_UTILS_DIR=${NOS_UTILS_DIR:-${USHnos}/python/nos-utils}
+NOS_WORKFLOW_DIR=${NOS_WORKFLOW_DIR:-${USHnos}/python}
+export PYTHONPATH="${NOS_WORKFLOW_DIR}:${NOS_UTILS_DIR}:${PYTHONPATH:-}"
 
-    echo ""
-    echo "--- Processing $phase ---"
+# LD_PRELOAD is scoped on the Python side via bash_compat.preserve_preload
+# but we unset here too so the pre-call import probe is clean (lesson #6).
+unset LD_PRELOAD
 
-    # Locate staout files
-    if [ "$phase" = "nowcast" ]; then
-        STAOUT_DIR="${COMOUT}/${RUN}.${cycle}.restart_outputs"
-        MODE_FLAG="n"
-        TIMESTART="${PDY}${NC_HOUR}"
-    else
-        STAOUT_DIR="${COMOUT}/${RUN}.${cycle}.forecast_outputs"
-        MODE_FLAG="f"
-        TIMESTART="${PDY}${cyc}"
-    fi
+# Quick import probe — fail loudly with a useful message if PYTHONPATH is
+# wrong or netCDF4 is missing on the compute node.
+python3 -c "import nos_workflow; from nos_utils.nco_bridge import run_prep" || {
+    echo "FATAL: nos_workflow / nos_utils not importable from PYTHONPATH=${PYTHONPATH}"
+    export err=99; err_chk
+}
 
-    if [ ! -f "$STAOUT_DIR/staout_1" ]; then
-        echo "WARNING: $STAOUT_DIR/staout_1 not found, skipping $phase"
-        continue
-    fi
-
-    # Set up working directory
-    WORK_POST="$DATA/post_${phase}"
-    mkdir -p "$WORK_POST"
-
-    # Create control file
-    cat > "$WORK_POST/schism_standard_output.ctl" << EOF
-${PREFIXNOS}
-${cyc}
-${PDY}
-${MODE_FLAG}
-${TIMESTART}
-EOF
-
-    # Create station.lat.lon
-    awk 'NR>2 && NF>=3 {print NR-2, $2, $3}' "$STA_IN" \
-        > "$WORK_POST/${PREFIXNOS}.station.lat.lon"
-
-    # Symlink staout files
-    for f in staout_1 staout_2 staout_3 staout_4 staout_5 \
-             staout_6 staout_7 staout_8 staout_9; do
-        [ -f "$STAOUT_DIR/$f" ] && ln -sf "$STAOUT_DIR/$f" "$WORK_POST/$f"
-    done
-
-    # Run combine script
-    echo "Running schism_combine_outputs.py for $phase ..."
-    (cd "$WORK_POST" && LD_PRELOAD= python3 "$COMBINE_SCRIPT") >> $pgmout 2>&1
-    rc=$?
-
-    if [ $rc -ne 0 ]; then
-        echo "WARNING: schism_combine_outputs.py failed for $phase (rc=$rc)"
-        continue
-    fi
-
-    # Copy station NetCDF to COMOUT
-    STA_NC="$WORK_POST/${PREFIXNOS}.t${cyc}z.${PDY}.stations.${phase}.nc"
-    if [ -f "$STA_NC" ]; then
-        cp -p "$STA_NC" "${COMOUT}/"
-        echo "Created: $(basename $STA_NC)"
-    else
-        echo "WARNING: Expected station NetCDF not found: $STA_NC"
-    fi
-
-done
-
-########################################
-# Ensemble bias correction (2D barotropic only)
-#
-# If BAROTROPIC=true and ensemble member outputs exist, apply
-# anomaly-based bias correction using the 3D deterministic run:
-#
-#   WL_final(t) = WL_3d_det(t) + a_i * (WL_2d_member(t) - WL_2d_control(t))
-#
-# Requires:
-#   - 3D deterministic station NC (from the corresponding 3D OFS COMOUT)
-#   - 2D control (member_000) staout files
-#   - 2D perturbed member staout files
-########################################
-if [ "${BAROTROPIC:-false}" = "true" ] || [ "${BAROTROPIC:-0}" = "1" ]; then
-
-    BIAS_SCRIPT="${HOMEnos}/ush/python/nos_ofs/ensemble/ensemble_bias_correct.py"
-    # 3D deterministic OFS name (e.g., secofs_2d_ufs → secofs_ufs or secofs)
-    # Derive 3D OFS name: secofs_2d_ufs → secofs, stofs_2d_atl → stofs_3d_atl
-    DET_OFS=${DET_OFS:-$(echo "$OFS" | sed 's/_2d_ufs//' | sed 's/_2d_/_3d_/')}
-    DET_COMOUT=${DET_COMOUT:-$(dirname $COMOUT)/${DET_OFS}.${PDY}}
-
-    DET_NCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.nowcast.nc"
-    DET_FCAST="${DET_COMOUT}/${DET_OFS}.t${cyc}z.${PDY}.stations.forecast.nc"
-
-    ENS_DIR="${COMOUT}/ensemble/${cycle}"
-    CTL_NCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.restart_outputs/staout_1"
-    CTL_FCAST="${ENS_DIR}/member_000/${RUN}.${cycle}.forecast_outputs/staout_1"
-
-    # Also check the deterministic (non-ensemble) staout locations as control
-    if [ ! -f "$CTL_NCAST" ]; then
-        CTL_NCAST="${COMOUT}/${RUN}.${cycle}.restart_outputs/staout_1"
-    fi
-    if [ ! -f "$CTL_FCAST" ]; then
-        CTL_FCAST="${COMOUT}/${RUN}.${cycle}.forecast_outputs/staout_1"
-    fi
-
-    if [ -f "$BIAS_SCRIPT" ] && [ -f "$DET_NCAST" ] && [ -f "$DET_FCAST" ] && \
-       [ -f "$CTL_NCAST" ] && [ -f "$CTL_FCAST" ]; then
-
-        echo ""
-        echo "============================================="
-        echo "Ensemble bias correction (2D → 3D anchored)"
-        echo "  3D det: $DET_OFS"
-        echo "  Control: member_000"
-        echo "============================================="
-
-        COEFF_FILE="${COMOUT}/bias_coefficients.json"
-
-        # Step 1: Train coefficients (control vs 3D det)
-        echo "Training bias correction coefficients ..."
-        LD_PRELOAD= python3 "$BIAS_SCRIPT" train \
-            --ctl-ncast "$CTL_NCAST" \
-            --ctl-fcast "$CTL_FCAST" \
-            --det-ncast "$DET_NCAST" \
-            --det-fcast "$DET_FCAST" \
-            --station-in "$STA_IN" \
-            --nc-base "${PDY}${NC_HOUR}" \
-            --fc-base "${PDY}${cyc}" \
-            -o "$COEFF_FILE" >> $pgmout 2>&1
-        train_rc=$?
-
-        if [ $train_rc -ne 0 ] || [ ! -f "$COEFF_FILE" ]; then
-            echo "WARNING: Bias correction training failed (rc=$train_rc), skipping"
-        else
-            echo "Coefficients saved: $COEFF_FILE"
-
-            # Step 2: Apply correction to each perturbed member
-            for member_dir in ${ENS_DIR}/member_*; do
-                [ ! -d "$member_dir" ] && continue
-                MEMBER_ID=$(basename "$member_dir" | sed 's/member_//')
-
-                # Skip control member (anomaly = 0, result = 3D det)
-                [ "$MEMBER_ID" = "000" ] && continue
-
-                MEM_NCAST="$member_dir/${RUN}.${cycle}.restart_outputs/staout_1"
-                MEM_FCAST="$member_dir/${RUN}.${cycle}.forecast_outputs/staout_1"
-
-                # Also check flat layout
-                [ ! -f "$MEM_NCAST" ] && MEM_NCAST="$member_dir/staout_1_nowcast"
-                [ ! -f "$MEM_FCAST" ] && MEM_FCAST="$member_dir/staout_1_forecast"
-
-                if [ ! -f "$MEM_NCAST" ] || [ ! -f "$MEM_FCAST" ]; then
-                    echo "  Member $MEMBER_ID: staout files not found, skipping"
-                    continue
-                fi
-
-                CORR_OUT="$member_dir/corrected_wl.csv"
-                echo "  Correcting member $MEMBER_ID ..."
-                LD_PRELOAD= python3 "$BIAS_SCRIPT" apply \
-                    --coefficients "$COEFF_FILE" \
-                    --det-ncast "$DET_NCAST" \
-                    --det-fcast "$DET_FCAST" \
-                    --ctl-ncast "$CTL_NCAST" \
-                    --ctl-fcast "$CTL_FCAST" \
-                    --member-ncast "$MEM_NCAST" \
-                    --member-fcast "$MEM_FCAST" \
-                    --station-in "$STA_IN" \
-                    --nc-base "${PDY}${NC_HOUR}" \
-                    --fc-base "${PDY}${cyc}" \
-                    -o "$CORR_OUT" >> $pgmout 2>&1
-
-                if [ $? -eq 0 ] && [ -f "$CORR_OUT" ]; then
-                    echo "  Member $MEMBER_ID: corrected → $(basename $CORR_OUT)"
-                else
-                    echo "  Member $MEMBER_ID: correction failed"
-                fi
-            done
-        fi
-    else
-        echo ""
-        echo "Skipping ensemble bias correction (missing inputs):"
-        [ ! -f "$BIAS_SCRIPT" ] && echo "  - bias correction script not found"
-        [ ! -f "$DET_NCAST" ] && echo "  - 3D det nowcast not found: $DET_NCAST"
-        [ ! -f "$DET_FCAST" ] && echo "  - 3D det forecast not found: $DET_FCAST"
-        [ ! -f "$CTL_NCAST" ] && echo "  - 2D control nowcast not found: $CTL_NCAST"
-        [ ! -f "$CTL_FCAST" ] && echo "  - 2D control forecast not found: $CTL_FCAST"
-    fi
-fi
-
-echo ""
-echo "============================================="
-echo "COMF SCHISM post-processing completed"
-echo "============================================="
-
-exit $err
+# ----- STEP 2: run post through nos_workflow --------------------------------
+# Invokes nos_workflow.stages.post.run() which:
+#   - for each of nowcast/forecast: builds work dir, writes ctl, awk-style
+#     station.lat.lon, symlinks staout_{1..9}, runs schism_combine_outputs.py,
+#     copies the resulting station NetCDF to $COMOUT
+#   - if BAROTROPIC=true: trains bias coefficients and applies them per
+#     ensemble member via ensemble_bias_correct.py
+# The CLI surfaces a structured FATAL one-liner on failure with full
+# traceback in $DATA/nos_uw.post.<ts>.traceback.
+exec python3 -m nos_workflow run post --ofs "${OFS}"

@@ -74,11 +74,6 @@ def test_forecast_stub_raises_not_implemented(fake_env):
         forecast_stage.run(_secofs_ufs_desc(), fake_env)
 
 
-def test_post_stub_raises_not_implemented(fake_env):
-    with pytest.raises(NotImplementedError):
-        post_stage.run(_secofs_ufs_desc(), fake_env)
-
-
 def test_prep_stofs_branch_mentions_task_33(fake_env):
     with pytest.raises(NotImplementedError) as exc_info:
         prep_stage.run(_stofs_3d_desc(), fake_env)
