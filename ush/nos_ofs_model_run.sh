@@ -1256,7 +1256,28 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
             if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
                 echo "  Hotstart combined successfully: hotstart_it=${nsteps}.nc"
                 local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
-                cp -p "hotstart_it=${nsteps}.nc" "${COMOUT}/${_rst_name}"
+                local _combined="hotstart_it=${nsteps}.nc"
+
+                # combine_hotstart7.f90:189 calls nf90_create with NF90_NETCDF4
+                # (full HDF5 flavor). When SCHISM forecast opens this hotstart
+                # via parallel-NetCDF collective MPI-IO at 2794-rank scale, it
+                # segfaults inside libpnetcdf the same way OBC NetCDFs did
+                # before we fixed those to NETCDF4_CLASSIC. Convert here so
+                # the rst.${phase}.nc archive is classic-flavored and future
+                # forecast/nowcast staging can open it safely at scale.
+                if command -v nccopy &>/dev/null; then
+                    if nccopy -k 'netCDF-4 classic model' "$_combined" "${_combined}.classic" 2>/dev/null; then
+                        mv "${_combined}.classic" "$_combined"
+                        echo "  Converted hotstart to NETCDF4_CLASSIC for parallel-IO safety"
+                    else
+                        echo "WARNING: nccopy classic-model conversion failed; hotstart left as NETCDF4"
+                        rm -f "${_combined}.classic"
+                    fi
+                else
+                    echo "WARNING: nccopy not in PATH; hotstart stays NETCDF4 (forecast may segfault at scale)"
+                fi
+
+                cp -p "$_combined" "${COMOUT}/${_rst_name}"
                 echo "  Archived to ${COMOUT}/${_rst_name}"
             else
                 echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
