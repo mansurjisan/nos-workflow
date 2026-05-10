@@ -36,6 +36,13 @@ DEFAULT_PDY = os.environ.get("PREP_PARITY_PDY", "20260324")
 DEFAULT_CYC = os.environ.get("PREP_PARITY_CYC", "18")
 DEFAULT_OFS = os.environ.get("PREP_PARITY_OFS", "secofs")
 
+# Post-stage parity cycle. Defaults track prep so the same staging dir
+# can feed both tests, but they can be overridden independently when a
+# specific post-stage cycle is staged with restart/forecast outputs.
+DEFAULT_POST_PDY = os.environ.get("POST_PARITY_PDY", DEFAULT_PDY)
+DEFAULT_POST_CYC = os.environ.get("POST_PARITY_CYC", DEFAULT_CYC)
+DEFAULT_POST_OFS = os.environ.get("POST_PARITY_OFS", DEFAULT_OFS)
+
 
 def _docker_image_available(image: str) -> bool:
     """Return True if the Docker image is locally accessible."""
@@ -64,6 +71,43 @@ def _staging_dir_populated(staging: Path, pdy: str, cyc: str) -> bool:
     return all(p.is_dir() for p in must_exist)
 
 
+def _post_inputs_present(staging: Path, ofs: str, pdy: str, cyc: str) -> bool:
+    """Sanity-check that a prior nowcast/forecast run's outputs exist.
+
+    The post stage operates on artifacts the model already produced —
+    ``restart_outputs/`` (nowcast) and/or ``forecast_outputs/``
+    (forecast) under a populated COMOUT. We probe for both the
+    typically-staged path layout (``com/nosofs/<ver>/<ofs>.<pdy>/...``)
+    and the bare ``<ofs>.<pdy>/...`` form.
+
+    Returns True iff at least one staout file (``staout_1`` from
+    either phase) is reachable; the post script tolerates a missing
+    phase but needs at least one to do useful work.
+    """
+    if not staging.is_dir():
+        return False
+    cycle = f"t{cyc}z"
+    candidates = []
+    nosofs_root = staging / "com" / "nosofs"
+    if nosofs_root.is_dir():
+        for ver_dir in nosofs_root.iterdir():
+            if not ver_dir.is_dir():
+                continue
+            candidates.append(ver_dir / f"{ofs}.{pdy}")
+    # Fallback: bare layout some test rigs use.
+    candidates.append(staging / f"{ofs}.{pdy}")
+    for c in candidates:
+        if not c.is_dir():
+            continue
+        for phase_dir in (
+            c / f"{ofs}.{cycle}.restart_outputs",
+            c / f"{ofs}.{cycle}.forecast_outputs",
+        ):
+            if (phase_dir / "staout_1").is_file():
+                return True
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -87,6 +131,12 @@ def prep_cycle() -> dict:
 
 
 @pytest.fixture(scope="session")
+def post_cycle() -> dict:
+    """The PDY/cyc/OFS triplet for the post-stage parity test."""
+    return {"pdy": DEFAULT_POST_PDY, "cyc": DEFAULT_POST_CYC, "ofs": DEFAULT_POST_OFS}
+
+
+@pytest.fixture(scope="session")
 def integration_preflight(staging_dir: Path, docker_image: str, prep_cycle: dict) -> None:
     """Skip the test session if Docker / staging are unavailable.
 
@@ -104,6 +154,42 @@ def integration_preflight(staging_dir: Path, docker_image: str, prep_cycle: dict
         pytest.skip(
             f"staging dir missing — see {staging_dir}. "
             "Populate com/gfs, com/nwm, fix/secofs or set SECOFS_STAGING_DIR."
+        )
+
+
+@pytest.fixture(scope="session")
+def post_integration_preflight(
+    staging_dir: Path, docker_image: str, post_cycle: dict
+) -> None:
+    """Skip post-stage integration tests if Docker / staging / model outputs absent.
+
+    Post needs three things at run time:
+      1. The Docker image (same as prep)
+      2. The base staging dir (com/gfs etc — same shape as prep)
+      3. A prior nowcast/forecast run's restart_outputs+forecast_outputs
+         in COMOUT. Building those from scratch would defeat the point of
+         an integration test, so we skip cleanly when they're not staged.
+    """
+    if not _docker_image_available(docker_image):
+        pytest.skip(
+            f"Docker image {docker_image!r} not accessible — "
+            "build it or set SECOFS_DOCKER_IMAGE to an available tag."
+        )
+    if not _staging_dir_populated(
+        staging_dir, post_cycle["pdy"], post_cycle["cyc"]
+    ):
+        pytest.skip(
+            f"staging dir missing — see {staging_dir}. "
+            "Populate com/gfs, com/nwm, fix/secofs or set SECOFS_STAGING_DIR."
+        )
+    if not _post_inputs_present(
+        staging_dir, post_cycle["ofs"], post_cycle["pdy"], post_cycle["cyc"]
+    ):
+        pytest.skip(
+            f"post inputs missing under {staging_dir} for "
+            f"{post_cycle['ofs']}.{post_cycle['pdy']}.{post_cycle['cyc']}z. "
+            "Stage a prior nowcast+forecast's restart_outputs/forecast_outputs "
+            "(see scripts/legacy/exnos_post.sh.preY-mig for input layout)."
         )
 
 

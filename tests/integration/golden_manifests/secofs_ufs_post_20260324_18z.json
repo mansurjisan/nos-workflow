@@ -1,0 +1,10 @@
+{
+  "cyc": "18",
+  "files": [],
+  "generated_at": "2026-05-10T20:00:00+00:00",
+  "generated_by": "tests/integration/test_post_artifact_parity.py",
+  "git_commit": "010545e",
+  "notes": "Schema-only stub for SECOFS-UFS post cycle. Regenerate after first successful Docker run via REGENERATE=1 pytest tests/integration/test_post_artifact_parity.py. The parallel migration agent will land scripts/legacy/exnos_post.sh.preY-mig and port nos_workflow.stages.post.run in commit 5a; the stub is in place so the test_post_golden_manifest_well_formed schema gate stays green until then.",
+  "ofs": "secofs_ufs",
+  "pdy": "20260324"
+}

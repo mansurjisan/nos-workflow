@@ -1,0 +1,279 @@
+# ============================================================================
+# stage_parity.yml — Stage-by-stage artifact parity gate (commits 4 + 5 of #219)
+#
+# Runs on every PR that touches a migrated stage. Two-tier matrix per
+# stage (prep, post — forecast/nowcast follow once they migrate):
+#
+#   tier-1 (hosted): cheap structural gate. Validates the golden
+#     manifest JSON, runs the diff-machinery unit tests, and confirms
+#     the new code imports cleanly. Always runs; no Docker.
+#
+#   tier-2 (self-hosted): full Docker parity test. Runs the migrated
+#     stage twice (Python path + NOS_USE_LEGACY_SHELL=YES legacy path)
+#     inside the SECOFS-UFS container and diffs the resulting COMOUT
+#     trees. Only runs on a self-hosted runner labeled `secofs-docker`
+#     (the dev box that has the 12 GB image + staging dir at
+#     /mnt/d/secofs_docker_data/).
+#
+# Trigger paths are scoped to the artifacts that can change either
+# stage's behavior — the migrated stage modules, the YAML→env bridge,
+# the shims themselves, the system YAML, and this workflow. The
+# nos-utils submodule pointer move counts too because
+# nco_bridge.run_prep + run_post live there.
+#
+# Refs:
+#   #219 — Migration punch list (commit-4 + commit-5 deliverables)
+#   #220 — Philosophy: side-by-side diffs are first-class artifacts
+# ============================================================================
+name: stage-parity
+
+on:
+  push:
+    branches:
+      - main
+      - "nos-unified-workflow"
+      - "feature/*"
+    paths:
+      - "ush/python/nos_workflow/stages/prep.py"
+      - "ush/python/nos_workflow/stages/post.py"
+      - "ush/python/nos_workflow/utils/yaml_to_env.py"
+      - "ush/python/nos-utils/**"
+      - "scripts/exnos_prep.sh"
+      - "scripts/exnos_post.sh"
+      - "scripts/legacy/exnos_prep.sh.preY-mig"
+      - "scripts/legacy/exnos_post.sh.preY-mig"
+      - "parm/systems/secofs_ufs.yaml"
+      - "tests/integration/**"
+      - ".github/workflows/stage_parity.yml"
+  pull_request:
+    branches:
+      - main
+      - "nos-unified-workflow"
+    paths:
+      - "ush/python/nos_workflow/stages/prep.py"
+      - "ush/python/nos_workflow/stages/post.py"
+      - "ush/python/nos_workflow/utils/yaml_to_env.py"
+      - "ush/python/nos-utils/**"
+      - "scripts/exnos_prep.sh"
+      - "scripts/exnos_post.sh"
+      - "scripts/legacy/exnos_prep.sh.preY-mig"
+      - "scripts/legacy/exnos_post.sh.preY-mig"
+      - "parm/systems/secofs_ufs.yaml"
+      - "tests/integration/**"
+      - ".github/workflows/stage_parity.yml"
+  workflow_dispatch:
+
+jobs:
+  # --------------------------------------------------------------------------
+  # Tier 1: structural / manifest validation (cheap, always runs)
+  #
+  # One job per stage — prep + post each get their own log so a failure
+  # routes to the right migration owner. Both jobs run on the same
+  # hosted runner; they're independent and run in parallel.
+  # --------------------------------------------------------------------------
+  prep-manifest-and-helpers:
+    name: Prep manifest schema + diff helpers (hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Minimal deps: pytest + netCDF4 for the in-process diff
+          # helpers. Do NOT pip-install nos_workflow / nos-utils —
+          # the WCOSS2 convention is git-pull only (see project
+          # memory: feedback_git_workflow.md).
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Validate prep manifest schema
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          unset RUN_DOCKER_PARITY
+          unset REGENERATE
+          python -m pytest tests/integration/test_prep_artifact_parity.py \
+            -v --tb=short \
+            -k "well_formed or diff or classify or manifest_assertion"
+
+      - name: Verify nos_workflow baseline tests still pass
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          cd ush/python/nos_workflow
+          python -m pytest -q
+
+  post-manifest-and-helpers:
+    name: Post manifest schema + diff helpers (hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Validate post manifest schema
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          unset RUN_DOCKER_PARITY
+          unset REGENERATE
+          python -m pytest tests/integration/test_post_artifact_parity.py \
+            -v --tb=short \
+            -k "well_formed or diff or classify or manifest_assertion"
+
+      - name: Verify shared diff_helpers module imports cleanly
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          python -c "
+          from tests.integration.diff_helpers import (
+              sha256, classify, diff_netcdf, text_diff_snippet,
+              format_failure, build_manifest_entries, assert_against_manifest,
+              NETCDF_RTOL, SIZE_TOLERANCE_PCT,
+          )
+          # Sanity: ensure stage-keyed failure marker works for both stages.
+          assert 'PREP_PARITY' in format_failure('x', stage='prep')
+          assert 'POST_PARITY' in format_failure('x', stage='post')
+          print('diff_helpers public surface verified')
+          "
+
+  # --------------------------------------------------------------------------
+  # Tier 2: full Docker parity (opt-in, self-hosted, 15+ min)
+  #
+  # One job per stage; each runs on the self-hosted secofs-docker
+  # runner and depends on its own tier-1 job (catch manifest schema
+  # bugs before paying the docker spin-up cost).
+  # --------------------------------------------------------------------------
+  prep-docker-parity:
+    name: Prep Docker parity (self-hosted)
+    runs-on: [self-hosted, secofs-docker]
+    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    timeout-minutes: 45
+    needs: prep-manifest-and-helpers
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Confirm Docker image + staging are present
+        run: |
+          set -eu
+          docker image inspect nosofs/secofs-ufs:latest > /dev/null
+          test -d /mnt/d/secofs_docker_data/com/nwm
+          test -d /mnt/d/secofs_docker_data/fix/secofs
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Run Docker prep parity
+        env:
+          SECOFS_STAGING_DIR: /mnt/d/secofs_docker_data
+          SECOFS_DOCKER_IMAGE: nosofs/secofs-ufs:latest
+          RUN_DOCKER_PARITY: "1"
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          python -m pytest tests/integration/test_prep_artifact_parity.py \
+            -v --tb=short \
+            -k "python_vs_legacy"
+
+      - name: Upload diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prep-parity-diff-${{ github.run_id }}
+          path: |
+            /tmp/pytest-of-*/pytest-*/prep_parity*/**
+            tests/integration/golden_manifests/*.json
+          retention-days: 14
+
+  post-docker-parity:
+    name: Post Docker parity (self-hosted)
+    runs-on: [self-hosted, secofs-docker]
+    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    timeout-minutes: 45
+    needs: post-manifest-and-helpers
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Confirm Docker image + staging are present
+        run: |
+          set -eu
+          docker image inspect nosofs/secofs-ufs:latest > /dev/null
+          test -d /mnt/d/secofs_docker_data/com/nwm
+          test -d /mnt/d/secofs_docker_data/fix/secofs
+          # Post-stage-specific: confirm at least one prior cycle's
+          # restart/forecast outputs are staged. The
+          # post_integration_preflight fixture re-checks but giving
+          # operators an early skip-vs-fail signal helps triage.
+          ls -d /mnt/d/secofs_docker_data/com/nosofs/*/secofs.*/ \
+            2>/dev/null | head -1 || \
+            echo "WARNING: no prior cycle staged — post parity will skip"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Run Docker post parity
+        env:
+          SECOFS_STAGING_DIR: /mnt/d/secofs_docker_data
+          SECOFS_DOCKER_IMAGE: nosofs/secofs-ufs:latest
+          RUN_DOCKER_PARITY: "1"
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          python -m pytest tests/integration/test_post_artifact_parity.py \
+            -v --tb=short \
+            -k "python_vs_legacy"
+
+      - name: Upload diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-parity-diff-${{ github.run_id }}
+          path: |
+            /tmp/pytest-of-*/pytest-*/post_parity*/**
+            tests/integration/golden_manifests/*.json
+          retention-days: 14
