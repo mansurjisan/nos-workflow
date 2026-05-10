@@ -203,11 +203,10 @@ case "${OFS_FRAMEWORK}" in
         $SCRIstofs3d/exnos_forecast.sh
         ;;
     comf|*)
-        # COMF Fortran executables need NetCDF Fortran library preloaded
-        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
-        fi
-        # nosofs/COMF forecast-only ex-script
+        # NB: legacy LD_PRELOAD=libnetcdff.so removed; see JNOS_NOWCAST for
+        # rationale. nos_run.sh sets LD_LIBRARY_PATH scoped to the
+        # combine_hotstart7 exec call.
+        unset LD_PRELOAD
         $SCRIPTSnos/exnos_forecast.sh $OFS
         ;;
 esac

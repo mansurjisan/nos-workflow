@@ -204,11 +204,14 @@ case "${OFS_FRAMEWORK}" in
         $SCRIstofs3d/exnos_nowcast.sh
         ;;
     comf|*)
-        # COMF Fortran executables need NetCDF Fortran library preloaded
-        if [ -n "${netcdf_ver:-}" ] && [ -n "${intel_ver:-}" ]; then
-            export LD_PRELOAD=/apps/prod/netcdf/${netcdf_ver}/intel/${intel_ver}/lib/libnetcdff.so:${LD_PRELOAD}
-        fi
-        # nosofs/COMF nowcast-only ex-script
+        # NB: legacy J-jobs set LD_PRELOAD=libnetcdff.so here for the old
+        # COMF Fortran scripts (nos_ofs_create_forcing_met etc.). On the
+        # SECOFS-UFS Python-prep path those scripts are not invoked, and the
+        # global preload poisons every subsequent command (libifport.so.5
+        # ENOENT chain through libnetcdff). nos_run.sh handles its own
+        # LD_LIBRARY_PATH for schism_combine_hotstart7.exe scoped to the
+        # exec call. Do not export LD_PRELOAD here.
+        unset LD_PRELOAD
         $SCRIPTSnos/exnos_nowcast.sh $OFS
         ;;
 esac
