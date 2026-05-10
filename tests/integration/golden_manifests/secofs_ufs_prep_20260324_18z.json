@@ -1,0 +1,186 @@
+{
+  "cyc": "18",
+  "files": [
+    {
+      "mode": "log",
+      "path": "Fortran_river.t18z.log",
+      "size": 725
+    },
+    {
+      "mode": "log",
+      "path": "GFS25.forecast_Fortran.t18z.log",
+      "size": 21284
+    },
+    {
+      "mode": "log",
+      "path": "GFS25.nowcast_Fortran.t18z.log",
+      "size": 6711
+    },
+    {
+      "mode": "text",
+      "path": "base_date.t18z",
+      "sha256": "3a62cc05c8624de09ca2d2aa98559b303b0d11561e287a25d5b70dfaa5cfcef9",
+      "size": 11
+    },
+    {
+      "mode": "log",
+      "path": "jlogfile",
+      "size": 5073
+    },
+    {
+      "mode": "text",
+      "path": "met_files_existed_forecast_GFS25_18.dat",
+      "sha256": "b9c51629a9f5fc75650729640ed39bf3470cb6f4377f1475c59725587490d94e",
+      "size": 1872
+    },
+    {
+      "mode": "text",
+      "path": "met_files_existed_nowcast_GFS25_18.dat",
+      "sha256": "b9c51629a9f5fc75650729640ed39bf3470cb6f4377f1475c59725587490d94e",
+      "size": 1872
+    },
+    {
+      "mode": "text",
+      "path": "met_files_used_forecast_18_GFS25.dat",
+      "sha256": "b3edd9f6c48e3440756d76035ea92339bd90eaba0c1206261171e73dac612543",
+      "size": 1728
+    },
+    {
+      "mode": "text",
+      "path": "met_files_used_nowcast_18_GFS25.dat",
+      "sha256": "24dd97a435164ee598dad5358f5739cd2a3d902e1252b67a37f2012a4ee3950f",
+      "size": 384
+    },
+    {
+      "mode": "netcdf",
+      "path": "secofs.t12z.20260324.rst.nowcast.nc",
+      "size": 18655536869
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.bctides.in.forecast",
+      "sha256": "001079536560c6528b90e6ea97ce87002cea26eaf2e1fb1cf9d8fcecb66793eb",
+      "size": 1457895
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.bctides.in.nowcast",
+      "sha256": "a9140f8ab5e0f1e63220c5e87a5da20a5963e31e3647232674519f7e5653799d",
+      "size": 1457895
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.combine.hotstart.nowcast.in",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.combine.netcdf.sta.forecast.in",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.combine.netcdf.sta.nowcast.in",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "mode": "log",
+      "path": "secofs.t18z.20260324.corms.log",
+      "size": 2107
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.forecast.in",
+      "sha256": "589cf40029a8cc50fb0f2b9be27c52c68602bc2ab706c72a51ec2398dcb00505",
+      "size": 36667
+    },
+    {
+      "mode": "netcdf",
+      "path": "secofs.t18z.20260324.init.nowcast.nc",
+      "size": 18655536869
+    },
+    {
+      "mode": "log",
+      "path": "secofs.t18z.20260324.jlogfile.log",
+      "size": 4424773
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.20260324.nowcast.in",
+      "sha256": "6775418cf8954897cbb7a375c24bb0a71af3060c05aa44b46a373168666016e3",
+      "size": 36666
+    },
+    {
+      "mode": "log",
+      "path": "secofs.t18z.20260324.nwm.source.sink.fore.tar",
+      "size": 10240
+    },
+    {
+      "mode": "log",
+      "path": "secofs.t18z.20260324.nwm.source.sink.now.tar",
+      "size": 10240
+    },
+    {
+      "mode": "log",
+      "path": "secofs.t18z.20260324.river.th.tar",
+      "size": 10240
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.met.emailbody",
+      "sha256": "4a508ce513d32c6106463003af83e0d22b06068f1b430ceb2fa7cdc633b0b61b",
+      "size": 331
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.nosbufr.emailbody",
+      "sha256": "a10e2b4fa1f3618f4984580509e8d9f3f3274ea0207ec4ac3d221f8b3aefb183",
+      "size": 292
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.rtofs.emailbody",
+      "sha256": "0af8406223882d2f91ac3d37ed7148aa37f82cdcdb39709b55601d3a198a2037",
+      "size": 286
+    },
+    {
+      "mode": "text",
+      "path": "secofs.t18z.usgsbufr.emailbody",
+      "sha256": "9fdf9ba9e6ed92b7760fd4a994b01ff02931421683709beba486bff6a0426f99",
+      "size": 294
+    },
+    {
+      "mode": "text",
+      "path": "sflux_inputs.txt",
+      "sha256": "0c3b61f05de491bcff132f09e02c53f93e584b50da2819dc60b008e432caa549",
+      "size": 16
+    },
+    {
+      "mode": "text",
+      "path": "time_forecastend.t18z",
+      "sha256": "db3ed7077d7996380ff922e0dcc8a05c223290983485a94edd6653fb0171e008",
+      "size": 11
+    },
+    {
+      "mode": "text",
+      "path": "time_hotstart.t18z",
+      "sha256": "3a62cc05c8624de09ca2d2aa98559b303b0d11561e287a25d5b70dfaa5cfcef9",
+      "size": 11
+    },
+    {
+      "mode": "text",
+      "path": "time_nowcastend.t18z",
+      "sha256": "fe7a34c2d497b9b7027d57104afd92727b9d964bf3e425dde528d3bac335edc0",
+      "size": 11
+    }
+  ],
+  "generated_at": "2026-05-10T19:19:05+00:00",
+  "generated_by": "tests/integration/test_prep_artifact_parity.py",
+  "git_commit": "a70741b",
+  "notes": "Golden manifest for SECOFS-UFS prep cycle. Bootstrapped from the pre-existing COMOUT at /mnt/d/secofs_docker_data/com/nosofs/v3.7/secofs.20260324/. Regenerate via REGENERATE=1 pytest tests/integration/test_prep_artifact_parity.py.",
+  "ofs": "secofs_ufs",
+  "pdy": "20260324"
+}
