@@ -126,12 +126,14 @@ def _legacy_post_script_present(repo: Path) -> bool:
 
 
 def _post_python_path_available(repo: Path) -> bool:
-    """Probe whether ``nos_workflow.stages.post.run`` has been ported.
+    """Probe whether ``nos_workflow.stages.post.run`` has been ported
+    for the COMF (SECOFS-UFS) branch.
 
-    Returns False while the stub still raises ``NotImplementedError``.
-    Until the partner agent's commit lands, we can only validate the
-    legacy-path manifest and the diff helpers — the cross-path parity
-    diff is xfail-skipped with a clear reason.
+    Returns False while the COMF post body is still the
+    NotImplementedError stub. STOFS/ADCIRC branches will keep
+    raising NotImplementedError until tasks #33/#34 — that's
+    expected and doesn't block the COMF parity test, so this probe
+    looks specifically for the ported ``_run_comf_post`` symbol.
     """
     post_module = repo / "ush" / "python" / "nos_workflow" / "stages" / "post.py"
     if not post_module.is_file():
@@ -140,10 +142,11 @@ def _post_python_path_available(repo: Path) -> bool:
         text = post_module.read_text(encoding="utf-8")
     except OSError:
         return False
-    # Heuristic: any stage that still raises NotImplementedError in its
-    # top-level run() body is not ready. The partner agent will replace
-    # that with a real dispatcher (mirror of prep._run_comf_prep).
-    return "NotImplementedError" not in text
+    # The partner agent's port introduces ``_run_comf_post`` as the
+    # dispatcher symbol (mirror of ``_run_comf_prep`` in prep.py). If
+    # that's present, the COMF path is exercisable; the residual
+    # NotImplementedError raises for stofs/adcirc are intentional.
+    return "_run_comf_post" in text
 
 
 def _docker_post_run(
