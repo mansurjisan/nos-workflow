@@ -15,9 +15,6 @@ import pytest
 
 from nos_workflow.errors import StageFailedError
 from nos_workflow.registry import OFSDescriptor
-from nos_workflow.stages import forecast as forecast_stage
-from nos_workflow.stages import nowcast as nowcast_stage
-from nos_workflow.stages import post as post_stage
 from nos_workflow.stages import prep as prep_stage
 
 
@@ -62,11 +59,6 @@ def _adcirc_desc() -> OFSDescriptor:
 def fake_env() -> object:
     """A trivial stand-in for Agent A's ``NCOEnv`` — stages don't read it yet."""
     return object()
-
-
-def test_forecast_stub_raises_not_implemented(fake_env):
-    with pytest.raises(NotImplementedError):
-        forecast_stage.run(_secofs_ufs_desc(), fake_env)
 
 
 def test_prep_stofs_branch_mentions_task_33(fake_env):
