@@ -133,10 +133,15 @@ class TestSystemConfigs:
         """STOFS-3D-ATL on UFS-Coastal — SCHISM + CDEPS DATM via NUOPC.
 
         Locks the production-vintage values: framework label, total/per-component
-        rank counts, v3.1.1 grid dimensions, and the PBS ``select=`` line. These
-        are pinned because the runtime dispatcher and the PBS jobcard generator
-        both depend on them — drifting any of these silently is the kind of bug
-        that only surfaces inside a 4434-rank allocation.
+        rank counts, v2.1 operational grid dimensions, and the PBS ``select=``
+        line. These are pinned because the runtime dispatcher and the PBS
+        jobcard generator both depend on them — drifting any of these silently
+        is the kind of bug that only surfaces inside a 4436-rank allocation.
+
+        Grid dimensions match the v2.1 operational STOFS-3D-ATL mesh extracted
+        from /lfs/h1/ops/prod/com/stofs/v2.1/.../rerun/*.restart.nc on
+        2026-05-11. partition.prop has 5,654,161 lines with max rank index
+        4313 -> 4314 SCHISM OCN ranks (+120 DATM +2 mediator = 4436 total).
         """
         if "stofs_3d_atl_ufs" not in system_configs:
             pytest.skip("stofs_3d_atl_ufs.yaml not found")
@@ -150,21 +155,21 @@ class TestSystemConfigs:
         assert data["system"]["name"] == "stofs_3d_atl_ufs"
         assert data["system"]["framework"] == "stofs_ufs"
 
-        # Resources / UFS-Coastal task split
+        # Resources / UFS-Coastal task split (v2.1 operational partition.prop)
         ufs = data.get("ufs_coastal", {})
-        assert ufs.get("total_tasks") == 4434
-        assert ufs.get("schism_tasks") == 4312
+        assert ufs.get("total_tasks") == 4436
+        assert ufs.get("schism_tasks") == 4314
         assert ufs.get("datm_tasks") == 120
         assert ufs.get("nscribes") == 0
 
-        # Grid dimensions (v3.1.1 mesh)
+        # Grid dimensions (v2.1 operational mesh)
         grid = data.get("grid", {})
-        assert grid.get("n_nodes") == 1813443
-        assert grid.get("n_elements") == 3564104
-        assert grid.get("n_sides") == 5377546
-        assert grid.get("n_levels") == 51
+        assert grid.get("n_nodes") == 2926236
+        assert grid.get("n_elements") == 5654157
+        assert grid.get("n_sides") == 8580540
+        assert grid.get("n_levels") == 49
 
-        # PBS select string — full-node 128-way packing
+        # PBS select string — full-node 128-way packing (4480 slots >= 4436)
         ens = data.get("ensemble", {}).get("resources", {})
         det = data.get("resources", {})
         select_str = ens.get("select") or det.get("select")

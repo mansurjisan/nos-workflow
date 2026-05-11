@@ -86,8 +86,8 @@ export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 
 # UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-4433
-# 35 nodes x 128 mpiprocs = 4480 slots (>= 4434 tasks)
-export TOTAL_TASKS=${TOTAL_TASKS:-4434}
+# 35 nodes x 128 mpiprocs = 4480 slots (>= 4436 tasks)
+export TOTAL_TASKS=${TOTAL_TASKS:-4436}
 
 ################################################
 # CALL executable job script here

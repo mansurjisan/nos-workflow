@@ -12,21 +12,21 @@
 #   - Keeps STOFS legacy prep scripts (river/OBC/tidal) enabled.
 #   - Separates STOFS-style hardcoded domain plumbing from COMF .ctl-driven plumbing.
 #
-# Resource sizing (LOCKED, matches STOFS v3.1.1 partition.prop)
+# Resource sizing (LOCKED, matches STOFS v2.1 operational partition.prop)
 # -------------------------------------------------------------
-#   schism_tasks: 4312    # max-rank SCHISM compute from v3.1.1 partition.prop
+#   schism_tasks: 4314    # max-rank SCHISM compute from v2.1 operational partition.prop
 #   datm_tasks:    120    # MED+ATM share PETs 0-119 (same as SECOFS-UFS)
 #   nscribes:        0    # output handled by CMEPS, not SCHISM scribes
-#   total_tasks:  4434    # = 4312 + 120 + 2 mediator
-# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4434).
+#   total_tasks:  4436    # = 4314 + 120 + 2 mediator
+# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4436).
 # Walltimes mirror SECOFS-UFS pattern: nowcast 01:30, forecast 05:30
 # (overridden in PBS templates; see ensemble.resources.walltime for ensemble).
 #
 # Resource differences vs SECOFS-UFS
 # ----------------------------------
-#   SECOFS-UFS: 2914 total (2794 SCHISM + 120 DATM) on a 1.68M-node mesh.
-#   STOFS-UFS:  4434 total (4312 SCHISM + 120 DATM) on a 1.81M-node mesh.
-# More tasks even though node count is similar because STOFS v3.1.1 partition.prop
+#   SECOFS-UFS: 2914 total (2794 SCHISM + 120 DATM) on a 1.69M-node mesh.
+#   STOFS-UFS:  4436 total (4314 SCHISM + 120 DATM) on a 2.93M-node mesh (v2.1 operational).
+# More tasks even though node count is similar because STOFS v2.1 operational partition.prop
 # was tuned for the larger continental-shelf+riverine domain and 7,690 NWM sources.
 
 _base: schism
@@ -39,13 +39,18 @@ system:
   version: "3.1.1"
   prefix: stofs_3d_atl_ufs
 
-# Grid configuration - identical to standalone stofs_3d_atl (v3.1.1 mesh)
+# Grid configuration — v2.1 operational STOFS-3D-ATL mesh (extracted from
+# /lfs/h1/ops/prod/com/stofs/v2.1/stofs_3d_atl.YYYYMMDD/rerun/*.restart.nc on
+# 2026-05-11; partition.prop in IT-stofs.v2.1.0/fix/stofs_3d_atl/ has 5654161
+# lines and max rank index 4313 → 4314 OCN ranks).
+# Earlier YAML revisions assumed v3.1.1 (n_nodes=1813443, n_levels=51) but
+# that mesh isn't deployed; v2.1 is what's on disk operationally.
 grid:
   type: unstructured
-  n_nodes: 1813443
-  n_elements: 3564104
-  n_sides: 5377546
-  n_levels: 51
+  n_nodes: 2926236
+  n_elements: 5654157
+  n_sides: 8580540
+  n_levels: 49
   files:
     horizontal: stofs_3d_atl_ufs.hgrid.gr3
     vertical: stofs_3d_atl_ufs.vgrid.in
@@ -217,10 +222,10 @@ ufs_coastal:
   coupling_interval: 150
   # MED+ATM share PETs 0-119 (120 PETs)
   datm_tasks: 120
-  # OCN PETs 120-4431 (4312 PETs — matches STOFS v3.1.1 partition.prop max rank)
-  schism_tasks: 4312
-  # Total MPI tasks (MED+ATM overlap, +2 mediator → 4312 + 120 + 2 = 4434)
-  total_tasks: 4434
+  # OCN PETs 120-4433 (4314 PETs — matches STOFS v2.1 operational partition.prop max rank)
+  schism_tasks: 4314
+  # Total MPI tasks (MED+ATM overlap, +2 mediator → 4314 + 120 + 2 = 4436)
+  total_tasks: 4436
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
@@ -273,10 +278,10 @@ output:
     interval: 86400
 
 # Computational resources (DATM + SCHISM)
-# STOFS v3.1.1 partition.prop max rank = 4312, plus 120 DATM + 2 mediator = 4434.
-# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4434).
+# STOFS v2.1 operational partition.prop max rank = 4313, plus 120 DATM + 2 mediator = 4436.
+# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4436).
 resources:
-  nprocs: 4434
+  nprocs: 4436
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
@@ -535,7 +540,7 @@ ensemble:
   resources:
     select: "select=35:ncpus=128:mpiprocs=128"
     walltime: "08:00:00"
-    total_tasks: 4434
+    total_tasks: 4436
     nscribes: 0
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"

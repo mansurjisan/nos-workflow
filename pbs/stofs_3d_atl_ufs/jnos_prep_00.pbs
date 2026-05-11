@@ -103,7 +103,7 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 # Use nos-utils (Python) for the full prep pipeline. The J-job's stofs_ufs
 # branch routes prep through Python. config_from_env reads OFS_CONFIG (set
 # above) so the YAML drives nws=4, the ATLANTIC datm_domain, and the
-# ufs_coastal task layout (4434 total tasks).
+# ufs_coastal task layout (4436 total tasks).
 #
 # USE_PYTHON_PREP=YES   - route prep through Python (vs legacy all-shell)
 # FULL_PYTHON_PREP=YES  - also run NWM river / RTOFS OBC / nudging in Python
