@@ -1,0 +1,549 @@
+# STOFS-3D-ATL UFS-Coastal Configuration  (SCAFFOLDING — commit 1 of port plan)
+# Storm Surge and Tide Operational Forecast System - 3D Atlantic, UFS-Coastal variant
+#
+# Derived from:
+#   parm/systems/secofs_ufs.yaml          (this branch, canonical UFS-Coastal shape)
+#   parm/systems/stofs_3d_atl.yaml        (feature/python-prep, ATL grid/domain/forcing)
+#
+# This file is SCAFFOLDING. Many fields are TODO(stofs-ufs-port): placeholders
+# pending commits 2-6 in docs/STOFS_3D_ATL_UFS_PORT_PLAN.md. The values are
+# good enough for `nos_uw list` / `nos_uw stages stofs_3d_atl_ufs` and for the
+# descriptor unit test, but the prep/nowcast/forecast/post stages will fail
+# loudly the first time they're invoked against the real WCOSS2 environment
+# until the placeholders are resolved.
+#
+# Key deltas from stofs_3d_atl.yaml (the standalone STOFS):
+#   - nws=4 (NUOPC atmospheric coupling, replacing nws=2 with sflux files)
+#   - model.executable: fv3_coastalS.exe (coupled DATM+SCHISM) instead of pschism_WCOSS2
+#   - Adds `ufs_coastal` section (datm tasks, blend resolution, templates)
+#   - system.framework: comf (not stofs; UFS dispatch is identical to SECOFS-UFS)
+#   - Stages: prep / nowcast / forecast / post (no post_1 / post_2 / temp_salt_restart
+#     extras; their deliverables fold into the comf post body — commit 6)
+#
+# Key deltas from secofs_ufs.yaml (the canonical UFS template):
+#   - Grid: 1.8M-node ATL mesh (51 vertical levels) instead of 1.7M-node SE coast (63 levels)
+#   - Domain: (-98.5..-52.5, 7..52.6) instead of (-88..-63, 17..40)
+#   - River: 7,690 NWM reaches instead of ~70 (TODO(stofs-ufs-port): verify
+#     NWMProcessor scales)
+#   - Resource sizing: ~4192 OCN ranks vs SECOFS' 2794 (TODO(stofs-ufs-port):
+#     confirm partition.prop math for ATL grid)
+
+_base: schism
+
+system:
+  name: stofs_3d_atl_ufs
+  description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
+  region: atlantic
+  framework: comf            # comf, not stofs: UFS dispatch is the SECOFS-UFS code path
+  version: "3.1.1-ufs"       # base version + ufs suffix; first ufs cut
+  prefix: stofs_3d_atl_ufs
+
+# Grid configuration — identical to standalone stofs_3d_atl
+# Values from stofs_3d_atl.yaml on feature/python-prep (v3.1.1 ATL mesh)
+grid:
+  type: unstructured
+  n_nodes: 1813443           # ATL mesh
+  n_elements: 3564104
+  n_sides: 5377546           # placeholder; SCHISM prints actual at startup
+  n_levels: 51
+  files:
+    horizontal: stofs_3d_atl_ufs.hgrid.gr3
+    vertical: stofs_3d_atl_ufs.vgrid.in
+    horizontal_ll: stofs_3d_atl_ufs.hgrid.ll
+    # TODO(stofs-ufs-port): the standalone STOFS-3D-ATL uses an 8-output param.nml
+    # template plus drag.gr3 / shapiro.gr3 / albedo.gr3 / watertype.gr3 / estuary.gr3 /
+    # tvd.prop / windrot_geo2proj.gr3 / partition.prop. The UFS variant
+    # inherits all of those (with the system prefix renamed). Verify each one
+    # is present in $FIXofs before commit 2 lands.
+    shapiro: stofs_3d_atl_ufs.shapiro.gr3
+    drag: stofs_3d_atl_ufs.drag.gr3
+    albedo: stofs_3d_atl_ufs.albedo.gr3
+    watertype: stofs_3d_atl_ufs.watertype.gr3
+    estuary: stofs_3d_atl_ufs.estuary.gr3
+    diffmin: stofs_3d_atl_ufs.diffmin.gr3
+    diffmax: stofs_3d_atl_ufs.diffmax.gr3
+    tvd_prop: stofs_3d_atl_ufs.tvd.prop
+    windrot: stofs_3d_atl_ufs.windrot_geo2proj.gr3
+    station: stofs_3d_atl_ufs.station.in
+    partition_prop: stofs_3d_atl_ufs.partition.prop
+  # ATL domain (much larger than SECOFS, much wider east-west)
+  domain:
+    lon_min: -98.5035
+    lon_max: -52.4867
+    lat_min: 7.347
+    lat_max: 52.5904
+  igrd_met: 0
+  igrd_obc: 1
+
+# Forcing configuration
+# Atmospheric forcing is via DATM (BlenderProcessor writes single
+# datm_forcing.nc); the legacy multi-file sflux pipeline is retired here.
+# River / OBC / nudging / tidal go through nos_utils.forcing.{nwm,rtofs,nudging,tidal}.
+forcing:
+  atmospheric:
+    met_num: 2
+    primary: GFS
+    secondary: HRRR
+    forecast_source: GFS
+    forecast_source2: HRRR
+    scale_hflux: 1.0
+    # GFS 0.25 deg for hourly cadence (matches SECOFS-UFS pattern).
+    gfs:
+      resolution: "0.25"
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+    # HRRR coastal blending — the ATL HRRR domain is identical to the SECOFS-UFS
+    # blend region, plus the wider lat/lon coverage needed for the ATL coast.
+    # Values from stofs_3d_atl.yaml on feature/python-prep.
+    hrrr_blend:
+      enabled: true
+      domain: conus
+      resolution: "3km"
+      lon_min: -98.5
+      lon_max: -49.5
+      lat_min: 5.5
+      lat_max: 50.0
+
+  river:
+    enabled: true
+    primary: nwm
+    # TODO(stofs-ufs-port): 7,690 NWM reaches for the ATL domain. The SECOFS-UFS
+    # NWMProcessor handles ~70 reaches; benchmark + add chunking if needed
+    # before commit 5. Production COMF (nos_ofs_create_forcing_river.sh:86)
+    # anchors the NWM hourly grid at time_hotstart + extra hours; carry the
+    # SECOFS-UFS convention here (hourly +18h, .th +1h).
+    n_rivers: 7690
+    version: "v3.0"
+    hourly_extra_hours: 18
+    th_extra_hours: 1
+    files:
+      # TODO(stofs-ufs-port): the standalone STOFS uses VIMS v7 simplified mapping
+      # (stofs_3d_atl_river_sources_conus.json, ~7,690 reaches). The UFS-coupled
+      # binary consumes the source_sink.in + vsource.th + vsink.th + msource.th
+      # that NWMProcessor writes; the JSON map below feeds NWMProcessor.
+      sources_json: stofs_3d_atl_ufs.sources.json
+      sinks_json: stofs_3d_atl_ufs.sinks.json
+      # Legacy USGS-fallback ctl_file is unused for UFS but kept for ops parity.
+      ctl_file: stofs_3d_atl_ufs.river.ctl
+      clim_file: nosofs.river.clim.usgs.nc
+      nwm_reach: stofs_3d_atl_ufs.nwm.reach.dat
+    # St. Lawrence River climatology — DCOMROOT-fed daily file the legacy
+    # stofs_3d_atl_create_river_st_lawrence.sh inserts manually. Commit 5
+    # decides whether this fold into NWMProcessor or stays as a sibling
+    # processor.
+    st_lawrence:
+      enabled: true
+      source: DCOMROOT
+      clim_file: stofs_3d_atl_ufs_st_lawrence_river_clim.nc
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+      # SSH offset correction (meters); ATL-specific.
+      ssh_offset: 0.04
+      # Dynamic adjust path — ADT bias correction on RTOFS SSH before run.
+      # Commit 5 wires this through nos_utils.forcing.dynamic_adjust.
+      obc_mode: dynamic_adjust
+      # RTOFS ROI for ATL boundary segments (2D surface fields for SSH).
+      # These index into the global RTOFS grid; values from stofs_3d_atl.yaml.
+      roi_2ds:
+        x1: 2805
+        x2: 2923
+        y1: 1598
+        y2: 2325
+      # 3D fields (T, S, U, V) — different ROI from 2D surface.
+      roi_3dz:
+        x1: 482
+        x2: 600
+        y1: 94
+        y2: 821
+      files:
+        obc_ctl: stofs_3d_atl_ufs.obc.ctl
+        obc_clim: nosofs.clim.WOA05.nc
+    nudging:
+      enabled: true
+      # STOFS convention: nudging timescale of 1 day (vs SECOFS 3h).
+      timescale_days: 1.0
+      # Nudge ROI is slightly larger than OBC ROI for ATL.
+      roi_3dz:
+        x1: 422
+        x2: 600
+        y1: 94
+        y2: 835
+      files:
+        nudge_weight: stofs_3d_atl_ufs.nudge.gr3
+        nudge_index: stofs_3d_atl_ufs.nobc_nudge_index.dat
+        sal_nudge: stofs_3d_atl_ufs.SAL_nudge.gr3
+        tem_nudge: stofs_3d_atl_ufs.TEM_nudge.gr3
+    # ADT (Altimetry Dynamic Topography) satellite SSH bias correction
+    # piggy-backed onto the prep stage. The legacy
+    # _create_obc_3d_th_dynamic_adjust.sh runs this on standalone SCHISM
+    # output; for UFS-Coastal the equivalent runs on the RTOFS interpolated
+    # fields BEFORE the mpiexec.
+    adt:
+      enabled: true
+      satellite: jason3
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    create_forcing: 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      harmonic_constants_obc: stofs_3d_atl_ufs.bctides.in
+      harmonic_constants_ofs: stofs_3d_atl_ufs.bctides.in_template
+      harmonic_nwlon: nosofs.HC_NWLON.nc
+
+# Model physics and runtime configuration
+model:
+  # UFS-Coastal coupled executable (DATM+SCHISM via NUOPC)
+  executable: fv3_coastalS.exe
+  ocean_model: SCHISM
+  physics:
+    dt: 150.0                 # ATL standalone uses 150s; verify for UFS-Coastal
+    extstep_seconds: 150.0    # TODO(stofs-ufs-port): may need to drop to 120 to match coupling_interval
+    slam0: -77.0              # Reference longitude (ATL center)
+    sfea0: 35.0               # Reference latitude
+    cpp_lon: -77              # Mercator projection center, ATL convention
+    cpp_lat: 35
+    # nws=4: NUOPC atmospheric coupling
+    nws: 4
+    nrampwind: 1
+    drampwind: 1.0
+    iwindoff: 0
+    ndtfast: 20
+    ihorcon: 0
+    ihdif: 0
+    idrag: 2
+    bfric: 0
+    ihhat: 1
+    inunfl: 0
+    min_depth: 0.01
+    rdrg: 3.0e-03
+    rdrg2: 0.005
+    zob: 0.0005
+    visc2: 0.0
+    visc4: 0.0
+    akt_bak: 5.0e-6
+    akv_bak: 5.0e-5
+    akk_bak: 5.0e-6
+    akp_bak: 5.0e-6
+    dcrit: 0.10
+    dstart: 151.0
+    tide_start: 0.0
+    # TODO(stofs-ufs-port): legacy STOFS has wtiminc=3600 for nws=2; nws=4 takes
+    # the value from coupling_interval below. Remove wtiminc if unused.
+  run:
+    # STOFS retains its 24h nowcast + 108h forecast — much longer than
+    # SECOFS-UFS' 6h + 48h.
+    hindcast_days: 1.0
+    forecast_days: 4.5
+    nowcast_hours: 24
+    forecast_hours: 108
+    base_date: "2011010100"    # TODO(stofs-ufs-port): verify ATL base_date matches param.nml
+    time_start: "2011090100"
+  runtime:
+    ctl_file: stofs_3d_atl_ufs.param.nml
+    met_ctl_file: stofs_3d_atl_ufs.sflux_inputs.txt
+
+# UFS-Coastal coupling configuration
+# Each value mirrors the secofs_ufs section structurally; resource counts and
+# blend region differ.
+ufs_coastal:
+  enabled: true
+  # DATM domain label (used by blending scripts; ATLANTIC matches SECOFS-UFS)
+  datm_domain: ATLANTIC
+  # Coupling interval in seconds — must equal dt above AND runSeq @<NN> in
+  # ufs.configure. TODO(stofs-ufs-port): align dt/extstep/coupling once
+  # SCHISM-coupled timestep target is confirmed.
+  coupling_interval: 120
+  # MED+ATM share 120 PETs (same as SECOFS-UFS); OCN gets the remainder.
+  datm_tasks: 120
+  # TODO(stofs-ufs-port): partition.prop math for the ATL grid. Standalone
+  # STOFS-3D-ATL uses 4314 compute ranks (original vintage) or 4912 (v3.1.1).
+  # The UFS variant subtracts 120 ATM/MED, so the OCN-side count drops by ~120
+  # OR partition.prop stays unchanged and total grows by 120 — TBD.
+  # Placeholder: 4192 OCN ranks + 120 ATM/MED = 4312 total.
+  schism_tasks: 4192
+  total_tasks: 4312
+  # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS).
+  nscribes: 0
+  # Source for DATM atmospheric forcing: grib2 (BlenderProcessor) is the
+  # SECOFS-UFS production default and the only well-tested path.
+  datm_forcing_source: grib2
+  # Blended HRRR+GFS atmospheric forcing
+  blend_hrrr_gfs: true
+  # Blended grid resolution in degrees (~3km, matches HRRR native).
+  blend_resolution: 0.025
+  # Transition zone width in degrees at HRRR boundary.
+  blend_buffer_deg: 0.5
+  # Forecast length (hours) for model_configure — must equal forecast_hours above.
+  nhours_fcst: 108
+  # Atmospheric coupling timestep (seconds) — TODO(stofs-ufs-port): SECOFS-UFS
+  # uses dt_atmos=720; check whether ATL needs the same or smaller.
+  dt_atmos: 720
+  # DATM grid dimensions — fallback values only.
+  # The orchestrator reads actual dims from the forcing file after blending,
+  # so these are used only if dimension extraction fails. ATL domain
+  # (-98..-55, 10..53) at 0.025 deg gives approximately 1721x1721 (same as
+  # SECOFS by coincidence).
+  # TODO(stofs-ufs-port): recompute when ATL blend extent is finalized.
+  nx_global: 1721
+  ny_global: 1721
+  # Template files (in FIXofs)
+  templates:
+    model_configure: model_configure.template
+    datm_in: datm_in.template
+    datm_streams: datm.streams.template
+    ufs_configure: ufs.configure
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: stofs_3d_atl_ufs
+  # TODO(stofs-ufs-port): ATL has many more output stations than SECOFS-UFS
+  # (97). The legacy stofs_3d_atl.station.in lists ~250 stations.
+  nstation: 250
+  stations:
+    enabled: true
+    interval: 360
+    file: stofs_3d_atl_ufs.station.in
+  fields:
+    interval: 3600
+    def_interval: 86400
+  fields_2d:
+    enabled: true
+    interval: 3600
+    variables:
+      - elevation
+      - dahv                  # Depth-averaged horizontal velocity
+      - windSpeedX
+      - windSpeedY
+  fields_3d:
+    enabled: true
+    interval: 3600
+    variables:
+      - salinity
+      - temperature
+      - horizontalVelX
+      - horizontalVelY
+      - zCoordinates
+      - verticalVelocity      # v3.1.1 added
+      - diffusivity           # v3.1.1 added
+  restart:
+    interval: 86400          # daily
+
+# Computational resources (DATM + SCHISM)
+# TODO(stofs-ufs-port): land final values in commit 2 once partition.prop +
+# WCOSS2 PBS sizing is confirmed.
+resources:
+  nprocs: 4312               # placeholder matching ufs_coastal.total_tasks
+  nscribes: 0
+  memory_gb: 2000
+  walltime_hours: 4
+
+# Workflow stages — UFS port folds post_1 / post_2 / temp_salt_restart into the
+# single canonical `post` body. Legacy 3-phase post is preserved in
+# stofs_3d_atl.yaml on feature/python-prep.
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings — derived from secofs_ufs.yaml. Every entry
+# here that references a yaml path that doesn't exist yet (or that has a
+# placeholder value) gets a TODO at the producer site, not here.
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    # Model identification
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    # Grid files
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+    Nudging_weight: forcing.ocean.nudging.files.nudge_weight
+
+    # Grid dimensions
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+    NNODE: grid.n_nodes
+    NELE: grid.n_elements
+
+    # Domain bounds — STOFS convention uses LONMIN/LATMIN, nosofs uses MINLON/MINLAT
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+    IGRD_MET: grid.igrd_met
+    IGRD_OBC: grid.igrd_obc
+
+    # Atmospheric forcing
+    MET_NUM: forcing.atmospheric.met_num
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
+    SCALE_HFLUX: forcing.atmospheric.scale_hflux
+
+    # HRRR blending domain (ATL-specific)
+    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.lon_min
+    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
+    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
+    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
+
+    # Ocean forcing
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset
+    OBC_MODE: forcing.ocean.obc.obc_mode
+
+    # RTOFS OBC ROI
+    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
+    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
+    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
+    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
+    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
+    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
+    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
+    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
+
+    # RTOFS nudge ROI (slightly different from OBC)
+    idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
+    idx_x2_3dz_nudge: forcing.ocean.nudging.roi_3dz.x2
+    idx_y1_3dz_nudge: forcing.ocean.nudging.roi_3dz.y1
+    idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
+
+    # Control files
+    RIVER_CTL_FILE: forcing.river.files.ctl_file
+    RIVER_CLIM_FILE: forcing.river.files.clim_file
+    NWM_REACHID_FILE: forcing.river.files.nwm_reach
+    OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
+    OBC_CLIM_FILE: forcing.ocean.obc.files.obc_clim
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
+    HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
+
+    # River
+    N_RIVERS: forcing.river.n_rivers
+
+    # Tidal
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+
+    # Runtime control
+    RUNTIME_CTL: model.runtime.ctl_file
+    RUNTIME_MET_CTL: model.runtime.met_ctl_file
+    DELT_MODEL: model.physics.dt
+    EXTSTEP_SECONDS: model.physics.extstep_seconds
+    NDTFAST: model.physics.ndtfast
+    NWS_VALUE: model.physics.nws
+    STEP_NU_VALUE: forcing.ocean.nudging.timescale_days
+    MIN_DEPTH: model.physics.min_depth
+    BASE_DATE: model.run.base_date
+    TIME_START: model.run.time_start
+
+    # Physics parameters
+    CPP_LON_VALUE: model.physics.cpp_lon
+    CPP_LAT_VALUE: model.physics.cpp_lat
+    IHORCON_VALUE: model.physics.ihorcon
+    IHDIF_VALUE: model.physics.ihdif
+    IDRAG_VALUE: model.physics.idrag
+    BFRIC_VALUE: model.physics.bfric
+    IHHAT_VALUE: model.physics.ihhat
+    INUNFL_VALUE: model.physics.inunfl
+    NRAMPWIND_VALUE: model.physics.nrampwind
+    DRAMPWIND_VALUE: model.physics.drampwind
+    IWINDOFF_VALUE: model.physics.iwindoff
+    RDRG: model.physics.rdrg
+    RDRG2: model.physics.rdrg2
+    Zob: model.physics.zob
+    VISC2: model.physics.visc2
+    VISC4: model.physics.visc4
+    AKT_BAK: model.physics.akt_bak
+    AKV_BAK: model.physics.akv_bak
+    AKK_BAK: model.physics.akk_bak
+    AKP_BAK: model.physics.akp_bak
+    DCRIT: model.physics.dcrit
+    DSTART: model.physics.dstart
+    TIDE_START: model.physics.tide_start
+
+    # Run length
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+
+    # Output intervals
+    NSTA: output.stations.interval
+    NSTATION: output.nstation
+    NHIS: output.fields.interval
+    NDEFHIS: output.fields.def_interval
+    NRST: output.restart.interval
+
+    # Resources
+    TOTAL_TASKS: resources.nprocs
+
+    # UFS-Coastal specific variables
+    USE_DATM: ufs_coastal.enabled
+    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
+    DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
+    DATM_DOMAIN: ufs_coastal.datm_domain
+    DATM_TASKS: ufs_coastal.datm_tasks
+    SCHISM_TASKS: ufs_coastal.schism_tasks
+    NSCRIBES: ufs_coastal.nscribes
+    BLEND_RESOLUTION: ufs_coastal.blend_resolution
+    BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
+    DT_ATMOS: ufs_coastal.dt_atmos
+    NHOURS_FCST: ufs_coastal.nhours_fcst
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    NX_GLOBAL: ufs_coastal.nx_global
+    NY_GLOBAL: ufs_coastal.ny_global
+
+# Ensemble: deferred — to land alongside commit 6's parity test, OR as a
+# follow-up after commit 6 if scoping permits. The legacy STOFS-3D-ATL
+# ensemble (GEFS + RRFS, 6 members, physics LHS) is documented in
+# stofs_3d_atl.yaml on feature/python-prep; the UFS variant inherits the same
+# logical structure but needs DATM-side perturbation (per-member
+# datm_forcing.nc) instead of sflux-side.
+# TODO(stofs-ufs-port): port ensemble block from stofs_3d_atl.yaml + DATM
+# perturbation hooks from secofs_ufs.yaml when commit 7 (ensemble) lands.
+
+# Legacy shell script execution disabled — every step goes through Python.
+legacy:
+  enabled: false
+  ush_dir: ""
+  fix_dir: ""
+  exec_dir: ""

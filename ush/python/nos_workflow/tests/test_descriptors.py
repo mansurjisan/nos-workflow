@@ -49,6 +49,26 @@ def test_stofs_2d_glo_is_adcirc_with_no_extras():
     assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
 
 
+def test_stofs_3d_atl_ufs_descriptor_shape():
+    """Greenfield UFS-Coastal port of STOFS-3D-ATL.
+
+    Uses ``framework="comf"`` so the prep / nowcast / forecast / post stage
+    bodies dispatch through the same SECOFS-UFS code path (the legacy
+    ``framework="stofs"`` descriptor stays around as a NotImplementedError
+    stub for any future standalone STOFS support). Canonical stages only —
+    no aliases, no extras: the legacy ``post_1`` / ``post_2`` /
+    ``temp_salt_restart`` deliverables fold into the comf post body in
+    commit 6 of docs/STOFS_3D_ATL_UFS_PORT_PLAN.md.
+    """
+    desc = lookup("stofs_3d_atl_ufs")
+    assert desc.framework == "comf"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.stage_aliases == {}
+    assert desc.extra_stages == ()
+    assert desc.yaml_path == Path("parm/systems/stofs_3d_atl_ufs.yaml")
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+
+
 def test_descriptors_are_frozen():
     """Frozen dataclass: no field can be mutated after construction."""
     desc = lookup("secofs_ufs")
