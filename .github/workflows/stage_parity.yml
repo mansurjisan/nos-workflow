@@ -1,8 +1,8 @@
 # ============================================================================
-# stage_parity.yml — Stage-by-stage artifact parity gate (commits 4 + 5 + 6 of #219)
+# stage_parity.yml — Stage-by-stage artifact parity gate (commits 4 + 5 + 6 + 7 of #219)
 #
 # Runs on every PR that touches a migrated stage. Two-tier matrix per
-# stage (prep, post, nowcast — forecast follows once it migrates):
+# stage (prep, post, nowcast, forecast):
 #
 #   tier-1 (hosted): cheap structural gate. Validates the golden
 #     manifest JSON, runs the diff-machinery unit tests, and confirms
@@ -37,15 +37,18 @@ on:
       - "ush/python/nos_workflow/stages/prep.py"
       - "ush/python/nos_workflow/stages/post.py"
       - "ush/python/nos_workflow/stages/nowcast.py"
+      - "ush/python/nos_workflow/stages/forecast.py"
       - "ush/python/nos_workflow/utils/yaml_to_env.py"
       - "ush/python/nos_workflow/bash_compat.py"
       - "ush/python/nos-utils/**"
       - "scripts/exnos_prep.sh"
       - "scripts/exnos_post.sh"
       - "scripts/exnos_nowcast.sh"
+      - "scripts/exnos_forecast.sh"
       - "scripts/legacy/exnos_prep.sh.preY-mig"
       - "scripts/legacy/exnos_post.sh.preY-mig"
       - "scripts/legacy/exnos_nowcast.sh.preY-mig"
+      - "scripts/legacy/exnos_forecast.sh.preY-mig"
       - "ush/nos_run.sh"
       - "parm/systems/secofs_ufs.yaml"
       - "tests/integration/**"
@@ -58,15 +61,18 @@ on:
       - "ush/python/nos_workflow/stages/prep.py"
       - "ush/python/nos_workflow/stages/post.py"
       - "ush/python/nos_workflow/stages/nowcast.py"
+      - "ush/python/nos_workflow/stages/forecast.py"
       - "ush/python/nos_workflow/utils/yaml_to_env.py"
       - "ush/python/nos_workflow/bash_compat.py"
       - "ush/python/nos-utils/**"
       - "scripts/exnos_prep.sh"
       - "scripts/exnos_post.sh"
       - "scripts/exnos_nowcast.sh"
+      - "scripts/exnos_forecast.sh"
       - "scripts/legacy/exnos_prep.sh.preY-mig"
       - "scripts/legacy/exnos_post.sh.preY-mig"
       - "scripts/legacy/exnos_nowcast.sh.preY-mig"
+      - "scripts/legacy/exnos_forecast.sh.preY-mig"
       - "ush/nos_run.sh"
       - "parm/systems/secofs_ufs.yaml"
       - "tests/integration/**"
@@ -221,6 +227,68 @@ jobs:
           assert 'mirror.out' in NOWCAST_NONDETERMINISTIC_PATTERNS
           assert 'flux.out' in NOWCAST_NONDETERMINISTIC_PATTERNS
           print('nowcast diff_helpers overlay verified')
+          "
+
+  forecast-manifest-and-helpers:
+    name: Forecast manifest schema + diff helpers (hosted)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Validate forecast manifest schema + classifier equivalence
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          unset RUN_DOCKER_PARITY
+          unset REGENERATE
+          # Includes: well_formed (schema), classify (forecast buckets +
+          # classifier equivalence lock with nowcast), diff helpers,
+          # parity_detects_tampered_artifact (test-the-test gate).
+          python -m pytest tests/integration/test_forecast_artifact_parity.py \
+            -v --tb=short \
+            -k "well_formed or diff or classify or matches_nowcast or detects_tampered"
+
+      - name: Verify forecast stage marker + nowcast classifier reuse
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          python -c "
+          from tests.integration.diff_helpers import (
+              classify, classify_nowcast, format_failure,
+              NOWCAST_NONDETERMINISTIC_PATTERNS,
+          )
+          # Sanity: forecast stage marker fires correctly. The
+          # format_failure helper takes the stage name verbatim and
+          # upper-cases it (no whitelist), so 'forecast' yields the
+          # FORECAST_PARITY marker the operators grep on.
+          assert 'FORECAST_PARITY' in format_failure('x', stage='forecast')
+          # Sanity: forecast reuses classify_nowcast (no classify_forecast).
+          # If a future drift introduces a forecast-specific classifier,
+          # this assertion stays valid until classify_forecast is added,
+          # and test_forecast_classify_matches_nowcast in the test
+          # module locks the equivalence.
+          assert classify_nowcast('mirror.out') == 'log'
+          assert classify_nowcast('flux.out') == 'log'
+          assert classify_nowcast('staout_1') == 'log'
+          # Forecast hotstart NetCDF — same allclose treatment as
+          # nowcast hotstart.
+          assert classify_nowcast('secofs.t18z.20260324.rst.forecast.nc') == 'netcdf'
+          print('forecast diff_helpers overlay verified')
           "
 
   # --------------------------------------------------------------------------
@@ -398,6 +466,69 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nowcast-parity-diff-${{ github.run_id }}
+          path: |
+            /tmp/pytest-of-*/pytest-*/prep_parity*/**
+            tests/integration/golden_manifests/*.json
+          retention-days: 14
+
+  forecast-parity:
+    name: Forecast Docker parity (self-hosted)
+    runs-on: [self-hosted, secofs-docker]
+    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    # Forecast = real MPI launch inside the container; 20-30 min wall time
+    # typical, plus container bootstrap. 60 minutes gives us 2x headroom
+    # (same as nowcast — same MPI machinery, same wall-time profile).
+    timeout-minutes: 60
+    needs: forecast-manifest-and-helpers
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 1
+
+      - name: Confirm Docker image + staging are present
+        run: |
+          set -eu
+          docker image inspect nosofs/secofs-ufs:latest > /dev/null
+          test -d /mnt/d/secofs_docker_data/com/nwm
+          test -d /mnt/d/secofs_docker_data/fix/secofs
+          # Forecast-specific: confirm the nowcast handoff is staged.
+          # The forecast_integration_preflight fixture re-checks but
+          # giving operators an early skip-vs-fail signal helps triage.
+          ls /mnt/d/secofs_docker_data/com/nosofs/*/secofs.*/secofs.t*z.*.rst.nowcast.nc \
+            2>/dev/null | head -1 || \
+            ls /mnt/d/secofs_docker_data/com/nosofs/*/secofs.*/secofs.t*z.*.init.nowcast.nc \
+            2>/dev/null | head -1 || \
+            echo "WARNING: no prior nowcast hotstart staged - forecast parity will skip"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pytest-cov netCDF4 numpy pyyaml
+
+      - name: Run Docker forecast parity
+        env:
+          SECOFS_STAGING_DIR: /mnt/d/secofs_docker_data
+          SECOFS_DOCKER_IMAGE: nosofs/secofs-ufs:latest
+          RUN_DOCKER_PARITY: "1"
+        run: |
+          set -eu
+          export PYTHONPATH=ush/python:ush/python/nos-utils
+          python -m pytest tests/integration/test_forecast_artifact_parity.py \
+            -v --tb=short \
+            -k "against_legacy_shell"
+
+      - name: Upload diff artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: forecast-parity-diff-${{ github.run_id }}
           path: |
             /tmp/pytest-of-*/pytest-*/prep_parity*/**
             tests/integration/golden_manifests/*.json

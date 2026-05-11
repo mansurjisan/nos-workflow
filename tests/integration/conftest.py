@@ -58,6 +58,14 @@ DEFAULT_NOWCAST_PDY = os.environ.get("NOWCAST_PARITY_PDY", DEFAULT_PDY)
 DEFAULT_NOWCAST_CYC = os.environ.get("NOWCAST_PARITY_CYC", DEFAULT_CYC)
 DEFAULT_NOWCAST_OFS = os.environ.get("NOWCAST_PARITY_OFS", DEFAULT_OFS)
 
+# Forecast-stage parity cycle. Defaults track prep / nowcast — the same
+# staging dir feeds all four stages on the dev box. Independently
+# overridable so a specific forecast cycle (with the prior nowcast's
+# rst.nowcast.nc / init.nowcast.nc staged in COMOUT) can be wired in.
+DEFAULT_FORECAST_PDY = os.environ.get("FORECAST_PARITY_PDY", DEFAULT_PDY)
+DEFAULT_FORECAST_CYC = os.environ.get("FORECAST_PARITY_CYC", DEFAULT_CYC)
+DEFAULT_FORECAST_OFS = os.environ.get("FORECAST_PARITY_OFS", DEFAULT_OFS)
+
 
 def _docker_image_available(image: str) -> bool:
     """Return True if the Docker image is locally accessible."""
@@ -119,6 +127,56 @@ def _post_inputs_present(staging: Path, ofs: str, pdy: str, cyc: str) -> bool:
             c / f"{ofs}.{cycle}.forecast_outputs",
         ):
             if (phase_dir / "staout_1").is_file():
+                return True
+    return False
+
+
+def _forecast_inputs_present(staging: Path, ofs: str, pdy: str, cyc: str) -> bool:
+    """Sanity-check that the prior nowcast's COMOUT artifacts exist.
+
+    The forecast stage consumes the *current cycle's* nowcast outputs:
+
+      1. ``rst.nowcast.nc`` — combined hotstart that
+         ``_schism_prepare_restart`` rolls into the forecast's
+         ``hotstart.nc`` (see ``ush/nos_run.sh`` for the staging logic).
+      2. ``init.nowcast.nc`` — alternate restart staging path some
+         cycles produce (``INI_FILE_NOWCAST``).
+      3. Current cycle's prep COMOUT (forcing + param.nml + bctides) —
+         forecast reuses the same prep tree the nowcast just consumed.
+
+    Without #1 or #2 the forecast can't reach the MPI launch step, so we
+    skip cleanly. Same loose-glob probe shape as
+    ``_nowcast_inputs_present`` because forecast and nowcast share the
+    same hotstart filename conventions.
+
+    Returns True iff at least one of ``init.nowcast.nc`` / ``rst.*.nc``
+    is reachable under the cycle COMOUT.
+    """
+    if not staging.is_dir():
+        return False
+    cycle = f"t{cyc}z"
+    candidates = []
+    nosofs_root = staging / "com" / "nosofs"
+    if nosofs_root.is_dir():
+        for ver_dir in nosofs_root.iterdir():
+            if not ver_dir.is_dir():
+                continue
+            candidates.append(ver_dir / f"{ofs}.{pdy}")
+    candidates.append(staging / f"{ofs}.{pdy}")
+    for c in candidates:
+        if not c.is_dir():
+            continue
+        # Forecast pulls its hotstart from the SAME cycle's nowcast
+        # archive (in contrast with nowcast itself, which pulls from
+        # the *prior* cycle). The glob keys are identical because both
+        # share ``_schism_find_hotstart``'s filename convention.
+        for pat in (
+            f"{ofs}.{cycle}.*.init.nowcast.nc",
+            f"{ofs}.{cycle}.*.rst.nowcast.nc",
+            f"{ofs}.{cycle}.*.rst.forecast.nc",
+            "hotstart.nc",
+        ):
+            if any(c.glob(pat)):
                 return True
     return False
 
@@ -208,6 +266,16 @@ def nowcast_cycle() -> dict:
         "pdy": DEFAULT_NOWCAST_PDY,
         "cyc": DEFAULT_NOWCAST_CYC,
         "ofs": DEFAULT_NOWCAST_OFS,
+    }
+
+
+@pytest.fixture(scope="session")
+def forecast_cycle() -> dict:
+    """The PDY/cyc/OFS triplet for the forecast-stage parity test."""
+    return {
+        "pdy": DEFAULT_FORECAST_PDY,
+        "cyc": DEFAULT_FORECAST_CYC,
+        "ofs": DEFAULT_FORECAST_OFS,
     }
 
 
@@ -313,6 +381,54 @@ def nowcast_integration_preflight(
             "Stage prior cycle's hotstart (init.nowcast.nc / rst.*.nc) "
             "and current cycle's prep COMOUT — see "
             "scripts/legacy/exnos_nowcast.sh.preY-mig for input layout."
+        )
+
+
+@pytest.fixture(scope="session")
+def forecast_integration_preflight(
+    staging_dir: Path, docker_image: str, forecast_cycle: dict
+) -> None:
+    """Skip forecast-stage integration tests when Docker / staging / hotstart absent.
+
+    Three independent skip reasons (kept distinct so CI log scrapers can
+    tell which knob is missing on the runner):
+
+      1. Docker image not accessible.
+      2. Base staging dir not populated (no com/gfs / com/nwm).
+      3. Prior nowcast's hotstart not staged in current-cycle COMOUT.
+
+    The third one is forecast-specific: ``_schism_prepare_restart``
+    consumes the *current cycle's* nowcast archive (``rst.nowcast.nc``
+    or ``init.nowcast.nc``) — that's the handoff from nowcast →
+    forecast. Without it the forecast can't even reach its MPI launch
+    step, so the parity diff has nothing to chew on.
+    """
+    if not _docker_image_available(docker_image):
+        pytest.skip(
+            f"Docker image {docker_image!r} not accessible — "
+            "build it or set SECOFS_DOCKER_IMAGE to an available tag."
+        )
+    if not _staging_dir_populated(
+        staging_dir, forecast_cycle["pdy"], forecast_cycle["cyc"]
+    ):
+        pytest.skip(
+            f"staging dir missing — see {staging_dir}. "
+            "Populate com/gfs, com/nwm, fix/secofs or set SECOFS_STAGING_DIR."
+        )
+    if not _forecast_inputs_present(
+        staging_dir,
+        forecast_cycle["ofs"],
+        forecast_cycle["pdy"],
+        forecast_cycle["cyc"],
+    ):
+        pytest.skip(
+            f"forecast inputs missing under {staging_dir} for "
+            f"{forecast_cycle['ofs']}.{forecast_cycle['pdy']}."
+            f"{forecast_cycle['cyc']}z. "
+            "Stage the prior nowcast's combined hotstart "
+            "(rst.nowcast.nc / init.nowcast.nc) under the current cycle's "
+            "COMOUT — see scripts/legacy/exnos_forecast.sh.preY-mig for "
+            "input layout."
         )
 
 

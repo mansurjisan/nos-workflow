@@ -1,0 +1,10 @@
+{
+  "cyc": "18",
+  "files": [],
+  "generated_at": "2026-05-10T20:00:00+00:00",
+  "generated_by": "tests/integration/test_forecast_artifact_parity.py",
+  "git_commit": "ad6c36f",
+  "notes": "Schema-only stub for SECOFS-UFS forecast cycle. Regenerate after first successful Docker run via REGENERATE=1 pytest tests/integration/test_forecast_artifact_parity.py. Real entries land after the first WCOSS2 forecast parity drill (post-migration validation). Schema matches secofs_ufs_nowcast_20260324_18z.json: single 'notes' field, no separate 'note'. The forecast stage consumes the prior step's COMOUT (nowcast's rst.nowcast.nc / init.nowcast.nc) and writes ${RUN}.${cycle}.forecast_outputs/ plus the combined hotstart rst.forecast.nc.",
+  "ofs": "secofs_ufs",
+  "pdy": "20260324"
+}
