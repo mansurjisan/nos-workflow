@@ -20,7 +20,7 @@ export LD_PRELOAD=${LD_PRELOAD:-}
 ########################################
 # Set HOME directories
 ########################################
-export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos_secofs_ufs}
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
 ###################################

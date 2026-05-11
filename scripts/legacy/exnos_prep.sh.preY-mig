@@ -117,7 +117,7 @@ fi
 echo ""
 echo "========================================="
 echo "  Python orchestrator produced river + OBC + nudging."
-echo "  (nos_secofs_ufs branch is FULL_PYTHON_PREP-only — no legacy fallback)"
+echo "  (nos-workflow branch is FULL_PYTHON_PREP-only — no legacy fallback)"
 echo "========================================="
 
 echo ""

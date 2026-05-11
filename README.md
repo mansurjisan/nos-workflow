@@ -1,4 +1,4 @@
-# nos_secofs_ufs
+# nos-workflow
 
 NOAA NOS SECOFS-UFS-Coastal — Southeast Coastal Ocean Forecast System, UFS-Coastal coupled (SCHISM + CDEPS DATM via NUOPC).
 
@@ -7,7 +7,7 @@ Operational workflow for nowcast and forecast on WCOSS2.
 ## Layout
 
 ```
-nos_secofs_ufs/
+nos-workflow/
 ├── jobs/             J-jobs (JNOS_PREP, JNOS_NOWCAST, JNOS_FORECAST, JNOS_POST)
 ├── scripts/          ex-scripts (exnos_prep.sh, exnos_nowcast.sh, exnos_forecast.sh, exnos_post.sh)
 ├── pbs/              PBS launchers (jnos_*.pbs)
@@ -42,7 +42,7 @@ archive_outputs   nowcast
 
 ```bash
 cd $PACKAGEROOT
-git clone -b nos-secofs_ufs https://github.com/mansurjisan/nos-workflow.git nos_secofs_ufs
+git clone -b nos-secofs_ufs https://github.com/mansurjisan/nos-workflow.git nos-workflow
 ```
 
 Then:

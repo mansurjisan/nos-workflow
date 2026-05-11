@@ -12,7 +12,7 @@ date
 ########################################
 # Set HOME directories
 ########################################
-export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos_secofs_ufs}}
+export HOMEnos=${HOMEnos:-${HOMEstofs:-${PACKAGEROOT}/nos-workflow}}
 export HOMEstofs=${HOMEstofs:-${HOMEnos}}
 
 ###################################

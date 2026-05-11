@@ -29,7 +29,7 @@
 export OFS_CONFIG_LOADED=${OFS_CONFIG_LOADED:-0}
 
 # Find yaml_to_env.py
-# nos_secofs_ufs layout puts it at ush/python/utils/; legacy nosofs.v3.7.0
+# nos-workflow layout puts it at ush/python/utils/; legacy nosofs.v3.7.0
 # layout had it at ush/python/nos_ofs/utils/. Search both so this script
 # works in either tree.
 _ofs_yaml_to_env=""

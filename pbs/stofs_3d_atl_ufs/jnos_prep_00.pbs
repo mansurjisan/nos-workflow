@@ -10,7 +10,7 @@
 
 # Source nosofs version file (COMF systems)
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos_secofs_ufs/versions/run.ver
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/stofs_3d_atl_ufs
@@ -96,7 +96,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for stofs_3d_atl_ufs
-export HOMEnos=${PACKAGEROOT}/nos_secofs_ufs
+export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

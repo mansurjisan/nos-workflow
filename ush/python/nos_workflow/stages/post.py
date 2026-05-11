@@ -163,7 +163,7 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     sl.info("phase=POST pdy=%s cyc=%s comout=%s", pdy, cyc, comout)
 
     # Search for schism_combine_outputs.py. The legacy nosofs.v3.7.0 deploy
-    # put it at $HOMEnos/ush/nosofs/. The refactored nos_secofs_ufs tree
+    # put it at $HOMEnos/ush/nosofs/. The refactored nos-workflow tree
     # consolidated $HOMEnos/ush/nosofs/ → $HOMEnos/ush/, so the file can
     # also live there. Operators can override via $NOS_COMBINE_OUTPUTS_SCRIPT.
     combine_script = _resolve_combine_script(homenos, shell_env)

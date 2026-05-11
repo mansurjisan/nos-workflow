@@ -8,7 +8,7 @@
 #PBS  -l walltime=05:30:00
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos_secofs_ufs/versions/run.ver
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-stofs_3d_atl_ufs}
@@ -38,7 +38,7 @@ module reset
 unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
 
 # Load UFS-Coastal hpc-stack modules
-module use ${PACKAGEROOT}/nos_secofs_ufs/modulefiles
+module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load modules.fv3
 module load cray-pals
 
@@ -96,7 +96,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for stofs_3d_atl_ufs
-export HOMEnos=${PACKAGEROOT}/nos_secofs_ufs
+export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

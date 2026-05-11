@@ -15,11 +15,11 @@
 # Runs after both nowcast and forecast complete.
 #
 # Submit via launcher or manually:
-#   qsub -v "PDY=20260322,CYC=18,OFS=secofs_ufs" jnos_secofs_ufs_post_00.pbs
+#   qsub -v "PDY=20260322,CYC=18,OFS=secofs_ufs" jnos_post_00.pbs
 # ------------------------------------------------------------------
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos_secofs_ufs/versions/run.ver
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-secofs_ufs}
@@ -85,7 +85,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for secofs_ufs
-export HOMEnos=${PACKAGEROOT}/nos_secofs_ufs
+export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
