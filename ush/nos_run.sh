@@ -618,11 +618,24 @@ _schism_stage_files() {
         fi
     done
 
-    # SCHISM property files (NOT partition.prop — UFS-Coastal uses different
-    # PET count than standalone, so SCHISM uses METIS internal partitioning).
-    for prop in tvd.prop fluxflag.prop; do
+    # SCHISM property files.
+    #
+    # partition.prop is staged when present so SCHISM reads the pre-computed
+    # partitioning instead of calling ParMETIS at runtime. At 2794-rank scale
+    # (the v3.9 mesh SCHISM/OCN rank count), ParMETIS's multi-level
+    # partitioner exhibits heap corruption inside partition_hgrid (seen on
+    # WCOSS2 jobid 262503199: "Could not find pointer in mcore" during
+    # ParMETIS_V3_PartGeomKway). The original comment here said
+    # "UFS-Coastal uses different PET count than standalone, so SCHISM uses
+    # METIS internal partitioning" — that was a stale assumption: what
+    # matters is the OCN/SCHISM rank count (2794), not the total PET count
+    # (2914 = 120 ATM/MED + 2794 OCN). partition.prop sized for max rank
+    # 2793 (commit f9e8f85) is exactly the right shape for the UFS-Coastal
+    # SCHISM partition.
+    for prop in partition.prop tvd.prop fluxflag.prop; do
         if [ -s "${FIXofs}/${PREFIXNOS}.${prop}" ]; then
             cp -p ${FIXofs}/${PREFIXNOS}.${prop} ${DATA}/${prop}
+            [ "${prop}" = "partition.prop" ] && echo "  Staged partition.prop (pre-computed, bypasses ParMETIS at runtime)"
         fi
     done
 
