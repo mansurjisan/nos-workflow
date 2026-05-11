@@ -161,13 +161,28 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
     sl.info("phase=POST pdy=%s cyc=%s comout=%s", pdy, cyc, comout)
 
-    combine_script = homenos / "ush" / "nosofs" / "schism_combine_outputs.py"
-    if not combine_script.is_file():
+    # Search for schism_combine_outputs.py. The legacy nosofs.v3.7.0 deploy
+    # put it at $HOMEnos/ush/nosofs/. The refactored nos_secofs_ufs tree
+    # consolidated $HOMEnos/ush/nosofs/ → $HOMEnos/ush/, so the file can
+    # also live there. Operators can override via $NOS_COMBINE_OUTPUTS_SCRIPT.
+    combine_script = _resolve_combine_script(homenos, shell_env)
+    if combine_script is None:
+        searched = [
+            shell_env.get("NOS_COMBINE_OUTPUTS_SCRIPT", "<NOS_COMBINE_OUTPUTS_SCRIPT unset>"),
+            str(homenos / "ush" / "nosofs" / "schism_combine_outputs.py"),
+            str(homenos / "ush" / "schism_combine_outputs.py"),
+            str(homenos / "ush" / "python" / "schism_combine_outputs.py"),
+        ]
         raise StageFailedError(
             stage=_STAGE,
             ofs=descriptor.name,
             returncode=1,
-            msg=f"schism_combine_outputs.py not found at {combine_script}",
+            msg=(
+                "schism_combine_outputs.py not found. Searched: "
+                + ", ".join(searched)
+                + ". Fix: set NOS_COMBINE_OUTPUTS_SCRIPT=<abs-path-to-script>, "
+                "or copy/symlink the script into one of the searched paths."
+            ),
         )
 
     sta_in = _resolve_station_in(fixofs, prefix_nos, shell_env)
@@ -524,6 +539,35 @@ def _missing_bias_inputs(
 # ---------------------------------------------------------------------------
 # Small helpers (kept local so the post stage stays self-contained).
 # ---------------------------------------------------------------------------
+
+
+def _resolve_combine_script(
+    homenos: Path, env: "os._Environ"
+) -> Optional[Path]:
+    """Locate schism_combine_outputs.py across legacy + refactored deploy paths.
+
+    Lookup order (first existing file wins):
+      1. ``$NOS_COMBINE_OUTPUTS_SCRIPT`` (explicit operator override)
+      2. ``$HOMEnos/ush/nosofs/schism_combine_outputs.py`` (legacy nosofs.v3.7.0)
+      3. ``$HOMEnos/ush/schism_combine_outputs.py`` (refactored consolidated ush/)
+      4. ``$HOMEnos/ush/python/schism_combine_outputs.py`` (pysh-style location)
+
+    Returns ``None`` if no candidate exists, leaving the caller to raise
+    a StageFailedError with the full searched-path list for ops debugging.
+    """
+    override = env.get("NOS_COMBINE_OUTPUTS_SCRIPT")
+    if override:
+        p = Path(override)
+        if p.is_file():
+            return p
+    for candidate in (
+        homenos / "ush" / "nosofs" / "schism_combine_outputs.py",
+        homenos / "ush" / "schism_combine_outputs.py",
+        homenos / "ush" / "python" / "schism_combine_outputs.py",
+    ):
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _require_env(env: "os._Environ", key: str) -> str:
