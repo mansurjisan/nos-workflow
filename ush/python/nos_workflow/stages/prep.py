@@ -1,9 +1,10 @@
 """Prep stage entry point.
 
-Right now only ``framework="comf"`` (SECOFS-UFS) has a real
-implementation — it dispatches to ``nos_utils.nco_bridge.run_prep`` for
-both the nowcast and forecast phases, mirroring the two-phase split in
-the legacy ``exnos_prep.sh``. The STOFS and ADCIRC branches raise
+Both ``framework="comf"`` (SECOFS-UFS) and ``framework="stofs_ufs"``
+(STOFS-3D-ATL-UFS) route through the UFS-Coastal implementation — it
+dispatches to ``nos_utils.nco_bridge.run_prep`` for both the nowcast and
+forecast phases, mirroring the two-phase split in the legacy
+``exnos_prep.sh``. The standalone STOFS and ADCIRC branches raise
 ``NotImplementedError`` until tasks #33 / #34 land.
 """
 from __future__ import annotations
@@ -42,13 +43,13 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     Raises:
         StageFailedError: any wrapped exception from ``run_prep`` or a
             non-bool return that we can't map cleanly to rc.
-        NotImplementedError: framework other than ``"comf"``; STOFS and
-            ADCIRC branches are stubbed for tasks #33 / #34.
+        NotImplementedError: framework="stofs" (standalone STOFS-3D-ATL)
+            or "adcirc" — stubs for tasks #33/#34.
     """
     sl = stage_logger(_STAGE, descriptor.name)
     sl.info("stage start")
 
-    if descriptor.framework == "comf":
+    if descriptor.framework in ("comf", "stofs_ufs"):
         return _run_comf_prep(descriptor, env)
     if descriptor.framework == "stofs":
         raise NotImplementedError(

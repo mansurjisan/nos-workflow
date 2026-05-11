@@ -1,7 +1,8 @@
 """Post stage entry point.
 
-Right now only ``framework="comf"`` (SECOFS-UFS) has a real
-implementation, mirroring the pre-migration ``scripts/exnos_post.sh``.
+Both ``framework="comf"`` (SECOFS-UFS) and ``framework="stofs_ufs"``
+(STOFS-3D-ATL-UFS) route through the UFS-Coastal implementation,
+mirroring the pre-migration ``scripts/exnos_post.sh``.
 The COMF body:
 
   1. For each of ``nowcast`` and ``forecast``, build a working dir
@@ -31,8 +32,8 @@ stay as ``subprocess.run`` instead of being imported as modules:
     glue at import time. The migration philosophy doc (#220) explicitly
     flags this case for ``subprocess.run``.
 
-The STOFS and ADCIRC branches raise ``NotImplementedError`` until
-tasks #33 / #34 land.
+The standalone STOFS and ADCIRC branches raise ``NotImplementedError``
+until tasks #33 / #34 land.
 """
 from __future__ import annotations
 
@@ -79,13 +80,13 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     Raises:
         StageFailedError: any unexpected exception during the COMF body,
             or an unknown framework.
-        NotImplementedError: framework other than ``"comf"``; STOFS and
-            ADCIRC branches are stubbed for tasks #33 / #34.
+        NotImplementedError: framework="stofs" (standalone STOFS-3D-ATL)
+            or "adcirc" — stubs for tasks #33/#34.
     """
     sl = stage_logger(_STAGE, descriptor.name)
     sl.info("stage start")
 
-    if descriptor.framework == "comf":
+    if descriptor.framework in ("comf", "stofs_ufs"):
         t_stage = time.monotonic()
         rc = _run_comf_post(descriptor, env)
         emit_stage_summary(

@@ -1,7 +1,8 @@
 """Forecast stage entry point.
 
-Right now only ``framework="comf"`` (SECOFS-UFS) has a real
-implementation, mirroring the pre-migration ``scripts/exnos_forecast.sh``.
+Both ``framework="comf"`` (SECOFS-UFS) and ``framework="stofs_ufs"``
+(STOFS-3D-ATL-UFS) route through the UFS-Coastal implementation,
+mirroring the pre-migration ``scripts/exnos_forecast.sh``.
 The COMF body executes the same 4-step interface the legacy shell drove:
 
     stage_model_files "forecast"
@@ -59,8 +60,8 @@ What this Python stage owns:
   - ``postmsg`` observability at start, per-step failure, and success
     (matches commit 6c audit pattern from ``ad6c36f``)
 
-The STOFS and ADCIRC branches raise ``NotImplementedError`` until
-tasks #33 / #34 land.
+The standalone STOFS and ADCIRC branches raise ``NotImplementedError``
+until tasks #33 / #34 land.
 """
 from __future__ import annotations
 
@@ -111,13 +112,13 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     Raises:
         StageFailedError: any unexpected exception during the COMF body,
             a missing required env var, or an unknown framework.
-        NotImplementedError: framework other than ``"comf"``; STOFS and
-            ADCIRC branches are stubbed for tasks #33 / #34.
+        NotImplementedError: framework="stofs" (standalone STOFS-3D-ATL)
+            or "adcirc" — stubs for tasks #33/#34.
     """
     sl = stage_logger(_STAGE, descriptor.name)
     sl.info("stage start")
 
-    if descriptor.framework == "comf":
+    if descriptor.framework in ("comf", "stofs_ufs"):
         return _run_comf_forecast(descriptor, env)
     if descriptor.framework == "stofs":
         raise NotImplementedError(

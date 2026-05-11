@@ -1,7 +1,8 @@
 """Nowcast stage entry point.
 
-Right now only ``framework="comf"`` (SECOFS-UFS) has a real
-implementation, mirroring the pre-migration ``scripts/exnos_nowcast.sh``.
+Both ``framework="comf"`` (SECOFS-UFS) and ``framework="stofs_ufs"``
+(STOFS-3D-ATL-UFS) route through the UFS-Coastal implementation,
+mirroring the pre-migration ``scripts/exnos_nowcast.sh``.
 The COMF body executes the same 4-step interface the legacy shell drove:
 
     stage_model_files "nowcast"
@@ -36,8 +37,8 @@ What this Python stage owns:
   - Forwarding the parent ``os.environ`` into each shell call (the
     J-job set up the full COMF env before we got here)
 
-The STOFS and ADCIRC branches raise ``NotImplementedError`` until
-tasks #33 / #34 land.
+The standalone STOFS and ADCIRC branches raise ``NotImplementedError``
+until tasks #33 / #34 land.
 """
 from __future__ import annotations
 
@@ -88,13 +89,13 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     Raises:
         StageFailedError: any unexpected exception during the COMF body,
             a missing required env var, or an unknown framework.
-        NotImplementedError: framework other than ``"comf"``; STOFS and
-            ADCIRC branches are stubbed for tasks #33 / #34.
+        NotImplementedError: framework="stofs" (standalone STOFS-3D-ATL)
+            or "adcirc" — stubs for tasks #33/#34.
     """
     sl = stage_logger(_STAGE, descriptor.name)
     sl.info("stage start")
 
-    if descriptor.framework == "comf":
+    if descriptor.framework in ("comf", "stofs_ufs"):
         return _run_comf_nowcast(descriptor, env)
     if descriptor.framework == "stofs":
         raise NotImplementedError(

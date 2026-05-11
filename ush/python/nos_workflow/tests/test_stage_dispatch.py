@@ -30,6 +30,22 @@ def _secofs_ufs_desc() -> OFSDescriptor:
     )
 
 
+def _stofs_3d_atl_ufs_desc() -> OFSDescriptor:
+    """STOFS-3D-ATL on UFS-Coastal — distinct framework label
+    (``stofs_ufs``) so the dispatcher can route through the same
+    UFS-Coastal code path as ``comf`` while keeping the label free for
+    future divergence."""
+    return OFSDescriptor(
+        name="stofs_3d_atl_ufs",
+        framework="stofs_ufs",
+        canonical_stages=("prep", "nowcast", "forecast", "post"),
+        stage_aliases={},
+        yaml_path=Path("parm/systems/stofs_3d_atl_ufs.yaml"),
+        runner_module="nos_workflow.runners.ufs_coastal",
+        notes="test fixture",
+    )
+
+
 def _stofs_3d_desc() -> OFSDescriptor:
     return OFSDescriptor(
         name="stofs_3d_atl",
@@ -160,3 +176,33 @@ def test_prep_comf_wraps_run_prep_exception_as_stage_failed(fake_env):
 
     assert exc_info.value.stage == "prep"
     assert exc_info.value.ofs == "secofs_ufs"
+
+
+def test_prep_stofs_ufs_dispatches_through_comf_path(fake_env):
+    """``framework="stofs_ufs"`` (STOFS-3D-ATL-UFS) must dispatch into the
+    same ``_run_comf_prep`` body as ``framework="comf"`` (SECOFS-UFS).
+
+    Both share the UFS-Coastal stack — DATM + SCHISM via NUOPC, same
+    fv3_coastalS.exe, same ``nos_utils.nco_bridge.run_prep`` shim. The
+    framework label differs only for future divergence; the dispatcher
+    must NOT raise NotImplementedError or StageFailedError when it sees
+    ``stofs_ufs``.
+    """
+    calls: list = []
+
+    def fake_run_prep(phase: str = "nowcast", skip_legacy: bool = True):
+        calls.append(phase)
+        return True
+
+    stubs = _install_stub_nco_bridge(fake_run_prep)
+    with patch.dict(sys.modules, stubs):
+        with patch.object(stubs["nos_utils.nco_bridge"], "run_prep",
+                          side_effect=fake_run_prep) as mock_rp:
+            rc = prep_stage.run(_stofs_3d_atl_ufs_desc(), fake_env)
+
+    assert rc == 0
+    assert calls == ["nowcast", "forecast"]
+    assert mock_rp.call_count == 2
+    # Same skip_legacy=False lockdown as the comf path.
+    for call in mock_rp.call_args_list:
+        assert call.kwargs.get("skip_legacy") is False

@@ -45,6 +45,21 @@ def _secofs_ufs_desc() -> OFSDescriptor:
     )
 
 
+def _stofs_3d_atl_ufs_desc() -> OFSDescriptor:
+    """STOFS-3D-ATL on UFS-Coastal — routes through the same UFS-Coastal
+    body as ``comf``; the distinct framework label keeps it free for
+    future divergence."""
+    return OFSDescriptor(
+        name="stofs_3d_atl_ufs",
+        framework="stofs_ufs",
+        canonical_stages=("prep", "nowcast", "forecast", "post"),
+        stage_aliases={},
+        yaml_path=Path("parm/systems/stofs_3d_atl_ufs.yaml"),
+        runner_module="nos_workflow.runners.ufs_coastal",
+        notes="test fixture",
+    )
+
+
 def _stofs_3d_desc() -> OFSDescriptor:
     return OFSDescriptor(
         name="stofs_3d_atl",
@@ -151,10 +166,22 @@ def _make_minimal_forecast_env(tmp_path: Path) -> dict:
     }
 
 
-def test_forecast_comf_happy_path_invokes_all_four_steps(tmp_path, fake_env):
-    """End-to-end COMF happy path: every step in the 4-step contract is
-    invoked with ``args=('forecast',)`` and the right script path, and
-    the stage returns 0."""
+@pytest.mark.parametrize(
+    "desc_factory",
+    [_secofs_ufs_desc, _stofs_3d_atl_ufs_desc],
+    ids=["comf", "stofs_ufs"],
+)
+def test_forecast_comf_happy_path_invokes_all_four_steps(
+    tmp_path, fake_env, desc_factory
+):
+    """End-to-end UFS-Coastal happy path: every step in the 4-step
+    contract is invoked with ``args=('forecast',)`` and the right script
+    path, and the stage returns 0.
+
+    Parametrized across both ``framework="comf"`` (SECOFS-UFS) and
+    ``framework="stofs_ufs"`` (STOFS-3D-ATL-UFS) since both must route
+    through ``_run_comf_forecast`` identically.
+    """
     env = _make_minimal_forecast_env(tmp_path)
     nos_run = Path(env["USHnos"]) / "nos_run.sh"
     data = Path(env["DATA"])
@@ -177,7 +204,7 @@ def test_forecast_comf_happy_path_invokes_all_four_steps(tmp_path, fake_env):
             "run_shell_function",
             side_effect=fake_run_shell_function,
         ):
-            rc = forecast_stage.run(_secofs_ufs_desc(), fake_env)
+            rc = forecast_stage.run(desc_factory(), fake_env)
 
     assert rc == 0
     # All 4 steps were called, in the contracted order.

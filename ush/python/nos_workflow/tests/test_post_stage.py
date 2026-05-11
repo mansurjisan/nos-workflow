@@ -44,6 +44,21 @@ def _secofs_ufs_desc() -> OFSDescriptor:
     )
 
 
+def _stofs_3d_atl_ufs_desc() -> OFSDescriptor:
+    """STOFS-3D-ATL on UFS-Coastal — routes through the same UFS-Coastal
+    body as ``comf``; the distinct framework label keeps it free for
+    future divergence."""
+    return OFSDescriptor(
+        name="stofs_3d_atl_ufs",
+        framework="stofs_ufs",
+        canonical_stages=("prep", "nowcast", "forecast", "post"),
+        stage_aliases={},
+        yaml_path=Path("parm/systems/stofs_3d_atl_ufs.yaml"),
+        runner_module="nos_workflow.runners.ufs_coastal",
+        notes="test fixture",
+    )
+
+
 def _stofs_3d_desc() -> OFSDescriptor:
     return OFSDescriptor(
         name="stofs_3d_atl",
@@ -200,11 +215,23 @@ def _fake_combine_subprocess_factory(
     return fake_run
 
 
-def test_post_comf_happy_path_writes_station_nc(tmp_path, fake_env, caplog):
-    """End-to-end COMF happy path: both phases combine cleanly, the
-    station NetCDF lands in COMOUT, the control file + station.lat.lon
-    are emitted with the right contents, and staout symlinks are wired
-    into each phase's working dir."""
+@pytest.mark.parametrize(
+    "desc_factory",
+    [_secofs_ufs_desc, _stofs_3d_atl_ufs_desc],
+    ids=["comf", "stofs_ufs"],
+)
+def test_post_comf_happy_path_writes_station_nc(
+    tmp_path, fake_env, caplog, desc_factory
+):
+    """End-to-end UFS-Coastal happy path: both phases combine cleanly,
+    the station NetCDF lands in COMOUT, the control file +
+    station.lat.lon are emitted with the right contents, and staout
+    symlinks are wired into each phase's working dir.
+
+    Parametrized across both ``framework="comf"`` (SECOFS-UFS) and
+    ``framework="stofs_ufs"`` (STOFS-3D-ATL-UFS) since both must route
+    through ``_run_comf_post`` identically.
+    """
     caplog.set_level("INFO", logger="nos_workflow.stages.post")
     env = _make_minimal_post_env(tmp_path)
     comout = Path(env["COMOUT"])
@@ -220,7 +247,7 @@ def test_post_comf_happy_path_writes_station_nc(tmp_path, fake_env, caplog):
 
     with patch.dict(os.environ, env, clear=False):
         with patch.object(post_stage.subprocess, "run", side_effect=fake_run):
-            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+            rc = post_stage.run(desc_factory(), fake_env)
 
     assert rc == 0
     # subprocess.run was called exactly twice (one per phase, no bias-corr
