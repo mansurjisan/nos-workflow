@@ -102,14 +102,18 @@ def test_nowcast_unknown_framework_raises_stage_failed(fake_env):
 
 
 def test_nowcast_phase_header_logged(fake_env, caplog):
-    """The shared phase-header log line ``[<UTC>] [nowcast] [<ofs>] entered``
-    must fire on every dispatch — even when the body later raises."""
+    """The stage-start log record must fire on every dispatch — even when
+    the body later raises. Stage + ofs live in record.extra (not in the
+    message text) under the LoggerAdapter pattern; the CLI's UTC formatter
+    renders them as ``[ts] [nowcast] [stofs_3d_atl] stage start`` at
+    output time."""
     caplog.set_level("INFO", logger="nos_workflow.stages.nowcast")
     with pytest.raises(NotImplementedError):
         nowcast_stage.run(_stofs_3d_desc(), fake_env)
     assert any(
-        "[nowcast]" in rec.getMessage() and "stofs_3d_atl" in rec.getMessage()
-        and "entered" in rec.getMessage()
+        rec.getMessage() == "stage start"
+        and getattr(rec, "stage", None) == "nowcast"
+        and getattr(rec, "ofs", None) == "stofs_3d_atl"
         for rec in caplog.records
     )
 

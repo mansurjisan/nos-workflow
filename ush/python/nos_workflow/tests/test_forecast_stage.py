@@ -107,14 +107,15 @@ def test_forecast_unknown_framework_raises_stage_failed(fake_env):
 
 
 def test_forecast_phase_header_logged(fake_env, caplog):
-    """The shared phase-header log line ``[<UTC>] [forecast] [<ofs>] entered``
-    must fire on every dispatch — even when the body later raises."""
+    """The stage-start log record must fire on every dispatch. Stage + ofs
+    live in record.extra under the LoggerAdapter pattern."""
     caplog.set_level("INFO", logger="nos_workflow.stages.forecast")
     with pytest.raises(NotImplementedError):
         forecast_stage.run(_stofs_3d_desc(), fake_env)
     assert any(
-        "[forecast]" in rec.getMessage() and "stofs_3d_atl" in rec.getMessage()
-        and "entered" in rec.getMessage()
+        rec.getMessage() == "stage start"
+        and getattr(rec, "stage", None) == "forecast"
+        and getattr(rec, "ofs", None) == "stofs_3d_atl"
         for rec in caplog.records
     )
 

@@ -39,10 +39,11 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional
 
+from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
 
@@ -63,12 +64,6 @@ _STAGE = "post"
 _STAOUT_INDICES = tuple(range(1, 10))  # staout_1 .. staout_9
 
 
-def _phase_header(ofs: str) -> None:
-    """Emit the one-line phase header used by the J-job ``OUTPUT.$$`` log."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.info("[%s] [%s] [%s] entered", ts, _STAGE, ofs)
-
-
 def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """Execute the post stage for ``descriptor``.
 
@@ -87,10 +82,18 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         NotImplementedError: framework other than ``"comf"``; STOFS and
             ADCIRC branches are stubbed for tasks #33 / #34.
     """
-    _phase_header(descriptor.name)
+    sl = stage_logger(_STAGE, descriptor.name)
+    sl.info("stage start")
 
     if descriptor.framework == "comf":
-        return _run_comf_post(descriptor, env)
+        t_stage = time.monotonic()
+        rc = _run_comf_post(descriptor, env)
+        emit_stage_summary(
+            sl, status="PASS" if rc == 0 else "FAIL",
+            runtime_s=time.monotonic() - t_stage,
+            extras={"rc": rc},
+        )
+        return rc
     if descriptor.framework == "stofs":
         raise NotImplementedError(
             "STOFS-3D-ATL post not yet ported — task #33 on the roadmap "
@@ -137,6 +140,7 @@ def _run_comf_post(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
+    sl = stage_logger(_STAGE, descriptor.name)
     """The actual COMF post work; raises ``StageFailedError`` on fatal
     failures, returns 0 on success (warnings are non-fatal).
     """
@@ -155,13 +159,7 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     prefix_nos = _require_env(shell_env, "PREFIXNOS")
     pgmout = shell_env.get("pgmout", "OUTPUT.$$")
 
-    logger.info("=============================================")
-    logger.info("Starting COMF SCHISM post-processing")
-    logger.info("  OFS:    %s", descriptor.name)
-    logger.info("  PDY:    %s", pdy)
-    logger.info("  cyc:    %s", cyc)
-    logger.info("  COMOUT: %s", comout)
-    logger.info("=============================================")
+    sl.info("phase=POST pdy=%s cyc=%s comout=%s", pdy, cyc, comout)
 
     combine_script = homenos / "ush" / "nosofs" / "schism_combine_outputs.py"
     if not combine_script.is_file():
@@ -217,9 +215,7 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             pgmout=pgmout,
         )
 
-    logger.info("=============================================")
-    logger.info("COMF SCHISM post-processing completed")
-    logger.info("=============================================")
+    sl.info("post-processing completed")
     return 0
 
 

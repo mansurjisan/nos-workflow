@@ -43,10 +43,11 @@ from __future__ import annotations
 
 import logging
 import os
-from datetime import datetime, timezone
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple
 
+from .._log import emit_stage_summary, stage_logger, timed_step
 from ..bash_compat import postmsg, run_shell_function
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
@@ -73,12 +74,6 @@ _STEPS: Tuple[str, ...] = (
 )
 
 
-def _phase_header(ofs: str) -> None:
-    """Emit the one-line phase header used by the J-job ``OUTPUT.$$`` log."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.info("[%s] [%s] [%s] entered", ts, _STAGE, ofs)
-
-
 def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """Execute the nowcast stage for ``descriptor``.
 
@@ -96,7 +91,8 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         NotImplementedError: framework other than ``"comf"``; STOFS and
             ADCIRC branches are stubbed for tasks #33 / #34.
     """
-    _phase_header(descriptor.name)
+    sl = stage_logger(_STAGE, descriptor.name)
+    sl.info("stage start")
 
     if descriptor.framework == "comf":
         return _run_comf_nowcast(descriptor, env)
@@ -147,6 +143,8 @@ def _comf_nowcast_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """The actual COMF nowcast work; returns the first non-zero rc from
     the 4-step contract, or 0 if every step succeeded.
     """
+    sl = stage_logger(_STAGE, descriptor.name)
+    t_stage = time.monotonic()
     shell_env = os.environ
     ushnos = Path(_require_env(shell_env, "USHnos"))
     data = Path(_require_env(shell_env, "DATA"))
@@ -166,34 +164,36 @@ def _comf_nowcast_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     # $DATA/outputs`` but expects $DATA to already exist.
     data.mkdir(parents=True, exist_ok=True)
 
-    logger.info("=============================================")
-    logger.info("=== NOWCAST PHASE (split-job mode) ===")
-    logger.info("=============================================")
-    logger.info("  OFS:            %s", descriptor.name)
-    logger.info("  DATA:           %s", data)
-    logger.info("  RNDAY_NOWCAST:  %s", shell_env.get("RNDAY_NOWCAST", "<unset>"))
-    logger.info("  PDYHH_NCAST_BEGIN: %s",
-                shell_env.get("PDYHH_NCAST_BEGIN", "<unset>"))
-    logger.info("=============================================")
+    sl.info("phase=NOWCAST (split-job mode) data=%s rnday=%s pdyhh_begin=%s",
+            data,
+            shell_env.get("RNDAY_NOWCAST", "<unset>"),
+            shell_env.get("PDYHH_NCAST_BEGIN", "<unset>"))
 
     postmsg(f"exnos_nowcast.sh (nos_workflow) started ({descriptor.name})")
 
     for step in _STEPS:
-        logger.info("--- nowcast step: %s ---", step)
-        rc = _run_step(step, nos_run, data, shell_env)
-        if rc != 0:
-            postmsg(f"FATAL: {step} nowcast failed (rc={rc})")
-            raise StageFailedError(
-                stage=_STAGE,
-                ofs=descriptor.name,
-                returncode=rc,
-                msg=f"{step} nowcast failed (rc={rc})",
-            )
+        with timed_step(sl, step):
+            rc = _run_step(step, nos_run, data, shell_env)
+            if rc != 0:
+                postmsg(f"FATAL: {step} nowcast failed (rc={rc})")
+                emit_stage_summary(
+                    sl, status="FAIL",
+                    runtime_s=time.monotonic() - t_stage,
+                    extras={"failed_step": step, "rc": rc},
+                )
+                raise StageFailedError(
+                    stage=_STAGE,
+                    ofs=descriptor.name,
+                    returncode=rc,
+                    msg=f"{step} nowcast failed (rc={rc})",
+                )
 
-    logger.info("=============================================")
-    logger.info("COMF nowcast completed normally")
-    logger.info("=============================================")
     postmsg(f"Finished exnos_nowcast.sh (nos_workflow) SUCCESSFULLY ({descriptor.name})")
+    emit_stage_summary(
+        sl, status="PASS",
+        runtime_s=time.monotonic() - t_stage,
+        extras={"steps_completed": len(_STEPS)},
+    )
     return 0
 
 

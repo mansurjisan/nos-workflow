@@ -9,9 +9,10 @@ the legacy ``exnos_prep.sh``. The STOFS and ADCIRC branches raise
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import time
 from typing import TYPE_CHECKING, Any
 
+from .._log import emit_stage_summary, stage_logger, timed_step
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
 
@@ -25,12 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 _STAGE = "prep"
-
-
-def _phase_header(ofs: str) -> None:
-    """Emit the one-line phase header used by the J-job ``OUTPUT.$$`` log."""
-    ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    logger.info("[%s] [%s] [%s] entered", ts, _STAGE, ofs)
 
 
 def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
@@ -50,7 +45,8 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         NotImplementedError: framework other than ``"comf"``; STOFS and
             ADCIRC branches are stubbed for tasks #33 / #34.
     """
-    _phase_header(descriptor.name)
+    sl = stage_logger(_STAGE, descriptor.name)
+    sl.info("stage start")
 
     if descriptor.framework == "comf":
         return _run_comf_prep(descriptor, env)
@@ -77,10 +73,16 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     Lazy-imports ``nos_utils.nco_bridge`` so ``nos_uw list`` and the
     descriptor tests don't pay the netCDF/numpy import cost.
     """
+    sl = stage_logger(_STAGE, descriptor.name)
+    t_stage = time.monotonic()
+
     try:
         # Lazy import — never hoisted to module top.
         from nos_utils.nco_bridge import run_prep  # type: ignore[import-not-found]
     except ImportError as exc:
+        emit_stage_summary(sl, status="FAIL",
+                           runtime_s=time.monotonic() - t_stage,
+                           extras={"reason": "nos_utils_import_failed"})
         raise StageFailedError(
             stage=_STAGE,
             ofs=descriptor.name,
@@ -96,20 +98,31 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     # matches the legacy preY-mig shell's COMOUT (which sets
     # FULL_PYTHON_PREP=YES → skip_legacy=False).
     for phase in ("nowcast", "forecast"):
-        try:
-            result: Any = run_prep(phase=phase, skip_legacy=False)
-        except Exception as exc:  # noqa: BLE001 — wrap to StageFailedError
-            raise StageFailedError(
-                stage=_STAGE,
-                ofs=descriptor.name,
-                returncode=1,
-                msg=f"nos_utils.run_prep({phase!r}) raised: {exc}",
-            ) from exc
+        step_name = f"prep_{phase}"
+        with timed_step(sl, step_name):
+            try:
+                result: Any = run_prep(phase=phase, skip_legacy=False)
+            except Exception as exc:  # noqa: BLE001 — wrap to StageFailedError
+                emit_stage_summary(sl, status="FAIL",
+                                   runtime_s=time.monotonic() - t_stage,
+                                   extras={"failed_phase": phase})
+                raise StageFailedError(
+                    stage=_STAGE,
+                    ofs=descriptor.name,
+                    returncode=1,
+                    msg=f"nos_utils.run_prep({phase!r}) raised: {exc}",
+                ) from exc
 
-        rc = _coerce_rc(result)
-        if rc != 0:
-            return rc
+            rc = _coerce_rc(result)
+            if rc != 0:
+                emit_stage_summary(sl, status="FAIL",
+                                   runtime_s=time.monotonic() - t_stage,
+                                   extras={"failed_phase": phase, "rc": rc})
+                return rc
 
+    emit_stage_summary(sl, status="PASS",
+                       runtime_s=time.monotonic() - t_stage,
+                       extras={"phases_completed": 2})
     return 0
 
 
