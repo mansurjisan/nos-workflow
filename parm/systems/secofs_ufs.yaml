@@ -259,6 +259,10 @@ stages:
 shell_mappings:
   framework: comf
   env_prefix: nos
+  # Only env vars that are actually read by downstream code remain here.
+  # Removed 42 unused entries (2026-05): physics constants are hardcoded in
+  # the param.nml template, UFS-Coastal knobs are read directly by
+  # nos_utils.config.OFSConfig from YAML, not via env vars.
   variables:
     # Model identification
     RUN: system.name
@@ -280,8 +284,6 @@ shell_mappings:
     ns_global: grid.n_sides
     nvrt: grid.n_levels
     KBm: grid.n_levels
-    NNODE: grid.n_nodes
-    NELE: grid.n_elements
 
     # Domain bounds
     MINLON: grid.domain.lon_min
@@ -297,7 +299,6 @@ shell_mappings:
     DBASE_MET_FOR: forcing.atmospheric.forecast_source
     DBASE_MET_NOW2: forcing.atmospheric.secondary
     DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
-    SCALE_HFLUX: forcing.atmospheric.scale_hflux
 
     # Ocean forcing
     DBASE_WL_NOW: forcing.ocean.obc.wl_source
@@ -307,10 +308,8 @@ shell_mappings:
 
     # Control files
     RIVER_CTL_FILE: forcing.river.files.ctl_file
-    RIVER_CLIM_FILE: forcing.river.files.clim_file
     NWM_REACHID_FILE: forcing.river.files.nwm_reach
     OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
-    OBC_CLIM_FILE: forcing.ocean.obc.files.obc_clim
     HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
     HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
     HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
@@ -322,37 +321,8 @@ shell_mappings:
     RUNTIME_CTL: model.runtime.ctl_file
     RUNTIME_MET_CTL: model.runtime.met_ctl_file
     DELT_MODEL: model.physics.dt
-    EXTSTEP_SECONDS: model.physics.extstep_seconds
     NDTFAST: model.physics.ndtfast
-    NWS_VALUE: model.physics.nws
-    STEP_NU_VALUE: forcing.ocean.nudging.timescale_seconds
-    MIN_DEPTH: model.physics.min_depth
     BASE_DATE: model.run.base_date
-    TIME_START: model.run.time_start
-
-    # Physics parameters
-    CPP_LON_VALUE: model.physics.cpp_lon
-    CPP_LAT_VALUE: model.physics.cpp_lat
-    IHORCON_VALUE: model.physics.ihorcon
-    IHDIF_VALUE: model.physics.ihdif
-    IDRAG_VALUE: model.physics.idrag
-    BFRIC_VALUE: model.physics.bfric
-    IHHAT_VALUE: model.physics.ihhat
-    INUNFL_VALUE: model.physics.inunfl
-    NRAMPWIND_VALUE: model.physics.nrampwind
-    DRAMPWIND_VALUE: model.physics.drampwind
-    IWINDOFF_VALUE: model.physics.iwindoff
-    RDRG: model.physics.rdrg
-    RDRG2: model.physics.rdrg2
-    Zob: model.physics.zob
-    VISC2: model.physics.visc2
-    VISC4: model.physics.visc4
-    AKT_BAK: model.physics.akt_bak
-    AKV_BAK: model.physics.akv_bak
-    AKK_BAK: model.physics.akk_bak
-    AKP_BAK: model.physics.akp_bak
-    DCRIT: model.physics.dcrit
-    DSTART: model.physics.dstart
     TIDE_START: model.physics.tide_start
 
     # Run length
@@ -363,7 +333,6 @@ shell_mappings:
 
     # Output intervals
     NSTA: output.stations.interval
-    NSTATION: output.nstation
     NHIS: output.fields.interval
     NDEFHIS: output.fields.def_interval
     NQCK: output.quicksave.interval
@@ -375,19 +344,13 @@ shell_mappings:
     # Resources
     TOTAL_TASKS: resources.nprocs
 
-    # UFS-Coastal specific variables
+    # UFS-Coastal-specific env vars actually consumed downstream.
+    # (datm_tasks, schism_tasks, blend_*, coupling_interval, datm_domain,
+    # nhours_fcst, datm_forcing_source are read by nos_utils.config directly
+    # from the YAML, so no env var mapping is needed for those.)
     USE_DATM: ufs_coastal.enabled
-    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
-    DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
-    DATM_DOMAIN: ufs_coastal.datm_domain
-    DATM_TASKS: ufs_coastal.datm_tasks
-    SCHISM_TASKS: ufs_coastal.schism_tasks
     NSCRIBES: ufs_coastal.nscribes
-    BLEND_RESOLUTION: ufs_coastal.blend_resolution
-    BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
     DT_ATMOS: ufs_coastal.dt_atmos
-    NHOURS_FCST: ufs_coastal.nhours_fcst
-    COUPLING_INTERVAL: ufs_coastal.coupling_interval
     NX_GLOBAL: ufs_coastal.nx_global
     NY_GLOBAL: ufs_coastal.ny_global
 
