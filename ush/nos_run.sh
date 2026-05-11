@@ -392,39 +392,6 @@ _schism_find_hotstart() {
 #      7. Untar NWM river forcing, OBC forcing, river forcing tarballs
 #      8. Final validation + restart_outputs staging for forecast
 #-----------------------------------------------------------------------------
-
-# Stage a hotstart file into $DATA/hotstart.nc with NETCDF4_CLASSIC format
-# guaranteed. Operational SECOFS-UFS hotstarts and most production cycle chains
-# produce NETCDF-4 (HDF5-backed) files; pnetcdf MPI-IO at 2794-rank scale
-# segfaults on HDF5-flavored NETCDF-4 (memory lesson #6). The
-# auto-stage in nos_utils.forcing.hotstart already converts on its way through,
-# but operator-staged bootstrap files (manual cp into COMOUT) bypass that
-# conversion. This helper makes the conversion mandatory at the point of
-# consumption regardless of how the file got into COMOUT.
-#
-# Args: $1 = source path, $2 = destination ($DATA/hotstart.nc), $3 = label for log
-_schism_stage_hotstart_classic() {
-    local src="$1"
-    local dst="$2"
-    local label="$3"
-    local fmt
-    fmt=$(ncdump -k "$src" 2>/dev/null || echo "unknown")
-    case "$fmt" in
-        "netCDF-4 classic model"|"classic")
-            cp -p "$src" "$dst"
-            echo "  Staged hotstart.nc from ${label} (format: ${fmt}, copied as-is)"
-            ;;
-        *)
-            echo "  Converting ${label} to NETCDF4_CLASSIC (was: ${fmt})"
-            nccopy -k 'netCDF-4 classic model' "$src" "$dst" || {
-                echo "FATAL: nccopy failed converting ${src} -> ${dst}" >&2
-                export err=2; err_exit
-            }
-            echo "  Staged hotstart.nc from ${label} (converted to NETCDF4_CLASSIC)"
-            ;;
-    esac
-}
-
 _schism_stage_files() {
     local phase=$1
 
@@ -660,9 +627,11 @@ _schism_stage_files() {
     # --------------------------------------------------------------------
     if [ "$phase" = "nowcast" ]; then
         if [ -n "${INI_FILE_NOWCAST:-}" ] && [ -s "${COMOUT}/${INI_FILE_NOWCAST}" ]; then
-            _schism_stage_hotstart_classic "${COMOUT}/${INI_FILE_NOWCAST}" "${DATA}/hotstart.nc" "${INI_FILE_NOWCAST}"
+            cp -p ${COMOUT}/${INI_FILE_NOWCAST} ${DATA}/hotstart.nc
+            echo "  Staged hotstart.nc from ${INI_FILE_NOWCAST}"
         elif [ -n "${INI_FILE:-}" ] && [ -s "${INI_FILE}" ]; then
-            _schism_stage_hotstart_classic "${INI_FILE}" "${DATA}/hotstart.nc" "${INI_FILE}"
+            cp -p ${INI_FILE} ${DATA}/hotstart.nc
+            echo "  Staged hotstart.nc from ${INI_FILE}"
         else
             echo "FATAL: nowcast requires hotstart.nc (ihot=${ihot_val}) but none was found." >&2
             echo "  Searched: \${COMOUT}/\${INI_FILE_NOWCAST} (INI_FILE_NOWCAST=${INI_FILE_NOWCAST:-<unset>})" >&2
@@ -674,9 +643,11 @@ _schism_stage_files() {
     else
         # Forecast uses nowcast restart (ihot=1, time reset)
         if [ -n "${INI_FILE_FORECAST:-}" ] && [ -s "${COMOUT}/${INI_FILE_FORECAST}" ]; then
-            _schism_stage_hotstart_classic "${COMOUT}/${INI_FILE_FORECAST}" "${DATA}/hotstart.nc" "${INI_FILE_FORECAST}"
+            cp -p ${COMOUT}/${INI_FILE_FORECAST} ${DATA}/hotstart.nc
+            echo "  Staged hotstart.nc from ${INI_FILE_FORECAST}"
         elif [ -n "${RST_OUT_NOWCAST:-}" ] && [ -s "${COMOUT}/${RST_OUT_NOWCAST}" ]; then
-            _schism_stage_hotstart_classic "${COMOUT}/${RST_OUT_NOWCAST}" "${DATA}/hotstart.nc" "${RST_OUT_NOWCAST}"
+            cp -p ${COMOUT}/${RST_OUT_NOWCAST} ${DATA}/hotstart.nc
+            echo "  Staged hotstart.nc from ${RST_OUT_NOWCAST}"
         else
             echo "FATAL: forecast requires hotstart.nc but no nowcast restart was found." >&2
             echo "  Searched: \${COMOUT}/\${INI_FILE_FORECAST} (INI_FILE_FORECAST=${INI_FILE_FORECAST:-<unset>})" >&2
