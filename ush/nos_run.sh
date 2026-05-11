@@ -620,7 +620,12 @@ _schism_stage_files() {
             cp -p ${INI_FILE} ${DATA}/hotstart.nc
             echo "  Staged hotstart.nc from ${INI_FILE}"
         else
-            echo "  WARNING: No hotstart.nc found (ihot=${ihot_val})"
+            echo "FATAL: nowcast requires hotstart.nc (ihot=${ihot_val}) but none was found." >&2
+            echo "  Searched: \${COMOUT}/\${INI_FILE_NOWCAST} (INI_FILE_NOWCAST=${INI_FILE_NOWCAST:-<unset>})" >&2
+            echo "            \${INI_FILE} (INI_FILE=${INI_FILE:-<unset>})" >&2
+            echo "  Fix: stage a NETCDF4_CLASSIC hotstart at \${COMOUT}/\${PREFIXNOS}.init.nowcast.nc" >&2
+            echo "       (auto-stage in nos_utils.forcing.hotstart needs a previous-cycle rst.nowcast.nc)" >&2
+            export err=1; err_exit
         fi
     else
         # Forecast uses nowcast restart (ihot=1, time reset)
@@ -631,7 +636,11 @@ _schism_stage_files() {
             cp -p ${COMOUT}/${RST_OUT_NOWCAST} ${DATA}/hotstart.nc
             echo "  Staged hotstart.nc from ${RST_OUT_NOWCAST}"
         else
-            echo "  WARNING: No forecast hotstart.nc found"
+            echo "FATAL: forecast requires hotstart.nc but no nowcast restart was found." >&2
+            echo "  Searched: \${COMOUT}/\${INI_FILE_FORECAST} (INI_FILE_FORECAST=${INI_FILE_FORECAST:-<unset>})" >&2
+            echo "            \${COMOUT}/\${RST_OUT_NOWCAST} (RST_OUT_NOWCAST=${RST_OUT_NOWCAST:-<unset>})" >&2
+            echo "  Fix: ensure the nowcast stage archived its combined hotstart to \${COMOUT} as rst.nowcast.nc" >&2
+            export err=1; err_exit
         fi
         # Force ihot=1 in case the runtime ctl shipped ihot=2.  Original COMF
         # uses ihot=1 for forecast (clock reset; rnday = forecast duration).
