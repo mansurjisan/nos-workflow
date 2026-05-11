@@ -64,9 +64,15 @@ def _utc_now() -> _dt.datetime:
 
 
 def _configure_logging(verbose: bool) -> None:
+    from ._log import StageContextFilter
+
     level = logging.DEBUG if verbose else logging.INFO
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_UTCFormatter())
+    # Inject stage/ofs from contextvars onto records from bare loggers
+    # (e.g. nos_utils.forcing.*) so they show as [prep] [ofs] rather than
+    # [-] [-] in the formatted output.
+    handler.addFilter(StageContextFilter())
     root = logging.getLogger()
     # Replace handlers — under repeated CLI invocations in tests we'd
     # otherwise stack duplicates.

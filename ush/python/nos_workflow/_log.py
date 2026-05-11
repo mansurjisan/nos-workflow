@@ -1,17 +1,26 @@
 """Logging helpers for stage modules.
 
 The CLI's ``_UTCFormatter`` prints ``[ts] [stage] [ofs] message`` and
-expects ``stage`` and ``ofs`` in the log record's ``extra`` dict. Plain
-``logging.getLogger(__name__)`` calls inside stage modules don't inject
-those, so the formatter falls through to ``-`` placeholders — which is
-what produced the ``[2026-05-11T02:46:34Z] [-] [-] ...`` lines all over
-the WCOSS2 prep/nowcast logs.
+expects ``stage`` and ``ofs`` attributes on the log record. Two
+complementary mechanisms keep those attributes populated:
 
-``stage_logger`` returns a ``LoggerAdapter`` that auto-injects the
-context on every log call, so each stage module just does::
+1. ``stage_logger(stage, ofs)`` returns a ``LoggerAdapter`` that auto-
+   injects ``stage`` and ``ofs`` via ``extra=`` on every log call from
+   the stage module. Adapter-emitted lines are guaranteed to carry the
+   correct context.
 
-    logger = stage_logger(_STAGE, descriptor.name)
-    logger.info("staging complete")        # -> [ts] [nowcast] [secofs_ufs] staging complete
+2. ``StageContextFilter`` (attached to the handler by the CLI's
+   ``setup_logging``) injects the same ``stage`` and ``ofs`` onto
+   records that come from bare ``logging.getLogger(__name__).info(...)``
+   calls — e.g. the loggers used inside ``nos_utils.forcing.*``
+   processors. Without it those records showed up as
+   ``[2026-05-11T16:08:11Z] [-] [-] ...`` in prep logs because the
+   formatter found no stage/ofs to format.
+
+The filter reads from two ``contextvars.ContextVar``s that
+``stage_logger`` sets when the stage starts. Adapter-emitted records
+already carry stage/ofs as record attributes (via the ``extra`` dict),
+so the filter is a no-op for those — adapter overrides always win.
 
 ``timed_step`` is a context manager for the 4-step contract. It logs a
 header on entry, an ``ok``/``fail`` footer with elapsed seconds on exit,
@@ -23,10 +32,45 @@ that operators / CI / monitoring tooling can rely on.
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import time
 from contextlib import contextmanager
 from typing import Iterator, Optional
+
+
+_stage_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "nos_workflow_stage", default="-"
+)
+_ofs_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "nos_workflow_ofs", default="-"
+)
+
+
+class StageContextFilter(logging.Filter):
+    """Inject stage/ofs from contextvars onto records that lack them.
+
+    Adapter-emitted records already have ``stage`` and ``ofs`` set as
+    record attributes (via the LoggerAdapter's ``extra`` dict), so the
+    filter is a no-op for them. Records from bare logger calls inside
+    libraries (e.g. ``nos_utils.forcing.*``) lack those attributes and
+    get them populated from the contextvars that ``stage_logger`` set
+    at stage entry.
+
+    Always returns True — this is a record-mutator, not a record-
+    rejecter.
+
+    Attach to the CLI's stream handler in ``setup_logging`` so every
+    record flowing to console/file picks up the context, regardless of
+    which logger it originated from.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not hasattr(record, "stage"):
+            record.stage = _stage_var.get()
+        if not hasattr(record, "ofs"):
+            record.ofs = _ofs_var.get()
+        return True
 
 
 class _StageAdapter(logging.LoggerAdapter):
@@ -46,10 +90,18 @@ class _StageAdapter(logging.LoggerAdapter):
 def stage_logger(stage: str, ofs: str, name: Optional[str] = None) -> _StageAdapter:
     """Return a LoggerAdapter pre-bound to ``stage`` and ``ofs``.
 
+    Also publishes ``stage`` / ``ofs`` into process-wide context vars so
+    that bare ``logging.getLogger(__name__)`` calls inside libraries
+    (e.g. ``nos_utils.forcing.*`` processors) pick up the same context
+    through ``StageContextFilter`` once it has been attached to the
+    handler (CLI's ``setup_logging`` does this automatically).
+
     Use at the top of ``run()`` in each stage module. Pass ``name`` if
     you want a non-default logger hierarchy (defaults to
     ``nos_workflow.stages.<stage>``).
     """
+    _stage_var.set(stage)
+    _ofs_var.set(ofs)
     base = logging.getLogger(name or f"nos_workflow.stages.{stage}")
     return _StageAdapter(base, {"stage": stage, "ofs": ofs})
 
@@ -104,4 +156,9 @@ def emit_stage_summary(
     logger.info(" ".join(parts))
 
 
-__all__ = ["stage_logger", "timed_step", "emit_stage_summary"]
+__all__ = [
+    "stage_logger",
+    "timed_step",
+    "emit_stage_summary",
+    "StageContextFilter",
+]
