@@ -47,7 +47,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Tuple
 
-from ..bash_compat import run_shell_function
+from ..bash_compat import postmsg, run_shell_function
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
 
@@ -176,10 +176,13 @@ def _comf_nowcast_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
                 shell_env.get("PDYHH_NCAST_BEGIN", "<unset>"))
     logger.info("=============================================")
 
+    postmsg(f"exnos_nowcast.sh (nos_workflow) started ({descriptor.name})")
+
     for step in _STEPS:
         logger.info("--- nowcast step: %s ---", step)
         rc = _run_step(step, nos_run, data, shell_env)
         if rc != 0:
+            postmsg(f"FATAL: {step} nowcast failed (rc={rc})")
             raise StageFailedError(
                 stage=_STAGE,
                 ofs=descriptor.name,
@@ -190,6 +193,7 @@ def _comf_nowcast_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     logger.info("=============================================")
     logger.info("COMF nowcast completed normally")
     logger.info("=============================================")
+    postmsg(f"Finished exnos_nowcast.sh (nos_workflow) SUCCESSFULLY ({descriptor.name})")
     return 0
 
 
