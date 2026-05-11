@@ -30,6 +30,23 @@ def test_secofs_ufs_descriptor_shape():
     assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
 
 
+def test_stofs_3d_atl_ufs_descriptor_shape():
+    """STOFS-3D-ATL on UFS-Coastal mirrors the secofs_ufs descriptor shape.
+
+    Distinct framework label (``stofs_ufs``) so the dispatcher can branch
+    on the UFS-Coastal stack without colliding with the legacy ``stofs``
+    framework; canonical stage names directly (no ``prep_nowcast`` /
+    ``now_forecast`` aliases like the standalone STOFS-3D-ATL descriptor);
+    same UFS-Coastal runner as secofs_ufs.
+    """
+    desc = lookup("stofs_3d_atl_ufs")
+    assert desc.framework == "stofs_ufs"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.stage_aliases == {}
+    assert desc.yaml_path == Path("parm/systems/stofs_3d_atl_ufs.yaml")
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+
+
 def test_stofs_3d_atl_aliases_map_legacy_names():
     desc = lookup("stofs_3d_atl")
     assert desc.framework == "stofs"

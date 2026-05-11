@@ -125,5 +125,23 @@ def test_load_all_descriptors_registers_known_ofses():
     # Wipe registry so we know the names we see came from the loader.
     registry._REGISTRY.clear()
     load_all_descriptors()
-    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_2d_glo"):
+    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs", "stofs_2d_glo"):
         assert lookup(name).name == name
+
+
+def test_stofs_3d_atl_ufs_resolves_via_registry():
+    """End-to-end: descriptor module registers + framework label survives.
+
+    Mirrors the secofs_ufs assertion style — we round-trip the descriptor
+    through ``load_all_descriptors`` and then read back the static identity
+    bits the dispatcher cares about. The framework label is the key
+    discriminator: it must be ``stofs_ufs`` (not ``comf``, not ``stofs``)
+    so dispatch logic branches onto the UFS-Coastal stack.
+    """
+    registry._REGISTRY.clear()
+    load_all_descriptors()
+    desc = lookup("stofs_3d_atl_ufs")
+    assert desc.name == "stofs_3d_atl_ufs"
+    assert desc.framework == "stofs_ufs"
+    # SCHISM-based runner — same module as secofs_ufs.
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"

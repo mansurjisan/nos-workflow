@@ -129,6 +129,47 @@ class TestSystemConfigs:
         assert data["system"]["name"] == "secofs_ufs"
         assert data["system"]["framework"] == "comf"
 
+    def test_stofs_3d_atl_ufs_config(self, system_configs: Dict[str, Path]) -> None:
+        """STOFS-3D-ATL on UFS-Coastal — SCHISM + CDEPS DATM via NUOPC.
+
+        Locks the production-vintage values: framework label, total/per-component
+        rank counts, v3.1.1 grid dimensions, and the PBS ``select=`` line. These
+        are pinned because the runtime dispatcher and the PBS jobcard generator
+        both depend on them — drifting any of these silently is the kind of bug
+        that only surfaces inside a 4434-rank allocation.
+        """
+        if "stofs_3d_atl_ufs" not in system_configs:
+            pytest.skip("stofs_3d_atl_ufs.yaml not found")
+
+        path = system_configs["stofs_3d_atl_ufs"]
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        # Identity
+        assert "system" in data
+        assert data["system"]["name"] == "stofs_3d_atl_ufs"
+        assert data["system"]["framework"] == "stofs_ufs"
+
+        # Resources / UFS-Coastal task split
+        ufs = data.get("ufs_coastal", {})
+        assert ufs.get("total_tasks") == 4434
+        assert ufs.get("schism_tasks") == 4312
+        assert ufs.get("datm_tasks") == 120
+        assert ufs.get("nscribes") == 0
+
+        # Grid dimensions (v3.1.1 mesh)
+        grid = data.get("grid", {})
+        assert grid.get("n_nodes") == 1813443
+        assert grid.get("n_elements") == 3564104
+        assert grid.get("n_sides") == 5377546
+        assert grid.get("n_levels") == 51
+
+        # PBS select string — full-node 128-way packing
+        ens = data.get("ensemble", {}).get("resources", {})
+        det = data.get("resources", {})
+        select_str = ens.get("select") or det.get("select")
+        assert select_str == "select=35:ncpus=128:mpiprocs=128"
+
     def test_stofs_3d_atl_config(self, system_configs: Dict[str, Path]) -> None:
         if "stofs_3d_atl" not in system_configs:
             pytest.skip("stofs_3d_atl.yaml not found")
