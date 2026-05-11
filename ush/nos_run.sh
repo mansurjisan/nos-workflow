@@ -1022,26 +1022,31 @@ print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_node
                 local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
                 local _combined="hotstart_it=${nsteps}.nc"
 
-                # combine_hotstart7.f90 calls nf90_create with NF90_NETCDF4
-                # (full HDF5).  When SCHISM forecast opens this hotstart via
-                # parallel-NetCDF collective MPI-IO at scale, it segfaults
-                # inside libpnetcdf the same way OBC NetCDFs did.  Convert to
-                # NETCDF4_CLASSIC here so the rst.${phase}.nc archive is
-                # classic-flavored and downstream stages can open it safely.
-                if command -v nccopy &>/dev/null; then
-                    if nccopy -k 'netCDF-4 classic model' "$_combined" "${_combined}.classic" 2>/dev/null; then
-                        mv "${_combined}.classic" "$_combined"
-                        echo "  Converted hotstart to NETCDF4_CLASSIC for parallel-IO safety"
-                    else
-                        echo "WARNING: nccopy classic-model conversion failed; hotstart left as NETCDF4"
-                        rm -f "${_combined}.classic"
-                    fi
-                else
-                    echo "WARNING: nccopy not in PATH; hotstart stays NETCDF4 (forecast may segfault at scale)"
-                fi
+                # Archive rst.${phase}.nc in combine_hotstart7's native HDF5
+                # (NF90_NETCDF4) format -- DO NOT convert here.
+                #
+                # SCHISM-UFS at 2,914-rank scale has an inverted per-file
+                # format rule (verified V19 jobid 262555114, 2026-05-11):
+                #
+                #   - rst.nowcast.nc consumed by FORECAST init: MUST stay HDF5.
+                #     Converting to NETCDF4_CLASSIC here crashes the forecast
+                #     at partition_hgrid:534 with SIGABRT + "double free or
+                #     corruption" inside libpnetcdf.
+                #
+                #   - init.nowcast.nc consumed by NOWCAST init: MUST be
+                #     NETCDF4_CLASSIC.  That conversion is done in nos-utils
+                #     HotstartProcessor.stage_init_to_comout when prep stages
+                #     the previous cycle's rst.${phase}.nc into THIS cycle's
+                #     ${COMOUT}/${prefix}.t{cyc}z.{pdy}.init.nowcast.nc.
+                #
+                # So the chain is:
+                #   combine_hotstart7 -> rst.${phase}.nc (HDF5, this archive)
+                #     -> next cycle prep nccopy -> init.nowcast.nc (CLASSIC)
+                #     -> nowcast hotstart.nc (CLASSIC).
+                # Forecast reads rst.nowcast.nc directly (HDF5).
 
                 cp -p "$_combined" "${COMOUT}/${_rst_name}"
-                echo "  Archived to ${COMOUT}/${_rst_name}"
+                echo "  Archived to ${COMOUT}/${_rst_name} (NETCDF4/HDF5 — native combine output, do not convert)"
             else
                 echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
             fi
