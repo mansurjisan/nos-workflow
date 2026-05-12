@@ -214,8 +214,19 @@ def patch_param_nml(ctx: SchismRunContext, phase: str) -> int:
     """
     target = ctx.data / "param.nml"
     if not target.is_file() or target.stat().st_size == 0:
-        logger.warning(
-            "patch_param_nml: %s missing or empty; skipping", target,
+        # ERROR (not WARNING): SCHISM's NUOPC cap will abort at
+        # schism_nuopc_cap.F90:316 if param.nml isn't present, so a
+        # silent skip here would crash SCHISM at MPI startup with no
+        # actionable diagnostic.  The bare-name rename should have
+        # happened in stage_files.run_python before this call; if we
+        # reach here, that step also failed (likely because
+        # $RUNTIME_CTL isn't staged).
+        logger.error(
+            "patch_param_nml: %s missing or empty -- SCHISM will "
+            "abort at schism_nuopc_cap.F90:316. Check that "
+            "stage_ufs_configs staged $RUNTIME_CTL and that the "
+            "bare-name rename step ran in stage_files.run_python.",
+            target,
         )
         return 0
 

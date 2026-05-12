@@ -547,6 +547,30 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     # Phase 1: static UFS-Coastal configs + DATM input directory.
     stage_ufs_configs(ctx, phase)
 
+    # Bare-name rename for param.nml: SCHISM's NUOPC cap inquires for
+    # the file literally named "param.nml" at schism_nuopc_cap.F90:316
+    # and aborts if it's missing. setup_paths stages the prefixed file
+    # ($DATA/${PREFIXNOS}.param.nml) via _stage_fix_files. The shell's
+    # _schism_stage_files does the bare-name copy at nos_run.sh lines
+    # 530-535; mirror that here BEFORE patch_param_nml runs (otherwise
+    # patch_param_nml silently no-ops and SCHISM dies looking for
+    # $DATA/param.nml at runtime).
+    runtime_ctl = os.environ.get("RUNTIME_CTL") or (
+        f"{ctx.prefixnos}.param.nml" if ctx.prefixnos else "param.nml"
+    )
+    runtime_ctl_src = ctx.data / runtime_ctl
+    param_nml_dst = ctx.data / "param.nml"
+    if not param_nml_dst.is_file() and runtime_ctl_src.is_file():
+        shutil.copy2(runtime_ctl_src, param_nml_dst)
+        logger.info("  Copied %s -> param.nml", runtime_ctl)
+    elif not param_nml_dst.is_file():
+        logger.error(
+            "Cannot stage param.nml: neither $DATA/param.nml nor "
+            "$DATA/%s exists. patch_param_nml will skip and SCHISM "
+            "will abort at schism_nuopc_cap.F90:316.",
+            runtime_ctl,
+        )
+
     # Phase 7 (out of shell order, BUT before bare-name copies):
     # The shell does patches AFTER ufs-config staging but BEFORE the
     # SCHISM bare-name + forcing extraction.  Matches lines 491-565.
