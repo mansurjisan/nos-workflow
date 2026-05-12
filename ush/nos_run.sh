@@ -800,6 +800,28 @@ _schism_prepare_restart() {
 _schism_run_mpi() {
     local phase=${1:-nowcast}
     cd ${DATA}
+
+    # Resolve NTASKS / PPN / UFS_EXEC defensively.  When called from the
+    # legacy shell path (_schism_execute_ufs_coastal), these are local
+    # vars set in scope already.  When called from Python via
+    # bash_compat.run_shell_function (PR 8), the locals are out of scope
+    # and we need to recover them from env (or fall back to canonical
+    # search for UFS_EXEC).
+    local NTASKS=${NTASKS:-${TOTAL_TASKS:-1200}}
+    local PPN=${PPN:-120}
+    local UFS_EXEC=${UFS_EXEC:-}
+    if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
+        local _cand
+        for _cand in \
+            "${DATA}/fv3_coastalS.exe" \
+            "${EXECnos:-}/fv3_coastalS.exe" \
+            "${HOMEnos:-}/exec/fv3_coastalS.exe" \
+            "${EXECnos:-}/ufs_coastal" \
+            "${HOMEnos:-}/exec/ufs_coastal"; do
+            if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
+        done
+    fi
+
     echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
     echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
     mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
