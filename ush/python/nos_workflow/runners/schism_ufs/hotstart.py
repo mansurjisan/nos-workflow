@@ -259,11 +259,16 @@ def find_hotstart(
             "falling back to cold start (FIXofs/%s.init.nc)",
             back_search_hours, time_nowcastend, prefix,
         )
-        # Cold-start anchor: 48h before time_nowcastend (matches the
-        # "too stale" branch on lines 333-334 of nos_run.sh; the shell
-        # err_exit's here in prep but the Python port returns the
-        # cold-start result so the dispatcher can choose policy).
-        base_date = _dateutils.ndate(-STALE_RESTART_HOURS, time_nowcastend)
+        # Cold-start anchor: cycle - LEN_NOWCAST.  This matches what the
+        # nos_utils prep orchestrator writes to $COMOUT/time_hotstart.${cycle}
+        # and what the operational COMF convention specifies (see
+        # MEMORY.md/feedback_time_hotstart_anchor.md).  The previous
+        # cycle - 48h anchor here was inherited from shell nos_run.sh:334
+        # but the shell err_exit's BEFORE reaching that branch on cold start
+        # (line 325), so the 48h fallback was effectively dead code and
+        # would produce a base_date inconsistent with the orchestrator if
+        # this path were ever wired into prep dispatch.
+        base_date = _dateutils.ndate(-len_nowcast, time_nowcastend)
         ini_file = fixofs / f"{prefix}.init.nc"
         nh_nowcast = _dateutils.nhour(time_nowcastend, base_date)
         nh_forecast = _dateutils.nhour(time_forecastend, base_date)
@@ -297,7 +302,9 @@ def find_hotstart(
 
     # The shell "too stale" check (lines 331-335): if the restart we
     # just found is >= 48 hours behind time_nowcastend, treat it as a
-    # cold start using the canonical init file from $FIXofs.
+    # cold start using the canonical init file from $FIXofs.  The anchor
+    # for the cold-fallback is cycle - LEN_NOWCAST (matches the orchestrator
+    # contract), not cycle - 48h.
     nh_nowcast = _dateutils.nhour(time_nowcastend, base_date)
     cold_start = "F"
     if nh_nowcast >= STALE_RESTART_HOURS:
@@ -307,7 +314,7 @@ def find_hotstart(
             rst_file, nh_nowcast, STALE_RESTART_HOURS,
         )
         cold_start = "T"
-        base_date = _dateutils.ndate(-STALE_RESTART_HOURS, time_nowcastend)
+        base_date = _dateutils.ndate(-len_nowcast, time_nowcastend)
         rst_file = None
         ini_file_root = fixofs / f"{prefix}.init.nc"
         nh_nowcast = _dateutils.nhour(time_nowcastend, base_date)
