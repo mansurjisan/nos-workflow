@@ -251,6 +251,22 @@ def _run_step(
                     run_python as _prepare_python,
                 )
                 return _prepare_python(ctx, "forecast")
+        if step == "stage_model_files":
+            # PR 7c: dispatch to the full stage_files.run_python
+            # orchestrator. Unlike archive/prepare_restart (which only
+            # need the minimal SchismRunContext built from os.environ),
+            # stage_files needs a fully-populated context with FIXofs
+            # staging, filename conventions, and time anchors.  Build
+            # via setup_paths.compute_paths() -- the PR 5 port that
+            # mirrors the shell's _schism_setup_paths function.
+            from ..env import NCOEnv
+            from ..runners.schism_ufs.setup_paths import compute_paths
+            from ..runners.schism_ufs.stage_files import (
+                run_python as _stage_files_python,
+            )
+            env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
+            ctx = compute_paths(env, phase="forecast", runtype="forecast")
+            return _stage_files_python(ctx, "forecast")
         logger.warning(
             "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
             "implementation has landed yet; falling back to shell.",
