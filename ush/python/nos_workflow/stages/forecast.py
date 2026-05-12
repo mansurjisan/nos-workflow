@@ -267,6 +267,17 @@ def _run_step(
             env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
             ctx = compute_paths(env, phase="forecast", runtype="forecast")
             return _stage_files_python(ctx, "forecast")
+        if step == "execute_model":
+            # PR 8: dispatch to execute.run_python orchestrator.
+            # MPI launch + combine_hotstart7 stay in shell (module load
+            # constraint); Python owns config validation + mesh regen +
+            # post-MPI archive.
+            from ..env import NCOEnv
+            from ..runners.schism_ufs.execute import run_python as _execute_python
+            from ..runners.schism_ufs.setup_paths import compute_paths
+            env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
+            ctx = compute_paths(env, phase="forecast", runtype="forecast")
+            return _execute_python(ctx, "forecast")
         logger.warning(
             "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
             "implementation has landed yet; falling back to shell.",

@@ -244,6 +244,20 @@ def _run_step(
             env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
             ctx = compute_paths(env, phase="nowcast", runtype="nowcast")
             return _stage_files_python(ctx, "nowcast")
+        if step == "execute_model":
+            # PR 8: dispatch to execute.run_python orchestrator.
+            # MPI launch (mpiexec fv3_coastalS.exe) and combine_hotstart7
+            # still happen in shell -- nos_run.sh:_schism_run_mpi and
+            # _schism_run_combine_hotstart respectively (module load
+            # cannot survive a Python subprocess).  Python owns the
+            # config validation, optional mesh regen, and post-MPI
+            # archive copy.
+            from ..env import NCOEnv
+            from ..runners.schism_ufs.execute import run_python as _execute_python
+            from ..runners.schism_ufs.setup_paths import compute_paths
+            env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
+            ctx = compute_paths(env, phase="nowcast", runtype="nowcast")
+            return _execute_python(ctx, "nowcast")
         logger.warning(
             "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
             "implementation has landed yet; falling back to shell.",

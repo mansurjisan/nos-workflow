@@ -781,12 +781,144 @@ _schism_prepare_restart() {
 }
 
 #-----------------------------------------------------------------------------
+# _schism_run_mpi - Thin wrapper around the actual mpiexec invocation.
+#
+#    Callable from either _schism_execute_ufs_coastal (shell default path)
+#    OR from nos_workflow.runners.schism_ufs.execute._run_mpi_shell when the
+#    Python orchestrator is enabled (via NOS_WORKFLOW_PYTHON_EXECUTE=1).
+#
+#    Stays in shell because `module load` doesn't survive a Python
+#    subprocess -- mpiexec on Cray PALS needs the modules loaded by the
+#    J-job's shell (cray-pals, intel-* compiler runtime, hpc-stack libs).
+#
+#    Required env (set by _schism_execute_ufs_coastal before this is called):
+#      UFS_EXEC   -- absolute path to fv3_coastalS.exe / ufs_coastal
+#      NTASKS     -- total MPI tasks
+#      PPN        -- ranks per node
+#      DATA       -- runtime working dir
+#-----------------------------------------------------------------------------
+_schism_run_mpi() {
+    local phase=${1:-nowcast}
+    cd ${DATA}
+    echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
+    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
+    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
+    local rc=$?
+    echo "_schism_run_mpi: mpiexec returned rc=${rc}"
+    return ${rc}
+}
+
+#-----------------------------------------------------------------------------
+# _schism_run_combine_hotstart - Thin wrapper around combine_hotstart7.
+#
+#    Callable from either _schism_execute_ufs_coastal (shell default path) OR
+#    from nos_workflow.runners.schism_ufs.combine_hotstart.combine_hotstart_files
+#    when the Python orchestrator is enabled.
+#
+#    Stays in shell because combine_hotstart7 links against the hpc-stack
+#    netcdf/4.7.4 + hdf5 libs loaded by `module load`, which doesn't survive
+#    a Python subprocess. We have to extend LD_LIBRARY_PATH inside this
+#    shell process so the dynamic linker finds libnetcdff.so / libhdf5*.so.
+#
+#    Searches for the combine executable in the canonical locations used
+#    by the legacy in-line code (EXECnos, HOMEnos/exec, EXECstofs3d).
+#
+#    Args:
+#      $1 -- step (int) -- the hotstart timestep (e.g. 180 for
+#            hotstart_it=180.nc).
+#      $2 -- phase ("nowcast" or "forecast") -- used to name the archive.
+#
+#    Required env: DATA, COMOUT, RUN, cycle, PDY, EXECnos / HOMEnos /
+#    EXECstofs3d (at least one must contain the combine executable).
+#-----------------------------------------------------------------------------
+_schism_run_combine_hotstart() {
+    local step=${1:-0}
+    local phase=${2:-nowcast}
+
+    if [ -z "$step" ] || [ "$step" = "0" ]; then
+        echo "_schism_run_combine_hotstart: invalid step=${step}, skipping"
+        return 1
+    fi
+
+    cd ${DATA}/outputs || {
+        echo "_schism_run_combine_hotstart: missing ${DATA}/outputs"
+        return 2
+    }
+
+    # Locate combine_hotstart7 (same canonical search order as the legacy
+    # in-line code in _schism_execute_ufs_coastal).
+    local COMBINE_EXE=""
+    for _cand in \
+        "${EXECnos:-}/schism_combine_hotstart7.exe" \
+        "${HOMEnos:-}/exec/schism_combine_hotstart7.exe" \
+        "${EXECnos:-}/nos_ofs_combine_hotstart" \
+        "${EXECstofs3d:-}/stofs_3d_atl_combine_hotstart"; do
+        if [ -x "$_cand" ]; then COMBINE_EXE="$_cand"; break; fi
+    done
+
+    if [ -z "$COMBINE_EXE" ]; then
+        echo "WARNING: schism_combine_hotstart7.exe not found"
+        # Maybe a previous run already produced hotstart_it=*.nc; check.
+        local _combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
+        if [ -n "$_combined" ] && [ -s "$_combined" ]; then
+            local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+            cp -p "$_combined" "${COMOUT}/${_rst_name}"
+            echo "  Found pre-combined hotstart: $_combined, archived as ${_rst_name}"
+            return 0
+        fi
+        return 3
+    fi
+
+    echo "_schism_run_combine_hotstart: step=${step} phase=${phase}"
+    echo "  Using combine executable: $COMBINE_EXE"
+
+    # Patch LD_LIBRARY_PATH for hpc-stack netcdf/4.7.4 + hdf5.
+    # combine_hotstart7 is compiled against these libs and the OS default
+    # netcdf isn't ABI-compatible.
+    for _lib in \
+        /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+        /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+        /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+        /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
+        [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
+    done
+
+    $COMBINE_EXE -i $step
+    local rc=$?
+    echo "_schism_run_combine_hotstart: combine_hotstart7 returned rc=${rc}"
+
+    if [ $rc -eq 0 ] && [ -s "hotstart_it=${step}.nc" ]; then
+        local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+        local _combined="hotstart_it=${step}.nc"
+        # Archive in combine_hotstart7's native HDF5 format -- DO NOT
+        # convert here (see _schism_execute_ufs_coastal comment block for
+        # the full chain explanation: rst.nowcast.nc must stay HDF5; the
+        # CLASSIC conversion happens later in nos-utils on stage to
+        # init.nowcast.nc).
+        cp -p "$_combined" "${COMOUT}/${_rst_name}"
+        echo "  Archived to ${COMOUT}/${_rst_name} (NETCDF4/HDF5 -- native combine output, do not convert)"
+    else
+        echo "WARNING: combine_hotstart7 failed (rc=${rc}) or output missing"
+    fi
+
+    return ${rc}
+}
+
+#-----------------------------------------------------------------------------
 # _schism_execute_ufs_coastal - The main UFS-Coastal (DATM + SCHISM) execution
 #
 #    Validates UFS configs/forcing, regenerates ESMF mesh from forcing file
 #    for guaranteed dimensional consistency, runs mpiexec, then combines the
 #    distributed hotstart files and converts to NETCDF4_CLASSIC for parallel-IO
 #    safety on the next forecast/nowcast.
+#
+#    PR 8 refactor: The actual mpiexec invocation and combine_hotstart7
+#    invocation are now extracted into _schism_run_mpi() and
+#    _schism_run_combine_hotstart() respectively. Those helpers are called
+#    inline here AND independently from
+#    nos_workflow.runners.schism_ufs.execute when the Python orchestrator
+#    is enabled. The wrappers MUST stay in shell because `module load`
+#    doesn't survive a Python subprocess.
 #-----------------------------------------------------------------------------
 _schism_execute_ufs_coastal() {
     local phase=$1
@@ -900,10 +1032,10 @@ ds.close()
     unset LD_PRELOAD 2>/dev/null || true
 
     echo "Starting UFS-Coastal at: $(date)"
-    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
 
-    cd $DATA
-    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
+    # MPI launch is delegated to _schism_run_mpi so the Python orchestrator
+    # can invoke the same shell helper via bash_compat.run_shell_function.
+    _schism_run_mpi "${phase}"
     export err=$?
 
     echo "UFS-Coastal finished at: $(date) with exit code: $err"
@@ -926,6 +1058,10 @@ ds.close()
     # Combine distributed hotstart, then convert to NETCDF4_CLASSIC.
     # Nowcast hotstart -> forecast in same cycle.
     # Forecast hotstart -> next cycle's nowcast.
+    #
+    # The combine_hotstart7 invocation is delegated to
+    # _schism_run_combine_hotstart so the Python orchestrator can invoke
+    # the same shell helper via bash_compat.run_shell_function.
     # ------------------------------------------------------------------
     if [ "$phase" = "nowcast" ] || [ "$phase" = "forecast" ] && [ -d "${DATA}/outputs" ]; then
         echo "Combining distributed hotstart files..."
@@ -940,70 +1076,8 @@ ds.close()
         nsteps=${_last_step:-$nsteps}
         echo "  Hotstart timestep: $nsteps (nhot_write=${nhot_write_val:-unknown}, dt=${dt_val:-unknown})"
 
-        # Locate combine_hotstart7 (multiple search locations)
-        local COMBINE_EXE=""
-        for _cand in \
-            "${EXECnos:-}/schism_combine_hotstart7.exe" \
-            "${HOMEnos:-}/exec/schism_combine_hotstart7.exe" \
-            "${EXECnos:-}/nos_ofs_combine_hotstart" \
-            "${EXECstofs3d:-}/stofs_3d_atl_combine_hotstart"; do
-            if [ -x "$_cand" ]; then COMBINE_EXE="$_cand"; break; fi
-        done
+        _schism_run_combine_hotstart "$nsteps" "$phase"
 
-        if [ -n "$COMBINE_EXE" ]; then
-            echo "  Using combine executable: $COMBINE_EXE"
-            # combine_hotstart7 links against /apps/prod/hpc-stack/intel-*/netcdf/4.7.4
-            for _lib in \
-                /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
-                /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
-                /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
-                /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
-                [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
-            done
-            $COMBINE_EXE -i $nsteps
-            local combine_err=$?
-            if [ $combine_err -eq 0 ] && [ -s "hotstart_it=${nsteps}.nc" ]; then
-                echo "  Hotstart combined successfully: hotstart_it=${nsteps}.nc"
-                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
-                local _combined="hotstart_it=${nsteps}.nc"
-
-                # Archive rst.${phase}.nc in combine_hotstart7's native HDF5
-                # (NF90_NETCDF4) format -- DO NOT convert here.
-                #
-                # SCHISM-UFS at 2,914-rank scale has an inverted per-file
-                # format rule (verified V19 jobid 262555114, 2026-05-11):
-                #
-                #   - rst.nowcast.nc consumed by FORECAST init: MUST stay HDF5.
-                #     Converting to NETCDF4_CLASSIC here crashes the forecast
-                #     at partition_hgrid:534 with SIGABRT + "double free or
-                #     corruption" inside libpnetcdf.
-                #
-                #   - init.nowcast.nc consumed by NOWCAST init: MUST be
-                #     NETCDF4_CLASSIC.  That conversion is done in nos-utils
-                #     HotstartProcessor.stage_init_to_comout when prep stages
-                #     the previous cycle's rst.${phase}.nc into THIS cycle's
-                #     ${COMOUT}/${prefix}.t{cyc}z.{pdy}.init.nowcast.nc.
-                #
-                # So the chain is:
-                #   combine_hotstart7 -> rst.${phase}.nc (HDF5, this archive)
-                #     -> next cycle prep nccopy -> init.nowcast.nc (CLASSIC)
-                #     -> nowcast hotstart.nc (CLASSIC).
-                # Forecast reads rst.nowcast.nc directly (HDF5).
-
-                cp -p "$_combined" "${COMOUT}/${_rst_name}"
-                echo "  Archived to ${COMOUT}/${_rst_name} (NETCDF4/HDF5 — native combine output, do not convert)"
-            else
-                echo "WARNING: combine_hotstart7 failed (rc=$combine_err) or output missing"
-            fi
-        else
-            echo "WARNING: schism_combine_hotstart7.exe not found"
-            local combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
-            if [ -n "$combined" ] && [ -s "$combined" ]; then
-                local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
-                cp -p "$combined" "${COMOUT}/${_rst_name}"
-                echo "  Found pre-combined hotstart: $combined, archived as ${_rst_name}"
-            fi
-        fi
         cd ${DATA}
     fi
 

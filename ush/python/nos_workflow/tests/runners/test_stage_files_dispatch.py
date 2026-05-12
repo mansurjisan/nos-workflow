@@ -226,15 +226,16 @@ def test_global_runner_flag_also_dispatches_stage_files_to_python(
     fake_from_env = MagicMock(return_value=MagicMock())
 
     # When the global flag is on, ALL four steps route to Python.
-    # archive_outputs and prepare_restart have their own Python paths
-    # (PR 2/3), so we mock those too to keep this test focused on
-    # stage_model_files dispatch.
+    # archive_outputs / prepare_restart / execute_model have their own
+    # Python paths (PR 2 / PR 3 / PR 8), so we mock those too to keep
+    # this test focused on stage_model_files dispatch.
     fake_archive_python = MagicMock(return_value=0)
     fake_prepare_python = MagicMock(return_value=0)
+    fake_execute_python = MagicMock(return_value=0)
 
     def fake_run_shell_function(*, script, function, args, env, cwd):
-        # execute_model still falls through (PR 8 territory). With the
-        # global flag on, the WARNING fallback path is taken.
+        # With the global flag on, no step should fall through to shell.
+        # This handler exists only as a safety net.
         return 0
 
     with patch.dict(os.environ, env, clear=False):
@@ -253,6 +254,9 @@ def test_global_runner_flag_also_dispatches_stage_files_to_python(
         ), patch(
             "nos_workflow.runners.schism_ufs.prepare_restart.run_python",
             fake_prepare_python,
+        ), patch(
+            "nos_workflow.runners.schism_ufs.execute.run_python",
+            fake_execute_python,
         ), patch.object(
             nowcast_stage,
             "run_shell_function",
