@@ -457,13 +457,30 @@ def stage_bctides_in(ctx: SchismRunContext, phase: str) -> int:
         1 if a bctides.in was staged from either $COMOUT or $FIXofs;
         0 if neither source was present.
     """
-    bctides_base = (
-        os.environ.get("BCTIDES_IN")
-        or (f"{ctx.prefixnos}.bctides.in" if ctx.prefixnos else "bctides.in")
-    )
+    # Resolve the per-phase basename, preferring the cycle-stamped value
+    # that compute_paths already built into the typed ctx field (i.e.,
+    # secofs_ufs.tHHz.YYYYMMDD.bctides.in).  Falling through to the bare
+    # ${PREFIXNOS}.bctides.in form drops the cycle stamp and never matches
+    # what the prep stage actually wrote to $COMOUT.
+    #
+    # nos_run.sh:610-615 exports BCTIDES_IN inside _schism_setup_paths,
+    # so a shell-direct call gets the cycle-stamped name via $BCTIDES_IN.
+    # When the Python runner dispatches stage_files.run_python without
+    # sourcing nos_run.sh, BCTIDES_IN is NOT in os.environ -- which is
+    # why we have to read from ctx first.
     if phase == "nowcast":
+        bctides_base = (
+            ctx.bctides_in_nowcast
+            or os.environ.get("BCTIDES_IN")
+            or (f"{ctx.prefixnos}.bctides.in" if ctx.prefixnos else "bctides.in")
+        )
         bctides_file = f"{bctides_base}.nowcast"
     elif phase == "forecast":
+        bctides_base = (
+            ctx.bctides_in_forecast
+            or os.environ.get("BCTIDES_IN")
+            or (f"{ctx.prefixnos}.bctides.in" if ctx.prefixnos else "bctides.in")
+        )
         bctides_file = f"{bctides_base}.forecast"
     else:
         logger.warning(

@@ -60,6 +60,8 @@ def _make_ctx(
     ini_file_forecast: Optional[str] = None,
     rst_out_nowcast: Optional[str] = None,
     ini_file: Optional[str] = None,
+    bctides_in_nowcast: Optional[str] = None,
+    bctides_in_forecast: Optional[str] = None,
 ) -> SchismRunContext:
     """Construct a :class:`SchismRunContext` with $COMOUT / $DATA /
     $FIXofs / $EXECnos all rooted under ``tmp_path``. Caller decides
@@ -77,6 +79,8 @@ def _make_ctx(
         ini_file_nowcast=ini_file_nowcast,
         ini_file_forecast=ini_file_forecast,
         rst_out_nowcast=rst_out_nowcast,
+        bctides_in_nowcast=bctides_in_nowcast,
+        bctides_in_forecast=bctides_in_forecast,
         ini_file=ini_file,
     )
 
@@ -675,10 +679,56 @@ def test_stage_bctides_in_no_sources_returns_zero(tmp_path):
     assert not (ctx.data / "bctides.in").is_file()
 
 
+def test_stage_bctides_in_prefers_ctx_cycle_stamped_basename(tmp_path):
+    """Regression: reader must prefer ``ctx.bctides_in_nowcast`` (which
+    compute_paths populates with the cycle-stamped filename
+    ``secofs_ufs.tHHz.YYYYMMDD.bctides.in``) over the bare
+    ``${PREFIXNOS}.bctides.in`` fallback.
+
+    The prep stage writes the cycle-stamped name to $COMOUT.  Falling
+    through to the bare-name basename would never match what's on disk
+    and would silently downgrade every cycle to the FIXofs static file.
+    """
+    ctx = _make_ctx(
+        tmp_path,
+        bctides_in_nowcast="nos.secofs_ufs.t00z.20260511.bctides.in",
+    )
+    # Prep wrote the cycle-stamped file.
+    (ctx.comout / "nos.secofs_ufs.t00z.20260511.bctides.in.nowcast").write_text(
+        "prep-cycle-stamped\n"
+    )
+    # Bare-name version is intentionally NOT present -- this is the bug
+    # condition where prep only writes cycle-stamped files.
+
+    n = stage_bctides_in(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "prep-cycle-stamped\n"
+
+
+def test_stage_bctides_in_forecast_prefers_ctx_cycle_stamped_basename(tmp_path):
+    """Same regression as nowcast but for the forecast phase."""
+    ctx = _make_ctx(
+        tmp_path,
+        phase="forecast",
+        bctides_in_forecast="nos.secofs_ufs.t00z.20260511.bctides.in",
+    )
+    (ctx.comout / "nos.secofs_ufs.t00z.20260511.bctides.in.forecast").write_text(
+        "forecast-stamped\n"
+    )
+
+    n = stage_bctides_in(ctx, "forecast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "forecast-stamped\n"
+
+
 def test_stage_bctides_in_honors_BCTIDES_IN_env(tmp_path, monkeypatch):
     """``$BCTIDES_IN`` env override is the basename (without phase
-    suffix) -- shell line 612 / 614 inserts the phase suffix."""
-    ctx = _make_ctx(tmp_path)
+    suffix) -- shell line 612 / 614 inserts the phase suffix.  Only
+    consulted when ctx.bctides_in_{phase} is None (legacy shell-direct
+    callers)."""
+    ctx = _make_ctx(tmp_path)  # ctx.bctides_in_nowcast intentionally None
     monkeypatch.setenv("BCTIDES_IN", "custom.bctides.in")
     (ctx.comout / "custom.bctides.in.nowcast").write_text("custom\n")
 
