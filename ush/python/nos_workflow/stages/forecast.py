@@ -241,10 +241,20 @@ def _run_step(
     ``cwd=data`` mirrors the legacy ``cd $DATA`` before each helper.
     """
     if _runner_flags.is_python_enabled(step):
+        if step == "archive_outputs":
+            from ..runners.schism_ufs.archive import run_python as _archive_python
+            from ..runners.schism_ufs.context import SchismRunContext
+            ctx = SchismRunContext(
+                comout=Path(shell_env["COMOUT"]),
+                data=data,
+                phase="forecast",
+                run=shell_env["RUN"],
+                cycle=shell_env["cycle"],
+            )
+            return _archive_python(ctx, "forecast")
         logger.warning(
             "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
-            "implementation has landed yet; falling back to shell. "
-            "This is expected during PR 1 (scaffolding).",
+            "implementation has landed yet; falling back to shell.",
             step,
         )
 
