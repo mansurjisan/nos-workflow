@@ -52,6 +52,7 @@ from .._log import emit_stage_summary, stage_logger, timed_step
 from ..bash_compat import postmsg, run_shell_function
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
+from ..runners.schism_ufs import _flags as _runner_flags
 
 if TYPE_CHECKING:
     # Forward-reference NCOEnv so the stage module doesn't import the
@@ -204,16 +205,26 @@ def _run_step(
     data: Path,
     shell_env: "os._Environ",
 ) -> int:
-    """Invoke one step of the 4-step contract via ``bash_compat``.
+    """Invoke one step of the 4-step contract.
 
-    We pass the full parent env explicitly (``env=os.environ.copy()``)
-    so the shell sees every NCO + module-loader var the J-job set up.
-    ``run_shell_function`` raises ``StageFailedError`` only if the
-    script itself is missing; non-zero rc from the function body
-    propagates back here as an int we handle in the caller.
+    When ``_runner_flags.is_python_enabled(step)`` returns True, the
+    Python implementation handles ``step``; otherwise we shell out to
+    ``nos_run.sh`` via ``bash_compat.run_shell_function``. PR 1 ships
+    only the dispatcher scaffolding — no Python helpers exist yet — so
+    any truthy flag logs a WARNING and falls through to shell with the
+    original behavior intact. Subsequent PRs (#2 onwards) replace the
+    WARNING with real Python dispatch one helper at a time.
 
     ``cwd=data`` mirrors the legacy ``cd $DATA`` before each helper.
     """
+    if _runner_flags.is_python_enabled(step):
+        logger.warning(
+            "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
+            "implementation has landed yet; falling back to shell. "
+            "This is expected during PR 1 (scaffolding).",
+            step,
+        )
+
     child_env = dict(shell_env)
     return run_shell_function(
         script=nos_run,
