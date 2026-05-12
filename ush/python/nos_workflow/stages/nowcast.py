@@ -218,17 +218,16 @@ def _run_step(
     ``cwd=data`` mirrors the legacy ``cd $DATA`` before each helper.
     """
     if _runner_flags.is_python_enabled(step):
-        if step == "archive_outputs":
-            from ..runners.schism_ufs.archive import run_python as _archive_python
-            from ..runners.schism_ufs.context import SchismRunContext
-            ctx = SchismRunContext(
-                comout=Path(shell_env["COMOUT"]),
-                data=data,
-                phase="nowcast",
-                run=shell_env["RUN"],
-                cycle=shell_env["cycle"],
-            )
-            return _archive_python(ctx, "nowcast")
+        if step in ("archive_outputs", "prepare_restart"):
+            ctx = _build_schism_context(shell_env, data, "nowcast")
+            if step == "archive_outputs":
+                from ..runners.schism_ufs.archive import run_python as _archive_python
+                return _archive_python(ctx, "nowcast")
+            if step == "prepare_restart":
+                from ..runners.schism_ufs.prepare_restart import (
+                    run_python as _prepare_python,
+                )
+                return _prepare_python(ctx, "nowcast")
         logger.warning(
             "NOS_WORKFLOW_PYTHON_* flag set for step=%r but no Python "
             "implementation has landed yet; falling back to shell.",
@@ -248,6 +247,21 @@ def _run_step(
 # ---------------------------------------------------------------------------
 # Helpers (kept local so the nowcast stage stays self-contained).
 # ---------------------------------------------------------------------------
+
+
+def _build_schism_context(
+    shell_env: "os._Environ",
+    data: Path,
+    phase: str,
+):
+    """Build a ``SchismRunContext`` for the given phase.
+
+    Wraps ``SchismRunContext.from_env_and_phase`` so the dispatcher can
+    keep its import local (the runner package is heavy-import-aware —
+    pulling it in at module load would pin the schism_ufs imports
+    even on shell-path runs)."""
+    from ..runners.schism_ufs.context import SchismRunContext
+    return SchismRunContext.from_env_and_phase(dict(shell_env), phase=phase)
 
 
 def _require_env(env: "os._Environ", key: str) -> str:
