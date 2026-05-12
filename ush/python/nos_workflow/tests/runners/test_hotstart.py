@@ -167,19 +167,36 @@ def test_find_hotstart_no_restart_in_window_returns_cold_start(
     assert result.ini_file == env.fixofs / "nos.secofs_ufs.init.nc"
 
 
-def test_find_hotstart_cold_start_base_date_is_48h_before_anchor(
+def test_find_hotstart_cold_start_base_date_is_cycle_minus_nowcast(
         tmp_path, monkeypatch):
-    """Cold-start fallback anchors BASE_DATE 48 hours before
-    time_nowcastend (matches the shell's stale-restart branch on
-    lines 333-334 of nos_run.sh)."""
+    """Cold-start fallback anchors BASE_DATE to cycle - LEN_NOWCAST so the
+    Python port agrees with the nos-utils prep orchestrator (which writes
+    cycle - nowcast_hours to $COMOUT/time_hotstart.${cycle}).
+
+    Note: this replaces the older cycle - 48h anchor that was inherited
+    from nos_run.sh:334 but was effectively dead code (the shell err_exits
+    on cold start at line 325 before reaching that branch)."""
     env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
 
-    result = find_hotstart(env, phase="nowcast")
+    # Default LEN_NOWCAST is 6 -> cycle 20260512 00z - 6h = 20260511 18z
+    result = find_hotstart(env, phase="nowcast", len_nowcast=6)
 
-    # 48h before 2026-05-12 00z is 2026-05-10 00z
-    assert result.base_date == "2026051000"
-    assert result.time_hotstart == "2026051000"
-    assert result.tide_start == "2026051000"
+    assert result.base_date == "2026051118"
+    assert result.time_hotstart == "2026051118"
+    assert result.tide_start == "2026051118"
+
+
+def test_find_hotstart_cold_start_honors_custom_len_nowcast(
+        tmp_path, monkeypatch):
+    """LEN_NOWCAST=12 -> base_date = cycle - 12h (regression check that the
+    cold-start anchor uses the passed-in len_nowcast, not a hardcoded 6)."""
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+
+    result = find_hotstart(env, phase="nowcast", len_nowcast=12)
+
+    # 12h before 20260512 00z is 20260511 12z
+    assert result.base_date == "2026051112"
+    assert result.time_hotstart == "2026051112"
 
 
 # ---------------------------------------------------------------------------
