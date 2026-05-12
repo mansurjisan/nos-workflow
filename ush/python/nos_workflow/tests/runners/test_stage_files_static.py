@@ -25,14 +25,21 @@ import pytest
 
 from nos_workflow.runners.schism_ufs.context import SchismRunContext
 from nos_workflow.runners.schism_ufs.stage_files import (
+    _NWM_FALLBACK_FILES,
+    _RIVER_RENAMES,
     _SCHISM_PARTITION_FILES,
     _SCHISM_PROPERTY_FILES,
     _UFS_AUX_FILES,
     _UFS_CONFIG_FILES,
+    copy_hgrid_to_outputs,
+    fallback_nwm_files_from_fixofs,
+    rename_river_th_files,
+    stage_bctides_in,
     stage_forecast_restart_outputs,
     stage_hotstart,
     stage_partition_props,
     stage_schism_bare_names,
+    stage_sflux_inputs_txt,
     stage_ufs_configs,
 )
 
@@ -609,3 +616,200 @@ def test_stage_forecast_restart_outputs_missing_src_logs_warning(
         "restart_outputs" in rec.getMessage()
         for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# stage_bctides_in
+# ---------------------------------------------------------------------------
+
+
+def test_stage_bctides_in_nowcast_prefers_comout(tmp_path):
+    """When ``$COMOUT/${PREFIXNOS}.bctides.in.nowcast`` exists, prefer it
+    over the FIXofs fallback."""
+    ctx = _make_ctx(tmp_path)
+    (ctx.comout / "nos.secofs_ufs.bctides.in.nowcast").write_text("prep-generated\n")
+    (ctx.fixofs / "nos.secofs_ufs.bctides.in").write_text("fix fallback\n")
+
+    n = stage_bctides_in(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "prep-generated\n"
+
+
+def test_stage_bctides_in_forecast_uses_forecast_suffix(tmp_path):
+    """Phase=forecast reads from ``.forecast`` suffix."""
+    ctx = _make_ctx(tmp_path, phase="forecast")
+    (ctx.comout / "nos.secofs_ufs.bctides.in.forecast").write_text("forecast tides\n")
+
+    n = stage_bctides_in(ctx, "forecast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "forecast tides\n"
+
+
+def test_stage_bctides_in_falls_back_to_fixofs(tmp_path, caplog):
+    """When $COMOUT bctides.in is absent, fall back to $FIXofs and log a
+    WARNING (matches shell line 621)."""
+    import logging
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / "nos.secofs_ufs.bctides.in").write_text("fix fallback\n")
+    caplog.set_level(
+        logging.WARNING,
+        logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+
+    n = stage_bctides_in(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "fix fallback\n"
+    assert any("FIXofs bctides.in" in rec.getMessage() for rec in caplog.records)
+
+
+def test_stage_bctides_in_no_sources_returns_zero(tmp_path):
+    """Neither $COMOUT nor $FIXofs source present -> rc 0, no file staged."""
+    ctx = _make_ctx(tmp_path)
+
+    n = stage_bctides_in(ctx, "nowcast")
+
+    assert n == 0
+    assert not (ctx.data / "bctides.in").is_file()
+
+
+def test_stage_bctides_in_honors_BCTIDES_IN_env(tmp_path, monkeypatch):
+    """``$BCTIDES_IN`` env override is the basename (without phase
+    suffix) -- shell line 612 / 614 inserts the phase suffix."""
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("BCTIDES_IN", "custom.bctides.in")
+    (ctx.comout / "custom.bctides.in.nowcast").write_text("custom\n")
+
+    n = stage_bctides_in(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "bctides.in").read_text() == "custom\n"
+
+
+# ---------------------------------------------------------------------------
+# fallback_nwm_files_from_fixofs
+# ---------------------------------------------------------------------------
+
+
+def test_nwm_fallback_stages_only_missing(tmp_path):
+    """FIXofs fallback runs only for NWM files NOT already produced by
+    the tar extraction."""
+    ctx = _make_ctx(tmp_path)
+    # Simulate vsource.th already staged by tar extraction.
+    (ctx.data / "vsource.th").write_text("from tar\n")
+    # FIXofs has fallback for everything; only the missing ones should copy.
+    for fname in _NWM_FALLBACK_FILES:
+        (ctx.fixofs / f"nos.secofs_ufs.{fname}").write_text(f"fix {fname}\n")
+
+    n = fallback_nwm_files_from_fixofs(ctx, "nowcast")
+
+    # 3 staged (source_sink.in, vsink.th, msource.th); vsource.th preserved
+    assert n == 3
+    assert (ctx.data / "vsource.th").read_text() == "from tar\n"
+    assert (ctx.data / "source_sink.in").read_text() == "fix source_sink.in\n"
+    assert (ctx.data / "vsink.th").read_text() == "fix vsink.th\n"
+    assert (ctx.data / "msource.th").read_text() == "fix msource.th\n"
+
+
+def test_nwm_fallback_no_prefix_is_noop(tmp_path):
+    """Without PREFIXNOS, fallback can't construct source paths."""
+    ctx = _make_ctx(tmp_path, prefixnos="")
+
+    n = fallback_nwm_files_from_fixofs(ctx, "nowcast")
+
+    assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# rename_river_th_files
+# ---------------------------------------------------------------------------
+
+
+def test_rename_river_th_files_canonicalizes(tmp_path):
+    """``schism_*.th`` -> SCHISM canonical names (TEM_1.th / flux.th /
+    salt.th)."""
+    ctx = _make_ctx(tmp_path)
+    for src_name, _ in _RIVER_RENAMES:
+        (ctx.data / src_name).write_text(f"content of {src_name}\n")
+
+    n = rename_river_th_files(ctx, "nowcast")
+
+    assert n == 3
+    assert (ctx.data / "TEM_1.th").read_text() == "content of schism_temp.th\n"
+    assert (ctx.data / "flux.th").read_text() == "content of schism_flux.th\n"
+    assert (ctx.data / "salt.th").read_text() == "content of schism_salt.th\n"
+
+
+def test_rename_river_th_files_silently_skips_missing(tmp_path):
+    """No schism_*.th sources -> rc 0, no destination created."""
+    ctx = _make_ctx(tmp_path)
+
+    n = rename_river_th_files(ctx, "nowcast")
+
+    assert n == 0
+    assert not (ctx.data / "TEM_1.th").exists()
+
+
+def test_rename_river_th_files_partial(tmp_path):
+    """Only some sources present -> only those get renamed."""
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "schism_flux.th").write_text("flux data\n")
+
+    n = rename_river_th_files(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "flux.th").read_text() == "flux data\n"
+    assert not (ctx.data / "TEM_1.th").exists()
+    assert not (ctx.data / "salt.th").exists()
+
+
+# ---------------------------------------------------------------------------
+# stage_sflux_inputs_txt
+# ---------------------------------------------------------------------------
+
+
+def test_stage_sflux_inputs_txt_stages_when_present(tmp_path):
+    """``$FIXofs/$PREFIXNOS.sflux_inputs.txt`` -> ``$DATA/sflux/sflux_inputs.txt``."""
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / "nos.secofs_ufs.sflux_inputs.txt").write_text("sflux config\n")
+
+    n = stage_sflux_inputs_txt(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "sflux" / "sflux_inputs.txt").read_text() == "sflux config\n"
+
+
+def test_stage_sflux_inputs_txt_absent_returns_zero(tmp_path):
+    """Missing source returns 0 without creating the sflux subdir."""
+    ctx = _make_ctx(tmp_path)
+
+    n = stage_sflux_inputs_txt(ctx, "nowcast")
+
+    assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# copy_hgrid_to_outputs
+# ---------------------------------------------------------------------------
+
+
+def test_copy_hgrid_to_outputs_copies_when_present(tmp_path):
+    """``$DATA/hgrid.gr3`` -> ``$DATA/outputs/hgrid.gr3``."""
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "hgrid.gr3").write_text("hgrid content\n")
+
+    n = copy_hgrid_to_outputs(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "outputs" / "hgrid.gr3").read_text() == "hgrid content\n"
+
+
+def test_copy_hgrid_to_outputs_skips_when_absent(tmp_path):
+    """No ``$DATA/hgrid.gr3`` -> rc 0, no destination created."""
+    ctx = _make_ctx(tmp_path)
+
+    n = copy_hgrid_to_outputs(ctx, "nowcast")
+
+    assert n == 0

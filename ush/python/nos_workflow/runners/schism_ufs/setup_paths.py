@@ -207,6 +207,104 @@ def _compute_filenames(prefix: str, cycle: str, pdy1: str) -> dict:
     }
 
 
+def _read_comout_time_file(comout: Path, basename: str, cycle: str) -> Optional[str]:
+    """Read a single-line text file ``$COMOUT/<basename>.<cycle>``.
+
+    Mirrors the ``read time_hotstart < "$COMOUT/time_hotstart.${cycle}"``
+    pattern at lines 418-440 of ``nos_run.sh``.  Returns the stripped
+    file contents (the YYYYMMDDHH timestamp), or ``None`` if the file
+    is absent / empty / unreadable.
+    """
+    path = comout / f"{basename}.{cycle}"
+    if not path.is_file():
+        return None
+    try:
+        text = path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def _read_comout_time_anchors(
+    comout: Path,
+    cycle: str,
+    len_nowcast: int,
+    len_forecast: int,
+    delt_model: float,
+    pdy: str,
+    cyc: str,
+) -> Optional[dict]:
+    """Read time anchors from prep-written ``$COMOUT/time_*.${cycle}`` files.
+
+    Mirrors lines 418-440 of ``nos_run.sh``::
+
+        read time_hotstart   < "$COMOUT/time_hotstart.${cycle}"
+        read time_nowcastend < "$COMOUT/time_nowcastend.${cycle}"
+        read time_forecastend < "$COMOUT/time_forecastend.${cycle}"
+        read BASE_DATE       < "$COMOUT/base_date.${cycle}"
+
+    The shell treats ``time_hotstart.${cycle}`` as REQUIRED (FATAL if
+    missing).  The other three files are optional in shell; if absent
+    we derive from time_hotstart + cycle math (the same fallbacks the
+    shell would compute downstream).
+
+    Returns a dict in the same shape as :func:`_compute_time_anchors`,
+    or ``None`` if ``time_hotstart.${cycle}`` is absent (caller falls
+    back to formula-based computation).
+    """
+    time_hotstart = _read_comout_time_file(comout, "time_hotstart", cycle)
+    if not time_hotstart:
+        return None
+
+    # time_nowcastend.${cycle}: optional in shell (lines 429-432), fall
+    # back to PDY||cyc (the cycle time, which is what time_nowcastend
+    # normally equals anyway).
+    time_nowcastend = (
+        _read_comout_time_file(comout, "time_nowcastend", cycle)
+        or f"{pdy}{cyc}"
+    )
+
+    # time_forecastend.${cycle}: optional (lines 433-436), fall back to
+    # time_nowcastend + LEN_FORECAST hours.
+    time_forecastend = (
+        _read_comout_time_file(comout, "time_forecastend", cycle)
+        or _dateutils.ndate(len_forecast, time_nowcastend)
+    )
+
+    # base_date.${cycle}: optional (lines 437-440), defaults to
+    # time_hotstart (which is how _schism_find_hotstart sets it at
+    # nos_run.sh:347).
+    base_date = (
+        _read_comout_time_file(comout, "base_date", cycle)
+        or time_hotstart
+    )
+
+    nstep_nowcast = int(len_nowcast * 3600 / delt_model) if delt_model > 0 else 0
+    nstep_forecast = int(len_forecast * 3600 / delt_model) if delt_model > 0 else 0
+
+    # NH_NOWCAST = time_nowcastend - time_hotstart (in hours).  Shell uses
+    # ``$NHOUR $time_nowcastend $time_hotstart`` at nos_run.sh:361.  When
+    # the prep wrote a non-standard time_hotstart (e.g. a warm-start
+    # restart was found mid-window), this can differ from len_nowcast.
+    nh_nowcast = _dateutils.nhour(time_nowcastend, time_hotstart)
+    dstart_nowcast = "0.0"
+    dstart_forecast = f"{nh_nowcast / 24.0:.4f}"
+
+    return {
+        "BASE_DATE":        base_date,
+        "time_hotstart":    time_hotstart,
+        "time_nowcastend":  time_nowcastend,
+        "time_forecastend": time_forecastend,
+        "NSTEP_NOWCAST":    str(nstep_nowcast),
+        "NSTEP_FORECAST":   str(nstep_forecast),
+        "NTIMES_NOWCAST":   str(nstep_nowcast),
+        "NTIMES_FORECAST":  str(nstep_forecast),
+        "DSTART_NOWCAST":   dstart_nowcast,
+        "DSTART_FORECAST":  dstart_forecast,
+        "COLD_START":       "F",
+    }
+
+
 def _compute_time_anchors(
     pdy: str,
     cyc: str,
@@ -214,7 +312,8 @@ def _compute_time_anchors(
     len_forecast: int,
     delt_model: float,
 ) -> dict:
-    """Compute time anchors + step counts.
+    """Compute time anchors + step counts (fallback when $COMOUT files
+    are absent).
 
     The shell does most of this inside :func:`_schism_find_hotstart`
     (lines 330-367), but the non-prep code path only needs the basic
@@ -227,8 +326,9 @@ def _compute_time_anchors(
     - ``NSTEP_NOWCAST``: LEN_NOWCAST * 3600 / DELT_MODEL
     - ``NSTEP_FORECAST``: LEN_FORECAST * 3600 / DELT_MODEL
 
-    PR 6 will replace the cold-start ``BASE_DATE`` here with the
-    ``_schism_find_hotstart`` walk-back result.
+    For warm-start cycles (where prep wrote a different time_hotstart
+    via :func:`hotstart.find_hotstart`), use :func:`_read_comout_time_anchors`
+    instead to honor the prep-written value.
     """
     time_nowcastend = f"{pdy}{cyc}"
     time_hotstart = _dateutils.ndate(-len_nowcast, time_nowcastend)
@@ -348,12 +448,37 @@ def compute_paths(
         rst_file_for_ctx = str(result.rst_file) if result.rst_file is not None else None
         ini_file_for_ctx = str(result.ini_file) if result.ini_file is not None else None
     else:
-        times = _compute_time_anchors(
-            pdy=pdy, cyc=cyc,
+        # Prefer prep-written $COMOUT files (matches shell nos_run.sh
+        # lines 418-440: nowcast/forecast stages read what prep wrote
+        # rather than recomputing).  This matters for warm-start cycles
+        # where prep's `_schism_find_hotstart` discovered a restart at
+        # an unconventional offset -- formula-based recomputation would
+        # silently overwrite that with cycle-LEN_NOWCAST and produce a
+        # param.nml whose start_day/start_hour mismatches the staged
+        # hotstart.nc.  Fall back to the formula only when $COMOUT files
+        # are absent (e.g. unit tests, dev-machine smoke runs).
+        times = _read_comout_time_anchors(
+            comout=env.comout,
+            cycle=cycle,
             len_nowcast=len_nowcast,
             len_forecast=len_forecast,
             delt_model=delt_model_float,
+            pdy=pdy,
+            cyc=cyc,
         )
+        if times is None:
+            logger.warning(
+                "setup_paths: $COMOUT/time_hotstart.%s not found; "
+                "falling back to formula-based time anchors "
+                "(shell would FATAL here -- only OK for dev/test).",
+                cycle,
+            )
+            times = _compute_time_anchors(
+                pdy=pdy, cyc=cyc,
+                len_nowcast=len_nowcast,
+                len_forecast=len_forecast,
+                delt_model=delt_model_float,
+            )
         base_date = times["BASE_DATE"]
         time_hotstart = times["time_hotstart"]
         time_nowcastend = times["time_nowcastend"]
@@ -442,4 +567,9 @@ def to_shell_filenames(
     return _compute_filenames(prefix, cycle, pdy1)
 
 
-__all__ = ["compute_paths", "to_shell_filenames"]
+__all__ = [
+    "compute_paths",
+    "to_shell_filenames",
+    "_read_comout_time_anchors",
+    "_read_comout_time_file",
+]

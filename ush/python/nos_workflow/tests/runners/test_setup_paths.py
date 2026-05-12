@@ -463,6 +463,83 @@ def test_compute_paths_prep_mode_finds_existing_restart(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# $COMOUT time-file recovery (shell lines 418-440 parity)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_reads_time_hotstart_from_comout(tmp_path, monkeypatch):
+    """For non-prep runtypes, ``$COMOUT/time_hotstart.${cycle}`` overrides
+    the formula-based computation -- matches shell nos_run.sh:418-421
+    where nowcast/forecast stages read the file prep wrote.
+
+    Concretely: if prep wrote ``2026051118`` (warm-start, 6h back from
+    a 2026-05-12 00z cycle) into $COMOUT/time_hotstart.${cycle}, Python
+    must return that exact value -- NOT cycle-LEN_NOWCAST.
+    """
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    cycle = env.cycle
+    (env.comout / f"time_hotstart.{cycle}").write_text("2026051118\n")
+    (env.comout / f"time_nowcastend.{cycle}").write_text("2026051200\n")
+    (env.comout / f"time_forecastend.{cycle}").write_text("2026051400\n")
+    (env.comout / f"base_date.{cycle}").write_text("2026051118\n")
+
+    ctx = compute_paths(env, phase="nowcast", runtype="nowcast")
+
+    assert ctx.time_hotstart == "2026051118"
+    assert ctx.time_nowcastend == "2026051200"
+    assert ctx.time_forecastend == "2026051400"
+    assert ctx.base_date == "2026051118"
+
+
+def test_compute_paths_reads_unconventional_time_hotstart_from_comout(
+    tmp_path, monkeypatch,
+):
+    """If prep wrote a time_hotstart that is NOT cycle-LEN_NOWCAST
+    (e.g., the cycle time itself, or a 12-hour-old restart anchor),
+    compute_paths must honor that value rather than silently
+    recomputing it.
+
+    This is the bug the Cycle-A-vs-Cycle-B parity drill exposed:
+    formula-based recomputation drove start_day/start_hour mismatches
+    between shell and Python on warm-start cycles.
+    """
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    # Intentionally non-standard: prep wrote the cycle time itself
+    # as time_hotstart (e.g., zero-hour nowcast scenario).
+    (env.comout / f"time_hotstart.{env.cycle}").write_text("2026051200\n")
+
+    ctx = compute_paths(env, phase="nowcast", runtype="nowcast")
+
+    assert ctx.time_hotstart == "2026051200"
+    # The cycle time fallback for time_nowcastend (no file present).
+    assert ctx.time_nowcastend == "2026051200"
+
+
+def test_compute_paths_falls_back_to_formula_when_comout_missing(
+    tmp_path, monkeypatch, caplog,
+):
+    """When $COMOUT/time_hotstart.${cycle} is absent (e.g. dev-machine
+    smoke test, or prep skipped), compute_paths falls back to the
+    formula-based computation AND logs a WARNING flagging this as a
+    fatal-in-shell condition."""
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    # Do not seed $COMOUT/time_hotstart.${cycle}
+
+    with caplog.at_level(logging.WARNING):
+        ctx = compute_paths(env, phase="nowcast", runtype="nowcast")
+
+    # Formula = cycle - LEN_NOWCAST (default 6h) = 2026051200 - 6h = 2026051118
+    assert ctx.time_hotstart == "2026051118"
+    assert any(
+        "time_hotstart" in record.message for record in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schema invariants
 # ---------------------------------------------------------------------------
 

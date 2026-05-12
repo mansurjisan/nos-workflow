@@ -422,6 +422,251 @@ def stage_partition_props(ctx: SchismRunContext, phase: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# bctides.in: prep-generated tides with correct nodal factors
+# ---------------------------------------------------------------------------
+
+
+def stage_bctides_in(ctx: SchismRunContext, phase: str) -> int:
+    """Stage ``$DATA/bctides.in`` from the prep-generated $COMOUT artifact.
+
+    Mirrors lines 609-622 of nos_run.sh::
+
+        if [ "$phase" = "nowcast" ]; then
+            bctides_file="${BCTIDES_IN:-${PREFIXNOS}.bctides.in}.nowcast"
+        else
+            bctides_file="${BCTIDES_IN:-${PREFIXNOS}.bctides.in}.forecast"
+        fi
+        if [ -s "${COMOUT}/${bctides_file}" ]; then
+            cp -p ${COMOUT}/${bctides_file} ${DATA}/bctides.in
+        elif [ -s "${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in}" ]; then
+            cp -p ${FIXofs}/${HC_FILE_OBC:-${PREFIXNOS}.bctides.in} ${DATA}/bctides.in
+            echo "  WARNING: Using FIXofs bctides.in (prep-generated not found)"
+        fi
+
+    SCHISM aborts at ``read_bctides`` (early in mesh setup) if bctides.in
+    is absent on a tidal-boundary grid -- the absence can surface as a
+    partition_hgrid SIGSEGV when the tidal-boundary metadata feeds
+    downstream partitioning state.  Staging it here closes a parity gap
+    where the shell stages it and the Python path didn't.
+
+    Args:
+        ctx: runner context.
+        phase: ``"nowcast"`` or ``"forecast"``.
+
+    Returns:
+        1 if a bctides.in was staged from either $COMOUT or $FIXofs;
+        0 if neither source was present.
+    """
+    bctides_base = (
+        os.environ.get("BCTIDES_IN")
+        or (f"{ctx.prefixnos}.bctides.in" if ctx.prefixnos else "bctides.in")
+    )
+    if phase == "nowcast":
+        bctides_file = f"{bctides_base}.nowcast"
+    elif phase == "forecast":
+        bctides_file = f"{bctides_base}.forecast"
+    else:
+        logger.warning(
+            "stage_bctides_in: unknown phase=%r, skipping", phase,
+        )
+        return 0
+
+    dst = ctx.data / "bctides.in"
+    com_src = ctx.comout / bctides_file
+    if _copy_if_exists(com_src, dst, label=f"bctides.in from {bctides_file}"):
+        return 1
+
+    # Fall back to $FIXofs/$HC_FILE_OBC (or $PREFIXNOS.bctides.in).
+    hc_file_obc = (
+        os.environ.get("HC_FILE_OBC")
+        or (f"{ctx.prefixnos}.bctides.in" if ctx.prefixnos else None)
+    )
+    if hc_file_obc and ctx.fixofs is not None:
+        fix_src = ctx.fixofs / hc_file_obc
+        if _copy_if_exists(fix_src, dst):
+            logger.warning(
+                "  Using FIXofs bctides.in (prep-generated %s not found)",
+                bctides_file,
+            )
+            return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# NWM FIXofs fallback for source_sink.in / vsource.th / vsink.th / msource.th
+# ---------------------------------------------------------------------------
+
+_NWM_FALLBACK_FILES: tuple = ("source_sink.in", "vsource.th", "vsink.th", "msource.th")
+
+
+def fallback_nwm_files_from_fixofs(ctx: SchismRunContext, phase: str) -> int:
+    """Copy NWM source/sink fallback files from $FIXofs when the tar
+    extraction at :func:`forcing.untar_nwm_source_sink` left them absent.
+
+    Mirrors lines 685-701 of nos_run.sh::
+
+        if [ ! -s "${DATA}/source_sink.in" ]; then
+            ...
+            cp -p ${FIXofs}/${PREFIXNOS}.source_sink.in ${DATA}/source_sink.in
+        fi
+        for rivf in vsource.th vsink.th msource.th; do
+            if [ ! -s "${DATA}/${rivf}" ]; then
+                ...
+                cp -p ${FIXofs}/${PREFIXNOS}.${rivf} ${DATA}/${rivf}
+            fi
+        done
+
+    SCHISM aborts if ``if_source=1`` in param.nml and any of these
+    files are missing.  The NWM tar covers the typical case; FIXofs
+    fallback exists for cycles where NWM didn't produce a tar (e.g.,
+    cold start, retro runs).
+
+    Args:
+        ctx: runner context.
+        phase: present for API symmetry; unused (fallback set is
+            phase-agnostic).
+
+    Returns:
+        Number of files staged from $FIXofs (0..4).
+    """
+    del phase
+
+    if ctx.fixofs is None or not ctx.prefixnos:
+        return 0
+
+    staged = 0
+    for fname in _NWM_FALLBACK_FILES:
+        dst = ctx.data / fname
+        if dst.is_file() and dst.stat().st_size > 0:
+            continue  # tar extraction already produced this; respect it
+        src = ctx.fixofs / f"{ctx.prefixnos}.{fname}"
+        if _copy_if_exists(src, dst):
+            logger.info("  Fallback: staged %s from FIXofs", fname)
+            staged += 1
+        else:
+            logger.warning("WARNING: %s not found after NWM tar extraction "
+                           "and no FIXofs fallback", fname)
+    return staged
+
+
+# ---------------------------------------------------------------------------
+# SCHISM river forcing file renames (schism_*.th -> SCHISM canonical names)
+# ---------------------------------------------------------------------------
+
+# (source, dest) pairs.  Shell lines 725-728 of nos_run.sh.
+_RIVER_RENAMES: tuple = (
+    ("schism_temp.th", "TEM_1.th"),
+    ("schism_flux.th", "flux.th"),
+    ("schism_salt.th", "salt.th"),
+)
+
+
+def rename_river_th_files(ctx: SchismRunContext, phase: str) -> int:
+    """Rename ``schism_*.th`` river forcing files to SCHISM canonical names.
+
+    Mirrors lines 725-728 of nos_run.sh::
+
+        [ -s "${DATA}/schism_temp.th" ] && cp -p ${DATA}/schism_temp.th ${DATA}/TEM_1.th
+        [ -s "${DATA}/schism_flux.th" ] && cp -p ${DATA}/schism_flux.th ${DATA}/flux.th
+        [ -s "${DATA}/schism_salt.th" ] && cp -p ${DATA}/schism_salt.th ${DATA}/salt.th
+
+    The river forcing tar (extracted at :func:`forcing.untar_river_forcing`)
+    ships ``schism_*.th`` names; SCHISM expects them under ``TEM_1.th`` /
+    ``flux.th`` / ``salt.th`` based on bctides.in's river-segment refs.
+
+    Args:
+        ctx: runner context.
+        phase: present for API symmetry; unused.
+
+    Returns:
+        Number of files renamed (0..3).
+    """
+    del phase
+
+    renamed = 0
+    for src_name, dst_name in _RIVER_RENAMES:
+        src = ctx.data / src_name
+        if src.is_file() and src.stat().st_size > 0:
+            shutil.copy2(src, ctx.data / dst_name)
+            renamed += 1
+    return renamed
+
+
+# ---------------------------------------------------------------------------
+# sflux_inputs.txt: SCHISM probes for this even when DATM drives forcing
+# ---------------------------------------------------------------------------
+
+
+def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:
+    """Stage ``$DATA/sflux/sflux_inputs.txt`` from $FIXofs if present.
+
+    Mirrors lines 730-734 of nos_run.sh::
+
+        if [ -s "${FIXofs}/${PREFIXNOS}.sflux_inputs.txt" ]; then
+            mkdir -p ${DATA}/sflux
+            cp -p ${FIXofs}/${PREFIXNOS}.sflux_inputs.txt ${DATA}/sflux/sflux_inputs.txt
+        fi
+
+    DATM drives forcing for UFS-Coastal, so sflux_inputs.txt is not the
+    primary data path, but SCHISM may probe for the file's existence in
+    its sflux initialization.  Keeping this in parity with the shell.
+
+    Args:
+        ctx: runner context.
+        phase: present for API symmetry; unused.
+
+    Returns:
+        1 if staged, 0 otherwise.
+    """
+    del phase
+
+    if ctx.fixofs is None or not ctx.prefixnos:
+        return 0
+
+    src = ctx.fixofs / f"{ctx.prefixnos}.sflux_inputs.txt"
+    if not src.is_file() or src.stat().st_size == 0:
+        return 0
+
+    sflux_dir = _data_subdir(ctx, "sflux")
+    shutil.copy2(src, sflux_dir / "sflux_inputs.txt")
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# hgrid.gr3 -> outputs/ copy (SCHISM probes for hgrid in outputs/ as well)
+# ---------------------------------------------------------------------------
+
+
+def copy_hgrid_to_outputs(ctx: SchismRunContext, phase: str) -> int:
+    """Copy ``$DATA/hgrid.gr3`` to ``$DATA/outputs/hgrid.gr3``.
+
+    Mirrors line 738 of nos_run.sh::
+
+        mkdir -p ${DATA}/outputs
+        [ -s "${DATA}/hgrid.gr3" ] && cp -p ${DATA}/hgrid.gr3 ${DATA}/outputs/
+
+    Some SCHISM post-processing utilities (combine_output11, etc.) look
+    for hgrid.gr3 in outputs/ rather than the run root.  The shell stages
+    it unconditionally before mpiexec.
+
+    Args:
+        ctx: runner context.
+        phase: present for API symmetry; unused.
+
+    Returns:
+        1 if the copy was made, 0 otherwise.
+    """
+    del phase
+
+    outputs_dir = _data_subdir(ctx, "outputs")
+    src = ctx.data / "hgrid.gr3"
+    if not src.is_file() or src.stat().st_size == 0:
+        return 0
+    shutil.copy2(src, outputs_dir / "hgrid.gr3")
+    return 1
+
+
+# ---------------------------------------------------------------------------
 # Phase 8b: forecast-only previous-cycle restart_outputs staging
 # ---------------------------------------------------------------------------
 
@@ -585,15 +830,35 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     # Phase 8a: SCHISM partition / tvd / fluxflag.
     stage_partition_props(ctx, phase)
 
+    # bctides.in from prep ($COMOUT) -- shell lines 609-622.  Must be
+    # staged BEFORE the hotstart so SCHISM finds tides metadata on the
+    # same boundary segments referenced by the hotstart.
+    stage_bctides_in(ctx, phase)
+
     # Phase 3: hotstart.nc (FATAL if missing -- raises FileNotFoundError).
     stage_hotstart(ctx, phase)
 
-    # Phases 4-6: untar forcing tarballs.  Each returns ``-1`` on
-    # missing/empty source, which we surface as a non-fatal warning
-    # (matches the shell -- the FIXofs fallback covers NWM gaps).
+    # Phase 5 first (shell ordering): NWM source/sink tar (lines 670-683).
+    # The OBC + river tars at lines 703-723 run AFTER this; we mirror.
     forcing.untar_nwm_source_sink(ctx, phase)
+
+    # FIXofs fallback for any NWM payload the tar didn't supply --
+    # shell lines 685-701.  SCHISM aborts if if_source=1 and these are
+    # missing, so this guard is load-bearing for the typical config.
+    fallback_nwm_files_from_fixofs(ctx, phase)
+
+    # Phase 4 + 6: OBC + river tars (lines 703-723).
     forcing.untar_obc_forcing(ctx, phase)
     forcing.untar_river_forcing(ctx, phase)
+
+    # SCHISM canonical river-forcing names (shell lines 725-728).
+    rename_river_th_files(ctx, phase)
+
+    # sflux_inputs.txt probe target (shell lines 730-734).
+    stage_sflux_inputs_txt(ctx, phase)
+
+    # hgrid.gr3 -> outputs/ (shell line 738).
+    copy_hgrid_to_outputs(ctx, phase)
 
     # Phase 8b: forecast-only previous-cycle restart_outputs staging.
     stage_forecast_restart_outputs(ctx, phase)
@@ -619,5 +884,10 @@ __all__ = [
     "stage_hotstart",
     "stage_partition_props",
     "stage_forecast_restart_outputs",
+    "stage_bctides_in",
+    "fallback_nwm_files_from_fixofs",
+    "rename_river_th_files",
+    "stage_sflux_inputs_txt",
+    "copy_hgrid_to_outputs",
     "run_python",
 ]
