@@ -491,10 +491,109 @@ def stage_forecast_restart_outputs(ctx: SchismRunContext, phase: str) -> int:
     return staged
 
 
+# ---------------------------------------------------------------------------
+# Phase orchestrator (PR 7b -- composes phases 1-8 in shell order)
+# ---------------------------------------------------------------------------
+
+
+def run_python(ctx: SchismRunContext, phase: str) -> int:
+    """Compose all phases of ``_schism_stage_files`` in shell order.
+
+    Wires together:
+
+      - PR 7a's static-staging helpers (this module: phases 1, 2, 3, 8).
+      - PR 7b's forcing-tar extractors (:mod:`forcing`: phases 4, 5, 6).
+      - PR 7b's namelist patchers (:mod:`configure`: phase 7).
+      - PR 4's ESMF mesh regeneration (:mod:`mesh`) -- folded in at the
+        end because the param.nml + datm_in patches need to be in
+        place before the mesh is rebuilt from the actual forcing file.
+
+    The order matches the shell function in ``ush/nos_run.sh`` so a side-
+    by-side diff is straightforward to audit:
+
+      1. ``stage_ufs_configs``                  -- shell lines 452-490
+      2. ``configure.patch_param_nml``          -- shell lines 538-551
+         ``configure.patch_datm_in``            -- shell lines 555-565
+         ``configure.patch_model_configure``    -- shell lines 516-522
+         ``configure.patch_ufs_configure``      -- shell lines 523-528
+      3. ``stage_schism_bare_names``            -- shell lines 571-586
+      4. ``stage_partition_props``              -- shell lines 602-607
+      5. ``stage_hotstart``                     -- shell lines 628-657
+      6. ``forcing.untar_nwm_source_sink``      -- shell lines 670-683
+      7. ``forcing.untar_obc_forcing``          -- shell lines 703-712
+      8. ``forcing.untar_river_forcing``        -- shell lines 715-723
+      9. ``stage_forecast_restart_outputs``     -- shell lines 744-764
+     10. ESMF mesh regen                         -- shell mesh.py call
+
+    Args:
+        ctx: runner context.
+        phase: ``"nowcast"`` or ``"forecast"``.
+
+    Returns:
+        0 on success.  Per-phase failures are logged but not propagated
+        because the shell behaves similarly (only stage_hotstart raises
+        on missing source; the rest log + continue).
+
+    Note: PR 7b ships this function but does NOT wire it into the
+    dispatcher.  The runner flag flip + stage-script call live in
+    PR 7c.  We surface ``run_python`` here so PR 7c is a small diff:
+    just replace the shell call with ``stage_files.run_python(ctx, phase)``.
+    """
+    # Imports are local so circular-import risk is avoided when
+    # ``stage_files`` is imported from ``forcing`` or ``configure``
+    # (currently neither does, but defending against future churn).
+    from . import configure, forcing, mesh
+
+    # Phase 1: static UFS-Coastal configs + DATM input directory.
+    stage_ufs_configs(ctx, phase)
+
+    # Phase 7 (out of shell order, BUT before bare-name copies):
+    # The shell does patches AFTER ufs-config staging but BEFORE the
+    # SCHISM bare-name + forcing extraction.  Matches lines 491-565.
+    configure.patch_model_configure(ctx, phase)
+    configure.patch_ufs_configure(ctx, phase)
+    configure.patch_param_nml(ctx, phase)
+    configure.patch_datm_in(ctx, phase)
+
+    # Phase 2: SCHISM bare-name files (hgrid.gr3, vgrid.in, etc.)
+    stage_schism_bare_names(ctx, phase)
+
+    # Phase 8a: SCHISM partition / tvd / fluxflag.
+    stage_partition_props(ctx, phase)
+
+    # Phase 3: hotstart.nc (FATAL if missing -- raises FileNotFoundError).
+    stage_hotstart(ctx, phase)
+
+    # Phases 4-6: untar forcing tarballs.  Each returns ``-1`` on
+    # missing/empty source, which we surface as a non-fatal warning
+    # (matches the shell -- the FIXofs fallback covers NWM gaps).
+    forcing.untar_nwm_source_sink(ctx, phase)
+    forcing.untar_obc_forcing(ctx, phase)
+    forcing.untar_river_forcing(ctx, phase)
+
+    # Phase 8b: forecast-only previous-cycle restart_outputs staging.
+    stage_forecast_restart_outputs(ctx, phase)
+
+    # PR 4 follow-up: ESMF mesh regen from the actual DATM forcing file.
+    # The mesh path depends on $DATM_INPUT_DIR which defaults to INPUT.
+    # Shell counterpart: lines 855-912 (pre-PR-4 inline Python heredoc).
+    datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
+    forcing_file = ctx.data / datm_dir_name / "datm_forcing.nc"
+    esmf_mesh_out = ctx.data / datm_dir_name / "datm_esmf_mesh.nc"
+    if forcing_file.is_file() and forcing_file.stat().st_size > 0:
+        try:
+            mesh.generate_esmf_mesh(forcing_file, esmf_mesh_out)
+        except Exception as exc:  # pragma: no cover -- mesh handles its own
+            logger.warning("ESMF mesh regen failed: %s", exc)
+
+    return 0
+
+
 __all__ = [
     "stage_ufs_configs",
     "stage_schism_bare_names",
     "stage_hotstart",
     "stage_partition_props",
     "stage_forecast_restart_outputs",
+    "run_python",
 ]
