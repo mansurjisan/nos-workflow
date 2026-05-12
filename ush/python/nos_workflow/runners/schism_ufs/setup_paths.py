@@ -23,8 +23,8 @@ Where:
   cyc, COMOUT, etc.).
 - ``phase``: ``"nowcast"`` or ``"forecast"``.
 - ``runtype``: ``"nowcast"`` | ``"forecast"`` | ``"prep"``. ``"prep"``
-  mode raises :class:`NotImplementedError` -- that triggers
-  ``_schism_find_hotstart`` which lands in PR 6.
+  mode invokes :func:`~.hotstart.find_hotstart` to walk back through
+  ``$COMOUTroot`` for a prior cycle's restart file (ported in PR 6).
 
 The shell function exports a single ``PDY1`` derived from ``time_nowcastend``;
 since ``time_nowcastend == PDY||cyc`` by default, ``PDY1 == PDY`` here.
@@ -36,7 +36,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from . import _dateutils
 from .context import SchismRunContext
@@ -274,21 +274,19 @@ def compute_paths(
             Filenames are identical for both phases; ``phase`` only
             affects the :class:`SchismRunContext.phase` field.
         runtype: ``"nowcast"`` | ``"forecast"`` | ``"prep"``. ``"prep"``
-            mode invokes :func:`_schism_find_hotstart` -- not yet ported
-            (PR 6 wires this).
+            mode invokes :func:`~.hotstart.find_hotstart` -- the COM-hunt
+            walk-back logic from ``_schism_find_hotstart`` (PR 6).
 
     Returns:
         Fully-populated :class:`SchismRunContext`.
 
-    Raises:
-        NotImplementedError: if ``runtype="prep"`` (PR 6 wires this).
+        For ``runtype="prep"``, the time anchors (BASE_DATE,
+        time_hotstart, NSTEP_*, NTIMES_*, DSTART_*, COLD_START) and
+        the hotstart paths (rst_file, ini_file) come from the
+        walk-back result. For non-prep runtypes, anchors derive from
+        the simple ``PDY||cyc - LEN_NOWCAST`` cold-start formula and
+        rst_file / ini_file stay ``None``.
     """
-    if runtype == "prep" or runtype == "PREP":
-        raise NotImplementedError(
-            "_schism_setup_paths in prep mode calls _schism_find_hotstart; "
-            "port lands in PR 6"
-        )
-
     # ---- Fix-file staging -----------------------------------------------
     _stage_fix_files(env)
 
@@ -308,14 +306,67 @@ def compute_paths(
     except (TypeError, ValueError):
         delt_model_float = 120.0
 
-    # ---- Filename conventions + time anchors ----------------------------
+    # ---- Filename conventions -------------------------------------------
     filenames = _compute_filenames(prefix, cycle, pdy1)
-    times = _compute_time_anchors(
-        pdy=pdy, cyc=cyc,
-        len_nowcast=len_nowcast,
-        len_forecast=len_forecast,
-        delt_model=delt_model_float,
-    )
+
+    # ---- Time anchors + hotstart paths ----------------------------------
+    #
+    # Prep mode runs the COM-hunt walk-back (PR 6); non-prep modes use the
+    # simple cold-start formula. The two paths produce the same field set,
+    # but prep additionally populates rst_file + ini_file from the
+    # discovered (or fallback) restart and writes the time_*.${cycle}
+    # text files into $COMOUT for downstream PBS jobs to read.
+    # ----------------------------------------------------------------------
+    rst_file_for_ctx: Optional[str]
+    ini_file_for_ctx: Optional[str]
+    runtype_norm = (runtype or "").lower()
+    if runtype_norm == "prep":
+        from .hotstart import find_hotstart, write_time_files
+
+        result = find_hotstart(
+            env, phase=phase,
+            len_nowcast=len_nowcast,
+            len_forecast=len_forecast,
+            delt_model=delt_model_float,
+        )
+        write_time_files(result, env.comout, cycle)
+
+        base_date = result.base_date
+        time_hotstart = result.time_hotstart
+        time_nowcastend = result.time_nowcastend
+        time_forecastend = result.time_forecastend
+        cold_start = result.cold_start
+        # SchismRunContext stores numeric anchors as strings to preserve
+        # the YYYYMMDDHH zero-padding and the shell-style decimal precision
+        # the downstream consumers (`bc`, `expr`) expect.
+        dstart_nowcast = f"{result.dstart_nowcast:.4f}"
+        dstart_forecast = f"{result.dstart_forecast:.4f}"
+        nstep_nowcast_s = str(result.nstep_nowcast)
+        nstep_forecast_s = str(result.nstep_forecast)
+        ntimes_nowcast_s = str(result.ntimes_nowcast)
+        ntimes_forecast_s = str(result.ntimes_forecast)
+        rst_file_for_ctx = str(result.rst_file) if result.rst_file is not None else None
+        ini_file_for_ctx = str(result.ini_file) if result.ini_file is not None else None
+    else:
+        times = _compute_time_anchors(
+            pdy=pdy, cyc=cyc,
+            len_nowcast=len_nowcast,
+            len_forecast=len_forecast,
+            delt_model=delt_model_float,
+        )
+        base_date = times["BASE_DATE"]
+        time_hotstart = times["time_hotstart"]
+        time_nowcastend = times["time_nowcastend"]
+        time_forecastend = times["time_forecastend"]
+        cold_start = times["COLD_START"]
+        dstart_nowcast = times["DSTART_NOWCAST"]
+        dstart_forecast = times["DSTART_FORECAST"]
+        nstep_nowcast_s = times["NSTEP_NOWCAST"]
+        nstep_forecast_s = times["NSTEP_FORECAST"]
+        ntimes_nowcast_s = times["NTIMES_NOWCAST"]
+        ntimes_forecast_s = times["NTIMES_FORECAST"]
+        rst_file_for_ctx = os.environ.get("RST_FILE") or None
+        ini_file_for_ctx = None
 
     # ---- Build the SchismRunContext --------------------------------------
     return SchismRunContext(
@@ -340,20 +391,20 @@ def compute_paths(
         ini_file_forecast=filenames["INI_FILE_FORECAST"],
         rst_out_nowcast=filenames["RST_OUT_NOWCAST"],
         rst_out_forecast=filenames["RST_OUT_FORECAST"],
-        ini_file=None,        # PR 6 will set this (from _schism_find_hotstart)
-        rst_file=os.environ.get("RST_FILE") or None,  # shell: RST_FILE=${RST_FILE:-}
+        ini_file=ini_file_for_ctx,
+        rst_file=rst_file_for_ctx,
         # Time anchors
-        base_date=times["BASE_DATE"],
-        time_hotstart=times["time_hotstart"],
-        time_nowcastend=times["time_nowcastend"],
-        time_forecastend=times["time_forecastend"],
-        dstart_nowcast=times["DSTART_NOWCAST"],
-        dstart_forecast=times["DSTART_FORECAST"],
-        nstep_nowcast=times["NSTEP_NOWCAST"],
-        nstep_forecast=times["NSTEP_FORECAST"],
-        ntimes_nowcast=times["NTIMES_NOWCAST"],
-        ntimes_forecast=times["NTIMES_FORECAST"],
-        cold_start=times["COLD_START"],
+        base_date=base_date,
+        time_hotstart=time_hotstart,
+        time_nowcastend=time_nowcastend,
+        time_forecastend=time_forecastend,
+        dstart_nowcast=dstart_nowcast,
+        dstart_forecast=dstart_forecast,
+        nstep_nowcast=nstep_nowcast_s,
+        nstep_forecast=nstep_forecast_s,
+        ntimes_nowcast=ntimes_nowcast_s,
+        ntimes_forecast=ntimes_forecast_s,
+        cold_start=cold_start,
         # Forcing artifact filenames
         # NOTE: nos_run.sh exports BCTIDES_IN (single), not _NOWCAST/_FORECAST
         # split. We populate the split fields with the same value -- downstream

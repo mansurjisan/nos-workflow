@@ -385,28 +385,81 @@ def test_compute_paths_phase_nowcast_vs_forecast_paths_identical(
 
 
 # ---------------------------------------------------------------------------
-# Prep mode (PR 6 wires this)
+# Prep mode (PR 6 wires the find_hotstart walk-back)
 # ---------------------------------------------------------------------------
 
 
-def test_compute_paths_prep_mode_raises_not_implemented(tmp_path, monkeypatch):
-    """``runtype="prep"`` invokes the COM-hunt logic in
-    ``_schism_find_hotstart`` -- not ported in PR 5. Must raise
-    :class:`NotImplementedError` with a PR 6 reference."""
+def test_compute_paths_prep_mode_empty_comout_falls_to_cold_start(
+        tmp_path, monkeypatch):
+    """``runtype="prep"`` with an empty $COMOUTroot should run
+    :func:`hotstart.find_hotstart`, fail to locate a usable restart, and
+    return a cold-start context (COLD_START="T", rst_file=None)."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.secofs_ufs")
+
+    ctx = compute_paths(env, phase="nowcast", runtype="prep")
+
+    assert isinstance(ctx, SchismRunContext)
+    assert ctx.cold_start == "T", "empty COMOUTroot must fall back to cold start"
+    assert ctx.rst_file is None
+
+
+def test_compute_paths_prep_mode_uppercase_also_runs(tmp_path, monkeypatch):
+    """Shell accepts both ``PREP`` and ``prep`` (case-insensitive) -- the
+    Python port normalizes to lowercase before dispatching."""
     env = _make_env(tmp_path, monkeypatch)
     _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
 
-    with pytest.raises(NotImplementedError, match=r"PR 6|find_hotstart"):
-        compute_paths(env, phase="nowcast", runtype="prep")
+    ctx = compute_paths(env, phase="nowcast", runtype="PREP")
+
+    assert isinstance(ctx, SchismRunContext)
 
 
-def test_compute_paths_prep_mode_uppercase_also_raises(tmp_path, monkeypatch):
-    """Shell accepts both PREP and prep -- match that behavior."""
+def test_compute_paths_prep_mode_writes_time_files(tmp_path, monkeypatch):
+    """Prep mode must persist time_*.${cycle} text files into $COMOUT so
+    downstream PBS jobs can recover the anchors without re-running the
+    walk-back (matches the persistence block on lines 370-373 of
+    nos_run.sh)."""
     env = _make_env(tmp_path, monkeypatch)
     _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
 
-    with pytest.raises(NotImplementedError):
-        compute_paths(env, phase="nowcast", runtype="PREP")
+    ctx = compute_paths(env, phase="nowcast", runtype="prep")
+
+    cycle = ctx.cycle
+    for name in (
+        f"time_hotstart.{cycle}",
+        f"time_nowcastend.{cycle}",
+        f"time_forecastend.{cycle}",
+        f"base_date.{cycle}",
+    ):
+        assert (env.comout / name).is_file(), f"missing {name} in $COMOUT"
+
+
+def test_compute_paths_prep_mode_finds_existing_restart(tmp_path, monkeypatch):
+    """When $COMOUTroot has a usable restart 6 hours before time_nowcastend,
+    prep mode locates it and returns COLD_START='F' with the rst_file set.
+
+    NCOEnv defaults COMOUTroot to ``comout.parent``, so seeding a restart
+    under ``tmp_path/{run}.YYYYMMDD/`` exposes it through the default
+    lookup path.
+    """
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.secofs_ufs")
+
+    # Seed a restart at 2026-05-11 18z (6h before time_nowcastend=2026051200).
+    rst_dir = tmp_path / "nos.secofs_ufs.20260511"
+    rst_dir.mkdir(parents=True, exist_ok=True)
+    rst_path = rst_dir / "nos.secofs_ufs.t18z.20260511.rst.nowcast.nc"
+    rst_path.write_bytes(b"\x89HDF\r\nfake restart\n")
+
+    ctx = compute_paths(env, phase="nowcast", runtype="prep")
+
+    assert ctx.cold_start == "F"
+    assert ctx.rst_file == str(rst_path)
+    assert ctx.base_date == "2026051118"
+    assert ctx.time_hotstart == "2026051118"
 
 
 # ---------------------------------------------------------------------------
