@@ -1,0 +1,428 @@
+"""Unit tests for ``nos_workflow.runners.schism_ufs.setup_paths``.
+
+Pins the behavior of the Python port of ``_schism_setup_paths`` (lines
+128-285 of ``ush/nos_run.sh``). All cases use ``tmp_path`` + monkeypatch
+so they're hermetic -- no real $COMOUT / $DATA / $FIXofs needed.
+
+Coverage:
+
+  - Minimal env: required NCO vars set; filename + time-anchor fields
+    populated; optional fix files absent and produce warnings.
+  - Time anchors: BASE_DATE, time_hotstart, time_nowcastend,
+    time_forecastend computed via ``_dateutils.ndate``; NSTEP / NTIMES
+    derived from LEN_* and DELT_MODEL.
+  - Filename conventions: INI_FILE_*, RST_OUT_*, OBC_FORCING_FILE,
+    NWM_SOURCE_SINK_*, MET_NETCDF_*, etc. follow the
+    ``${prefix}.${cycle}.${pdy1}.<suffix>`` pattern.
+  - Fix-file staging: required + optional files copied from $FIXofs to
+    $DATA; missing required files log ERROR but don't raise.
+  - Prep mode: raises NotImplementedError (PR 6 wires this).
+  - Schema invariant: returned context is frozen.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from pathlib import Path
+
+import pytest
+
+from nos_workflow.env import NCOEnv
+from nos_workflow.runners.schism_ufs.context import SchismRunContext
+from nos_workflow.runners.schism_ufs.setup_paths import (
+    compute_paths,
+    to_shell_filenames,
+)
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _make_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+              *, pdy: str = "20260512", cyc: str = "00",
+              ofs: str = "secofs_ufs") -> NCOEnv:
+    """Build an :class:`NCOEnv` with $COMOUT/$DATA/$FIXofs rooted under
+    ``tmp_path``."""
+    comout = tmp_path / "comout"
+    data = tmp_path / "data"
+    fixofs = tmp_path / "fix"
+    comout.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    fixofs.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setenv("OFS", ofs)
+    monkeypatch.setenv("RUN", f"nos.{ofs}")
+    monkeypatch.setenv("PDY", pdy)
+    monkeypatch.setenv("cyc", cyc)
+    monkeypatch.setenv("COMOUT", str(comout))
+    monkeypatch.setenv("DATA", str(data))
+    monkeypatch.setenv("FIXofs", str(fixofs))
+
+    return NCOEnv.from_env(ofs=ofs)
+
+
+def _seed_fix_files(fixofs: Path, monkeypatch: pytest.MonkeyPatch,
+                    *, gridfile: str = "hgrid.gr3",
+                    sta_out_ctl: str = "station.in",
+                    runtime_ctl: str = "param.nml",
+                    with_optional: bool = True) -> None:
+    """Populate ``$FIXofs`` with the required + optional files
+    ``_schism_setup_paths`` expects, and set the matching env vars."""
+    monkeypatch.setenv("GRIDFILE", gridfile)
+    monkeypatch.setenv("STA_OUT_CTL", sta_out_ctl)
+    monkeypatch.setenv("RUNTIME_CTL", runtime_ctl)
+
+    for fname in (gridfile, sta_out_ctl, runtime_ctl):
+        (fixofs / fname).write_text(f"# {fname} content\n")
+
+    if with_optional:
+        monkeypatch.setenv("GRIDFILE_LL", "hgrid.ll")
+        monkeypatch.setenv("VGRID_CTL", "vgrid.in")
+        (fixofs / "hgrid.ll").write_text("# hgrid.ll\n")
+        (fixofs / "vgrid.in").write_text("# vgrid.in\n")
+
+
+# ---------------------------------------------------------------------------
+# Minimal construction
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_minimal(tmp_path, monkeypatch):
+    """With the bare-minimum env, compute_paths returns a populated
+    :class:`SchismRunContext`."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert isinstance(ctx, SchismRunContext)
+    assert ctx.comout == env.comout
+    assert ctx.data == env.data
+    assert ctx.phase == "nowcast"
+    assert ctx.run == env.run
+    assert ctx.cycle == env.cycle
+    assert ctx.pdy == "20260512"
+    assert ctx.cyc == "00"
+    assert ctx.fixofs == env.fixofs
+
+
+def test_compute_paths_uses_default_prefix_when_unset(tmp_path, monkeypatch):
+    """If PREFIXNOS is not set, fall back to ``nos.{ofs}``."""
+    env = _make_env(tmp_path, monkeypatch, ofs="secofs_ufs")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.delenv("PREFIXNOS", raising=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.prefixnos == "nos.secofs_ufs"
+
+
+def test_compute_paths_respects_explicit_prefix(tmp_path, monkeypatch):
+    """Operator-supplied PREFIXNOS wins over the default."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.custom_prefix")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.prefixnos == "nos.custom_prefix"
+
+
+# ---------------------------------------------------------------------------
+# Time anchors
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_populates_time_anchors(tmp_path, monkeypatch):
+    """BASE_DATE / time_hotstart / time_nowcastend / time_forecastend
+    derived from PDY + cyc + LEN_NOWCAST + LEN_FORECAST."""
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("LEN_NOWCAST", "6")
+    monkeypatch.setenv("LEN_FORECAST", "48")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    # time_nowcastend = PDY || cyc
+    assert ctx.time_nowcastend == "2026051200"
+    # time_hotstart = time_nowcastend - 6 hours
+    assert ctx.time_hotstart == "2026051118"
+    # time_forecastend = time_nowcastend + 48 hours
+    assert ctx.time_forecastend == "2026051400"
+    # BASE_DATE defaults to time_hotstart in the non-prep path
+    assert ctx.base_date == "2026051118"
+
+
+def test_compute_paths_nstep_derived_from_delt_model(tmp_path, monkeypatch):
+    """NSTEP_NOWCAST = LEN_NOWCAST * 3600 / DELT_MODEL."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("LEN_NOWCAST", "6")
+    monkeypatch.setenv("LEN_FORECAST", "48")
+    monkeypatch.setenv("DELT_MODEL", "120")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    # 6 hr * 3600 s/hr / 120 s/step = 180 steps
+    assert ctx.nstep_nowcast == "180"
+    assert ctx.ntimes_nowcast == "180"
+    # 48 hr * 3600 / 120 = 1440
+    assert ctx.nstep_forecast == "1440"
+    assert ctx.ntimes_forecast == "1440"
+    assert ctx.delt_model == "120"
+
+
+def test_compute_paths_dstart_forecast_in_decimal_days(tmp_path, monkeypatch):
+    """DSTART_FORECAST = LEN_NOWCAST / 24.0 (decimal days)."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("LEN_NOWCAST", "6")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    # 6 hr / 24 hr/day = 0.25 day
+    assert ctx.dstart_forecast == "0.2500"
+    assert ctx.dstart_nowcast == "0.0"
+
+
+def test_compute_paths_cold_start_defaults_false(tmp_path, monkeypatch):
+    """In the non-prep path, COLD_START defaults to 'F'. PR 6 will set
+    it to 'T' from _schism_find_hotstart when the COM-hunt fails."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.cold_start == "F"
+
+
+# ---------------------------------------------------------------------------
+# Filename conventions
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_filename_conventions(tmp_path, monkeypatch):
+    """All filename fields follow ``${prefix}.${cycle}.${pdy1}.<suffix>``."""
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.secofs_ufs")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    base = "nos.secofs_ufs.t00z.20260512"
+    assert ctx.ini_file_nowcast == f"{base}.init.nowcast.nc"
+    assert ctx.rst_out_nowcast == f"{base}.rst.nowcast.nc"
+    assert ctx.rst_out_forecast == f"{base}.rst.forecast.nc"
+    # INI_FILE_FORECAST = RST_OUT_NOWCAST (the hand-off semantics)
+    assert ctx.ini_file_forecast == f"{base}.rst.nowcast.nc"
+    # Forcing
+    assert ctx.nwm_source_sink_nowcast == f"{base}.nwm.source.sink.now.tar"
+    assert ctx.nwm_source_sink_forecast == f"{base}.nwm.source.sink.fore.tar"
+    assert ctx.river_forcing_file == f"{base}.river.th.tar"
+    assert ctx.met_netcdf_nowcast == f"{base}.met.nowcast.nc.tar"
+    assert ctx.met_netcdf_forecast == f"{base}.met.forecast.nc.tar"
+
+
+def test_compute_paths_to_shell_filenames_helper(tmp_path, monkeypatch):
+    """``to_shell_filenames`` returns the same dict shape the shell
+    exports as env vars (NCO names, full ``${prefix}.${cycle}.${pdy1}``
+    pattern)."""
+    fns = to_shell_filenames("nos.secofs_ufs", "t12z", "20260507")
+
+    # Spot-check a representative subset of the 28 file names
+    assert fns["OBC_FORCING_FILE"] == "nos.secofs_ufs.t12z.20260507.obc.tar"
+    assert fns["RST_OUT_NOWCAST"] == "nos.secofs_ufs.t12z.20260507.rst.nowcast.nc"
+    assert fns["MODEL_LOG_FORECAST"] == "nos.secofs_ufs.t12z.20260507.forecast.log"
+    assert fns["BCTIDES_IN"] == "nos.secofs_ufs.t12z.20260507.bctides.in"
+    assert fns["HIS_2D_NOWCAST"] == "nos.secofs_ufs.t12z.20260507.surface.nowcast.nc"
+
+
+def test_compute_paths_bctides_split_uses_same_filename(tmp_path, monkeypatch):
+    """The shell exports a single BCTIDES_IN; the Python port populates
+    both _nowcast and _forecast SchismRunContext slots with the same
+    value (downstream can override per-phase if needed)."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.secofs_ufs")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.bctides_in_nowcast == ctx.bctides_in_forecast
+    assert ctx.bctides_in_nowcast.endswith(".bctides.in")
+
+
+# ---------------------------------------------------------------------------
+# Fix-file staging
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_stages_required_grid_files(tmp_path, monkeypatch):
+    """Required fix files (GRIDFILE, STA_OUT_CTL, RUNTIME_CTL) copied
+    from $FIXofs into $DATA. ``cp -p``-equivalent ``shutil.copy2`` so
+    contents survive intact."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    compute_paths(env, phase="nowcast")
+
+    assert (env.data / "hgrid.gr3").is_file()
+    assert (env.data / "station.in").is_file()
+    assert (env.data / "param.nml").is_file()
+    assert (env.data / "hgrid.gr3").read_text() == "# hgrid.gr3 content\n"
+
+
+def test_compute_paths_stages_optional_grid_files(tmp_path, monkeypatch):
+    """When optional fix-file env vars are set and the file exists, it's
+    copied. Missing optional files don't raise."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=True)
+
+    compute_paths(env, phase="nowcast")
+
+    assert (env.data / "hgrid.ll").is_file()
+    assert (env.data / "vgrid.in").is_file()
+
+
+def test_compute_paths_creates_outputs_and_sflux_subdirs(tmp_path, monkeypatch):
+    """``mkdir -p $DATA/outputs $DATA/sflux`` (line 152 of nos_run.sh)
+    is unconditional."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    compute_paths(env, phase="nowcast")
+
+    assert (env.data / "outputs").is_dir()
+    assert (env.data / "sflux").is_dir()
+
+
+def test_compute_paths_missing_required_grid_file_logs_error(
+        tmp_path, monkeypatch, caplog):
+    """Required fix file missing from $FIXofs logs an ERROR but does
+    NOT raise -- matches the shell's err_chk semantics (the dispatcher,
+    not compute_paths, decides whether to err_exit)."""
+    env = _make_env(tmp_path, monkeypatch)
+    monkeypatch.setenv("GRIDFILE", "hgrid.gr3")
+    monkeypatch.setenv("STA_OUT_CTL", "station.in")
+    monkeypatch.setenv("RUNTIME_CTL", "param.nml")
+    # Intentionally do NOT seed the fix files
+
+    caplog.set_level(logging.ERROR,
+                     logger="nos_workflow.runners.schism_ufs.setup_paths")
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert isinstance(ctx, SchismRunContext), (
+        "missing fix file should NOT raise; the dispatcher handles err_chk"
+    )
+    error_msgs = [r.getMessage() for r in caplog.records
+                  if r.levelno >= logging.ERROR]
+    assert any("hgrid.gr3" in m for m in error_msgs)
+
+
+def test_compute_paths_stages_nudge_index_files_when_prefixed_match(
+        tmp_path, monkeypatch):
+    """``${FIXofs}/${PREFIXNOS}.nobc_nudge_index.dat`` is renamed to
+    ``$DATA/nobc_nudge_index.dat`` (sans prefix). Confirms the rename."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "nos.secofs_ufs")
+
+    (env.fixofs / "nos.secofs_ufs.nobc_nudge_index.dat").write_text("idx")
+    (env.fixofs / "nos.secofs_ufs.nudge_point_at_ofs_grid.dat").write_text("pts")
+
+    compute_paths(env, phase="nowcast")
+
+    assert (env.data / "nobc_nudge_index.dat").read_text() == "idx"
+    assert (env.data / "nudge_point_at_ofs_grid.dat").read_text() == "pts"
+
+
+def test_compute_paths_vgrid_fake_overrides_vgrid_in(tmp_path, monkeypatch):
+    """VGRID_FAKE_CTL is intentionally copied OVER the canonical
+    VGRID_CTL name (matches launch.sh:154 quirk)."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("VGRID_CTL", "vgrid.in")
+    monkeypatch.setenv("VGRID_FAKE_CTL", "vgrid.fake")
+    (env.fixofs / "vgrid.in").write_text("# real vgrid\n")
+    (env.fixofs / "vgrid.fake").write_text("# fake vgrid\n")
+
+    compute_paths(env, phase="nowcast")
+
+    # vgrid.fake content should now be at $DATA/vgrid.in (the rename)
+    assert (env.data / "vgrid.in").read_text() == "# fake vgrid\n"
+
+
+# ---------------------------------------------------------------------------
+# Phase routing (PR 5 does not differentiate paths by phase)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_phase_nowcast_vs_forecast_paths_identical(
+        tmp_path, monkeypatch):
+    """phase=nowcast and phase=forecast produce contexts with identical
+    file-path fields. The shell ``_schism_setup_paths`` doesn't branch on
+    phase either -- the same filename env vars are exported regardless,
+    and the consumer (``_schism_stage_files`` step 6) picks which one
+    to actually stage."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx_nowcast = compute_paths(env, phase="nowcast")
+    ctx_forecast = compute_paths(env, phase="forecast")
+
+    # Phase is the only difference
+    assert ctx_nowcast.phase == "nowcast"
+    assert ctx_forecast.phase == "forecast"
+    # All filename + time anchor fields match
+    for f in ("ini_file_nowcast", "ini_file_forecast",
+              "rst_out_nowcast", "rst_out_forecast",
+              "base_date", "time_hotstart", "time_nowcastend",
+              "time_forecastend", "nstep_nowcast", "nstep_forecast"):
+        assert getattr(ctx_nowcast, f) == getattr(ctx_forecast, f), (
+            f"field {f!r} should not differ between phases at PR 5"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Prep mode (PR 6 wires this)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_prep_mode_raises_not_implemented(tmp_path, monkeypatch):
+    """``runtype="prep"`` invokes the COM-hunt logic in
+    ``_schism_find_hotstart`` -- not ported in PR 5. Must raise
+    :class:`NotImplementedError` with a PR 6 reference."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    with pytest.raises(NotImplementedError, match=r"PR 6|find_hotstart"):
+        compute_paths(env, phase="nowcast", runtype="prep")
+
+
+def test_compute_paths_prep_mode_uppercase_also_raises(tmp_path, monkeypatch):
+    """Shell accepts both PREP and prep -- match that behavior."""
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    with pytest.raises(NotImplementedError):
+        compute_paths(env, phase="nowcast", runtype="PREP")
+
+
+# ---------------------------------------------------------------------------
+# Schema invariants
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_returns_frozen_context(tmp_path, monkeypatch):
+    """The returned :class:`SchismRunContext` is frozen -- attempting to
+    mutate must raise :class:`FrozenInstanceError`."""
+    from dataclasses import FrozenInstanceError
+
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    with pytest.raises(FrozenInstanceError):
+        ctx.phase = "forecast"  # type: ignore[misc]
