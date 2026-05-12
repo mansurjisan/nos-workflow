@@ -824,14 +824,7 @@ _schism_run_mpi() {
 
     echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
     echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
-    # Mute the per-step IHOT2_DEBUG ModelAdvance noise (~500k lines = 98.7%
-    # of the .err) emitted unconditionally from schism_nuopc_cap.F90:1093.
-    # We deliberately only filter the per-step line; init / first-call-fix
-    # IHOT2_DEBUG lines pass through because pbs/check_ihot2_staout.sh
-    # greps for them.  Permanent fix would require a Fortran source patch
-    # (gate the write with `if (myrank == 0)`) and a coastal-app rebuild.
-    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC} \
-        2> >(grep -v 'IHOT2_DEBUG: ModelAdvance called' >&2)
+    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
     local rc=$?
     echo "_schism_run_mpi: mpiexec returned rc=${rc}"
     return ${rc}
