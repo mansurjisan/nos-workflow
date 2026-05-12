@@ -852,64 +852,9 @@ ds.close()
             # dims, elementMask, coordinates — never trust template meshes).
             local _ftotal=$((_fnx * _fny))
             echo "Generating ESMF mesh from forcing (${_fnx}x${_fny} = ${_ftotal} nodes)..."
-            python3 -c "
-from netCDF4 import Dataset
-import numpy as np
-
-ds = Dataset('${_forcing_file}', 'r')
-try:
-    lons = ds.variables['longitude'][:]
-    lats = ds.variables['latitude'][:]
-    if lons.ndim == 1:
-        lon2d, lat2d = np.meshgrid(lons, lats)
-    else:
-        lon2d, lat2d = lons, lats
-except:
-    lon2d = ds.variables['x'][:]
-    lat2d = ds.variables['y'][:]
-ds.close()
-
-ny, nx = lon2d.shape
-n_nodes = ny * nx
-n_elems = (ny - 1) * (nx - 1)
-
-out = Dataset('${DATA}/${DATM_DIR}/datm_esmf_mesh.nc', 'w')
-out.createDimension('nodeCount', n_nodes)
-out.createDimension('elementCount', n_elems)
-out.createDimension('maxNodePElement', 4)
-out.createDimension('coordDim', 2)
-
-nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
-nodeCoords.units = 'degrees'
-coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
-nodeCoords[:] = coords
-
-j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
-n0 = (j_idx * nx + i_idx + 1).ravel()
-conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
-
-elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
-elemConn.long_name = 'Node indices that define the element connectivity'
-elemConn.start_index = 1
-elemConn[:] = conn
-
-numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
-numElemConn[:] = 4
-
-elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
-elementMask[:] = np.ones(n_elems, dtype=np.int32)
-
-centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
-centerCoords.units = 'degrees'
-clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
-clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
-centerCoords[:] = np.column_stack([clon, clat])
-
-out.title = 'ESMF mesh generated from DATM forcing file'
-out.gridType = 'unstructured mesh'
-out.close()
-print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(nx, ny, n_nodes, n_elems))
-" 2>&1
+            python3 -m nos_workflow.runners.schism_ufs.mesh \
+                --forcing "${_forcing_file}" \
+                --output "${DATA}/${DATM_DIR}/datm_esmf_mesh.nc" 2>&1
             if [ $? -ne 0 ]; then
                 echo "WARNING: ESMF mesh generation failed - using existing mesh" >&2
             fi
