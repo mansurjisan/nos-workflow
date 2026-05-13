@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_post.sh - SECOFS-UFS post-processing driver (nos_workflow shim)
+#  exnos_post.sh - NOS-OFS post-processing driver (nos_workflow shim)
 #
 #  Sources nos_run.sh to populate env vars consumed by Python post, then hands
 #  off to nos_workflow.stages.post. Set NOS_USE_LEGACY_SHELL=YES to route

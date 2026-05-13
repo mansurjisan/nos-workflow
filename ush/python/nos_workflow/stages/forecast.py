@@ -46,7 +46,7 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_comf_forecast(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """COMF (SECOFS-UFS) forecast: drive the 4-step contract."""
+    """SCHISM-UFS (framework=comf|stofs_ufs) forecast: drive the 4-step contract."""
     try:
         return _comf_forecast_body(descriptor, env)
     except StageFailedError:

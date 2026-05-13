@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_forecast.sh - SECOFS-UFS forecast driver (nos_workflow shim)
+#  exnos_forecast.sh - NOS-OFS forecast driver (nos_workflow shim)
 #
 #  Sources nos_run.sh to populate env vars consumed by Python orchestration,
 #  then hands off to nos_workflow.stages.forecast. MPI launch, combine_hotstart7,

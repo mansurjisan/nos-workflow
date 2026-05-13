@@ -46,7 +46,7 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_comf_nowcast(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """COMF (SECOFS-UFS) nowcast: drive the 4-step contract."""
+    """SCHISM-UFS (framework=comf|stofs_ufs) nowcast: drive the 4-step contract."""
     try:
         return _comf_nowcast_body(descriptor, env)
     except StageFailedError:

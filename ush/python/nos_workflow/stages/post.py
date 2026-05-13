@@ -52,7 +52,7 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_comf_post(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """COMF (SECOFS-UFS) post: combine staout, then optionally bias-correct."""
+    """SCHISM-UFS (framework=comf|stofs_ufs) post: combine staout, then optionally bias-correct."""
     try:
         return _comf_post_body(descriptor, env)
     except StageFailedError:

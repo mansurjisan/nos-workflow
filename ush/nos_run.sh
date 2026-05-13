@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  nos_run.sh - SECOFS-UFS-Coastal SCHISM run library.
+#  nos_run.sh - SCHISM-UFS-Coastal run library.
 #
 #  This file is sourced by ex-scripts to expose `_schism_run_mpi` and
 #  `_schism_run_combine_hotstart` to the Python orchestrator via
@@ -10,7 +10,9 @@
 #  `module load` (cray-pals, intel-*, hpc-stack netcdf/hdf5) which does
 #  not survive a Python subprocess.
 #
-#  Scope: SECOFS-UFS-Coastal only (OCEAN_MODEL=SCHISM, USE_DATM=true).
+#  Scope: any OFS coupling SCHISM via UFS-Coastal NUOPC (currently
+#  secofs_ufs and stofs_3d_atl_ufs; both register framework=comf or
+#  framework=stofs_ufs and route through the same Python runner).
 #
 #  Required env (set by the J-job and YAML loader):
 #    OFS, RUN, PREFIXNOS, PDY, cyc, cycle, DATA, COMOUT, COMOUTroot,

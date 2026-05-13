@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_nowcast.sh - SECOFS-UFS nowcast driver (nos_workflow shim)
+#  exnos_nowcast.sh - NOS-OFS nowcast driver (nos_workflow shim)
 #
 #  Sources nos_run.sh to populate env vars consumed by Python orchestration,
 #  then hands off to nos_workflow.stages.nowcast. MPI launch, combine_hotstart7,

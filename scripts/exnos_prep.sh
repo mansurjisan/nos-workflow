@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_prep.sh - SECOFS-UFS prep driver (nos_workflow shim)
+#  exnos_prep.sh - NOS-OFS prep driver (nos_workflow shim)
 #
 #  Sources nos_run.sh to populate env vars consumed by Python prep, then
 #  hands off to nos_workflow.stages.prep. Set NOS_USE_LEGACY_SHELL=YES to

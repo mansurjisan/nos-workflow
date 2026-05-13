@@ -40,7 +40,7 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """COMF (SECOFS-UFS) prep: run nowcast then forecast phases."""
+    """SCHISM-UFS (framework=comf|stofs_ufs) prep: run nowcast then forecast phases."""
     sl = stage_logger(_STAGE, descriptor.name)
     t_stage = time.monotonic()
 
