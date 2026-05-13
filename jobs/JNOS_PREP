@@ -2,7 +2,7 @@
 set -x
 
 ########################################
-# NOS_OFS_PREP - Unified Prep Job
+# JNOS_PREP - Unified Prep Job
 #
 # Supports both nosofs/COMF and STOFS frameworks with YAML configuration
 ########################################

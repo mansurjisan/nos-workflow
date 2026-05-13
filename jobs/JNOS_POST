@@ -2,7 +2,7 @@
 set -x
 
 ########################################
-# NOS_OFS_POST - Unified Post-Processing Job
+# JNOS_POST - Unified Post-Processing Job
 #
 # Supports both nosofs/COMF and STOFS frameworks with YAML configuration
 ########################################
