@@ -1,27 +1,4 @@
-"""Generate ESMF unstructured mesh from a DATM forcing NetCDF file.
-
-This module replaces the 60-line inline Python heredoc that lived in
-``ush/nos_run.sh`` (lines 855-912 pre-PR-4). Same algorithm, same
-output bytes -- just refactored into a testable, importable module.
-
-The mesh file (datm_esmf_mesh.nc) is consumed by CMEPS at runtime to
-regrid DATM atmospheric forcing onto the SCHISM ocean mesh. It must
-have specific node ordering and ``elementMask=1`` for the bilinear
-regrid in ATM->OCN to work (see MEMORY.md lesson #18 + #19). Setting
-elementMask=0 silently masks all elements and the ocean receives a
-constant-zero atmospheric field -- one of the worst failure modes
-because the model still runs cleanly.
-
-Public API:
-    generate_esmf_mesh(forcing: Path, output: Path) -> int
-
-CLI:
-    python3 -m nos_workflow.runners.schism_ufs.mesh \\
-        --forcing /path/to/datm_forcing.nc \\
-        --output /path/to/datm_esmf_mesh.nc
-
-Shell counterpart: lines 855-912 of ush/nos_run.sh (pre-PR-4).
-"""
+"""Generate ESMF unstructured mesh from a DATM forcing NetCDF file."""
 from __future__ import annotations
 
 import argparse
@@ -35,23 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 def generate_esmf_mesh(forcing: Path, output: Path) -> int:
-    """Build a CMEPS-compatible ESMF unstructured mesh from a DATM
-    forcing file's lon/lat dims.
+    """Build a CMEPS-compatible ESMF unstructured mesh from a DATM forcing file.
 
-    Args:
-        forcing: Path to the DATM forcing NetCDF (must have either
-            ``longitude``/``latitude`` 1-D or 2-D vars, or fall back to
-            ``x``/``y``).
-        output: Path where the ESMF mesh NetCDF will be written
-            (typically ``$DATA/$DATM_DIR/datm_esmf_mesh.nc``).
-
-    Returns:
-        0 on success, non-zero on failure. Failures log WARNING; shell
-        callers fall back to the existing template mesh.
+    Returns 0 on success, non-zero on failure.
     """
-    # Imports stay inside the function so the module can be imported on
-    # systems without netCDF4 installed (CLI ``--help`` still works,
-    # tests can decide whether to skip).
     try:
         from netCDF4 import Dataset
         import numpy as np
@@ -59,9 +23,8 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
         logger.error("netCDF4/numpy not available: %s", exc)
         return 1
 
-    # Strip LD_PRELOAD before touching netCDF4 (MEMORY.md lesson #6:
-    # COMF Fortran J-jobs set LD_PRELOAD=libnetcdff.so which segfaults
-    # the CPython netCDF4 extension).
+    # Strip LD_PRELOAD before touching netCDF4: Fortran J-jobs set
+    # LD_PRELOAD=libnetcdff.so which segfaults the CPython netCDF4 extension.
     with preserve_preload():
         try:
             ds = Dataset(str(forcing), 'r')
@@ -104,10 +67,9 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
             numElemConn = out.createVariable('numElementConn', 'i4', ('elementCount',))
             numElemConn[:] = 4
 
-            # CRITICAL: elementMask MUST be all ones. MEMORY.md lesson
-            # #18: setting elementMask=0 masks every element out of
-            # CMEPS' bilinear ATM->OCN regrid, so SCHISM receives zero
-            # atmospheric forcing -- model runs but is silently wrong.
+            # elementMask MUST be all ones: setting it to 0 masks every element
+            # out of CMEPS bilinear ATM->OCN regrid, so SCHISM receives zero
+            # atmospheric forcing (model runs but is silently wrong).
             elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
             elementMask[:] = np.ones(n_elems, dtype=np.int32)
 
@@ -131,7 +93,7 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI entry point invoked by ``python3 -m nos_workflow.runners.schism_ufs.mesh``."""
+    """CLI entry point."""
     parser = argparse.ArgumentParser(
         description="Generate ESMF unstructured mesh from a DATM forcing NetCDF file.",
     )

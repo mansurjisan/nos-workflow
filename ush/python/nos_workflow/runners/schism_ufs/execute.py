@@ -1,31 +1,4 @@
-"""Python port of ``_schism_execute_ufs_coastal`` orchestration.
-
-The shell function (lines 791-1078 of ``ush/nos_run.sh``, 289 LOC) is
-split into three pieces:
-
-  - The pure-MPI launch stays in shell as ``_schism_run_mpi()`` because
-    ``module load`` (Cray PALS / hpc-stack) doesn't survive a Python
-    subprocess. mpiexec must run from a shell that has those modules
-    already loaded by the J-job.
-  - The ``combine_hotstart7`` invocation stays in shell as
-    ``_schism_run_combine_hotstart()`` for the same reason -- it needs
-    the hpc-stack netcdf/4.7.4 + hdf5 ``LD_LIBRARY_PATH`` patch per
-    shell call.
-  - Everything else (config validation, ESMF mesh regeneration, post-MPI
-    cleanup, ``rst.{phase}.nc`` archive copy) moves here to Python.
-
-Public API:
-
-    :func:`run_python` -- one entry point ``run_python(ctx, phase)`` ->
-    ``int`` rc. Dispatched from ``stages/nowcast.py`` and
-    ``stages/forecast.py`` when ``NOS_WORKFLOW_PYTHON_EXECUTE=1`` (the
-    wire-in to the dispatcher happens in a follow-up commit AFTER PR 7c
-    lands, to avoid conflicts with the stage-dispatch refactor).
-
-Shell counterpart: ``_schism_execute_ufs_coastal`` in
-``ush/nos_run.sh`` (refactored body, lines ~923-1024 in the PR 8
-revision).
-"""
+"""Orchestrate the UFS-Coastal execute stage (validation, mesh, mpi, archive)."""
 from __future__ import annotations
 
 import logging
@@ -40,67 +13,37 @@ from .context import SchismRunContext
 logger = logging.getLogger(__name__)
 
 
-# Files that MUST exist in $DATA before mpiexec is launched. Mirrors the
-# validation loop at lines 799-804 of nos_run.sh.
 _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
 
 
 def run_python(ctx: SchismRunContext, phase: str) -> int:
     """Execute the UFS-Coastal stage end-to-end.
 
-    Steps (matches the shell function's flow):
-
-      1. Validate required configs are staged in ``$DATA``.
-      2. Optionally regenerate ESMF mesh from the DATM forcing file
-         (calls :func:`mesh.generate_esmf_mesh`).
-      3. Run mpiexec (shell -- ``module load`` required for mpiexec).
-      4. Combine per-rank hotstart files (shell -- ``module load`` for
-         combine_hotstart7's hpc-stack netcdf).
-      5. Archive ``rst.{phase}.nc`` to ``$COMOUT``.
-
-    Args:
-        ctx: runner context.
-        phase: ``"nowcast"`` or ``"forecast"``.
-
-    Returns:
-        0 on success, non-zero rc if any sub-step fails. Steps 4 and 5
-        log warnings but do not propagate non-fatal errors (matches the
-        shell, which only returns non-zero from mpiexec).
+    Returns 0 on success, non-zero only if mpiexec or config validation fails.
     """
-    # 1. Validate required configs present.
     rc = _validate_configs(ctx, phase)
     if rc != 0:
         return rc
 
-    # 2. Optional ESMF mesh regeneration (skipped silently if no
-    #    forcing file -- happens before any tests stand up a real DATM).
     rc = _maybe_regenerate_mesh(ctx, phase)
     if rc != 0:
-        # Mesh generation failure is non-fatal: the existing template
-        # mesh is used. Match the shell warning at line 859.
         logger.warning(
             "execute: ESMF mesh regen returned rc=%d; using existing mesh", rc,
         )
 
-    # 3. Run MPI (shell -- module load required).
+    # mpiexec stays in shell; module load doesn't survive a Python subprocess.
     rc = _run_mpi_shell(ctx, phase)
     if rc != 0:
         logger.error("execute: mpiexec failed (rc=%d)", rc)
         return rc
 
-    # 4. Combine per-rank hotstart files (shell -- module load for
-    #    combine_hotstart7 hpc-stack netcdf).
+    # combine_hotstart7 also stays in shell for the hpc-stack module load.
     combine_rc = combine_hotstart.combine_hotstart_files(ctx, phase)
     if combine_rc != 0:
-        # Non-fatal: shell uses WARNING + continues (lines 996, 999).
         logger.warning(
             "execute: combine_hotstart returned rc=%d (non-fatal)", combine_rc,
         )
 
-    # 5. Archive rst.{phase}.nc to $COMOUT. Combine already wrote the
-    #    canonical RUN.cycle.PDY.rst.{phase}.nc to $COMOUT, so this is
-    #    a safety net that surfaces a different filename convention if
-    #    the workflow ever stages a pre-combined hotstart.
     archive_rc = _archive_restart(ctx, phase)
     if archive_rc != 0:
         logger.warning(
@@ -111,13 +54,8 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
-    """Validate that required UFS configs and param.nml are present
-    in $DATA before launching mpiexec.
-
-    Mirrors the loop at lines 798-804 of nos_run.sh. Returns 1 (matching
-    the shell's `return 1`) if any required file is missing or empty.
-    """
-    del phase  # validation set is phase-agnostic
+    """Validate that required UFS configs exist and are non-empty in $DATA."""
+    del phase
     missing = []
     for name in _REQUIRED_CONFIGS:
         f = ctx.data / name
@@ -137,14 +75,7 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _maybe_regenerate_mesh(ctx: SchismRunContext, phase: str) -> int:
-    """Regenerate the ESMF mesh from datm_forcing.nc if the forcing
-    file is present.
-
-    Matches the shell block at lines 828-862 of nos_run.sh (post-PR-4):
-    we regenerate the mesh unconditionally whenever the forcing file
-    exists -- the mesh.py module is cheap to call and we never trust a
-    template mesh (MEMORY.md lesson #18 + #19).
-    """
+    """Regenerate the ESMF mesh from datm_forcing.nc if the forcing file exists."""
     del phase
     datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
     forcing = ctx.data / datm_dir_name / "datm_forcing.nc"
@@ -160,17 +91,9 @@ def _maybe_regenerate_mesh(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _run_mpi_shell(ctx: SchismRunContext, phase: str) -> int:
-    """Invoke shell's ``_schism_run_mpi()`` function via bash_compat.
-
-    Dispatches ``mpiexec ... fv3_coastalS.exe`` from a shell that has
-    Cray-PALS modules loaded (the J-job's shell context). The Python
-    subprocess inherits the J-job's env via ``os.environ.copy()`` so
-    ``module load`` side effects (LD_LIBRARY_PATH, PATH, MODULESHOME,
-    etc.) survive into the bash -c subprocess.
-    """
+    """Invoke ``_schism_run_mpi`` from a shell context with module load active."""
     ushnos_env = os.environ.get("USHnos")
     if not ushnos_env:
-        # Fall back to ctx.ushnos if env wasn't exported.
         if ctx.ushnos is None:
             logger.error("execute: USHnos not set; cannot invoke shell helper")
             return 1
@@ -191,16 +114,7 @@ def _run_mpi_shell(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _archive_restart(ctx: SchismRunContext, phase: str) -> int:
-    """Copy the combined hotstart file from ``$DATA/outputs/`` to
-    ``$COMOUT`` as the ``rst.{phase}.nc`` artifact.
-
-    The shell helper ``_schism_run_combine_hotstart`` already does this
-    for the canonical ``RUN.cycle.PDY.rst.{phase}.nc`` filename. This
-    safety net runs when ``ctx.rst_out_nowcast`` / ``ctx.rst_out_forecast``
-    point at a different filename convention (e.g., if a follow-up PR
-    parameterizes the rst path) -- it's a no-op if the source is
-    missing or the ctx field is None.
-    """
+    """Copy the combined hotstart to $COMOUT as the rst.{phase}.nc artifact."""
     if phase == "nowcast":
         rst_dst_name = ctx.rst_out_nowcast
     elif phase == "forecast":
@@ -217,8 +131,6 @@ def _archive_restart(ctx: SchismRunContext, phase: str) -> int:
         )
         return 0
 
-    # Source: look for combined output in outputs/. The combine helper
-    # produces hotstart_it=<step>.nc; find the most recent one.
     outputs_dir = ctx.data / "outputs"
     if not outputs_dir.is_dir():
         logger.info(

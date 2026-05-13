@@ -1,12 +1,4 @@
-"""Prep stage entry point.
-
-Both ``framework="comf"`` (SECOFS-UFS) and ``framework="stofs_ufs"``
-(STOFS-3D-ATL-UFS) route through the UFS-Coastal implementation — it
-dispatches to ``nos_utils.nco_bridge.run_prep`` for both the nowcast and
-forecast phases, mirroring the two-phase split in the legacy
-``exnos_prep.sh``. The standalone STOFS and ADCIRC branches raise
-``NotImplementedError`` until tasks #33 / #34 land.
-"""
+"""Prep stage entry point."""
 from __future__ import annotations
 
 import logging
@@ -18,8 +10,6 @@ from ..errors import StageFailedError
 from ..registry import OFSDescriptor
 
 if TYPE_CHECKING:
-    # Forward-reference NCOEnv so the stage modules don't import Agent A's
-    # env.py at collection time. The runtime parameter type is structural.
     from ..env import NCOEnv  # noqa: F401
 
 
@@ -30,35 +20,16 @@ _STAGE = "prep"
 
 
 def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """Execute the prep stage for ``descriptor``.
-
-    Args:
-        descriptor: The OFS descriptor returned by ``registry.lookup``.
-        env: NCO environment bundle (PDY, cyc, COM paths, etc.).
-
-    Returns:
-        0 on success; a non-zero return code is surfaced unchanged from
-        ``run_prep`` if it returns rc-style instead of raising.
-
-    Raises:
-        StageFailedError: any wrapped exception from ``run_prep`` or a
-            non-bool return that we can't map cleanly to rc.
-        NotImplementedError: framework="stofs" (standalone STOFS-3D-ATL)
-            or "adcirc" — stubs for tasks #33/#34.
-    """
+    """Execute the prep stage for ``descriptor``."""
     sl = stage_logger(_STAGE, descriptor.name)
     sl.info("stage start")
 
     if descriptor.framework in ("comf", "stofs_ufs"):
         return _run_comf_prep(descriptor, env)
     if descriptor.framework == "stofs":
-        raise NotImplementedError(
-            "STOFS-3D-ATL prep not yet ported — task #33 on the roadmap"
-        )
+        raise NotImplementedError("STOFS-3D-ATL prep not yet ported")
     if descriptor.framework == "adcirc":
-        raise NotImplementedError(
-            "STOFS-2D-GLO prep not yet ported — task #34"
-        )
+        raise NotImplementedError("STOFS-2D-GLO prep not yet ported")
 
     raise StageFailedError(
         stage=_STAGE,
@@ -69,16 +40,11 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """COMF (SECOFS-UFS) prep: run nowcast then forecast phases.
-
-    Lazy-imports ``nos_utils.nco_bridge`` so ``nos_uw list`` and the
-    descriptor tests don't pay the netCDF/numpy import cost.
-    """
+    """COMF (SECOFS-UFS) prep: run nowcast then forecast phases."""
     sl = stage_logger(_STAGE, descriptor.name)
     t_stage = time.monotonic()
 
     try:
-        # Lazy import — never hoisted to module top.
         from nos_utils.nco_bridge import run_prep  # type: ignore[import-not-found]
     except ImportError as exc:
         emit_stage_summary(sl, status="FAIL",
@@ -91,19 +57,12 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             msg=f"nos_utils.nco_bridge import failed: {exc}",
         ) from exc
 
-    # The nos-unified-workflow branch is FULL_PYTHON_PREP-only — NWM /
-    # RTOFS / nudging are produced by the Python orchestrator, not the
-    # legacy Fortran scripts. The default `skip_legacy=True` in
-    # nco_bridge.run_prep dates from the older HYBRID mode and would
-    # skip those steps; pass False explicitly so the new shim's COMOUT
-    # matches the legacy preY-mig shell's COMOUT (which sets
-    # FULL_PYTHON_PREP=YES → skip_legacy=False).
     for phase in ("nowcast", "forecast"):
         step_name = f"prep_{phase}"
         with timed_step(sl, step_name):
             try:
                 result: Any = run_prep(phase=phase, skip_legacy=False)
-            except Exception as exc:  # noqa: BLE001 — wrap to StageFailedError
+            except Exception as exc:  # noqa: BLE001
                 emit_stage_summary(sl, status="FAIL",
                                    runtime_s=time.monotonic() - t_stage,
                                    extras={"failed_phase": phase})
@@ -128,18 +87,12 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _coerce_rc(result: Any) -> int:
-    """Normalize ``run_prep`` return values into an integer rc.
-
-    ``nos_utils.nco_bridge.run_prep`` currently returns a bool
-    (True=success). If a future version starts returning an int we
-    pass it through unchanged.
-    """
+    """Normalize ``run_prep`` return values into an integer rc."""
     if isinstance(result, bool):
         return 0 if result else 1
     if isinstance(result, int):
         return result
     if result is None:
-        # Treat ``None`` as success — convention for procedural shims.
         return 0
     raise StageFailedError(
         stage=_STAGE,

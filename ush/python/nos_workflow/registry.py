@@ -1,15 +1,4 @@
-"""OFS descriptor type and process-global registry.
-
-The architecture is *descriptors-as-data*: each OFS gets a small frozen
-dataclass that names its framework, canonical workflow stages, alias
-mapping, runner module, and YAML path. The CLI dispatches via these
-descriptors instead of subclassing a model hierarchy — see strategic
-plan issue #219 for the rationale.
-
-Concrete descriptor modules live under ``nos_workflow.descriptors``;
-each one calls :func:`register` at import time. The CLI triggers those
-imports via :func:`load_all_descriptors`.
-"""
+"""OFS descriptor type and process-global registry."""
 from __future__ import annotations
 
 import importlib
@@ -24,13 +13,7 @@ from .errors import OFSNotRegisteredError, StageNotFoundError
 
 @dataclass(frozen=True)
 class OFSDescriptor:
-    """Static metadata for one OFS system.
-
-    Frozen so descriptor modules can't accidentally mutate registry
-    state at runtime. Anything that would need to vary at runtime
-    (cycle, PDY, member id, resource counts) belongs in the YAML or
-    ``NCOEnv``, not here.
-    """
+    """Static metadata for one OFS system."""
 
     name: str
     framework: str
@@ -42,37 +25,21 @@ class OFSDescriptor:
     notes: str = ""
 
     def resolve_stage(self, requested: str) -> str:
-        """Map ``requested`` to a canonical or extra stage name.
-
-        Resolution order:
-            1. ``stage_aliases`` (e.g. STOFS ``prep_nowcast`` → ``prep``)
-            2. ``canonical_stages``
-            3. ``extra_stages``
-
-        Input is matched case-insensitively but the returned name is
-        always the descriptor's own casing.
-
-        Raises:
-            StageNotFoundError: ``requested`` is not in any of the three
-                tables.
-        """
+        """Map ``requested`` to a canonical or extra stage name."""
         if not isinstance(requested, str) or not requested:
             raise StageNotFoundError(
                 f"stage name must be a non-empty string, got {requested!r}"
             )
         key = requested.strip().lower()
 
-        # Aliases (case-insensitive on the alias key)
         for alias, canonical in self.stage_aliases.items():
             if alias.lower() == key:
                 return canonical
 
-        # Canonical stages
         for stage in self.canonical_stages:
             if stage.lower() == key:
                 return stage
 
-        # Extra stages
         for stage in self.extra_stages:
             if stage.lower() == key:
                 return stage
@@ -86,20 +53,11 @@ class OFSDescriptor:
         )
 
 
-# ---------------------------------------------------------------------------
-# Process-global registry
-# ---------------------------------------------------------------------------
-
 _REGISTRY: Dict[str, OFSDescriptor] = {}
 
 
 def register(desc: OFSDescriptor) -> None:
-    """Add ``desc`` to the process-global registry.
-
-    Re-registering the same name with a different descriptor replaces
-    the previous entry. Tests that swap descriptors in and out should
-    snapshot ``_REGISTRY`` at setup and restore it at teardown.
-    """
+    """Add ``desc`` to the process-global registry."""
     if not isinstance(desc, OFSDescriptor):
         raise TypeError(
             f"register() expected OFSDescriptor, got {type(desc).__name__}"
@@ -108,12 +66,7 @@ def register(desc: OFSDescriptor) -> None:
 
 
 def lookup(name: str) -> OFSDescriptor:
-    """Return the descriptor for ``name``. Case-insensitive.
-
-    Raises:
-        OFSNotRegisteredError: no descriptor module has registered the
-            name yet (likely missed :func:`load_all_descriptors`).
-    """
+    """Return the descriptor for ``name`` (case-insensitive)."""
     if not isinstance(name, str) or not name:
         raise OFSNotRegisteredError(
             f"ofs name must be a non-empty string, got {name!r}"
@@ -128,28 +81,19 @@ def lookup(name: str) -> OFSDescriptor:
 
 
 def list_ofs() -> List[OFSDescriptor]:
-    """Return every registered descriptor, sorted by ``name``.
-
-    Used by ``nos_uw list``. Order is stable for golden-output tests.
-    """
+    """Return every registered descriptor, sorted by ``name``."""
     return sorted(_REGISTRY.values(), key=lambda d: d.name)
 
 
 def is_registered(name: str) -> bool:
-    """Return True if ``name`` resolves to a descriptor. Case-insensitive."""
+    """Return True if ``name`` resolves to a descriptor."""
     if not isinstance(name, str) or not name:
         return False
     return name.strip().lower() in _REGISTRY
 
 
 def load_all_descriptors() -> None:
-    """Import every module under ``nos_workflow.descriptors``.
-
-    Each descriptor module registers itself at import time via
-    ``register(...)``. To stay idempotent across tests that clear the
-    registry mid-session, we ``reload`` already-imported modules so
-    their top-level ``register`` calls fire again.
-    """
+    """Import every module under ``nos_workflow.descriptors``."""
     from . import descriptors as _pkg
 
     pkg_path = list(_pkg.__path__)

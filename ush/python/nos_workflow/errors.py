@@ -1,14 +1,8 @@
-"""Exception hierarchy for nos_workflow.
-
-These map to NCO ``err_chk`` / ``err_exit`` semantics: a top-level handler
-in ``cli.main`` catches ``WorkflowError``, logs a one-line FATAL to stdout
-(so on-call sees it in ``OUTPUT.$$``), writes the full traceback to a
-side file, and exits non-zero so PBS marks the job FAILED.
-"""
+"""Exception hierarchy for nos_workflow."""
 
 
 class WorkflowError(Exception):
-    """Base for all nos_workflow exceptions. Operationally fatal."""
+    """Base for all nos_workflow exceptions."""
 
 
 class ConfigError(WorkflowError):
@@ -24,7 +18,7 @@ class OFSNotRegisteredError(WorkflowError):
 
 
 class StageFailedError(WorkflowError):
-    """A stage's runtime body raised. Wrap with the stage name + return code."""
+    """A stage's runtime body raised."""
 
     def __init__(self, stage: str, ofs: str, returncode: int = 1, msg: str = ""):
         self.stage = stage

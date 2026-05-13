@@ -1,54 +1,5 @@
 #!/usr/bin/env python3
-"""YAML-to-shell environment-variable bridge for nos_workflow.
-
-The single load-bearing utility ported verbatim from the legacy
-``nos_ofs.utils.yaml_to_env`` module. Operational shell scripts
-(``exsecofs_*``, ``ex*nos_ofs_prep``, …) source the output of this
-module to obtain configuration values that are owned by
-``parm/systems/<ofs>.yaml``. Every framework branch (STOFS, COMF,
-ADCIRC) feeds through here.
-
-Public API (preserved across the rename):
-    load_yaml_with_inheritance(path)
-    deep_merge(base, override)
-    get_nested_value(data, path)
-    compute_derived_values(data, runtime_env)
-    get_runtime_from_env()
-    export_shell_mappings(data, framework='auto')
-    get_standard_exports(data, framework, computed, runtime_env)
-    format_shell_exports(exports)
-    format_json(exports)
-    format_ctl_file(exports, system_name)
-    export_for_shell(config_path, section=None, output_format='shell',
-                     framework='auto')
-    filter_by_section(exports, section)
-    main()  # argparse CLI
-
-Usage in shell scripts (preferred — clean CLI via ``nos_uw``):
-    eval $(nos_uw env --ofs secofs_ufs --shell)
-    eval $(nos_uw env --ofs stofs_3d_atl --shell --section domain)
-
-Direct module invocation (backward-compatible with legacy callers):
-    eval $(python -m nos_workflow.utils.yaml_to_env \
-        --config parm/systems/secofs_ufs.yaml --framework comf)
-
-Differences from the legacy ``nos_ofs.utils.yaml_to_env``:
-    1. PyYAML is imported lazily inside ``load_yaml_with_inheritance`` so
-       lightweight commands such as ``nos_uw list`` don't pay PyYAML
-       startup cost.
-    2. Errors print a single structured line to stderr
-       (``ERROR: yaml_to_env: <reason> (config=<path>)``) and the
-       process exits non-zero. Operators no longer need
-       ``2>/dev/null`` discipline; we never dump tracebacks unless
-       ``NOS_WORKFLOW_DEBUG=1`` is exported.
-    3. ``cyc`` is normalized to a zero-padded two-digit string at every
-       string boundary (``f"{int(cyc):02d}"``) so operational filename
-       templates (``t${cyc}z``) can never see a one-digit value.
-    4. The ADCIRC framework is recognised as a peer of ``stofs`` /
-       ``comf`` so STOFS-2D-GLO can flow through the same code path.
-    5. The old ``--config CFG`` form is the canonical CLI; the legacy
-       positional ``CFG`` argument is still accepted for compatibility.
-"""
+"""YAML-to-shell environment-variable bridge for nos_workflow."""
 from __future__ import annotations
 
 import argparse
@@ -59,17 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-# yaml is imported lazily inside ``load_yaml_with_inheritance`` so that
-# callers which never touch a YAML file (e.g. ``nos_uw list`` invocations
-# that import this module transitively) don't pay PyYAML startup cost.
 
-# Public identifier; bumped when output format / public API changes.
 __version__ = "3.0.0"
-
-
-# ---------------------------------------------------------------------------
-# YAML loading with _base inheritance
-# ---------------------------------------------------------------------------
 
 
 def load_yaml_with_inheritance(
@@ -78,21 +20,11 @@ def load_yaml_with_inheritance(
 ) -> Dict[str, Any]:
     """Load a YAML file resolving ``_base: <name>`` deep-merge inheritance.
 
-    Looks for the base under ``<base_dir>/base/<name>.yaml`` first
-    (the canonical ``parm/`` layout) and falls back to a sibling
-    ``<base_dir>/<name>.yaml``. Inheritance is recursive: a base can
-    itself extend another base. Values in the child override values in
-    the parent on a key-by-key basis through :func:`deep_merge`.
-
-    Args:
-        yaml_path: Path to the YAML file to load.
-        base_dir: Directory used as the search root for ``_base`` files.
-            Defaults to the parent of ``yaml_path``.
-
-    Returns:
-        The merged YAML configuration as a plain ``dict``.
+    Looks for the base under ``<base_dir>/base/<name>.yaml`` first and
+    falls back to a sibling ``<base_dir>/<name>.yaml``. Inheritance is
+    recursive; child values override parent values via :func:`deep_merge`.
     """
-    import yaml  # lazy import; see module docstring.
+    import yaml  # lazy import
 
     yaml_path = Path(yaml_path)
     if base_dir is None:
@@ -115,11 +47,7 @@ def load_yaml_with_inheritance(
 
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
-    """Deep-merge ``override`` into ``base`` and return a new dict.
-
-    Nested dicts are merged recursively; everything else (lists, scalars,
-    None) is replaced wholesale. ``base`` is not mutated.
-    """
+    """Deep-merge ``override`` into ``base`` and return a new dict."""
     result = base.copy()
     for key, value in override.items():
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
@@ -141,19 +69,8 @@ def get_nested_value(data: Dict[str, Any], path: str, default: Any = None) -> An
     return value
 
 
-# ---------------------------------------------------------------------------
-# cyc normalization
-# ---------------------------------------------------------------------------
-
-
 def _normalize_cyc(cyc: Any) -> Optional[str]:
-    """Coerce ``cyc`` to a two-digit string, or return None.
-
-    The Memory file has multiple incidents where ``cyc=0`` snuck through
-    as ``"0"`` after arithmetic and broke ``t${cyc}z`` filename
-    templates. Coerce through ``int`` and re-emit with ``:02d`` at every
-    string boundary so the bug can't reappear.
-    """
+    """Coerce ``cyc`` to a two-digit string, or return None."""
     if cyc is None or cyc == "":
         return None
     try:
@@ -163,11 +80,6 @@ def _normalize_cyc(cyc: Any) -> Optional[str]:
     if not 0 <= n <= 23:
         return None
     return f"{n:02d}"
-
-
-# ---------------------------------------------------------------------------
-# Derived values + runtime env
-# ---------------------------------------------------------------------------
 
 
 def compute_derived_values(
@@ -210,20 +122,13 @@ def compute_derived_values(
             computed["time_forecastend"] = fcast_end.strftime("%Y%m%d%H")
 
         except (ValueError, TypeError):
-            # Bad PDY format — silently leave the time fields blank so
-            # the caller can still consume the static config without
-            # cycle-derived values.
             pass
 
     return computed
 
 
 def get_runtime_from_env() -> Dict[str, Any]:
-    """Return tracked NCO env vars from ``os.environ``.
-
-    ``cyc`` is normalised to a two-digit string here so it never leaks
-    out as ``"0"``.
-    """
+    """Return tracked NCO env vars from ``os.environ``."""
     runtime: Dict[str, Any] = {}
 
     env_vars = [
@@ -240,9 +145,6 @@ def get_runtime_from_env() -> Dict[str, Any]:
             value = os.environ[var]
             if var == "cyc":
                 normalized = _normalize_cyc(value)
-                # Fall back to raw value if normalisation fails so we
-                # don't silently drop a malformed cyc on the floor; the
-                # downstream consumer will see and complain.
                 runtime[var] = normalized if normalized is not None else value
             else:
                 runtime[var] = value
@@ -250,22 +152,11 @@ def get_runtime_from_env() -> Dict[str, Any]:
     return runtime
 
 
-# ---------------------------------------------------------------------------
-# Export tables
-# ---------------------------------------------------------------------------
-
-
 def export_shell_mappings(
     data: Dict[str, Any],
     framework: str = "auto",
 ) -> Dict[str, Any]:
-    """Build the flat ``{shell_var: value}`` table for one YAML config.
-
-    Args:
-        data: Loaded YAML dict (post-inheritance merge).
-        framework: ``stofs``, ``comf``, ``adcirc``, or ``auto`` (detect
-            from ``system.framework`` in the YAML).
-    """
+    """Build the flat ``{shell_var: value}`` table for one YAML config."""
     exports: Dict[str, Any] = {}
 
     runtime_env = get_runtime_from_env()
@@ -304,7 +195,6 @@ def get_standard_exports(
     """Standard exports applied regardless of ``shell_mappings``."""
     exports: Dict[str, Any] = {}
 
-    # ----- System identity -----
     system = data.get("system", {})
     exports["OFS"] = system.get("name", "")
     exports["OFS_NAME"] = system.get("name", "")
@@ -313,7 +203,6 @@ def get_standard_exports(
     ocean_model = model.get("ocean_model", model.get("type", "SCHISM"))
     exports["OCEAN_MODEL"] = (ocean_model or "SCHISM").upper()
 
-    # ----- Grid -----
     grid = data.get("grid", {})
     exports["GRIDFILE"] = grid.get("files", {}).get("horizontal", "")
 
@@ -324,7 +213,6 @@ def get_standard_exports(
         exports["LATMIN"] = domain.get("lat_min", "")
         exports["LATMAX"] = domain.get("lat_max", "")
     else:
-        # COMF and ADCIRC both use the MIN/MAX naming convention.
         exports["MINLON"] = domain.get("lon_min", "")
         exports["MAXLON"] = domain.get("lon_max", "")
         exports["MINLAT"] = domain.get("lat_min", "")
@@ -342,7 +230,6 @@ def get_standard_exports(
     exports["LEN_NOWCAST"] = computed.get("len_nowcast_hours", "")
     exports["LEN_FORECAST"] = computed.get("len_forecast_hours", "")
 
-    # ----- Framework-specific -----
     if framework == "stofs":
         exports["N_DAYS_MODEL_RUN_PERIOD"] = computed.get("total_run_days", "")
         if "PDYHH_NCAST_BEGIN" in computed:
@@ -385,15 +272,8 @@ def get_standard_exports(
         if "time_hotstart" in computed:
             exports["time_hotstart"] = computed["time_hotstart"]
 
-    # ----- Resources -----
-    # YAML convention (legacy, preserved across SECOFS/creofs/stofs_*/stofs_3d_atl):
-    #   - ``nprocs``: TOTAL mpiexec -n rank count (compute + scribes).
-    #   - ``nscribes``: SCHISM I/O-rank count (argv[1] to pschism).
-    # We export the same value under three names for compatibility:
-    #   - NPROCS      -> consumed by Python workflow drivers (mpiexec -n)
-    #   - TOTAL_TASKS -> consumed by ush/nos_ofs_model_run.sh:383 (mpiexec -n)
-    #   - NCPU_PBS    -> legacy alias in the same fallback chain
-    # Forward-compat: accept ``total_tasks`` as an alias for ``nprocs``.
+    # ``nprocs`` is total mpiexec rank count; ``nscribes`` is the SCHISM
+    # I/O-rank count. NPROCS/TOTAL_TASKS/NCPU_PBS are aliases.
     resources = data.get("resources", {})
     total = resources.get("nprocs")
     if total in (None, ""):
@@ -404,25 +284,13 @@ def get_standard_exports(
     exports["NCPU_PBS"] = exports["NPROCS"]
     exports["NSCRIBES"] = nscribes_val
 
-    # Carry the runtime env back into the export table so downstream
-    # shell can pick up ``PDY`` / ``cyc`` / etc. from a single place.
     exports.update(runtime_env)
 
     return exports
 
 
-# ---------------------------------------------------------------------------
-# Output formatters
-# ---------------------------------------------------------------------------
-
-
 def format_shell_exports(exports: Dict[str, Any]) -> str:
-    """Render the export table as ``export KEY=VALUE`` lines.
-
-    ``cyc`` is forced through :func:`_normalize_cyc` once more so even
-    if a caller bypassed :func:`get_runtime_from_env` we still emit a
-    two-digit value.
-    """
+    """Render the export table as ``export KEY=VALUE`` lines."""
     lines: List[str] = []
     for key, value in sorted(exports.items()):
         if value is None or value == "":
@@ -502,11 +370,6 @@ def format_ctl_file(exports: Dict[str, Any], system_name: str) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Section filtering
-# ---------------------------------------------------------------------------
-
-
 _SECTIONS: Dict[str, List[str]] = {
     "domain": [
         "LONMIN", "LONMAX", "LATMIN", "LATMAX",
@@ -542,33 +405,15 @@ def filter_by_section(exports: Dict[str, Any], section: str) -> Dict[str, Any]:
     return {k: v for k, v in exports.items() if k in section_vars}
 
 
-# ---------------------------------------------------------------------------
-# Top-level helper used by both the CLI and the public API
-# ---------------------------------------------------------------------------
-
-
 def export_for_shell(
     config_path: Union[str, Path],
     section: Optional[str] = None,
     output_format: str = "shell",
     framework: str = "auto",
 ) -> str:
-    """Top-level helper: load YAML, merge bases, format exports.
-
-    Args:
-        config_path: Path to the YAML system config.
-        section: One of ``domain``, ``model``, ``run``, ``forcing``,
-            ``paths``; if set, only those keys are emitted.
-        output_format: ``shell``, ``json``, or ``ctl``.
-        framework: ``auto``, ``stofs``, ``comf``, or ``adcirc``.
-
-    Returns:
-        The rendered output string.
-    """
+    """Top-level helper: load YAML, merge bases, format exports."""
     config_path = Path(config_path)
 
-    # When the YAML lives under ``parm/systems/`` we step one level up
-    # to find the ``parm/base/`` peer used by the inheritance loader.
     if config_path.parent.name == "systems":
         base_dir = config_path.parent.parent
     else:
@@ -589,22 +434,13 @@ def export_for_shell(
     return format_shell_exports(exports)
 
 
-# ---------------------------------------------------------------------------
-# Public alias matching the new naming
-# ---------------------------------------------------------------------------
-
-
 def export_env(
     yaml_path: Union[str, Path],
     framework: str = "auto",
     output_format: str = "shell",
     section: Optional[str] = None,
 ) -> str:
-    """Cleaner alias for :func:`export_for_shell`.
-
-    Argument order matches what the CLI dispatches with, and the
-    keyword-only style is preferred for any new internal call site.
-    """
+    """Cleaner alias for :func:`export_for_shell`."""
     return export_for_shell(
         config_path=yaml_path,
         section=section,
@@ -613,35 +449,21 @@ def export_env(
     )
 
 
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m nos_workflow.utils.yaml_to_env",
-        description=(
-            "Export YAML config values as shell environment variables. "
-            "Prefer ``nos_uw env --ofs <name>`` for new shell scripts; "
-            "this module entry point exists for backward compatibility "
-            "with the legacy nos_ofs.utils.yaml_to_env CLI."
-        ),
+        description="Export YAML config values as shell environment variables.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Preferred — via the nos_uw CLI:
   eval $(nos_uw env --ofs secofs_ufs --shell)
 
-  # Direct module invocation (legacy compatibility):
   eval $(python -m nos_workflow.utils.yaml_to_env \\
       --config parm/systems/secofs_ufs.yaml --framework comf)
 
-  # Section filter:
   eval $(python -m nos_workflow.utils.yaml_to_env \\
       --config parm/systems/stofs_3d_atl.yaml --section domain)
 
-  # Generate a nosofs-style .ctl file:
   python -m nos_workflow.utils.yaml_to_env \\
       --config parm/systems/secofs_ufs.yaml --format ctl > secofs_ufs.ctl
 
@@ -660,14 +482,11 @@ Frameworks:
 """,
     )
 
-    # Accept ``--config <path>`` (canonical) and a positional fallback
-    # for backward compatibility with the legacy CLI invocation
-    # ``python -m nos_ofs.yaml_to_env <config>``.
     parser.add_argument(
         "config_file",
         nargs="?",
         default=None,
-        help="path to YAML configuration file (positional, legacy form)",
+        help="path to YAML configuration file (positional)",
     )
     parser.add_argument(
         "-c", "--config",
@@ -701,13 +520,7 @@ Frameworks:
 
 
 def _emit_error(reason: str, config_path: Optional[Path]) -> None:
-    """Emit a single structured error line on stderr.
-
-    No traceback is printed unless ``NOS_WORKFLOW_DEBUG=1`` is exported.
-    The legacy ``2>/dev/null`` masking pattern in operational shell
-    callers is therefore unnecessary — operators see a meaningful
-    one-liner pointing at the offending config.
-    """
+    """Emit a single structured error line on stderr."""
     cfg_repr = str(config_path) if config_path is not None else "<unset>"
     print(
         f"ERROR: yaml_to_env: {reason} (config={cfg_repr})",
@@ -719,7 +532,7 @@ def _emit_error(reason: str, config_path: Optional[Path]) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """argparse entry point. Returns a shell exit code."""
+    """argparse entry point."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -739,8 +552,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             output_format=args.format,
             framework=args.framework,
         )
-    except Exception as exc:  # noqa: BLE001 — convert to one-line stderr
-        # Try to keep the message tight: "<ExceptionType>: <message>"
+    except Exception as exc:  # noqa: BLE001
         _emit_error(f"{type(exc).__name__}: {exc}", config_path)
         return 1
 
