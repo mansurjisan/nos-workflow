@@ -105,10 +105,30 @@ def _stage_and_extract(
     return extracted
 
 
+def _legacy_combined_obc_tar(tar_filename: str) -> str:
+    """Derive the legacy combined OBC tar name from a phase-specific name.
+
+    Phase-specific names follow ``{base}.obc.{phase}.tar``; the legacy
+    combined tar is ``{base}.obc.tar``. Returns an empty string when the
+    input does not match the phase-specific pattern.
+    """
+    if not tar_filename:
+        return ""
+    for phase_suffix in (".obc.nowcast.tar", ".obc.forecast.tar"):
+        if tar_filename.endswith(phase_suffix):
+            return tar_filename[: -len(phase_suffix)] + ".obc.tar"
+    return ""
+
+
 def untar_obc_forcing(ctx: SchismRunContext, phase: str) -> int:
     """Untar the OBC forcing tarball into $DATA.
 
     Returns count of payload files extracted (0..6), or -1 if absent.
+
+    Phase-specific tars (``{base}.obc.nowcast.tar`` / ``{base}.obc.forecast.tar``)
+    are preferred. If absent, falls back to the legacy combined tar
+    (``{base}.obc.tar``) for backward compatibility with prep runs that
+    predate the phase split.
     """
     if phase == "nowcast":
         tar_filename = ctx.obc_forcing_file_nowcast or ""
@@ -119,6 +139,19 @@ def untar_obc_forcing(ctx: SchismRunContext, phase: str) -> int:
             f"untar_obc_forcing: unknown phase {phase!r} "
             "(expected nowcast/forecast)"
         )
+
+    src = ctx.comout / tar_filename if tar_filename else None
+    if src is None or not src.is_file() or src.stat().st_size == 0:
+        legacy = _legacy_combined_obc_tar(tar_filename)
+        if legacy:
+            legacy_src = ctx.comout / legacy
+            if legacy_src.is_file() and legacy_src.stat().st_size > 0:
+                logger.warning(
+                    "OBC forcing: phase-specific tar %s not found in %s; "
+                    "falling back to combined tar %s",
+                    tar_filename, ctx.comout, legacy,
+                )
+                tar_filename = legacy
 
     return _stage_and_extract(
         ctx,
