@@ -1,15 +1,4 @@
-"""NCO environment normalization.
-
-The shell J-jobs export a forest of environment variables (NCO
-convention: ``HOMEnos``, ``FIXofs``, ``COMOUT``, ``DATA`` …). Python
-stages need a typed, validated handle on those variables instead of
-peppering ``os.environ.get`` calls through the codebase. ``NCOEnv`` is
-that handle — built once at the top of a stage and passed downstream.
-
-Anything missing that the stage actually needs raises ``ConfigError``
-with a message naming the variable, so on-call doesn't have to chase a
-``KeyError`` through a stack trace.
-"""
+"""NCO environment normalization."""
 from __future__ import annotations
 
 import os
@@ -22,12 +11,7 @@ from .errors import ConfigError
 
 
 def _derive_net(ofs: str) -> str:
-    """Best-effort mapping from OFS name to NCO ``NET`` namespace.
-
-    STOFS-family systems live under ``NET=stofs``; everything else —
-    SECOFS, CBOFS, LEOFS, etc. — defaults to ``NET=nos``. Operators can
-    override by exporting ``NET`` themselves.
-    """
+    """Map OFS name to NCO ``NET`` namespace."""
     name = ofs.lower()
     if name.startswith("stofs"):
         return "stofs"
@@ -35,7 +19,7 @@ def _derive_net(ofs: str) -> str:
 
 
 def _require(env: dict, key: str) -> str:
-    """Look up ``key`` in ``env`` or raise ``ConfigError`` with a clear msg."""
+    """Look up ``key`` in ``env`` or raise ``ConfigError``."""
     val = env.get(key)
     if val is None or val == "":
         raise ConfigError(
@@ -54,14 +38,7 @@ def _path_or_default(env: dict, key: str, default: Path) -> Path:
 
 @dataclass(frozen=True)
 class NCOEnv:
-    """Frozen, typed view of the NCO environment for a single stage run.
-
-    All directory fields are ``pathlib.Path``; all string fields are
-    plain ``str`` (already validated, e.g. ``cyc`` is two digits). The
-    dataclass is frozen because we treat one ``NCOEnv`` instance as the
-    immutable ground truth for one stage; mutations belong in a fresh
-    instance constructed via ``dataclasses.replace``.
-    """
+    """Frozen, typed view of the NCO environment for a single stage run."""
 
     ofs: str
     pdy: str
@@ -88,16 +65,9 @@ class NCOEnv:
 
     @classmethod
     def from_env(cls, ofs: Optional[str] = None) -> "NCOEnv":
-        """Build an ``NCOEnv`` from ``os.environ``.
-
-        ``ofs`` lets the CLI override the env-derived OFS name. If not
-        passed, we read ``$OFS`` then fall back to ``$RUN``. Everything
-        else comes from the environment with the documented NCO
-        defaults; required variables raise ``ConfigError``.
-        """
+        """Build an ``NCOEnv`` from ``os.environ``."""
         env = os.environ
 
-        # Identity ---------------------------------------------------------
         ofs_value = ofs or env.get("OFS") or env.get("RUN")
         if not ofs_value:
             raise ConfigError(
@@ -114,7 +84,6 @@ class NCOEnv:
         net = env.get("NET") or _derive_net(ofs_value)
         run = env.get("RUN") or ofs_value
 
-        # Directories ------------------------------------------------------
         homenos = _path_or_default(env, "HOMEnos", Path("/lfs/h1/nos") / net / ofs_value)
         fixofs = _path_or_default(env, "FIXofs", homenos / "fix")
         parmnos = _path_or_default(env, "PARMnos", homenos / "parm")
@@ -128,7 +97,6 @@ class NCOEnv:
         dataroot = _path_or_default(env, "DATAROOT", Path("/lfs/h2/emc/stmp"))
         data = Path(_require(env, "DATA"))
 
-        # NCO log/dbn knobs ------------------------------------------------
         pgmout = env.get("pgmout", "OUTPUT.$$")
         jlogfile = env.get("jlogfile", "")
         sendcom = env.get("SENDCOM", "YES")
@@ -161,11 +129,7 @@ class NCOEnv:
         )
 
     def as_shell_env(self) -> dict:
-        """Re-serialize the dataclass as a flat ``dict[str, str]``.
-
-        Suitable for passing to ``subprocess.run(env=...)``. Keys use the
-        NCO casing the shell scripts expect (``HOMEnos``, ``cyc``, …).
-        """
+        """Re-serialize the dataclass as a flat ``dict[str, str]``."""
         return {
             "OFS": self.ofs,
             "PDY": self.pdy,

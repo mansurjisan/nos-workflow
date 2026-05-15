@@ -1,20 +1,4 @@
-"""argparse-based CLI dispatcher for ``nos_uw``.
-
-The CLI is intentionally thin: it parses arguments, builds an ``NCOEnv``,
-looks up the OFS descriptor + stage runner, and calls into them. All the
-real work lives in stage modules (Agent B's ``nos_workflow.stages.*``).
-
-Subcommands:
-
-  - ``run <stage> --ofs <name>``    — execute a stage
-  - ``list``                        — print registered OFS systems
-  - ``stages <ofs>``                — print stages an OFS exposes
-  - ``validate <ofs>``              — sanity-check YAML + FIXofs + EXEC
-  - ``env --ofs <name>``            — dump effective env (Agent C wires)
-
-The top-level ``main`` returns an ``int`` exit code so ``__main__`` can
-``raise SystemExit(main())``.
-"""
+"""argparse-based CLI dispatcher for ``nos_uw``."""
 from __future__ import annotations
 
 import argparse
@@ -35,10 +19,6 @@ from .errors import (
     WorkflowError,
 )
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
 
 class _UTCFormatter(logging.Formatter):
     """Logging formatter that prints UTC timestamps with [stage] [ofs] tags."""
@@ -54,12 +34,7 @@ class _UTCFormatter(logging.Formatter):
 
 
 def _utc_now() -> _dt.datetime:
-    """Return UTC ``datetime`` compatible with both 3.8 and 3.13.
-
-    ``datetime.utcnow`` is deprecated on 3.12+; ``datetime.now(timezone.utc)``
-    is the supported replacement. We need 3.8 support too, where both
-    spellings work.
-    """
+    """Return UTC ``datetime`` compatible with both 3.8 and 3.13."""
     return _dt.datetime.now(_dt.timezone.utc)
 
 
@@ -69,13 +44,8 @@ def _configure_logging(verbose: bool) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_UTCFormatter())
-    # Inject stage/ofs from contextvars onto records from bare loggers
-    # (e.g. nos_utils.forcing.*) so they show as [prep] [ofs] rather than
-    # [-] [-] in the formatted output.
     handler.addFilter(StageContextFilter())
     root = logging.getLogger()
-    # Replace handlers — under repeated CLI invocations in tests we'd
-    # otherwise stack duplicates.
     for h in list(root.handlers):
         root.removeHandler(h)
     root.addHandler(handler)
@@ -85,11 +55,6 @@ def _configure_logging(verbose: bool) -> None:
 def _log_phase(stage: str, ofs: str, message: str) -> None:
     logger = logging.getLogger("nos_workflow.cli")
     logger.info(message, extra={"stage": stage, "ofs": ofs})
-
-
-# ---------------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------------
 
 
 def _resolve_ofs(arg_ofs: Optional[str]) -> str:
@@ -116,7 +81,7 @@ def _resolve_cyc(arg_cyc: Optional[str]) -> Optional[str]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argparse tree. Exposed for testing."""
+    """Build the argparse tree."""
     parser = argparse.ArgumentParser(
         prog="nos_uw",
         description="Operational workflow driver for NOS-OFS systems.",
@@ -129,7 +94,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sub = parser.add_subparsers(dest="cmd", required=True, metavar="<command>")
 
-    # run -----------------------------------------------------------------
     p_run = sub.add_parser("run", help="execute a stage")
     p_run.add_argument("stage", help="stage name (prep, nowcast, forecast, post, ...)")
     p_run.add_argument("--ofs", help="OFS name; defaults to $OFS or $RUN")
@@ -137,23 +101,19 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--cyc", help="cycle hour HH; defaults to $cyc")
     p_run.set_defaults(func=cmd_run)
 
-    # list ----------------------------------------------------------------
     p_list = sub.add_parser("list", help="list registered OFS systems")
     p_list.set_defaults(func=cmd_list)
 
-    # stages --------------------------------------------------------------
     p_stages = sub.add_parser("stages", help="list stages exposed by an OFS")
     p_stages.add_argument("ofs", help="OFS name")
     p_stages.set_defaults(func=cmd_stages)
 
-    # validate ------------------------------------------------------------
     p_validate = sub.add_parser(
         "validate", help="sanity-check YAML + FIXofs + EXEC paths"
     )
     p_validate.add_argument("ofs", help="OFS name")
     p_validate.set_defaults(func=cmd_validate)
 
-    # env -----------------------------------------------------------------
     p_env = sub.add_parser(
         "env",
         help="dump effective env from YAML (eval-able shell, JSON, or .ctl)",
@@ -185,19 +145,12 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-# ---------------------------------------------------------------------------
-# Subcommand handlers
-# ---------------------------------------------------------------------------
-
-
 def cmd_run(args: argparse.Namespace) -> int:
     """Resolve descriptor, translate stage alias, dispatch to stage module."""
     ofs = _resolve_ofs(args.ofs)
     pdy = _resolve_pdy(args.pdy)
     cyc = _resolve_cyc(args.cyc)
 
-    # Bake resolved values back into the env so NCOEnv.from_env / shell
-    # children agree with what the operator typed on the command line.
     if pdy:
         os.environ["PDY"] = pdy
     if cyc:
@@ -206,17 +159,15 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     _log_phase(args.stage, ofs, f"resolving descriptor for {ofs}")
 
-    # Lazy imports so test runs (and `--help`) don't pull in the registry
-    # at module-load time.
     from .registry import lookup, load_all_descriptors
 
     load_all_descriptors()
-    descriptor = lookup(ofs)  # raises OFSNotRegisteredError on miss
+    descriptor = lookup(ofs)
 
     canonical_stage = descriptor.resolve_stage(args.stage)
     _log_phase(canonical_stage, ofs, f"loading stage module nos_workflow.stages.{canonical_stage}")
 
-    from .env import NCOEnv  # local import so cli is importable without env wiring
+    from .env import NCOEnv
     nco_env = NCOEnv.from_env(ofs=ofs)
 
     stage_module = _import_stage_module(canonical_stage)
@@ -240,8 +191,6 @@ def cmd_list(args: argparse.Namespace) -> int:
         print("No OFS systems registered yet (registry module not present).")
         return 0
 
-    # Trigger descriptor module imports so register() side-effects populate
-    # the registry. Idempotent across CLI calls.
     load_all_descriptors()
     rows = list_ofs()
     if not rows:
@@ -263,7 +212,7 @@ def cmd_stages(args: argparse.Namespace) -> int:
     from .registry import lookup, load_all_descriptors
 
     load_all_descriptors()
-    descriptor = lookup(args.ofs.lower())  # raises OFSNotRegisteredError on miss
+    descriptor = lookup(args.ofs.lower())
 
     for s in descriptor.canonical_stages:
         print(s)
@@ -277,7 +226,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     from .registry import lookup, load_all_descriptors
 
     load_all_descriptors()
-    descriptor = lookup(args.ofs.lower())  # raises OFSNotRegisteredError on miss
+    descriptor = lookup(args.ofs.lower())
 
     problems: List[str] = []
     yaml_path = getattr(descriptor, "yaml_path", None)
@@ -301,19 +250,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
 
 def cmd_env(args: argparse.Namespace) -> int:
-    """Resolve a YAML config and emit its export table.
-
-    Resolution order for the YAML path:
-        1. ``--config`` CLI argument (explicit override).
-        2. ``OFS_CONFIG`` env var (operational shell convention).
-        3. The registered ``OFSDescriptor.yaml_path`` for ``--ofs``,
-           resolved against ``$HOMEnos`` if relative.
-
-    Errors print a one-line ``FATAL: ...`` to stdout via the standard
-    ``WorkflowError`` path; ``yaml_to_env``'s own ``ERROR:`` line still
-    goes to stderr. No tracebacks are dumped unless
-    ``NOS_WORKFLOW_DEBUG=1`` is exported.
-    """
+    """Resolve a YAML config and emit its export table."""
     from .utils.yaml_to_env import export_for_shell
 
     if args.json:
@@ -338,12 +275,10 @@ def cmd_env(args: argparse.Namespace) -> int:
             ofs = _resolve_ofs(args.ofs)
             try:
                 from .registry import load_all_descriptors, lookup
-            except ImportError as exc:  # pragma: no cover - defensive
+            except ImportError as exc:  # pragma: no cover
                 raise OFSNotRegisteredError(
                     f"registry module not available ({exc})"
                 ) from exc
-            # Trigger descriptor module imports so ``register()`` side-
-            # effects populate the registry. Idempotent across CLI calls.
             load_all_descriptors()
             descriptor = lookup(ofs)
             framework = getattr(descriptor, "framework", "auto") or "auto"
@@ -354,8 +289,6 @@ def cmd_env(args: argparse.Namespace) -> int:
                 )
             yaml_path = Path(yaml_path)
             if not yaml_path.is_absolute():
-                # Resolve against $HOMEnos first (operational layout),
-                # then $PACKAGEROOT, then the current working directory.
                 root_env = (
                     os.environ.get("HOMEnos")
                     or os.environ.get("PACKAGEROOT")
@@ -380,17 +313,8 @@ def cmd_env(args: argparse.Namespace) -> int:
     return 0
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _import_stage_module(stage: str):
-    """Import ``nos_workflow.stages.<stage>`` lazily.
-
-    Raises ``StageNotFoundError`` rather than ``ImportError`` so the
-    top-level handler logs a clean FATAL.
-    """
+    """Import ``nos_workflow.stages.<stage>`` lazily."""
     import importlib
 
     try:
@@ -402,7 +326,7 @@ def _import_stage_module(stage: str):
 
 
 def _write_traceback_sidecar(stage: Optional[str]) -> Optional[Path]:
-    """If ``$DATA`` is set, dump the active traceback there. Best-effort."""
+    """If ``$DATA`` is set, dump the active traceback there."""
     data = os.environ.get("DATA")
     if not data:
         return None
@@ -414,17 +338,12 @@ def _write_traceback_sidecar(stage: Optional[str]) -> Optional[Path]:
         sidecar = data_path / f"nos_uw.{stage_tag}.{ts}.traceback"
         sidecar.write_text(traceback.format_exc())
         return sidecar
-    except Exception:  # noqa: BLE001 — never let logging blow up exit path
+    except Exception:  # noqa: BLE001
         return None
 
 
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
-
 def main(argv: Optional[List[str]] = None) -> int:
-    """Parse args and dispatch. Returns shell-style exit code."""
+    """Parse args and dispatch."""
     parser = build_parser()
     args = parser.parse_args(argv)
     _configure_logging(getattr(args, "verbose", False))
@@ -436,14 +355,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         return int(args.func(args) or 0)
     except WorkflowError as exc:
-        # Operator-facing one-liner; full traceback to a sidecar if we have $DATA.
         print(f"FATAL: {exc}", flush=True)
         sidecar = _write_traceback_sidecar(stage_for_log)
         if sidecar is not None:
             print(f"FATAL: traceback written to {sidecar}", flush=True)
         return getattr(exc, "returncode", 1) or 1
-    # Unexpected exceptions intentionally bubble: PBS will mark the job
-    # FAILED and the operator gets the full stack in the log.
 
 
 __all__ = ["main", "build_parser"]

@@ -93,16 +93,16 @@ def fake_env() -> object:
 # ---------------------------------------------------------------------------
 
 
-def test_nowcast_stofs_branch_mentions_task_33(fake_env):
+def test_nowcast_stofs_branch_raises_not_implemented(fake_env):
     with pytest.raises(NotImplementedError) as exc_info:
         nowcast_stage.run(_stofs_3d_desc(), fake_env)
-    assert "#33" in str(exc_info.value)
+    assert "STOFS-3D-ATL" in str(exc_info.value)
 
 
-def test_nowcast_adcirc_branch_mentions_task_34(fake_env):
+def test_nowcast_adcirc_branch_raises_not_implemented(fake_env):
     with pytest.raises(NotImplementedError) as exc_info:
         nowcast_stage.run(_adcirc_desc(), fake_env)
-    assert "#34" in str(exc_info.value)
+    assert "STOFS-2D-GLO" in str(exc_info.value)
 
 
 def test_nowcast_unknown_framework_raises_stage_failed(fake_env):
@@ -135,22 +135,24 @@ def test_nowcast_phase_header_logged(fake_env, caplog):
 
 # ---------------------------------------------------------------------------
 # COMF body — happy path
+#
+# The COMF body drives the 4-step contract via direct Python runner calls
+# (``runners.schism_ufs.{stage_files,prepare_restart,execute,archive}.run_python``).
+# We patch those functions at their source modules so the body can exercise
+# its env-validation, step ordering, and error-propagation logic without
+# touching the filesystem or building real SchismRunContexts.
 # ---------------------------------------------------------------------------
 
 
 def _make_minimal_nowcast_env(tmp_path: Path) -> dict:
     """Build the env vars the COMF nowcast body requires, with stubs in
-    tmp_path. The 4-step contract is mocked, so we only need USHnos/
-    nos_run.sh to exist (it gets validated up-front)."""
+    tmp_path. The 4-step contract is mocked at the Python runner level,
+    so we only need USHnos/DATA on disk to satisfy the up-front env
+    validation."""
     ushnos = tmp_path / "ush"
     data = tmp_path / "data"
     ushnos.mkdir(parents=True, exist_ok=True)
     data.mkdir(parents=True, exist_ok=True)
-
-    # Drop a stub nos_run.sh (just has to exist for the path check;
-    # run_shell_function is mocked so its body is never sourced).
-    nos_run = ushnos / "nos_run.sh"
-    nos_run.write_text("#!/bin/bash\n# stub\n")
 
     return {
         "USHnos": str(ushnos),
@@ -161,7 +163,83 @@ def _make_minimal_nowcast_env(tmp_path: Path) -> dict:
         "cyc": "00",
         "cycle": "t00z",
         "PREFIXNOS": "nos.secofs_ufs",
+        "COMOUT": str(tmp_path / "com"),
     }
+
+
+def _patch_all_runner_steps(stage_module, *, returns):
+    """Patch all four Python runners + context builders the stage uses.
+
+    ``returns`` is a dict mapping step name -> rc (or callable / exception).
+    A missing step defaults to rc=0.
+
+    Returns the dict of MagicMock objects keyed by step name so callers
+    can inspect call_args / call_count.
+    """
+    from unittest.mock import MagicMock, patch
+
+    mocks = {}
+    patches = []
+
+    for step in ("stage_model_files", "prepare_restart", "execute_model", "archive_outputs"):
+        spec = returns.get(step, 0)
+        if isinstance(spec, BaseException) or (
+            isinstance(spec, type) and issubclass(spec, BaseException)
+        ):
+            m = MagicMock(side_effect=spec)
+        elif callable(spec):
+            m = MagicMock(side_effect=spec)
+        else:
+            m = MagicMock(return_value=spec)
+        mocks[step] = m
+
+    # Patch the runners' run_python at their source modules.
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.stage_files.run_python",
+        mocks["stage_model_files"],
+    ))
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.prepare_restart.run_python",
+        mocks["prepare_restart"],
+    ))
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.execute.run_python",
+        mocks["execute_model"],
+    ))
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.archive.run_python",
+        mocks["archive_outputs"],
+    ))
+
+    # Patch the supporting builders so ``_run_step`` can build a fake
+    # context cheaply without needing a real COM tree.
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.setup_paths.compute_paths",
+        MagicMock(return_value=MagicMock(name="SchismRunContext")),
+    ))
+    patches.append(patch(
+        "nos_workflow.env.NCOEnv.from_env",
+        MagicMock(return_value=MagicMock(name="NCOEnv")),
+    ))
+    # prepare_restart / archive_outputs build context via
+    # SchismRunContext.from_env_and_phase, so patch that too.
+    patches.append(patch(
+        "nos_workflow.runners.schism_ufs.context.SchismRunContext.from_env_and_phase",
+        MagicMock(return_value=MagicMock(name="SchismRunContext")),
+    ))
+
+    return mocks, patches
+
+
+def _enter_all(patches):
+    """Enter every patch in ``patches`` and return them so the caller can stop()."""
+    started = [p.start() for p in patches]
+    return started
+
+
+def _stop_all(patches):
+    for p in patches:
+        p.stop()
 
 
 @pytest.mark.parametrize(
@@ -173,54 +251,31 @@ def test_nowcast_comf_happy_path_invokes_all_four_steps(
     tmp_path, fake_env, desc_factory
 ):
     """End-to-end UFS-Coastal happy path: every step in the 4-step
-    contract is invoked with ``args=('nowcast',)`` and the right script
-    path, and the stage returns 0.
+    contract is invoked with ``phase='nowcast'`` and the stage returns 0.
 
     Parametrized across both ``framework="comf"`` (SECOFS-UFS) and
     ``framework="stofs_ufs"`` (STOFS-3D-ATL-UFS) since both must route
     through ``_run_comf_nowcast`` identically.
     """
     env = _make_minimal_nowcast_env(tmp_path)
-    nos_run = Path(env["USHnos"]) / "nos_run.sh"
-    data = Path(env["DATA"])
 
-    seen: list = []
-
-    def fake_run_shell_function(*, script, function, args, env, cwd):
-        seen.append({
-            "script": Path(script),
-            "function": function,
-            "args": tuple(args),
-            "cwd": Path(cwd) if cwd is not None else None,
-            "env_keys": set(env.keys()) if env else set(),
-        })
-        return 0
+    mocks, patches = _patch_all_runner_steps(nowcast_stage, returns={})
 
     with patch.dict(os.environ, env, clear=False):
-        with patch.object(
-            nowcast_stage,
-            "run_shell_function",
-            side_effect=fake_run_shell_function,
-        ):
+        _enter_all(patches)
+        try:
             rc = nowcast_stage.run(desc_factory(), fake_env)
+        finally:
+            _stop_all(patches)
 
     assert rc == 0
-    # All 4 steps were called, in the contracted order.
-    assert [c["function"] for c in seen] == [
-        "stage_model_files",
-        "prepare_restart",
-        "execute_model",
-        "archive_outputs",
-    ]
-    # Every call passed the same script path and the "nowcast" phase arg.
-    for call in seen:
-        assert call["script"] == nos_run
-        assert call["args"] == ("nowcast",)
-        assert call["cwd"] == data
-        # The parent env was forwarded (otherwise the shell helpers
-        # wouldn't see PDY/cyc/PREFIXNOS/etc).
-        assert "PDY" in call["env_keys"]
-        assert "PREFIXNOS" in call["env_keys"]
+    # All 4 runners were called exactly once.
+    for step, m in mocks.items():
+        assert m.call_count == 1, f"{step} should have been called once, got {m.call_count}"
+        # phase argument is always "nowcast"
+        call_args = m.call_args
+        # call_args.args is (ctx, phase)
+        assert call_args.args[1] == "nowcast", f"{step} should receive phase='nowcast'"
 
 
 def test_nowcast_comf_stops_on_first_failing_step(tmp_path, fake_env):
@@ -228,26 +283,24 @@ def test_nowcast_comf_stops_on_first_failing_step(tmp_path, fake_env):
     ``StageFailedError`` with that rc and NOT call the remaining steps."""
     env = _make_minimal_nowcast_env(tmp_path)
 
-    seen: list = []
-
-    def fake_run_shell_function(*, script, function, args, env, cwd):
-        seen.append(function)
-        # Fail on the first step.
-        if function == "stage_model_files":
-            return 7
-        return 0
+    mocks, patches = _patch_all_runner_steps(
+        nowcast_stage,
+        returns={"stage_model_files": 7},
+    )
 
     with patch.dict(os.environ, env, clear=False):
-        with patch.object(
-            nowcast_stage,
-            "run_shell_function",
-            side_effect=fake_run_shell_function,
-        ):
+        _enter_all(patches)
+        try:
             with pytest.raises(StageFailedError) as exc_info:
                 nowcast_stage.run(_secofs_ufs_desc(), fake_env)
+        finally:
+            _stop_all(patches)
 
-    # Only the first step ran; the rest were skipped.
-    assert seen == ["stage_model_files"]
+    # Only stage_model_files was called; the other 3 were skipped.
+    assert mocks["stage_model_files"].call_count == 1
+    assert mocks["prepare_restart"].call_count == 0
+    assert mocks["execute_model"].call_count == 0
+    assert mocks["archive_outputs"].call_count == 0
     assert exc_info.value.stage == "nowcast"
     assert exc_info.value.ofs == "secofs_ufs"
     assert exc_info.value.returncode == 7
@@ -261,22 +314,23 @@ def test_nowcast_comf_propagates_execute_model_rc(tmp_path, fake_env):
     or an mpiexec rank failure."""
     env = _make_minimal_nowcast_env(tmp_path)
 
-    def fake_run_shell_function(*, script, function, args, env, cwd):
-        if function == "execute_model":
-            return 137  # OOM-killed; classic MPI exit code
-        return 0
+    mocks, patches = _patch_all_runner_steps(
+        nowcast_stage,
+        returns={"execute_model": 137},  # OOM-killed; classic MPI exit code
+    )
 
     with patch.dict(os.environ, env, clear=False):
-        with patch.object(
-            nowcast_stage,
-            "run_shell_function",
-            side_effect=fake_run_shell_function,
-        ):
+        _enter_all(patches)
+        try:
             with pytest.raises(StageFailedError) as exc_info:
                 nowcast_stage.run(_secofs_ufs_desc(), fake_env)
+        finally:
+            _stop_all(patches)
 
     assert exc_info.value.returncode == 137
     assert "execute_model" in str(exc_info.value)
+    # archive_outputs not reached after execute_model failure.
+    assert mocks["archive_outputs"].call_count == 0
 
 
 def test_nowcast_comf_archive_failure_surfaces(tmp_path, fake_env):
@@ -285,19 +339,18 @@ def test_nowcast_comf_archive_failure_surfaces(tmp_path, fake_env):
     must see."""
     env = _make_minimal_nowcast_env(tmp_path)
 
-    def fake_run_shell_function(*, script, function, args, env, cwd):
-        if function == "archive_outputs":
-            return 2
-        return 0
+    mocks, patches = _patch_all_runner_steps(
+        nowcast_stage,
+        returns={"archive_outputs": 2},
+    )
 
     with patch.dict(os.environ, env, clear=False):
-        with patch.object(
-            nowcast_stage,
-            "run_shell_function",
-            side_effect=fake_run_shell_function,
-        ):
+        _enter_all(patches)
+        try:
             with pytest.raises(StageFailedError) as exc_info:
                 nowcast_stage.run(_secofs_ufs_desc(), fake_env)
+        finally:
+            _stop_all(patches)
 
     assert exc_info.value.returncode == 2
     assert "archive_outputs" in str(exc_info.value)
@@ -334,37 +387,23 @@ def test_nowcast_comf_missing_data_raises(tmp_path, fake_env):
     assert "DATA" in str(exc_info.value)
 
 
-def test_nowcast_comf_missing_nos_run_sh_raises(tmp_path, fake_env):
-    """If ``${USHnos}/nos_run.sh`` is absent, fail fast with a
-    StageFailedError naming the missing path."""
-    env = _make_minimal_nowcast_env(tmp_path)
-    # Yank the stub nos_run.sh.
-    nos_run = Path(env["USHnos"]) / "nos_run.sh"
-    nos_run.unlink()
-
-    with patch.dict(os.environ, env, clear=False):
-        with pytest.raises(StageFailedError) as exc_info:
-            nowcast_stage.run(_secofs_ufs_desc(), fake_env)
-    assert exc_info.value.stage == "nowcast"
-    assert "nos_run.sh" in str(exc_info.value)
-
-
 def test_nowcast_comf_unexpected_exception_wrapped(tmp_path, fake_env):
-    """An unexpected RuntimeError from ``run_shell_function`` is wrapped
-    into a StageFailedError so the CLI prints a clean FATAL line."""
+    """An unexpected RuntimeError from a runner is wrapped into a
+    StageFailedError so the CLI prints a clean FATAL line."""
     env = _make_minimal_nowcast_env(tmp_path)
 
-    def boom(*, script, function, args, env, cwd):
-        raise RuntimeError("subprocess.run died unexpectedly")
+    mocks, patches = _patch_all_runner_steps(
+        nowcast_stage,
+        returns={"stage_model_files": RuntimeError("runner died unexpectedly")},
+    )
 
     with patch.dict(os.environ, env, clear=False):
-        with patch.object(
-            nowcast_stage,
-            "run_shell_function",
-            side_effect=boom,
-        ):
+        _enter_all(patches)
+        try:
             with pytest.raises(StageFailedError) as exc_info:
                 nowcast_stage.run(_secofs_ufs_desc(), fake_env)
+        finally:
+            _stop_all(patches)
 
     assert exc_info.value.stage == "nowcast"
     assert "unexpected exception" in str(exc_info.value)

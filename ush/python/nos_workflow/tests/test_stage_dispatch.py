@@ -77,16 +77,16 @@ def fake_env() -> object:
     return object()
 
 
-def test_prep_stofs_branch_mentions_task_33(fake_env):
+def test_prep_stofs_branch_raises_not_implemented(fake_env):
     with pytest.raises(NotImplementedError) as exc_info:
         prep_stage.run(_stofs_3d_desc(), fake_env)
-    assert "#33" in str(exc_info.value)
+    assert "STOFS-3D-ATL" in str(exc_info.value)
 
 
-def test_prep_adcirc_branch_mentions_task_34(fake_env):
+def test_prep_adcirc_branch_raises_not_implemented(fake_env):
     with pytest.raises(NotImplementedError) as exc_info:
         prep_stage.run(_adcirc_desc(), fake_env)
-    assert "#34" in str(exc_info.value)
+    assert "STOFS-2D-GLO" in str(exc_info.value)
 
 
 def test_prep_unknown_framework_raises_stage_failed(fake_env):

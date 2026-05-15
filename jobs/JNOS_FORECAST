@@ -2,7 +2,7 @@
 set -x
 
 ########################################
-# NOS_OFS_FORECAST - Forecast Job
+# JNOS_FORECAST - Forecast Job
 #
 # Runs the forecast phase for all frameworks (COMF, STOFS, ADCIRC).
 # Retrieves hotstart file from $COMOUT archived by the nowcast job.
