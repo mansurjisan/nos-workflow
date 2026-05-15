@@ -103,7 +103,13 @@ def _compute_filenames(prefix: str, cycle: str, pdy1: str) -> dict:
     """Build the per-cycle filename dict (forcing, restart, output products)."""
     base = f"{prefix}.{cycle}.{pdy1}"
     return {
-        "OBC_FORCING_FILE":      f"{base}.obc.tar",
+        # Phase-specific tars are written by prep with phase-specific sim
+        # windows (nowcast=6h, forecast=48h). OBC_FORCING_FILE is the
+        # legacy combined tar (54h) retained for backward-compat fallback
+        # when prep predates the split.
+        "OBC_FORCING_FILE":           f"{base}.obc.tar",
+        "OBC_FORCING_FILE_NOWCAST":   f"{base}.obc.nowcast.tar",
+        "OBC_FORCING_FILE_FORECAST":  f"{base}.obc.forecast.tar",
         "RIVER_FORCING_FILE":    f"{base}.river.th.tar",
         "NWM_SOURCE_SINK_NOW":   f"{base}.nwm.source.sink.now.tar",
         "NWM_SOURCE_SINK_FORE":  f"{base}.nwm.source.sink.fore.tar",
@@ -384,8 +390,8 @@ def compute_paths(
         bctides_in_forecast=filenames["BCTIDES_IN"],
         nwm_source_sink_nowcast=filenames["NWM_SOURCE_SINK_NOW"],
         nwm_source_sink_forecast=filenames["NWM_SOURCE_SINK_FORE"],
-        obc_forcing_file_nowcast=filenames["OBC_FORCING_FILE"],
-        obc_forcing_file_forecast=filenames["OBC_FORCING_FILE"],
+        obc_forcing_file_nowcast=filenames["OBC_FORCING_FILE_NOWCAST"],
+        obc_forcing_file_forecast=filenames["OBC_FORCING_FILE_FORECAST"],
         river_forcing_file=filenames["RIVER_FORCING_FILE"],
         met_netcdf_nowcast=filenames["MET_NETCDF_1_NOWCAST"],
         met_netcdf_forecast=filenames["MET_NETCDF_1_FORECAST"],

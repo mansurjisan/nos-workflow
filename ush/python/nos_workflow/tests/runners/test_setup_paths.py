@@ -217,7 +217,9 @@ def test_compute_paths_filename_conventions(tmp_path, monkeypatch):
     assert ctx.rst_out_forecast == f"{base}.rst.forecast.nc"
     # INI_FILE_FORECAST = RST_OUT_NOWCAST (the hand-off semantics)
     assert ctx.ini_file_forecast == f"{base}.rst.nowcast.nc"
-    # Forcing
+    # Forcing -- OBC selects phase-specific tar (6h vs 48h sim windows)
+    assert ctx.obc_forcing_file_nowcast == f"{base}.obc.nowcast.tar"
+    assert ctx.obc_forcing_file_forecast == f"{base}.obc.forecast.tar"
     assert ctx.nwm_source_sink_nowcast == f"{base}.nwm.source.sink.now.tar"
     assert ctx.nwm_source_sink_forecast == f"{base}.nwm.source.sink.fore.tar"
     assert ctx.river_forcing_file == f"{base}.river.th.tar"
@@ -231,8 +233,16 @@ def test_compute_paths_to_shell_filenames_helper(tmp_path, monkeypatch):
     pattern)."""
     fns = to_shell_filenames("nos.secofs_ufs", "t12z", "20260507")
 
-    # Spot-check a representative subset of the 28 file names
+    # Spot-check a representative subset of the file names
     assert fns["OBC_FORCING_FILE"] == "nos.secofs_ufs.t12z.20260507.obc.tar"
+    assert (
+        fns["OBC_FORCING_FILE_NOWCAST"]
+        == "nos.secofs_ufs.t12z.20260507.obc.nowcast.tar"
+    )
+    assert (
+        fns["OBC_FORCING_FILE_FORECAST"]
+        == "nos.secofs_ufs.t12z.20260507.obc.forecast.tar"
+    )
     assert fns["RST_OUT_NOWCAST"] == "nos.secofs_ufs.t12z.20260507.rst.nowcast.nc"
     assert fns["MODEL_LOG_FORECAST"] == "nos.secofs_ufs.t12z.20260507.forecast.log"
     assert fns["BCTIDES_IN"] == "nos.secofs_ufs.t12z.20260507.bctides.in"

@@ -170,6 +170,78 @@ def test_untar_obc_forcing_partial_payload_counts_correctly(tmp_path):
     assert n == 2
 
 
+def test_untar_obc_forcing_falls_back_to_combined_tar_when_phase_absent(
+        tmp_path):
+    """When the phase-specific OBC tar is absent in $COMOUT but the legacy
+    combined ``{base}.obc.tar`` is present, ``untar_obc_forcing`` falls
+    back to extracting the combined tar. Keeps backward-compat with prep
+    runs that predate the phase-specific split.
+    """
+    base = "nos.secofs_ufs.t00z.20260512"
+    ctx = _make_ctx(
+        tmp_path, phase="forecast",
+        obc_nowcast=f"{base}.obc.nowcast.tar",
+        obc_forecast=f"{base}.obc.forecast.tar",
+    )
+    # Only seed the combined tar -- not the phase-specific forecast tar.
+    payload = {name: f"combined {name}".encode() for name in _OBC_PAYLOAD_NAMES}
+    _build_tar(ctx.comout / f"{base}.obc.tar", payload)
+
+    n = untar_obc_forcing(ctx, "forecast")
+
+    assert n == 6, "fallback to combined tar should extract all 6 payload files"
+    # All payload files extracted from the combined tar.
+    for name in _OBC_PAYLOAD_NAMES:
+        assert (ctx.data / name).read_bytes() == f"combined {name}".encode()
+
+
+def test_untar_obc_forcing_phase_specific_preferred_over_combined(tmp_path):
+    """When BOTH the phase-specific and combined tars exist, the
+    phase-specific one is used (no fallback triggered)."""
+    base = "nos.secofs_ufs.t00z.20260512"
+    ctx = _make_ctx(
+        tmp_path, phase="forecast",
+        obc_nowcast=f"{base}.obc.nowcast.tar",
+        obc_forecast=f"{base}.obc.forecast.tar",
+    )
+    # Phase-specific payload carries a distinguishable marker.
+    phase_payload = {
+        name: f"phase-specific {name}".encode() for name in _OBC_PAYLOAD_NAMES
+    }
+    combined_payload = {
+        name: f"combined {name}".encode() for name in _OBC_PAYLOAD_NAMES
+    }
+    _build_tar(ctx.comout / f"{base}.obc.forecast.tar", phase_payload)
+    _build_tar(ctx.comout / f"{base}.obc.tar", combined_payload)
+
+    n = untar_obc_forcing(ctx, "forecast")
+
+    assert n == 6
+    # Phase-specific contents should win; combined tar untouched.
+    for name in _OBC_PAYLOAD_NAMES:
+        assert (ctx.data / name).read_bytes() == (
+            f"phase-specific {name}".encode()
+        )
+
+
+def test_untar_obc_forcing_no_fallback_when_field_is_legacy_combined(tmp_path):
+    """If the context's OBC field is already a legacy ``{base}.obc.tar``
+    name (not ``{base}.obc.{phase}.tar``), the fallback derivation must
+    not synthesize a degenerate retry against the same path."""
+    base = "nos.secofs_ufs.t00z.20260512"
+    ctx = _make_ctx(
+        tmp_path, phase="nowcast",
+        # Legacy form -- both fields point at the combined tar.
+        obc_nowcast=f"{base}.obc.tar",
+        obc_forecast=f"{base}.obc.tar",
+    )
+    payload = {name: b"x" for name in _OBC_PAYLOAD_NAMES[:1]}
+    _build_tar(ctx.comout / f"{base}.obc.tar", payload)
+
+    n = untar_obc_forcing(ctx, "nowcast")
+    assert n == 1
+
+
 # ---------------------------------------------------------------------------
 # untar_nwm_source_sink
 # ---------------------------------------------------------------------------
