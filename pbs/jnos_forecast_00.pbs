@@ -7,29 +7,6 @@
 #PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120
 #PBS  -l walltime=05:30:00
 
-# --- cabinet guard: dodge the partition_hgrid:534 heap-corruption cabinets ---
-# 2914-rank SCHISM-UFS crashes with double-free in ParMETIS when the
-# allocation includes WCOSS2 cabinets x1000-x1006; reliable on x1007+.
-# Resubmit a fresh job (re-rolls the allocation) if any node is in a bad
-# cabinet, before burning the ~500s init that ends in the crash.
-if [ -n "${PBS_NODEFILE:-}" ] && [ -r "${PBS_NODEFILE}" ]; then
-  BAD_CABS="x1000 x1001 x1002 x1003 x1004 x1005 x1006"
-  RETRY=${NODE_GUARD_RETRY:-0}; MAXRETRY=10
-  hit=0
-  for n in $(sort -u "${PBS_NODEFILE}"); do
-    cab=$(pbsnodes "$n" 2>/dev/null | awk -F= '/resources_available.cabinet/{gsub(/[ \t]/,"",$2);print $2}')
-    case " ${BAD_CABS} " in *" ${cab} "*) hit=$((hit+1));; esac
-  done
-  echo "CABINET_GUARD: ${hit} node(s) in bad cabinets {${BAD_CABS}} (retry=${RETRY}/${MAXRETRY})"
-  if [ "${hit}" -gt 0 ] && [ "${RETRY}" -lt "${MAXRETRY}" ]; then
-    echo "CABINET_GUARD: resubmitting to dodge bad cabinets (attempt $((RETRY+1)))"
-    qsub -v "PDY=${PDY:-},cyc=${cyc:-${CYC:-00}},COMOUT=${COMOUT:-},COMIN=${COMIN:-},NODE_GUARD_RETRY=$((RETRY+1))" "$0"
-    exit 0
-  fi
-  [ "${RETRY}" -ge "${MAXRETRY}" ] && echo "CABINET_GUARD: max retries hit — running anyway"
-fi
-# --- end cabinet guard ---
-
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
@@ -122,8 +99,31 @@ export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
-# Submit with dependency on nowcast:
-#   NCST_JOB=$(qsub jnos_nowcast_00.pbs)
-#   qsub -W depend=afterok:${NCST_JOB} jnos_forecast_00.pbs
+# Submission: do NOT use `-W depend=afterok:` across these jobs. With the
+# ParMETIS blind-retry below, a crashed job exits non-zero and resubmits
+# itself as a NEW jobid; an afterok dependent would be cancelled and would
+# never see the retry. Submit sequentially after each leg succeeds:
+#   qsub jnos_nowcast_00.pbs    # self-retries until rst.nowcast.nc archived
+#   qsub jnos_forecast_00.pbs   # after nowcast PASS; self-retries
+#   qsub jnos_post_00.pbs       # after forecast PASS
 
 ${HOMEnos}/jobs/JNOS_FORECAST
+_rc=$?
+
+# --- ParMETIS blind-retry ---------------------------------------------------
+# partition_hgrid:534 is a nondeterministic ParMETIS heap corruption at
+# ~2914 ranks (nos-workflow #98), independent of node placement; a resubmit
+# re-rolls the rank/heap layout and usually clears it. Detect that specific
+# crash in this job's own stderr and resubmit, capped, before giving up.
+if [ "${_rc}" -ne 0 ] \
+   && grep -qE 'partition_hgrid|double free or corruption|Failed during initial partitioning' "${_LOG_PREFIX}.err" 2>/dev/null; then
+  RETRY=${PARMETIS_RETRY:-0}; MAXRETRY=8
+  if [ "${RETRY}" -lt "${MAXRETRY}" ]; then
+    echo "PARMETIS_RETRY: partition_hgrid crash (rc=${_rc}); resubmitting attempt $((RETRY+1))/${MAXRETRY}"
+    qsub -v "PDY=${PDY:-},cyc=${cyc:-${CYC:-00}},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
+  else
+    echo "PARMETIS_RETRY: max retries (${MAXRETRY}) exhausted — giving up"
+  fi
+fi
+exit "${_rc}"
+# --- end ParMETIS blind-retry -----------------------------------------------
