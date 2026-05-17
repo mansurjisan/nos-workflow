@@ -34,6 +34,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     copy_hgrid_to_outputs,
     fallback_nwm_files_from_fixofs,
     rename_river_th_files,
+    stage_st_lawrence_river,
     stage_bctides_in,
     stage_forecast_restart_outputs,
     stage_hotstart,
@@ -813,6 +814,89 @@ def test_rename_river_th_files_partial(tmp_path):
     assert (ctx.data / "flux.th").read_text() == "flux data\n"
     assert not (ctx.data / "TEM_1.th").exists()
     assert not (ctx.data / "salt.th").exists()
+
+
+# ---------------------------------------------------------------------------
+# stage_st_lawrence_river (STOFS-3D-ATL only; gated)
+# ---------------------------------------------------------------------------
+
+
+def _seed_st_lawrence_comout(ctx: SchismRunContext) -> None:
+    """Drop the prep-archived St. Lawrence individual files in $COMOUT."""
+    prefix = f"{ctx.run}.{ctx.cycle}"
+    (ctx.comout / f"{prefix}.riv.obs.flux.th").write_text("0 -1.0\n")
+    (ctx.comout / f"{prefix}.riv.obs.tem_1.th").write_text("0 4.0\n")
+
+
+def test_stage_st_lawrence_river_off_by_default(tmp_path, monkeypatch):
+    """Without the opt-in flag the consumer is a no-op even when the
+    source files are present (default-safe for SECOFS)."""
+    monkeypatch.delenv("NOS_ARCHIVE_MANIFEST", raising=False)
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    _seed_st_lawrence_comout(ctx)
+
+    n = stage_st_lawrence_river(ctx, "nowcast")
+
+    assert n == 0
+    assert not (ctx.data / "flux.th").exists()
+    assert not (ctx.data / "TEM_1.th").exists()
+
+
+def test_stage_st_lawrence_river_secofs_noop_when_absent(
+        tmp_path, monkeypatch):
+    """SECOFS: flag ON but archive_to_comout never wrote the
+    riv.obs.* files (st_lawrence_enabled=False) -> nothing staged."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "YES")
+    ctx = _make_ctx(tmp_path)  # default run = nos.secofs_ufs
+    # No _seed_st_lawrence_comout -> source files absent.
+
+    n = stage_st_lawrence_river(ctx, "nowcast")
+
+    assert n == 0
+    assert not (ctx.data / "flux.th").exists()
+    assert not (ctx.data / "TEM_1.th").exists()
+
+
+def test_stage_st_lawrence_river_stofs_stages_files(
+        tmp_path, monkeypatch):
+    """STOFS: flag ON + source files present -> flux.th / TEM_1.th
+    copied into $DATA from the operational riv.obs.* basenames."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    _seed_st_lawrence_comout(ctx)
+
+    n = stage_st_lawrence_river(ctx, "nowcast")
+
+    assert n == 2
+    assert (ctx.data / "flux.th").read_text() == "0 -1.0\n"
+    assert (ctx.data / "TEM_1.th").read_text() == "0 4.0\n"
+
+
+def test_stage_st_lawrence_river_wins_over_river_rename(
+        tmp_path, monkeypatch):
+    """Sequencing invariant: when stage_st_lawrence_river runs AFTER
+    rename_river_th_files (as wired in the staging sequence), the
+    St. Lawrence climatology is authoritative -- it must NOT be
+    clobbered by the schism_temp.th -> TEM_1.th / schism_flux.th ->
+    flux.th rename."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "TRUE")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    # SECOFS-style river files that the rename step would canonicalize.
+    (ctx.data / "schism_flux.th").write_text("RIVER flux\n")
+    (ctx.data / "schism_temp.th").write_text("RIVER temp\n")
+    # St. Lawrence climatology in $COMOUT.
+    _seed_st_lawrence_comout(ctx)
+
+    # Same order as stage_all_inputs: rename first, St. Lawrence after.
+    rename_river_th_files(ctx, "nowcast")
+    stage_st_lawrence_river(ctx, "nowcast")
+
+    # St. Lawrence values win (not the river-rename values).
+    assert (ctx.data / "flux.th").read_text() == "0 -1.0\n"
+    assert (ctx.data / "TEM_1.th").read_text() == "0 4.0\n"
 
 
 # ---------------------------------------------------------------------------

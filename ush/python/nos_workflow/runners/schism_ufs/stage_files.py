@@ -349,6 +349,68 @@ def rename_river_th_files(ctx: SchismRunContext, phase: str) -> int:
     return renamed
 
 
+def _archive_manifest_enabled() -> bool:
+    """True when the opt-in archive-manifest flag is set (YES/1/TRUE).
+
+    Mirrors ``nos_utils.orchestrator.PrepOrchestrator._archive_manifest_enabled``.
+    The St. Lawrence individual files only exist in $COMOUT when prep ran
+    with the manifest path AND ``st_lawrence_enabled`` (STOFS-3D-ATL
+    only), so this stage-side consumer is gated on the same flag for
+    symmetry and is additionally a hard no-op when the files are absent
+    (SECOFS).
+    """
+    return os.environ.get("NOS_ARCHIVE_MANIFEST", "").upper() in (
+        "YES", "1", "TRUE",
+    )
+
+
+# St. Lawrence individual archive files -> SCHISM run-dir names.
+# Prep writes ``{run}.{cycle}.riv.obs.flux.th`` / ``...riv.obs.tem_1.th``
+# (operational STOFS convention; see
+# stofs_3d_atl_create_river_st_lawrence.sh and the nos-utils
+# archive_to_comout St. Lawrence extra). The legacy run-side restage is
+# exstofs_3d_atl_now_forecast.sh:182-225.
+_ST_LAWRENCE_RESTAGE: tuple = (
+    ("riv.obs.flux.th", "flux.th"),
+    ("riv.obs.tem_1.th", "TEM_1.th"),
+)
+
+
+def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
+    """Restage St. Lawrence flux.th / TEM_1.th from $COMOUT into $DATA.
+
+    STOFS-3D-ATL only. The St. Lawrence climatology is the authoritative
+    ``flux.th`` / ``TEM_1.th`` for the STOFS boundary; it must be staged
+    AFTER :func:`rename_river_th_files` so the SECOFS-style
+    ``schism_temp.th -> TEM_1.th`` / ``schism_flux.th -> flux.th`` rename
+    does not clobber it.
+
+    No-op for SECOFS: ``archive_to_comout`` only writes the
+    ``{run}.{cycle}.riv.obs.*`` files when ``st_lawrence_enabled`` (false
+    for SECOFS), so the source files are absent and nothing is copied.
+    Also gated on the ``NOS_ARCHIVE_MANIFEST`` opt-in flag for symmetry
+    with the prep side.
+
+    Returns the number of files staged (0..2).
+    """
+    del phase
+
+    if not _archive_manifest_enabled():
+        return 0
+
+    prefix = f"{ctx.run}.{ctx.cycle}"
+    staged = 0
+    for src_suffix, dst_name in _ST_LAWRENCE_RESTAGE:
+        src = ctx.comout / f"{prefix}.{src_suffix}"
+        if src.is_file() and src.stat().st_size > 0:
+            shutil.copy2(src, ctx.data / dst_name)
+            logger.info(
+                "  Staged St. Lawrence %s -> %s", src.name, dst_name,
+            )
+            staged += 1
+    return staged
+
+
 def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:
     """Stage $DATA/sflux/sflux_inputs.txt from $FIXofs if present.
 
@@ -469,6 +531,11 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
 
     rename_river_th_files(ctx, phase)
 
+    # STOFS-3D-ATL only; must follow rename_river_th_files so the
+    # St. Lawrence climatology is not clobbered by the schism_*.th
+    # rename. No-op for SECOFS (source files absent).
+    stage_st_lawrence_river(ctx, phase)
+
     stage_sflux_inputs_txt(ctx, phase)
 
     copy_hgrid_to_outputs(ctx, phase)
@@ -497,6 +564,7 @@ __all__ = [
     "stage_bctides_in",
     "fallback_nwm_files_from_fixofs",
     "rename_river_th_files",
+    "stage_st_lawrence_river",
     "stage_sflux_inputs_txt",
     "copy_hgrid_to_outputs",
     "run_python",
