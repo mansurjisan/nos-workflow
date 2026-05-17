@@ -78,8 +78,10 @@ echo RUNNING > "$STATUS_FILE"
 # are newer than a sentinel touched right before qsub:
 #   PASS      : a fresh .out has `STAGE_SUMMARY ... status=PASS`
 #   FAIL/parm : a fresh .out has `PARMETIS_RETRY: max retries ( ... exhausted`
-#   FAIL/hard : a fresh .out has `status=FAIL` and NO `PARMETIS_RETRY:` line
-#               (terminal non-ParMETIS failure: prep error, missing hotstart…)
+#   FAIL/hard : a fresh .out has `status=FAIL` OR a `FATAL: stage=… rc=`
+#               one-liner, and NO `PARMETIS_RETRY:` line (terminal non-ParMETIS
+#               failure: prep error, missing script/hotstart) — fails fast even
+#               when the stage FATALs before emitting STAGE_SUMMARY
 #   else      : still running, or mid-retry (a fresh .out shows
 #               `PARMETIS_RETRY: ... resubmitting`) — keep polling
 submit_and_wait(){
@@ -120,7 +122,7 @@ submit_and_wait(){
         log "FAIL[$stage]: ParMETIS blind-retry exhausted — $(basename "$newest")"
         return 1
       fi
-      if grep -q "status=FAIL" "$newest" 2>/dev/null \
+      if grep -qE 'status=FAIL|FATAL: stage=.* rc=' "$newest" 2>/dev/null \
          && ! grep -q "PARMETIS_RETRY:" "$newest" 2>/dev/null; then
         local why
         why=$(grep -m1 -E 'FATAL:|failed_step=' "$newest" 2>/dev/null | tail -1)
