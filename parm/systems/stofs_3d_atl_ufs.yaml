@@ -39,6 +39,15 @@ system:
   version: "3.1.1"
   prefix: stofs_3d_atl_ufs
 
+# Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
+# When present this block is authoritative and supersedes the is_stofs_like
+# heuristic for these two prep steps. STOFS-3D-ATL runs both the
+# St-Lawrence River climatology and OBC dynamic SSH adjust.
+prep:
+  extras:
+    st_lawrence: true
+    obc_dynamic_adjust: true
+
 # Grid configuration — v2.1 operational STOFS-3D-ATL mesh (extracted from
 # /lfs/h1/ops/prod/com/stofs/v2.1/stofs_3d_atl.YYYYMMDD/rerun/*.restart.nc on
 # 2026-05-11; partition.prop in IT-stofs.v2.1.0/fix/stofs_3d_atl/ has 5654161
