@@ -19,6 +19,15 @@ system:
   version: "3.7.0"
   prefix: secofs_ufs
 
+# Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
+# When present this block is authoritative and supersedes the is_stofs_like
+# heuristic for these two prep steps. SECOFS does NOT run St-Lawrence
+# climatology or OBC dynamic SSH adjust, so both are false here.
+prep:
+  extras:
+    st_lawrence: false
+    obc_dynamic_adjust: false
+
 # Grid configuration - identical to standalone secofs
 # Values from secofs.ctl
 grid:
