@@ -105,10 +105,12 @@ _rc=$?
 # --- ParMETIS blind-retry ---------------------------------------------------
 # partition_hgrid:534 is a nondeterministic ParMETIS heap corruption at
 # ~2914 ranks (nos-workflow #98), independent of node placement; a resubmit
-# re-rolls the rank/heap layout and usually clears it. Detect that specific
-# crash in this job's own stderr and resubmit, capped, before giving up.
-if [ "${_rc}" -ne 0 ] \
-   && grep -qE 'partition_hgrid|double free or corruption|Failed during initial partitioning' "${_LOG_PREFIX}.err" 2>/dev/null; then
+# re-rolls the rank/heap layout and usually clears it. NOTE: JNOS_* does not
+# reliably propagate the stage exit code (it ends on postmsg/date), so ${_rc}
+# can be 0 even on a crash — decide from the log, not rc: retry iff the
+# signature appears in .err OR .out AND the stage did not log status=PASS.
+if grep -qE 'partition_hgrid|double free or corruption|Failed during initial partitioning' "${_LOG_PREFIX}.err" "${_LOG_PREFIX}.out" 2>/dev/null \
+   && ! grep -qE 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" 2>/dev/null; then
   RETRY=${PARMETIS_RETRY:-0}; MAXRETRY=8
   if [ "${RETRY}" -lt "${MAXRETRY}" ]; then
     echo "PARMETIS_RETRY: partition_hgrid crash (rc=${_rc}); resubmitting attempt $((RETRY+1))/${MAXRETRY}"
