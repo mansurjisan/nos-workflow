@@ -42,7 +42,7 @@ PREP_TIMEOUT=${PREP_TIMEOUT:-5400}     # 90 min  (prep has no retry)
 NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-10800}  # 3 h   (clean ~30m + retry headroom)
 FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-14400} # 4 h  (clean ~60m + retry headroom)
 POST_TIMEOUT=${POST_TIMEOUT:-1800}     # 30 min
-STAGES="prep nowcast forecast post"
+STAGES=${STAGES:-"prep nowcast forecast post"}   # override e.g. STAGES=post for single-stage recovery
 
 # ---- args -------------------------------------------------------------------
 cyc=${1:-}
@@ -50,6 +50,10 @@ case "$cyc" in
   00|06|12|18) ;;
   *) echo "FATAL: CYC must be one of 00 06 12 18 (got '${cyc}')" >&2; exit 2 ;;
 esac
+for _s in $STAGES; do case "$_s" in
+  prep|nowcast|forecast|post) ;;
+  *) echo "FATAL: STAGES has unknown stage '${_s}' (allowed: prep nowcast forecast post)" >&2; exit 2 ;;
+esac; done
 PDY=${PDY:-$(date -u +%Y%m%d)}         # cycle is always the same UTC day
 TAG="${PDY}t${cyc}z"
 mkdir -p "$RPTDIR" 2>/dev/null || { echo "FATAL: cannot mkdir $RPTDIR" >&2; exit 2; }
@@ -161,6 +165,7 @@ submit_and_wait(){
 
 # ---- run the chain ----------------------------------------------------------
 overall=0
+log "stages: ${STAGES}"
 for st in $STAGES; do
   case "$st" in
     prep)     to=$PREP_TIMEOUT     ;;
