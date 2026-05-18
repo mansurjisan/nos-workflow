@@ -42,7 +42,7 @@ PREP_TIMEOUT=${PREP_TIMEOUT:-5400}     # 90 min  (prep has no retry)
 NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-10800}  # 3 h   (clean ~30m + retry headroom)
 FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-14400} # 4 h  (clean ~60m + retry headroom)
 POST_TIMEOUT=${POST_TIMEOUT:-1800}     # 30 min
-STAGES="prep nowcast forecast post"
+STAGES=${STAGES:-"prep nowcast forecast post"}   # override e.g. STAGES=post for single-stage recovery
 
 # ---- args -------------------------------------------------------------------
 cyc=${1:-}
@@ -50,6 +50,10 @@ case "$cyc" in
   00|06|12|18) ;;
   *) echo "FATAL: CYC must be one of 00 06 12 18 (got '${cyc}')" >&2; exit 2 ;;
 esac
+for _s in $STAGES; do case "$_s" in
+  prep|nowcast|forecast|post) ;;
+  *) echo "FATAL: STAGES has unknown stage '${_s}' (allowed: prep nowcast forecast post)" >&2; exit 2 ;;
+esac; done
 PDY=${PDY:-$(date -u +%Y%m%d)}         # cycle is always the same UTC day
 TAG="${PDY}t${cyc}z"
 mkdir -p "$RPTDIR" 2>/dev/null || { echo "FATAL: cannot mkdir $RPTDIR" >&2; exit 2; }
@@ -138,11 +142,21 @@ submit_and_wait(){
       log "FAIL[$stage]: TIMEOUT after ${elapsed}s (no STAGE_SUMMARY=PASS)"
       return 1
     fi
-    # liveness backstop: nothing fresh, nothing of ours queued, well past start
-    if [ -z "$newest" ] && [ "$elapsed" -ge 1200 ]; then
-      if ! qstat -u "$USER" 2>/dev/null | grep -q "secofs_ufs"; then
-        log "FAIL[$stage]: no output and no queued job after ${elapsed}s (submission lost?)"
-        return 1
+    # liveness backstop (pre-first-output only): confirm the exact submitted
+    # jobid is still known to PBS before declaring the submission lost.
+    # `qstat -u $USER` truncates the Name column and a busy queue can hold a
+    # job well past the grace, so the old name-grep falsely aborted healthy
+    # queued cycles. A transient qstat error must stay inconclusive (keep
+    # polling), never a false "lost" — hence the second sample. ($jid is the
+    # first submission; on a ParMETIS retry an .out exists so $newest != ""
+    # and this block is skipped.)
+    if [ -z "$newest" ] && [ "$elapsed" -ge 1800 ]; then
+      if ! qstat "$jid" >/dev/null 2>&1; then
+        sleep 15
+        if ! qstat "$jid" >/dev/null 2>&1; then
+          log "FAIL[$stage]: jobid ${jid} unknown to PBS after ${elapsed}s (submission lost)"
+          return 1
+        fi
       fi
     fi
     sleep "$POLL"
@@ -151,6 +165,7 @@ submit_and_wait(){
 
 # ---- run the chain ----------------------------------------------------------
 overall=0
+log "stages: ${STAGES}"
 for st in $STAGES; do
   case "$st" in
     prep)     to=$PREP_TIMEOUT     ;;
