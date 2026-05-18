@@ -138,11 +138,21 @@ submit_and_wait(){
       log "FAIL[$stage]: TIMEOUT after ${elapsed}s (no STAGE_SUMMARY=PASS)"
       return 1
     fi
-    # liveness backstop: nothing fresh, nothing of ours queued, well past start
-    if [ -z "$newest" ] && [ "$elapsed" -ge 1200 ]; then
-      if ! qstat -u "$USER" 2>/dev/null | grep -q "secofs_ufs"; then
-        log "FAIL[$stage]: no output and no queued job after ${elapsed}s (submission lost?)"
-        return 1
+    # liveness backstop (pre-first-output only): confirm the exact submitted
+    # jobid is still known to PBS before declaring the submission lost.
+    # `qstat -u $USER` truncates the Name column and a busy queue can hold a
+    # job well past the grace, so the old name-grep falsely aborted healthy
+    # queued cycles. A transient qstat error must stay inconclusive (keep
+    # polling), never a false "lost" — hence the second sample. ($jid is the
+    # first submission; on a ParMETIS retry an .out exists so $newest != ""
+    # and this block is skipped.)
+    if [ -z "$newest" ] && [ "$elapsed" -ge 1800 ]; then
+      if ! qstat "$jid" >/dev/null 2>&1; then
+        sleep 15
+        if ! qstat "$jid" >/dev/null 2>&1; then
+          log "FAIL[$stage]: jobid ${jid} unknown to PBS after ${elapsed}s (submission lost)"
+          return 1
+        fi
       fi
     fi
     sleep "$POLL"
