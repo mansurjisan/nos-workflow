@@ -305,6 +305,19 @@ def get_standard_exports(
     #   - NCPU_PBS    -> legacy alias in the same fallback chain
     # For forward compat, accept `total_tasks` as an alias for `nprocs`.
     resources = data.get('resources', {})
+    # execution.mode=standalone overlays standalone resources/exec; ufs/absent
+    # is a strict no-op so the UFS export dict stays byte-identical.
+    if data.get('execution', {}).get('mode', 'ufs') == 'standalone':
+        overlay = data.get('standalone', {})
+        resources = {**resources, **{
+            k: overlay[k] for k in ('nprocs', 'nscribes', 'select')
+            if k in overlay
+        }}
+        if 'executable' in overlay:
+            exports['UFS_EXEC_NAME'] = overlay['executable']
+        if 'nws' in overlay:
+            exports['NWS_VALUE'] = overlay['nws']
+        exports['USE_DATM'] = 'false'
     _total = resources.get('nprocs')
     if _total in (None, ''):
         _total = resources.get('total_tasks', '')
