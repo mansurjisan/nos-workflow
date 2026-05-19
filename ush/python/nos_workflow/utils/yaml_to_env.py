@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -283,6 +284,15 @@ def get_standard_exports(
     exports["TOTAL_TASKS"] = exports["NPROCS"]
     exports["NCPU_PBS"] = exports["NPROCS"]
     exports["NSCRIBES"] = nscribes_val
+
+    # ``PPN`` (mpiexec ``-ppn``, ranks per node) is parsed from the
+    # ``mpiprocs=`` token of ``resources.select`` so it can never drift
+    # from the PBS node allocation. When ``resources.select`` is absent
+    # (SECOFS carries select= in its PBS header, not the YAML), PPN is
+    # left unset and the shell launcher keeps its historical default.
+    select_match = re.search(r"mpiprocs=(\d+)", str(resources.get("select", "") or ""))
+    if select_match:
+        exports["PPN"] = select_match.group(1)
 
     exports.update(runtime_env)
 
