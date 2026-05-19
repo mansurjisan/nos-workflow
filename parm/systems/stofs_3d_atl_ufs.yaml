@@ -18,7 +18,10 @@
 #   datm_tasks:    120    # MED+ATM share PETs 0-119 (same as SECOFS-UFS)
 #   nscribes:        0    # output handled by CMEPS, not SCHISM scribes
 #   total_tasks:  4436    # = 4314 + 120 + 2 mediator
-# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4436).
+# PBS select: select=37:ncpus=128:mpiprocs=120:ompthreads=1 → 4440 slots (>= 4436).
+# ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
+# mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
+# mpiprocs= token, so per-node packing tracks the PBS allocation.
 # Walltimes mirror SECOFS-UFS pattern: nowcast 01:30, forecast 05:30
 # (overridden in PBS templates; see ensemble.resources.walltime for ensemble).
 #
@@ -290,13 +293,16 @@ output:
 
 # Computational resources (DATM + SCHISM)
 # STOFS v2.1 operational partition.prop max rank = 4313, plus 120 DATM + 2 mediator = 4436.
-# PBS select: select=35:ncpus=128:mpiprocs=128 → 4480 slots (>= 4436).
+# PBS select: select=37:ncpus=128:mpiprocs=120:ompthreads=1 → 4440 slots (>= 4436).
+# ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
+# mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
+# mpiprocs= token, so per-node packing tracks the PBS allocation.
 resources:
   nprocs: 4436
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
-  select: "select=35:ncpus=128:mpiprocs=128"
+  select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
   walltime_nowcast: "01:30:00"
   walltime_forecast: "05:30:00"
 
@@ -549,7 +555,7 @@ ensemble:
   # Ensemble-specific resources (per member)
   # Same PBS select as deterministic; longer walltime for combined nowcast+forecast.
   resources:
-    select: "select=35:ncpus=128:mpiprocs=128"
+    select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
     walltime: "08:00:00"
     total_tasks: 4436
     nscribes: 0

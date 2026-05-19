@@ -169,11 +169,11 @@ class TestSystemConfigs:
         assert grid.get("n_sides") == 8580540
         assert grid.get("n_levels") == 49
 
-        # PBS select string — full-node 128-way packing (4480 slots >= 4436)
+        # PBS select — operational ppn=120 + ompthreads=1 packing (37 nodes, 4440 >= 4436)
         ens = data.get("ensemble", {}).get("resources", {})
         det = data.get("resources", {})
         select_str = ens.get("select") or det.get("select")
-        assert select_str == "select=35:ncpus=128:mpiprocs=128"
+        assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
 
     def test_stofs_3d_atl_config(self, system_configs: Dict[str, Path]) -> None:
         if "stofs_3d_atl" not in system_configs:
