@@ -12,6 +12,15 @@ from .context import SchismRunContext
 logger = logging.getLogger(__name__)
 
 
+def _is_ufs() -> bool:
+    """True unless Phase-1's resolver explicitly emitted USE_DATM=false.
+
+    Standalone is the ONLY caller that sets ``USE_DATM=false``; unset or
+    anything else => UFS (the strict, validated pass-through path).
+    """
+    return os.environ.get("USE_DATM", "true").strip().lower() != "false"
+
+
 _UFS_CONFIG_FILES: tuple = (
     "model_configure",
     "datm_in",
@@ -114,17 +123,29 @@ def stage_ufs_configs(ctx: SchismRunContext, phase: str) -> int:
             if _copy_if_exists(src_com, dst):
                 staged += 1
 
-    ufs_exec_name = os.environ.get("UFS_EXEC_NAME") or "fv3_coastalS.exe"
-    dst_exec = ctx.data / ufs_exec_name
-    already_executable = dst_exec.is_file() and os.access(dst_exec, os.X_OK)
-    if not already_executable and ctx.execnos is not None:
-        src_exec = ctx.execnos / ufs_exec_name
-        if src_exec.is_file() and os.access(src_exec, os.X_OK):
-            shutil.copy2(src_exec, dst_exec)
-            logger.info("  Staged executable: %s", ufs_exec_name)
-            staged += 1
-
     return staged
+
+
+def stage_executable(ctx: SchismRunContext, phase: str) -> int:
+    """Stage the model executable from $EXECnos (mode-common).
+
+    UFS: $UFS_EXEC_NAME=fv3_coastalS.exe. Standalone: Phase-1's resolver
+    sets $UFS_EXEC_NAME=pschism_WCOSS2 (same env var, different binary).
+    """
+    del phase
+
+    exec_name = os.environ.get("UFS_EXEC_NAME") or "fv3_coastalS.exe"
+    dst_exec = ctx.data / exec_name
+    if dst_exec.is_file() and os.access(dst_exec, os.X_OK):
+        return 0
+    if ctx.execnos is None:
+        return 0
+    src_exec = ctx.execnos / exec_name
+    if src_exec.is_file() and os.access(src_exec, os.X_OK):
+        shutil.copy2(src_exec, dst_exec)
+        logger.info("  Staged executable: %s", exec_name)
+        return 1
+    return 0
 
 
 def stage_schism_bare_names(ctx: SchismRunContext, phase: str) -> int:
@@ -481,11 +502,48 @@ def stage_forecast_restart_outputs(ctx: SchismRunContext, phase: str) -> int:
     return staged
 
 
+def _stage_standalone_param_nml(ctx: SchismRunContext) -> bool:
+    """Prefer the legacy-schema standalone param.nml when present.
+
+    The staged $RUNTIME_CTL ($DATA/<prefix>.param.nml) is authored for the
+    UFS-Coastal SCHISM schema (has &CORE nbins_veg_vert/nmarsh_types); the
+    operational standalone pschism uses the legacy schema (isav, no veg
+    keys) and SCHISM's nml_read ABORTS on unrecognized keys. If
+    $FIXofs/<prefix>.standalone.param.nml exists, copy it to $DATA so the
+    downstream bare-name rename picks it up; otherwise fall back to the
+    UFS file with a loud WARNING (parent must author the legacy file).
+    Returns True if the standalone variant was staged.
+    """
+    if ctx.fixofs is None or not ctx.prefixnos:
+        return False
+    src = ctx.fixofs / f"{ctx.prefixnos}.standalone.param.nml"
+    if not src.is_file() or src.stat().st_size == 0:
+        logger.warning(
+            "standalone: %s not found; falling back to the UFS-schema "
+            "param.nml. pschism will ABORT in nml_read if its &CORE "
+            "schema differs (nbins_veg_vert/nmarsh_types vs isav). "
+            "Author a legacy-schema %s.standalone.param.nml in $FIXofs.",
+            src, ctx.prefixnos,
+        )
+        return False
+    dst = ctx.data / f"{ctx.prefixnos}.param.nml"
+    shutil.copy2(src, dst)
+    logger.info("  Staged standalone param.nml: %s", src.name)
+    return True
+
+
 def run_python(ctx: SchismRunContext, phase: str) -> int:
     """Compose all staging phases in shell order."""
     from . import configure, forcing, mesh
 
-    stage_ufs_configs(ctx, phase)
+    ufs = _is_ufs()
+
+    if ufs:
+        stage_ufs_configs(ctx, phase)
+    else:
+        _stage_standalone_param_nml(ctx)
+
+    stage_executable(ctx, phase)
 
     # SCHISM's NUOPC cap inquires for the literal "param.nml" at
     # schism_nuopc_cap.F90:316. setup_paths stages the prefixed file; copy
@@ -507,10 +565,12 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
             runtime_ctl,
         )
 
-    configure.patch_model_configure(ctx, phase)
-    configure.patch_ufs_configure(ctx, phase)
+    if ufs:
+        configure.patch_model_configure(ctx, phase)
+        configure.patch_ufs_configure(ctx, phase)
     configure.patch_param_nml(ctx, phase)
-    configure.patch_datm_in(ctx, phase)
+    if ufs:
+        configure.patch_datm_in(ctx, phase)
 
     stage_schism_bare_names(ctx, phase)
 
@@ -542,21 +602,28 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
 
     stage_forecast_restart_outputs(ctx, phase)
 
-    # Regenerate ESMF mesh from the actual DATM forcing file after patches.
-    datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
-    forcing_file = ctx.data / datm_dir_name / "datm_forcing.nc"
-    esmf_mesh_out = ctx.data / datm_dir_name / "datm_esmf_mesh.nc"
-    if forcing_file.is_file() and forcing_file.stat().st_size > 0:
-        try:
-            mesh.generate_esmf_mesh(forcing_file, esmf_mesh_out)
-        except Exception as exc:  # pragma: no cover
-            logger.warning("ESMF mesh regen failed: %s", exc)
+    if ufs:
+        # Regenerate ESMF mesh from the actual DATM forcing file after patches.
+        datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
+        forcing_file = ctx.data / datm_dir_name / "datm_forcing.nc"
+        esmf_mesh_out = ctx.data / datm_dir_name / "datm_esmf_mesh.nc"
+        if forcing_file.is_file() and forcing_file.stat().st_size > 0:
+            try:
+                mesh.generate_esmf_mesh(forcing_file, esmf_mesh_out)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("ESMF mesh regen failed: %s", exc)
+    else:
+        # Standalone SCHISM (nws=2) reads sflux from $DATA/sflux/ instead
+        # of DATM; prep tarred it to $COMOUT.
+        forcing.untar_met_sflux(ctx, phase)
 
     return 0
 
 
 __all__ = [
+    "_is_ufs",
     "stage_ufs_configs",
+    "stage_executable",
     "stage_schism_bare_names",
     "stage_hotstart",
     "stage_partition_props",
