@@ -42,6 +42,22 @@ system:
   version: "3.1.1"
   prefix: stofs_3d_atl_ufs
 
+# Execution mode: drives both UFS-Coastal (default) and classic standalone
+# SCHISM from one yaml. `standalone:` below holds ONLY the keys that differ;
+# the resolver in yaml_to_env.get_standard_exports is a no-op for `ufs`.
+execution:
+  mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
+
+# Standalone-SCHISM overlay (consumed only when execution.mode == standalone).
+# 4314 v2.1 compute ranks + 6 scribes = 4320; PBS 36x120 = 4320 (parity packing).
+# Mesh/grid is the shared v2.1 block below and is intentionally NOT duplicated.
+standalone:
+  nws: 2
+  executable: pschism_WCOSS2
+  nscribes: 6
+  nprocs: 4320
+  select: "select=36:ncpus=128:mpiprocs=120:ompthreads=1"
+
 # Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
 # When present this block is authoritative and supersedes the is_stofs_like
 # heuristic for these two prep steps. STOFS-3D-ATL runs both the
