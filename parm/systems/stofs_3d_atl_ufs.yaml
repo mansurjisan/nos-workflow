@@ -119,6 +119,8 @@ forcing:
       enabled: true
       source: DCOMROOT
       clim_file: stofs_3d_atl_st_lawrence_river_clim.nc
+      csv_name: QC_02OA016_hourly_hydrometric.csv
+      subdir: canadian_water
 
   ocean:
     enabled: true

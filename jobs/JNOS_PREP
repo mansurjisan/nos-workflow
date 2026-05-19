@@ -274,6 +274,12 @@ case "${OFS_FRAMEWORK}" in
     comf|*)
         # Python-based prep (nos-utils) — the only supported path on this branch
         echo "Using Python-based prep (nos-utils package)"
+        # DCOM paths for ADT satellite, CO-OPS water level obs, St. Lawrence river
+        # (STOFS-3D-ATL-UFS prep needs these on the comf path; nos-utils maps the
+        # operational filenames/subdirs from the YAML st_lawrence/adt config).
+        export COMINadt=${COMINadt:-${DCOMROOT:-}}
+        export COMINwl=${COMINwl:-${DCOMROOT:-}}
+        export COMINlaw=${COMINlaw:-${DCOMROOT:-}}
         $SCRIPTSnos/exnos_prep.sh
         ;;
 esac
