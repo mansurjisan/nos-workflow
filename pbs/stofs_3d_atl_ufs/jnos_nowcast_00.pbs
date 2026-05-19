@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l place=vscatter:excl,select=35:ncpus=128:mpiprocs=128
+#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1
 #PBS  -l walltime=01:30:00
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -86,7 +86,7 @@ export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 
 # UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-4433
-# 35 nodes x 128 mpiprocs = 4480 slots (>= 4436 tasks)
+# 37 nodes x 120 mpiprocs = 4440 slots (>= 4436 tasks); ppn=120 + ompthreads=1 = STOFS operational parity
 export TOTAL_TASKS=${TOTAL_TASKS:-4436}
 
 ################################################
