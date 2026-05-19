@@ -30,6 +30,7 @@ import sys
 import argparse
 import json
 import os
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Any, Optional, Union
@@ -312,6 +313,15 @@ def get_standard_exports(
     exports['TOTAL_TASKS'] = exports['NPROCS']
     exports['NCPU_PBS'] = exports['NPROCS']
     exports['NSCRIBES'] = _nscribes_val
+
+    # PPN is the mpiexec -ppn (ranks per node) value, parsed from the
+    # mpiprocs= token of resources.select so it stays locked to the PBS
+    # node allocation. nos_run.sh:_schism_run_mpi reads ${PPN:-120}.
+    # When resources.select is absent (SECOFS keeps select= in its PBS
+    # header, not the YAML) PPN is left unset and the 120 default holds.
+    _select_match = re.search(r'mpiprocs=(\d+)', str(resources.get('select', '') or ''))
+    if _select_match:
+        exports['PPN'] = _select_match.group(1)
 
     # Include runtime environment variables
     exports.update(runtime_env)
