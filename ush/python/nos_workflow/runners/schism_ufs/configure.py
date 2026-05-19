@@ -8,6 +8,7 @@ from typing import Tuple
 
 from . import patches
 from .context import SchismRunContext
+from .stage_files import _is_ufs
 
 logger = logging.getLogger(__name__)
 
@@ -110,16 +111,21 @@ def patch_param_nml(ctx: SchismRunContext, phase: str) -> int:
         },
     )
 
-    # ihot=1 forces hotstart with clock reset; required for the UFS-Coastal
-    # NUOPC clock to drive the SCHISM cap correctly.
-    n_total += patches.patch_fortran_namelist_simple(
-        target,
-        {"ihot": 1},
-    )
+    # UFS: ihot=1 forces hotstart with clock reset; required for the
+    # UFS-Coastal NUOPC clock to drive the SCHISM cap correctly.
+    # Standalone (no NUOPC clock): mirror operational pschism --
+    # nowcast ihot=1, forecast ihot=2 (continues from nowcast hotstart
+    # without resetting the clock); also force nws=2 (sflux, not DATM).
+    if _is_ufs():
+        simple = {"ihot": 1}
+    else:
+        simple = {"ihot": 1 if phase == "nowcast" else 2, "nws": 2}
+    n_total += patches.patch_fortran_namelist_simple(target, simple)
 
     logger.info(
-        "  Patched param.nml: rnday=%s, start=%s-%s-%s %sZ, ihot=1",
+        "  Patched param.nml: rnday=%s, start=%s-%s-%s %sZ, %s",
         rnday, sim_yyyy, sim_mm, sim_dd, sim_hh,
+        ", ".join(f"{k}={v}" for k, v in simple.items()),
     )
     return n_total
 

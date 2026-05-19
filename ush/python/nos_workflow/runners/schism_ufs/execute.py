@@ -9,6 +9,7 @@ from pathlib import Path
 from ...bash_compat import run_shell_function
 from . import combine_hotstart, mesh
 from .context import SchismRunContext
+from .stage_files import _is_ufs
 
 logger = logging.getLogger(__name__)
 
@@ -54,8 +55,13 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
-    """Validate that required UFS configs exist and are non-empty in $DATA."""
+    """Validate that required UFS configs exist and are non-empty in $DATA.
+
+    Standalone SCHISM (pschism) needs none of the UFS configs -> rc=0.
+    """
     del phase
+    if not _is_ufs():
+        return 0
     missing = []
     for name in _REQUIRED_CONFIGS:
         f = ctx.data / name
@@ -75,8 +81,13 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _maybe_regenerate_mesh(ctx: SchismRunContext, phase: str) -> int:
-    """Regenerate the ESMF mesh from datm_forcing.nc if the forcing file exists."""
+    """Regenerate the ESMF mesh from datm_forcing.nc if the forcing file exists.
+
+    Standalone SCHISM has no DATM/ESMF mesh -> rc=0 (nothing to regen).
+    """
     del phase
+    if not _is_ufs():
+        return 0
     datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
     forcing = ctx.data / datm_dir_name / "datm_forcing.nc"
     if not forcing.is_file() or forcing.stat().st_size == 0:

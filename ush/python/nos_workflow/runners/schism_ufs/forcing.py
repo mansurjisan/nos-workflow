@@ -199,10 +199,85 @@ def untar_river_forcing(ctx: SchismRunContext, phase: str) -> int:
     )
 
 
+def _met_sflux_tar_names(ctx: SchismRunContext, phase: str) -> tuple:
+    """Return ``(gfs_tar, hrrr_tar)`` $COMOUT filenames for ``phase``.
+
+    The GFS (stack-1) name comes from the resolved ctx field
+    (``MET_NETCDF_1_{PHASE}`` -> ``...met.{phase}.nc.tar``); the optional
+    HRRR (stack-2) sibling is the same name with ``.nc.tar`` ->
+    ``.nc.2.tar`` (matches setup_paths ``MET_NETCDF_1_{PHASE}_2``).
+    """
+    if phase == "nowcast":
+        gfs = ctx.met_netcdf_nowcast or ""
+    elif phase == "forecast":
+        gfs = ctx.met_netcdf_forecast or ""
+    else:
+        raise ValueError(
+            f"untar_met_sflux: unknown phase {phase!r} "
+            "(expected nowcast/forecast)"
+        )
+    hrrr = gfs[:-7] + ".nc.2.tar" if gfs.endswith(".nc.tar") else ""
+    return gfs, hrrr
+
+
+def untar_met_sflux(ctx: SchismRunContext, phase: str) -> int:
+    """Extract prep sflux met tar(s) from $COMOUT into $DATA/sflux/.
+
+    Standalone SCHISM (nws=2) only. Mirrors :func:`untar_nwm_source_sink`'s
+    $COMOUT discovery + ``tar`` extraction, but the destination is
+    $DATA/sflux/ (created here) and the GFS stack-1 tar is mandatory --
+    SCHISM aborts at sflux init without it. The HRRR stack-2 tar is
+    optional (secondary forcing) and a non-fatal miss.
+
+    Returns the number of ``sflux_*.nc`` files present after extraction.
+    """
+    gfs_tar, hrrr_tar = _met_sflux_tar_names(ctx, phase)
+
+    src = ctx.comout / gfs_tar if gfs_tar else None
+    if src is None or not src.is_file() or src.stat().st_size == 0:
+        raise FileNotFoundError(
+            f"untar_met_sflux: phase={phase} (standalone SCHISM nws=2) "
+            f"requires the GFS sflux tar but it was not found.\n"
+            f"  Expected: {ctx.comout / gfs_tar if gfs_tar else '(unset)'}\n"
+            f"  Fix: ensure prep archived "
+            f"$COMOUT/$PREFIXNOS.$cycle.$PDY.met.{phase}.nc.tar "
+            f"(nos_utils.orchestrator.archive_to_comout)."
+        )
+
+    sflux_dir = ctx.data / "sflux"
+    sflux_dir.mkdir(parents=True, exist_ok=True)
+
+    local_tar = sflux_dir / gfs_tar
+    shutil.copy2(src, local_tar)
+    _extract_tar(local_tar, sflux_dir, label=f"GFS sflux ({phase})")
+
+    if hrrr_tar:
+        hrrr_src = ctx.comout / hrrr_tar
+        if hrrr_src.is_file() and hrrr_src.stat().st_size > 0:
+            local_hrrr = sflux_dir / hrrr_tar
+            shutil.copy2(hrrr_src, local_hrrr)
+            _extract_tar(local_hrrr, sflux_dir, label=f"HRRR sflux ({phase})")
+        else:
+            logger.info(
+                "  HRRR sflux tar absent (optional secondary): %s", hrrr_src,
+            )
+
+    extracted = sum(
+        1 for p in sflux_dir.glob("sflux_*.nc")
+        if p.is_file() and p.stat().st_size > 0
+    )
+    logger.info(
+        "  Staged sflux met (%d sflux_*.nc files into %s from %s)",
+        extracted, sflux_dir, gfs_tar,
+    )
+    return extracted
+
+
 __all__ = [
     "untar_obc_forcing",
     "untar_nwm_source_sink",
     "untar_river_forcing",
+    "untar_met_sflux",
     "_OBC_PAYLOAD_NAMES",
     "_NWM_PAYLOAD_NAMES",
     "_RIVER_PAYLOAD_NAMES",

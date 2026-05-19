@@ -38,6 +38,31 @@ _schism_run_mpi() {
     # called from a context where the caller's locals aren't in scope.
     local NTASKS=${NTASKS:-${TOTAL_TASKS:-1200}}
     local PPN=${PPN:-120}
+
+    # Standalone SCHISM: Phase-1's resolver emits USE_DATM=false and stages
+    # the scribed pschism binary under $UFS_EXEC_NAME (pschism_WCOSS2). It
+    # takes nscribes as argv[1]; there is no DATM/NUOPC layer to bind.
+    if [ "${USE_DATM:-true}" = "false" ]; then
+        local SCHISM_EXEC=${SCHISM_EXEC:-}
+        local _exe_name=${UFS_EXEC_NAME:-pschism_WCOSS2}
+        if [ -z "${SCHISM_EXEC}" ] || [ ! -x "${SCHISM_EXEC}" ]; then
+            local _cand
+            for _cand in \
+                "${DATA}/${_exe_name}" \
+                "${EXECnos:-}/${_exe_name}" \
+                "${HOMEnos:-}/exec/${_exe_name}"; do
+                if [ -x "$_cand" ]; then SCHISM_EXEC="$_cand"; break; fi
+            done
+        fi
+        local NSCRIBES=${NSCRIBES:-6}
+        echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"
+        echo "  mpiexec -n ${NTASKS} -ppn ${PPN} ${SCHISM_EXEC} ${NSCRIBES}"
+        mpiexec -n ${NTASKS} -ppn ${PPN} ${SCHISM_EXEC} ${NSCRIBES}
+        local rc=$?
+        echo "_schism_run_mpi: mpiexec returned rc=${rc}"
+        return ${rc}
+    fi
+
     local UFS_EXEC=${UFS_EXEC:-}
     if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
         local _cand

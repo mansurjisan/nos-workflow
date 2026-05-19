@@ -36,6 +36,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     rename_river_th_files,
     stage_st_lawrence_river,
     stage_bctides_in,
+    stage_executable,
     stage_forecast_restart_outputs,
     stage_hotstart,
     stage_partition_props,
@@ -202,15 +203,16 @@ def test_stage_ufs_configs_aux_files_fall_back_to_comout(tmp_path):
         assert (ctx.data / f).read_text() == f"COM {f}\n"
 
 
-def test_stage_ufs_configs_executable_staged_from_execnos(tmp_path):
-    """The UFS executable is staged from $EXECnos to $DATA and marked
-    executable."""
+def test_stage_executable_staged_from_execnos(tmp_path):
+    """The executable is staged from $EXECnos to $DATA and marked
+    executable. (Exe-copy is mode-common: split out of stage_ufs_configs
+    into stage_executable so standalone-SCHISM also stages its binary.)"""
     ctx = _make_ctx(tmp_path)
     src = ctx.execnos / "fv3_coastalS.exe"
     src.write_bytes(b"#!fake binary\n")
     os.chmod(src, 0o755)
 
-    stage_ufs_configs(ctx, "nowcast")
+    stage_executable(ctx, "nowcast")
 
     dst = ctx.data / "fv3_coastalS.exe"
     assert dst.is_file()
@@ -218,7 +220,7 @@ def test_stage_ufs_configs_executable_staged_from_execnos(tmp_path):
     assert os.access(dst, os.X_OK), "executable bit must be preserved"
 
 
-def test_stage_ufs_configs_executable_skipped_if_present(tmp_path):
+def test_stage_executable_skipped_if_present(tmp_path):
     """An already-staged executable in $DATA is not overwritten."""
     ctx = _make_ctx(tmp_path)
     dst = ctx.data / "fv3_coastalS.exe"
@@ -229,22 +231,23 @@ def test_stage_ufs_configs_executable_skipped_if_present(tmp_path):
     src.write_bytes(b"new content\n")
     os.chmod(src, 0o755)
 
-    stage_ufs_configs(ctx, "nowcast")
+    stage_executable(ctx, "nowcast")
 
     assert dst.read_bytes() == b"already here\n"
 
 
-def test_stage_ufs_configs_honors_ufs_exec_name_override(
+def test_stage_executable_honors_ufs_exec_name_override(
     tmp_path, monkeypatch,
 ):
-    """``$UFS_EXEC_NAME`` override changes the executable filename."""
+    """``$UFS_EXEC_NAME`` override changes the executable filename
+    (standalone sets it to pschism_WCOSS2 via Phase-1's resolver)."""
     monkeypatch.setenv("UFS_EXEC_NAME", "schism.exe")
     ctx = _make_ctx(tmp_path)
     src = ctx.execnos / "schism.exe"
     src.write_bytes(b"#!schism\n")
     os.chmod(src, 0o755)
 
-    stage_ufs_configs(ctx, "nowcast")
+    stage_executable(ctx, "nowcast")
 
     assert (ctx.data / "schism.exe").is_file()
     assert not (ctx.data / "fv3_coastalS.exe").exists()
