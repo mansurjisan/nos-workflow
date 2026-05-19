@@ -535,6 +535,129 @@ resources:
         assert "export PPN=120" in output
 
 
+class TestExecutionMode:
+    """``execution.mode`` drives UFS (default) vs standalone SCHISM.
+
+    Phase 1 is config-resolution plumbing only. The whole point is parity:
+    the production-validated UFS path MUST stay byte-identical when
+    ``execution.mode`` is ``ufs`` or absent. ``standalone`` flips a small,
+    enumerated set of resource/coupling exports from the yaml's
+    ``standalone:`` overlay and nothing else.
+    """
+
+    _STOFS_UFS_YAML = (
+        Path(__file__).parent.parent.parent.parent.parent
+        / "parm" / "systems" / "stofs_3d_atl_ufs.yaml"
+    )
+
+    def _export(self, yaml_text: str) -> str:
+        with tempfile.NamedTemporaryFile(
+            mode="w", suffix=".yaml", delete=False
+        ) as f:
+            f.write(yaml_text)
+            temp_path = f.name
+        try:
+            return export_for_shell(temp_path, framework="stofs")
+        finally:
+            os.unlink(temp_path)
+
+    def _strip_execmode_blocks(self, text: str) -> str:
+        """Drop the ``execution:`` and ``standalone:`` top-level blocks.
+
+        Both are written as a top-level key followed by indented lines and
+        a trailing blank line in stofs_3d_atl_ufs.yaml, so a small state
+        machine that skips from the key until the next non-indented,
+        non-blank line removes exactly those blocks and nothing else.
+        """
+        out, skipping = [], False
+        for line in text.splitlines(keepends=True):
+            stripped = line.rstrip("\n")
+            if not skipping and stripped in ("execution:", "standalone:"):
+                skipping = True
+                continue
+            if skipping:
+                if stripped == "" or line[:1] in (" ", "\t"):
+                    continue
+                skipping = False
+            out.append(line)
+        return "".join(out)
+
+    def test_ufs_path_is_byte_identical_to_stripped_config(self) -> None:
+        """absent/``ufs`` execution.mode == config with the blocks removed.
+
+        This is the parity gate: adding the ``execution:``/``standalone:``
+        blocks (mode=ufs) must not perturb a single exported value vs the
+        same yaml with those blocks physically deleted.
+        """
+        full_text = self._STOFS_UFS_YAML.read_text()
+        full_lines = full_text.splitlines()
+        assert "execution:" in full_lines and "standalone:" in full_lines
+
+        stripped_text = self._strip_execmode_blocks(full_text)
+        stripped_lines = stripped_text.splitlines()
+        assert "execution:" not in stripped_lines
+        assert "standalone:" not in stripped_lines
+
+        with_blocks = self._export(full_text)            # mode: ufs
+        without_blocks = self._export(stripped_text)     # blocks absent
+
+        assert with_blocks == without_blocks
+
+    def test_ufs_mode_never_reads_standalone_overlay(self) -> None:
+        """With ``mode: ufs``, deleting ``standalone:`` changes nothing.
+
+        Proves the resolver is keyed purely on the mode and never touches
+        the overlay on the UFS path (the file ships ``mode: ufs``).
+        """
+        full_text = self._STOFS_UFS_YAML.read_text()
+        no_overlay = self._strip_execmode_blocks(full_text)
+        # Re-add only the execution block (mode: ufs), keeping standalone gone.
+        with_exec_only = (
+            "execution:\n  mode: ufs\n\n" + no_overlay
+        )
+        assert self._export(with_exec_only) == self._export(no_overlay)
+
+    def test_standalone_overrides_resource_and_coupling_exports(self) -> None:
+        """``mode: standalone`` flips exactly the overlay-backed exports."""
+        full_text = self._STOFS_UFS_YAML.read_text()
+        standalone_text = full_text.replace(
+            "  mode: ufs ", "  mode: standalone "
+        )
+        assert "  mode: standalone " in standalone_text
+
+        out = self._export(standalone_text)
+        lines = set(out.splitlines())
+
+        assert "export USE_DATM=false" in lines
+        assert "export NWS_VALUE=2" in lines
+        assert "export TOTAL_TASKS=4320" in lines
+        assert "export NPROCS=4320" in lines
+        assert "export NSCRIBES=6" in lines
+        assert "export UFS_EXEC_NAME=pschism_WCOSS2" in lines
+        # PPN parsed from the standalone select (mpiprocs=120), not the
+        # UFS one (also 120 here, but it must come from the overlay).
+        assert "export PPN=120" in lines
+
+    def test_standalone_does_not_touch_shared_grid_exports(self) -> None:
+        """Standalone overlay is resources/coupling only; grid is shared."""
+        full_text = self._STOFS_UFS_YAML.read_text()
+        ufs_out = self._export(full_text)
+        standalone_out = self._export(
+            full_text.replace("  mode: ufs ", "  mode: standalone ")
+        )
+
+        def _val(text: str, key: str) -> str:
+            for ln in text.splitlines():
+                if ln.startswith(f"export {key}="):
+                    return ln
+            return ""
+
+        for shared in ("np_global", "ne_global", "ns_global", "nvrt",
+                       "LONMIN", "LONMAX", "LATMIN", "LATMAX",
+                       "GRIDFILE", "DELT_MODEL"):
+            assert _val(ufs_out, shared) == _val(standalone_out, shared), shared
+
+
 # ---------------------------------------------------------------------------
 # Self-test entry point
 # ---------------------------------------------------------------------------

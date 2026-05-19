@@ -273,9 +273,23 @@ def get_standard_exports(
         if "time_hotstart" in computed:
             exports["time_hotstart"] = computed["time_hotstart"]
 
+    # execution.mode=standalone overlays standalone resources/exec; ufs/absent
+    # is a strict no-op so the UFS export dict stays byte-identical.
+    resources = data.get("resources", {})
+    if data.get("execution", {}).get("mode", "ufs") == "standalone":
+        overlay = data.get("standalone", {})
+        resources = {**resources, **{
+            k: overlay[k] for k in ("nprocs", "nscribes", "select")
+            if k in overlay
+        }}
+        if "executable" in overlay:
+            exports["UFS_EXEC_NAME"] = overlay["executable"]
+        if "nws" in overlay:
+            exports["NWS_VALUE"] = overlay["nws"]
+        exports["USE_DATM"] = "false"
+
     # ``nprocs`` is total mpiexec rank count; ``nscribes`` is the SCHISM
     # I/O-rank count. NPROCS/TOTAL_TASKS/NCPU_PBS are aliases.
-    resources = data.get("resources", {})
     total = resources.get("nprocs")
     if total in (None, ""):
         total = resources.get("total_tasks", "")
