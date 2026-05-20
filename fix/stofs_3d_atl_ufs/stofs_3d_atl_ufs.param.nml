@@ -539,8 +539,8 @@
 ! If error occurs like 'bktrk_subs: overflow' or 'MAIN: nbtrk > mxnbt'
 ! gradually increasing these will solve the problem
 !-----------------------------------------------------------------------
-  s1_mxnbt = 0.5
-  s2_mxnbt = 3.5
+  s1_mxnbt = 5.0
+  s2_mxnbt = 15.0
 
 !-----------------------------------------------------------------------
 ! Flag for harmonic analysis for elevation. If used , need to turn on cpp flags
