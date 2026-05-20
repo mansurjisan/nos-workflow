@@ -244,7 +244,7 @@
 !           nchi=1: bottom roughness (in meters) specified in rough.gr3.
 !           If iwbl/=0, nchi must =1.
 !-----------------------------------------------------------------------
-  nchi = 1
+  nchi = 0
   dzb_min = 0.5 !needed if nchi=1; min. bottom boundary layer thickness [m].
   hmin_man = 1. !needed if nchi=-1: min. depth in Manning's formulation [m]
 
@@ -261,7 +261,7 @@
 ! Elevation initial condition flag for cold start only. For hotstart, set this to 0
 ! (and elev will be read in from hotstart.nc). If ic_elev=1, elev.ic is needed.
 !-----------------------------------------------------------------------
-  ic_elev = 1
+  ic_elev = 0
 
 !-----------------------------------------------------------------------
 ! Elevation boundary condition ramp-up flag. =0: ramp up from 0; =1: ramp up from
@@ -288,7 +288,7 @@
 !  flag_ic(4) = 1 !Age i.c. flag set inside code
   flag_ic(5) = 1 !SED3D
   flag_ic(6) = 1 !EcoSim
-  flag_ic(7) = 1 !ICM
+  flag_ic(7) = 0 !ICM
   flag_ic(8) = 1 !CoSINE
   flag_ic(9) = 1 !FIB
   flag_ic(10) = 1 !TIMOR
@@ -427,8 +427,8 @@
 ! Nudging options for tracers. STOFS: T,S nudged to RTOFS via [MOD]_nu.nc
 ! (inu_tr=2, step_nu_tr=86400; SAL_nudge.gr3 / TEM_nudge.gr3 horizontal relax).
 !-----------------------------------------------------------------------
-  inu_tr(1) = 2 !T
-  inu_tr(2) = 2 !S
+  inu_tr(1) = 0 !T
+  inu_tr(2) = 0 !S
   inu_tr(3) = 0 !GEN
   inu_tr(4) = 0 !Age
   inu_tr(5) = 0 !SED3D
