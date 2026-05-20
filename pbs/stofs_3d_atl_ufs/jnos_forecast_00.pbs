@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1:mem=500GB
 #PBS  -l walltime=05:30:00
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -105,3 +105,24 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 #   qsub -W depend=afterok:${NCST_JOB} pbs/stofs_3d_atl_ufs/jnos_forecast_00.pbs
 
 ${HOMEnos}/jobs/JNOS_FORECAST
+_rc=$?
+
+# --- ParMETIS blind-retry ---------------------------------------------------
+# partition_hgrid:534 is a nondeterministic ParMETIS heap corruption at
+# ~2914 ranks (nos-workflow #98), independent of node placement; a resubmit
+# re-rolls the rank/heap layout and usually clears it. NOTE: JNOS_* does not
+# reliably propagate the stage exit code (it ends on postmsg/date), so ${_rc}
+# can be 0 even on a crash — decide from the log, not rc: retry iff the
+# signature appears in .err OR .out AND the stage did not log status=PASS.
+if grep -qE 'partition_hgrid|double free or corruption|Failed during initial partitioning' "${_LOG_PREFIX}.err" "${_LOG_PREFIX}.out" 2>/dev/null \
+   && ! grep -qE 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" 2>/dev/null; then
+  RETRY=${PARMETIS_RETRY:-0}; MAXRETRY=8
+  if [ "${RETRY}" -lt "${MAXRETRY}" ]; then
+    echo "PARMETIS_RETRY: partition_hgrid crash (rc=${_rc}); resubmitting attempt $((RETRY+1))/${MAXRETRY}"
+    qsub -v "PDY=${PDY:-},cyc=${cyc:-${CYC:-00}},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
+  else
+    echo "PARMETIS_RETRY: max retries (${MAXRETRY}) exhausted — giving up"
+  fi
+fi
+exit "${_rc}"
+# --- end ParMETIS blind-retry -----------------------------------------------
