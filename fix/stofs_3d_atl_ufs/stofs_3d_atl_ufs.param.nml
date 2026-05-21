@@ -244,7 +244,7 @@
 !           and may remove this constant in the future.
 !           If iwbl/=0, nchi must =1.
 !-----------------------------------------------------------------------
-  nchi = 1
+  nchi = 0
   dzb_min = 0.5 !needed if nchi=1; min. bottom boundary layer thickness [m].
   !dzb_decay = 0. !needed if nchi=1; a decay const. [-]. should =0
 
@@ -263,7 +263,7 @@
 ! Elevation initial condition flag for cold start only. If ic_elev=1, elev.ic (in *.gr3 format) is needed
 ! to specify the initial elevations; otherwise elevation is initialized to 0 everywhere
 !-----------------------------------------------------------------------
-  ic_elev = 1
+  ic_elev = 0
 
 !-----------------------------------------------------------------------
 ! Elevation boundary condition ramp-up flag. =0: ramp up from 0; =1: ramp up from
