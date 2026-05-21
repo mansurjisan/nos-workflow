@@ -1,0 +1,105 @@
+# Base configuration for all ROMS-based OFS systems
+# Systems inherit from this via _base: roms
+#
+# ROMS systems: CBOFS, DBOFS, TBOFS, GOMOFS, CIOFS, WCOFS
+
+model:
+  type: roms
+  version: "3.9"
+
+  # Default physics parameters
+  physics:
+    dt: 6.0                   # Baroclinic timestep (seconds)
+    ndtfast: 30               # Barotropic steps per baroclinic step
+    ntimes: 86400             # Number of timesteps (computed per run)
+    nrst: 1440                # Restart file interval
+    ninfo: 100                # Screen output interval
+    ldefout: true             # Create output file at start
+    nhis: 360                 # History output interval
+    ndefhis: 0                # Multi-file history
+    ntsavg: 1                 # Average accumulation start
+    navg: 360                 # Average output interval
+
+  # Vertical grid settings (S-coordinate)
+  vertical:
+    n: 20                     # Number of vertical levels
+    vtransform: 2             # Vertical transformation type
+    vstretching: 4            # Vertical stretching function
+    theta_s: 5.0              # Surface control parameter
+    theta_b: 0.4              # Bottom control parameter
+    tcline: 10.0              # Critical depth (m)
+    hc: 10.0                  # S-coordinate parameter
+
+  # Default run configuration
+  run:
+    hindcast_days: 0.25       # 6-hour hindcast
+    forecast_days: 2.0        # 48-hour forecast (ROMS runs are shorter)
+
+# Default forcing sources for ROMS
+forcing:
+  atmospheric:
+    primary: nam              # Most ROMS use NAM (12km)
+    fallback: gfs             # Global fallback
+    variables:
+      - Uwind                 # U-component wind stress
+      - Vwind                 # V-component wind stress
+      - Pair                  # Surface pressure
+      - Tair                  # Surface temperature
+      - Qair                  # Surface humidity
+      - rain                  # Precipitation
+      - swrad                 # Shortwave radiation
+      - lwrad                 # Longwave radiation
+
+  ocean:
+    enabled: true
+    primary: rtofs            # Real-Time Ocean Forecast System
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+
+  river:
+    enabled: true
+    primary: nwm              # National Water Model
+    # Individual river sources configured per system
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Default output configuration
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    interval: 360.0
+  fields_2d:
+    enabled: true
+    variables:
+      - zeta                  # Sea surface height
+      - ubar                  # Barotropic u velocity
+      - vbar                  # Barotropic v velocity
+  fields_3d:
+    enabled: true
+    variables:
+      - temp                  # Temperature
+      - salt                  # Salinity
+      - u                     # U velocity
+      - v                     # V velocity
+  intervals:
+    hotstart_days: 1.0
+    history_hours: 1.0
+
+# Default computational resources
+resources:
+  nprocs: 120                 # Override per system
+  memory_gb: 200
+  walltime_hours: 1
