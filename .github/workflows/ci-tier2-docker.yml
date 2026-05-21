@@ -1,15 +1,24 @@
-# Tier 2 CI: Docker container build + verification
-# Builds the SECOFS UFS container and verifies all components work.
-# Runs on every PR and push to main/feature branches.
+# Tier 2 CI: SECOFS_UFS Docker container (prep image) build + verify.
+#
+# Builds the prep-capable container (docker/Dockerfile.secofs_ufs --target
+# runtime): EPIC spack-stack base + the develop nos_workflow/nos-utils Python
+# pipeline + wgrib2/prod_util shims. This is the part that changes on every
+# push; the model executable (fv3_coastalS.exe) is added locally for the
+# Apptainer/Hercules image and is intentionally NOT built here.
+#
+# Triggers:
+#   * every push / PR touching the container or workflow inputs
+#   * nightly (07:00 UTC) so the image is rebuilt against upstream base updates
+#   * manual (workflow_dispatch)
+#
+# Push to Docker Hub happens only on non-PR events (PRs build + verify only).
+# Requires repo secrets: DOCKER_USERNAME, DOCKER_PASSWORD.
 
 name: CI - Tier 2 (Docker Build & Verify)
 
 on:
   push:
-    branches:
-      - main
-      - "feature/*"
-      - develop
+    branches: [main, develop, "feature/*"]
     paths:
       - 'docker/**'
       - 'jobs/**'
@@ -20,246 +29,129 @@ on:
       - 'fix/secofs_ufs/**'
       - '.github/workflows/ci-tier2-docker.yml'
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [main, develop]
     paths:
       - 'docker/**'
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'
       - 'parm/**'
-  workflow_dispatch:  # Manual trigger
+      - '.github/workflows/ci-tier2-docker.yml'
+  schedule:
+    - cron: '0 7 * * *'   # nightly 07:00 UTC
+  workflow_dispatch:
 
 env:
-  DOCKER_REGISTRY: docker.io
   IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/secofs-ufs
-  UFS_IMAGE_NAME: ${{ secrets.DOCKER_USERNAME }}/ufs-coastal
+  LOCAL_TAG: secofs-ufs:ci
 
 jobs:
-  # --------------------------------------------------------------------------
-  # Job 1: Build UFS-Coastal base image (cached, rarely changes)
-  # --------------------------------------------------------------------------
-  build-ufs-coastal:
-    name: Build UFS-Coastal Base
+  build-verify-push:
+    name: Build prep image, verify, push (non-PR)
     runs-on: ubuntu-latest
-    outputs:
-      ufs-image: ${{ steps.meta.outputs.tags }}
     steps:
-      - name: Checkout repository
+      - name: Checkout (with submodules)
         uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ush/python/nos-utils is required by COPY ush/
+
+      # The EPIC base (~10.7 GB) + image needs room beyond the default free disk.
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.UFS_IMAGE_NAME }}
-          tags: latest
-
-      - name: Build and push UFS-Coastal
-        uses: docker/build-push-action@v5
-        with:
-          context: docker/
-          file: docker/Dockerfile.ufs_coastal
-          push: true
-          tags: ${{ env.UFS_IMAGE_NAME }}:latest
-          cache-from: type=registry,ref=${{ env.UFS_IMAGE_NAME }}:buildcache
-          cache-to: type=registry,ref=${{ env.UFS_IMAGE_NAME }}:buildcache,mode=max
-
-  # --------------------------------------------------------------------------
-  # Job 2: Build SECOFS UFS container (GCC)
-  # --------------------------------------------------------------------------
-  build-secofs-gcc:
-    name: Build SECOFS UFS (GCC)
-    runs-on: ubuntu-latest
-    needs: build-ufs-coastal
-    outputs:
-      image-tag: ${{ steps.meta.outputs.tags }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@v3
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Docker meta
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=sha,prefix=gcc-
-            type=raw,value=gcc-latest
-
-      - name: Build and push
+      # Build the prep image (--target runtime) and load it locally so the
+      # verify steps run against it on every event (incl. PRs, which don't push).
+      - name: Build prep image (target=runtime)
         uses: docker/build-push-action@v5
         with:
           context: .
           file: docker/Dockerfile.secofs_ufs
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          build-args: |
-            UFS_IMAGE=${{ env.UFS_IMAGE_NAME }}:latest
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:gcc-buildcache
-          cache-to: type=registry,ref=${{ env.IMAGE_NAME }}:gcc-buildcache,mode=max
+          target: runtime
+          load: true
+          push: false
+          tags: ${{ env.LOCAL_TAG }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
-  # --------------------------------------------------------------------------
-  # Job 3: Verify container components
-  # --------------------------------------------------------------------------
-  verify:
-    name: Verify Container
-    runs-on: ubuntu-latest
-    needs: build-secofs-gcc
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      # ---------------- Verification (develop architecture) ----------------
+      - name: Python packages import (nos_workflow + nos_utils)
+        run: |
+          docker run --rm --entrypoint bash ${{ env.LOCAL_TAG }} -lc '
+            python3 -c "import nos_workflow; from nos_utils.nco_bridge import run_prep; print(\"OK: nos_workflow + nos_utils\")"
+            python3 -c "import numpy, scipy, pandas, xarray, netCDF4, yaml, cfgrib; print(\"OK: forcing deps\")"
+          '
 
+      - name: Validate YAML configs
+        run: |
+          docker run --rm --entrypoint bash ${{ env.LOCAL_TAG }} -lc '
+            FAIL=0
+            for y in /opt/nosofs/parm/systems/*.yaml /opt/nosofs/parm/base/*.yaml; do
+              python3 -c "import yaml,sys; c=yaml.safe_load(open(\"$y\")); assert isinstance(c,dict)" \
+                && echo "  OK: $(basename $y)" || { echo "  FAIL: $(basename $y)"; FAIL=1; }
+            done
+            [ $FAIL -eq 0 ] || exit 1
+          '
+
+      - name: Check WCOSS2 path mirroring (develop layout)
+        run: |
+          docker run --rm --entrypoint bash ${{ env.LOCAL_TAG }} -lc '
+            [ -L /lfs/h1/nos/nosofs/packages/nos-workflow ] && echo "OK: nos-workflow symlink" || { echo "FAIL: symlink"; exit 1; }
+            [ -f /lfs/h1/nos/nosofs/packages/nos-workflow/parm/systems/secofs_ufs.yaml ] && echo "OK: secofs_ufs.yaml via WCOSS2 path" || { echo "FAIL"; exit 1; }
+          '
+
+      - name: Check tools (wgrib2, ndate, mpiexec, mpirun, python3)
+        run: |
+          docker run --rm --entrypoint bash ${{ env.LOCAL_TAG }} -lc '
+            for t in wgrib2 ndate mpiexec mpirun python3; do
+              command -v $t >/dev/null && echo "OK: $t ($(command -v $t))" || { echo "FAIL: $t"; exit 1; }
+            done
+          '
+
+      - name: Check ndate arithmetic
+        run: |
+          docker run --rm --entrypoint bash ${{ env.LOCAL_TAG }} -lc '
+            R=$(ndate 6 2026032418);  [ "$R" = 2026032500 ] && echo "OK: ndate +6h ($R)"  || { echo "FAIL +6h: $R"; exit 1; }
+            R=$(ndate -24 2026032418); [ "$R" = 2026032318 ] && echo "OK: ndate -24h ($R)" || { echo "FAIL -24h: $R"; exit 1; }
+          '
+
+      - name: Dry run prep (Python CLI dispatch)
+        run: |
+          docker run --rm ${{ env.LOCAL_TAG }} prep --dry-run --pdy 20260324 --cyc 18 --ofs secofs_ufs 2>&1 | tee /tmp/dry.log
+          grep -q "JNOS_PREP" /tmp/dry.log || { echo "FAIL: JNOS_PREP not in dry run"; exit 1; }
+          grep -q "DRY RUN"   /tmp/dry.log || { echo "FAIL: dry-run marker missing"; exit 1; }
+          echo "OK: prep dry run dispatches to JNOS_PREP"
+
+      # ---------------- Push to Docker Hub (non-PR only) ----------------
       - name: Login to Docker Hub
+        if: ${{ github.event_name != 'pull_request' }}
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Pull image
-        run: docker pull ${{ env.IMAGE_NAME }}:gcc-latest
-
-      # --- Verify executables ---
-      - name: Check COMF Fortran executables
+      - name: Tag and push prep image
+        if: ${{ github.event_name != 'pull_request' }}
         run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            echo "=== COMF executables ==="
-            EXPECTED="nos_ofs_create_forcing_met nos_ofs_create_forcing_met_fvcom \
-                      nos_ofs_create_forcing_obc_schism nos_ofs_create_forcing_river \
-                      nos_ofs_create_tide_fac_schism nos_ofs_met_file_search \
-                      nos_ofs_read_restart nos_ofs_combine_hotstart_schism"
-            MISSING=0
-            for exe in $EXPECTED; do
-                if [ -f "/opt/nosofs/exec/$exe" ]; then
-                    echo "  OK: $exe"
-                else
-                    echo "  MISSING: $exe"
-                    MISSING=$((MISSING + 1))
-                fi
-            done
-            echo ""
-            echo "Total executables: $(ls /opt/nosofs/exec/ | wc -l)"
-            [ $MISSING -eq 0 ] || { echo "FAIL: $MISSING critical executables missing"; exit 1; }
-          '
-
-      - name: Check UFS-Coastal executable
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            ls -lh /opt/nosofs/exec/fv3_coastalS.exe || { echo "FAIL: fv3_coastalS.exe missing"; exit 1; }
-            file /opt/nosofs/exec/fv3_coastalS.exe | grep -q "ELF 64-bit" || { echo "FAIL: not a valid ELF binary"; exit 1; }
-            echo "OK: fv3_coastalS.exe ($(du -sh /opt/nosofs/exec/fv3_coastalS.exe | cut -f1))"
-          '
-
-      - name: Check tools (wgrib2, ndate, cfp, mpiexec)
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            for tool in wgrib2 ndate cfp mpiexec mpirun python3; do
-                which $tool >/dev/null 2>&1 && echo "OK: $tool ($(which $tool))" || { echo "FAIL: $tool not found"; exit 1; }
-            done
-          '
-
-      # --- Verify Python package ---
-      - name: Check nos_ofs Python package
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            python3 -c "from nos_ofs.config import OFSConfig; print(\"OK: nos_ofs.config\")"
-            python3 -c "from nos_ofs.registry import OFSRegistry; print(\"OK: nos_ofs.registry\")"
-            python3 -c "import yaml, numpy, xarray, netCDF4; print(\"OK: all Python deps\")"
-          '
-
-      # --- Verify YAML configs ---
-      - name: Validate all YAML configs
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            FAIL=0
-            for y in /opt/nosofs/parm/systems/*.yaml; do
-                name=$(basename $y)
-                python3 -c "import yaml; c=yaml.safe_load(open(\"$y\")); assert \"system\" in c or \"_base\" in c; print(\"  OK: $name\")" 2>&1 || { echo "  FAIL: $name"; FAIL=1; }
-            done
-            [ $FAIL -eq 0 ] || exit 1
-          '
-
-      # --- Verify WCOSS2 path structure ---
-      - name: Check WCOSS2 path mirroring
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            echo "=== WCOSS2 paths ==="
-            [ -L "/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0" ] && echo "OK: nosofs.v3.7.0 symlink" || { echo "FAIL: symlink missing"; exit 1; }
-            [ -f "/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/parm/systems/secofs.yaml" ] && echo "OK: secofs.yaml accessible via WCOSS2 path" || { echo "FAIL"; exit 1; }
-            [ -f "/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/parm/systems/secofs_ufs.yaml" ] && echo "OK: secofs_ufs.yaml accessible via WCOSS2 path" || { echo "FAIL"; exit 1; }
-            [ -f "/lfs/h1/nos/nosofs/packages/nosofs.v3.7.0/exec/fv3_coastalS.exe" ] && echo "OK: fv3_coastalS.exe via WCOSS2 path" || { echo "FAIL"; exit 1; }
-          '
-
-      # --- Verify ndate shim ---
-      - name: Check ndate date arithmetic
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            RESULT=$(ndate 6 2026032418)
-            [ "$RESULT" = "2026032500" ] && echo "OK: ndate +6h (2026032418 → $RESULT)" || { echo "FAIL: ndate returned $RESULT, expected 2026032500"; exit 1; }
-            RESULT=$(ndate -24 2026032418)
-            [ "$RESULT" = "2026032318" ] && echo "OK: ndate -24h (2026032418 → $RESULT)" || { echo "FAIL: ndate returned $RESULT, expected 2026032318"; exit 1; }
-          '
-
-      # --- Verify dry run ---
-      - name: Dry run prep + nowcast + forecast + post
-        run: |
-          docker run --rm ${{ env.IMAGE_NAME }}:gcc-latest all --dry-run --pdy 20260324 --cyc 18 --ofs secofs_ufs 2>&1 | tee /tmp/dryrun.log
-          grep -q "JNOS_OFS_PREP" /tmp/dryrun.log || { echo "FAIL: prep not in dry run"; exit 1; }
-          grep -q "JNOS_OFS_NOWCAST" /tmp/dryrun.log || { echo "FAIL: nowcast not in dry run"; exit 1; }
-          grep -q "JNOS_OFS_FORECAST" /tmp/dryrun.log || { echo "FAIL: forecast not in dry run"; exit 1; }
-          grep -q "JNOS_OFS_POST" /tmp/dryrun.log || { echo "FAIL: post not in dry run"; exit 1; }
-          echo "OK: All 4 stages in dry run"
-
-      # --- Verify cfp shim ---
-      - name: Check cfp MPI rank distribution
-        run: |
-          docker run --rm --entrypoint bash ${{ env.IMAGE_NAME }}:gcc-latest -c '
-            echo "/bin/echo line1" > /tmp/cmds
-            echo "/bin/echo line2" >> /tmp/cmds
-            echo "/bin/echo line3" >> /tmp/cmds
-            echo "/bin/echo line4" >> /tmp/cmds
-
-            # Rank 0 of 2 should get lines 1,3
-            OUT=$(OMPI_COMM_WORLD_RANK=0 OMPI_COMM_WORLD_SIZE=2 cfp /tmp/cmds)
-            echo "$OUT" | grep -q "line1" && echo "$OUT" | grep -q "line3" && echo "OK: cfp rank 0 gets odd lines" || { echo "FAIL: cfp distribution"; exit 1; }
-
-            # Rank 1 of 2 should get lines 2,4
-            OUT=$(OMPI_COMM_WORLD_RANK=1 OMPI_COMM_WORLD_SIZE=2 cfp /tmp/cmds)
-            echo "$OUT" | grep -q "line2" && echo "$OUT" | grep -q "line4" && echo "OK: cfp rank 1 gets even lines" || { echo "FAIL: cfp distribution"; exit 1; }
-          '
+          SHORT=$(git rev-parse --short HEAD)
+          TAGS="prep-latest prep-${SHORT}"
+          [ "${{ github.event_name }}" = "schedule" ] && TAGS="$TAGS prep-nightly"
+          for t in $TAGS; do
+            docker tag ${{ env.LOCAL_TAG }} ${{ env.IMAGE_NAME }}:$t
+            docker push ${{ env.IMAGE_NAME }}:$t
+            echo "pushed ${{ env.IMAGE_NAME }}:$t"
+          done
 
       - name: Summary
         run: |
           echo "=============================================="
-          echo " Tier 2 CI: All checks passed"
+          echo " Tier 2 CI (prep image): all checks passed"
+          echo "   target=runtime  image=${{ env.IMAGE_NAME }}"
+          echo "   event=${{ github.event_name }}"
+          echo "   pushed=${{ github.event_name != 'pull_request' }}"
           echo "=============================================="
-          echo " Image: ${{ env.IMAGE_NAME }}:gcc-latest"
-          echo " Checks:"
-          echo "   - COMF Fortran executables (8 critical)"
-          echo "   - UFS-Coastal fv3_coastalS.exe"
-          echo "   - Tools (wgrib2, ndate, cfp, mpiexec)"
-          echo "   - Python nos_ofs package + deps"
-          echo "   - YAML config validation"
-          echo "   - WCOSS2 path mirroring"
-          echo "   - ndate arithmetic"
-          echo "   - cfp rank distribution"
-          echo "   - Dry run (prep → nowcast → forecast → post)"

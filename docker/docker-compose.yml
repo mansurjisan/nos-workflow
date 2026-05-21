@@ -1,0 +1,59 @@
+# ============================================================================
+# SECOFS_UFS prep testing (nos-workflow develop branch)
+#
+# Usage:
+#   DATA_ROOT=/mnt/e/secofs_docker_rawdata/secofs_docker_data \
+#   OFS=secofs_ufs PDY=20260324 CYC=18 \
+#     docker compose -f docker/docker-compose.yml run --rm secofs-prep
+#
+# Data layout (CI dataset -> container bind targets):
+#   DATA_ROOT/com/{gfs,hrrr,nwm,rtofs} -> /lfs/h1/ops/prod/com/*  (WCOSS2 mirror)
+#   DATA_ROOT/fix/secofs               -> /data/fix/secofs        (CI fix files)
+#   DATA_ROOT/fix/shared               -> /data/fix/shared
+#   DATA_ROOT/com/nosofs               -> /data/com/nosofs        (hotstart)
+#   WORK_ROOT                          -> /lfs/h1/nos/ptmp/nosuser (com + work, rw)
+# ============================================================================
+
+x-common: &common
+  build:
+    context: ..
+    dockerfile: docker/Dockerfile.secofs_ufs
+  image: nosofs/secofs-ufs:develop
+  volumes:
+    # GRIB2/NetCDF inputs (rw so wgrib2 can write missing .idx alongside files)
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/gfs:/lfs/h1/ops/prod/com/gfs
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/hrrr:/lfs/h1/ops/prod/com/hrrr
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nwm:/lfs/h1/ops/prod/com/nwm
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/rtofs:/lfs/h1/ops/prod/com/rtofs
+    # Static fix files (read-only)
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/secofs:/data/fix/secofs:ro
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/fix/shared:/data/fix/shared:ro
+    # Previous-cycle restart / hotstart (read-only)
+    - ${DATA_ROOT:-/mnt/e/secofs_docker_rawdata/secofs_docker_data}/com/nosofs:/data/com/nosofs:ro
+    # Writable scratch: COMROOT (output) + DATAROOT (work) both live here
+    - ${WORK_ROOT:-/mnt/d/SECOFS_DOCKER/work}:/lfs/h1/nos/ptmp/nosuser
+  environment:
+    - OFS=${OFS:-secofs_ufs}
+    - PDY=${PDY:-20260324}
+    - CYC=${CYC:-18}
+    - LOGNAME=nosuser
+  shm_size: '2g'
+
+services:
+  # Python prep only (no MPI, no model executable)
+  secofs-prep:
+    <<: *common
+    command: ["prep"]
+
+  # Full chain (Phase 2+: requires fv3_coastalS.exe in the image)
+  secofs-all:
+    <<: *common
+    command: ["all"]
+
+  # Interactive shell for debugging (overrides entrypoint)
+  secofs-shell:
+    <<: *common
+    entrypoint: ["/bin/bash"]
+    command: ["-l"]
+    stdin_open: true
+    tty: true
