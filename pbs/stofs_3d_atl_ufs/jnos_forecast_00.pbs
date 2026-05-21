@@ -119,7 +119,7 @@ if grep -qE 'partition_hgrid|double free or corruption|Failed during initial par
   RETRY=${PARMETIS_RETRY:-0}; MAXRETRY=8
   if [ "${RETRY}" -lt "${MAXRETRY}" ]; then
     echo "PARMETIS_RETRY: partition_hgrid crash (rc=${_rc}); resubmitting attempt $((RETRY+1))/${MAXRETRY}"
-    qsub -v "PDY=${PDY:-},cyc=${cyc:-${CYC:-00}},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
+    qsub -v "PDY=${PDY:-},CYC=${CYC:-${cyc:-12}},OFS=${OFS:-stofs_3d_atl_ufs},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES},MPICH_OFI_STARTUP_CONNECT=${MPICH_OFI_STARTUP_CONNECT:-1},MPICH_COLL_SYNC=${MPICH_COLL_SYNC:-MPI_Bcast},MPICH_REDUCE_NO_SMP=${MPICH_REDUCE_NO_SMP:-1},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
   else
     echo "PARMETIS_RETRY: max retries (${MAXRETRY}) exhausted — giving up"
   fi
