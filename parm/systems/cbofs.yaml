@@ -1,0 +1,142 @@
+# CBOFS Configuration
+# Chesapeake Bay Operational Forecast System
+#
+# Inherits from the base ROMS configuration (parm/base/roms.yaml) and
+# overrides per-OFS values. COMF framework, standalone (non-UFS) execution.
+
+_base: roms
+
+system:
+  name: cbofs
+  description: "Chesapeake Bay Operational Forecast System"
+  region: chesapeake
+  framework: comf
+  version: "3.7.0"
+  prefix: cbofs
+
+# Execution mode: classic standalone ROMS (not UFS-Coastal coupled).
+execution:
+  mode: standalone
+
+# Grid configuration - ROMS curvilinear grid
+grid:
+  type: curvilinear
+  files:
+    grid: cbofs_grid.nc
+    forcing: cbofs_forcing.nc
+  # Chesapeake Bay domain bounds
+  domain:
+    lon_min: -77.5
+    lon_max: -75.0
+    lat_min: 36.5
+    lat_max: 39.7
+
+# Forcing configuration
+forcing:
+  atmospheric:
+    primary: nam
+    fallback: gfs
+    variables:
+      - Uwind
+      - Vwind
+      - Pair
+      - Tair
+      - Qair
+      - rain
+      - swrad
+      - lwrad
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: susquehanna
+        usgs_id: "01578310"
+      - name: potomac
+        usgs_id: "01646500"
+      - name: james
+        usgs_id: "02037500"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+
+  tidal:
+    enabled: true
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+# Model physics and runtime configuration
+model:
+  ocean_model: ROMS
+  physics:
+    dt: 4.0
+    ndtfast: 20
+  run:
+    hindcast_days: 0.25       # 6-hour nowcast
+    forecast_days: 2.0        # 2-day forecast
+
+# Output configuration
+output:
+  format: netcdf
+  prefix: cbofs
+  stations:
+    enabled: true
+    interval: 360             # 6 minutes
+  fields:
+    interval: 3600            # 1 hour
+  restart:
+    interval: 21600           # 6 hours
+
+# Computational resources
+resources:
+  nprocs: 120
+  memory_gb: 200
+  walltime_hours: 1
+
+# COMF workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+# Environment variable mappings
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    # Model identification
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    # Domain bounds
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+
+    # Atmospheric forcing
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+
+    # Ocean forcing
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+
+    # Runtime control
+    DELT_MODEL: model.physics.dt
+
+    # Resources
+    TOTAL_TASKS: resources.nprocs
