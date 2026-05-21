@@ -249,7 +249,7 @@ def _maybe_bias_correct(
 ) -> None:
     """Optional ensemble bias correction. All failures here are non-fatal."""
     bias_script = (
-        homenos / "ush" / "python" / "nos_ofs" / "ensemble"
+        homenos / "ush" / "python" / "nos_workflow" / "ensemble"
         / "ensemble_bias_correct.py"
     )
 
