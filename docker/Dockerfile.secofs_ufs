@@ -1,0 +1,170 @@
+# ============================================================================
+# Dockerfile.secofs_ufs - SECOFS_UFS container for nos-workflow (develop branch)
+#
+# Two build targets:
+#   --target runtime  (prep image)  base + Python workflow + wgrib2/prod_util.
+#                                    Runs `prep` (pure Python, no MPI/model).
+#                                    This is what CI builds (no external image
+#                                    deps), fast and self-contained.
+#   --target full     (default)      runtime + the model executables
+#                                    (fv3_coastalS.exe, combine_hotstart7,
+#                                    pschism), reused from the pre-built
+#                                    UFS_IMAGE / SCHISM_IMAGE. Used for the
+#                                    Apptainer/Hercules image where the model
+#                                    actually runs.
+#
+# Entry chain inside the container:
+#   run_secofs_ufs.sh -> jobs/JNOS_PREP -> scripts/exnos_prep.sh
+#     -> python3 -m nos_workflow run prep --ofs secofs_ufs
+#     -> nos_utils.nco_bridge.run_prep()
+#
+# Build (context = repo root):
+#   docker build -f docker/Dockerfile.secofs_ufs -t nosofs/secofs-ufs:develop .
+#   docker build -f docker/Dockerfile.secofs_ufs --target runtime \
+#       -t nosofs/secofs-ufs:prep .
+# ============================================================================
+
+# Source images for the model executables (only used by the `full` target).
+ARG UFS_IMAGE=nosofs/ufs-coastal:latest
+ARG SCHISM_IMAGE=nosofs/secofs-ufs:latest
+
+# ===========================================================================
+# Stage 1: wgrib2 + prod_util shims (built on plain Rocky 9)
+# ===========================================================================
+FROM rockylinux/rockylinux:9 AS tools
+
+RUN dnf update -y && \
+    dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm && \
+    /usr/bin/crb enable && \
+    dnf install -y --nobest \
+        gcc gcc-c++ gcc-gfortran make cmake git wget \
+        python3 \
+        jasper zlib-devel libpng-devel libpng libjpeg-turbo && \
+    dnf clean all
+
+ARG WGRIB2_VERSION=2.0.8
+RUN cd /tmp && \
+    wget -q https://www.ftp.cpc.ncep.noaa.gov/wd51we/wgrib2/wgrib2.tgz && \
+    tar -xzf wgrib2.tgz && cd grib2 && \
+    export CC=gcc FC=gfortran && \
+    sed -i \
+        -e 's/USE_AEC=1/USE_AEC=0/' \
+        -e 's/USE_OPENJPEG=1/USE_OPENJPEG=0/' \
+        -e 's/USE_NETCDF4=1/USE_NETCDF4=0/' \
+        -e 's/USE_NETCDF3=1/USE_NETCDF3=0/' \
+        -e 's/USE_PROJ4=1/USE_PROJ4=0/' \
+        -e 's/USE_IPOLATES=3/USE_IPOLATES=0/' \
+        -e 's/USE_SPECTRAL=1/USE_SPECTRAL=0/' \
+        makefile && \
+    make && \
+    mkdir -p /opt/wgrib2/bin && \
+    cp wgrib2/wgrib2 /opt/wgrib2/bin/ && \
+    cd / && rm -rf /tmp/wgrib2.tgz /tmp/grib2
+
+# prod_util shims (WCOSS2 provides these via `module load prod_util`)
+# ndate is bidirectional: `ndate <hrs> <YYYYMMDDHH>` adds hours;
+# `ndate <YYYYMMDDHH> <YYYYMMDDHH>` returns the hour difference.
+RUN mkdir -p /opt/prod_util/bin && \
+    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\na1, a2 = sys.argv[1], sys.argv[2]\nif len(a1) == 10 and len(a2) == 10:\n    d1 = datetime.strptime(a1, "%%Y%%m%%d%%H")\n    d2 = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print(int((d1 - d2).total_seconds() // 3600))\nelse:\n    hrs = int(a1)\n    dt = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/ndate && \
+    printf '#!/usr/bin/env python3\nimport sys\nfrom datetime import datetime, timedelta\na1, a2 = sys.argv[1], sys.argv[2]\nif len(a1) == 10 and len(a2) == 10:\n    d1 = datetime.strptime(a1, "%%Y%%m%%d%%H")\n    d2 = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print(int((d1 - d2).total_seconds() // 3600))\nelse:\n    hrs = int(a1)\n    dt = datetime.strptime(a2, "%%Y%%m%%d%%H")\n    print((dt + timedelta(hours=hrs)).strftime("%%Y%%m%%d%%H"))\n' > /opt/prod_util/bin/nhour && \
+    printf '#!/bin/bash\necho "$(date -u +%%m/%%d %%H:%%M:%%SZ) ${jobid:-$$}-$*" >> "${1:-/dev/null}" 2>/dev/null\n' > /opt/prod_util/bin/postmsg && \
+    printf '#!/bin/bash\nif [ "${err:-0}" -gt 0 ]; then echo "***FATAL ERROR in ${pgm:-unknown}: err=$err"; exit $err; fi\n' > /opt/prod_util/bin/err_chk && \
+    printf '#!/bin/bash\necho "FATAL ERROR: $*" >&2; exit ${err:-1}\n' > /opt/prod_util/bin/err_exit && \
+    printf '#!/bin/bash\nexport err=0\n' > /opt/prod_util/bin/prep_step && \
+    chmod +x /opt/prod_util/bin/*
+
+# ===========================================================================
+# Stage 2: runtime (PREP image) — EPIC GCC spack-stack base + Python workflow
+# ===========================================================================
+FROM noaaepic/rocky9-gcc13.3.1-spack-stack:v1.9.2-ufs-wm-srw AS runtime
+
+# Runtime OS packages. nco provides ncks/ncrcat used by post/forcing steps.
+RUN (dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm || true) && \
+    (/usr/bin/crb enable || true) && \
+    dnf install -y --nobest \
+        nco hostname which diffutils procps-ng findutils tar gzip \
+        python3 python3-pip && \
+    dnf clean all
+
+# Python deps for nos_workflow + nos-utils prep pipeline (pyproject.toml
+# under-declares these; list derived from actual imports).
+RUN python3 -m pip install --no-cache-dir --upgrade pip && \
+    python3 -m pip install --no-cache-dir \
+        numpy scipy pandas xarray netCDF4 pyyaml \
+        cfgrib eccodes \
+        pyproj cftime
+
+# nos-workflow tree -> WCOSS2-style package location.
+COPY jobs/        /opt/nosofs/jobs/
+COPY scripts/     /opt/nosofs/scripts/
+COPY ush/         /opt/nosofs/ush/
+COPY parm/        /opt/nosofs/parm/
+COPY versions/    /opt/nosofs/versions/
+COPY modulefiles/ /opt/nosofs/modulefiles/
+COPY fix/         /opt/nosofs/fix/
+
+# wgrib2 + prod_util shims.
+COPY --from=tools /opt/wgrib2/    /opt/wgrib2/
+COPY --from=tools /opt/prod_util/ /opt/prod_util/
+
+# Entrypoint + MPI shim + partition generator.
+COPY docker/run_secofs_ufs.sh     /opt/nosofs/docker/
+COPY docker/mpiexec_wrapper.sh    /opt/nosofs/docker/
+COPY docker/generate_partition.py /opt/nosofs/docker/
+
+ENV PACKAGEROOT=/lfs/h1/nos/nosofs/packages \
+    HOMEnos=/opt/nosofs \
+    HOMEstofs=/opt/nosofs \
+    PYTHONPATH=/opt/nosofs/ush/python:/opt/nosofs/ush/python/nos-utils \
+    PATH=/opt/nosofs/docker:/opt/prod_util/bin:/opt/wgrib2/bin:/opt/openmpi/4.1.6/bin:/usr/local/bin:/usr/bin:/bin \
+    LD_PRELOAD="" \
+    PYTHONUNBUFFERED=1
+
+# Discover spack-stack lib dirs once and bake an env file the MPI shim /
+# entrypoint source for model + combine_hotstart7 execution.
+RUN SI=$(ls -d /opt/spack-stack/*/envs/*/install/gcc/* 2>/dev/null | head -1) && \
+    LP=$(find "$SI" -maxdepth 2 \( -name lib -o -name lib64 \) -type d 2>/dev/null | tr '\n' ':') && \
+    { echo "export SI=$SI"; \
+      echo "export PATH=/opt/openmpi/4.1.6/bin:\$PATH"; \
+      echo "export LD_LIBRARY_PATH=/opt/openmpi/4.1.6/lib:${LP}\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}"; \
+    } > /opt/nosofs/docker/spack_libs.env
+
+# Make scripts runnable, mirror WCOSS2 package path, MPI symlinks, flat ush/.
+RUN chmod +x /opt/nosofs/docker/run_secofs_ufs.sh \
+             /opt/nosofs/docker/mpiexec_wrapper.sh \
+             /opt/nosofs/docker/generate_partition.py && \
+    chmod -R +x /opt/nosofs/jobs/ /opt/nosofs/scripts/ 2>/dev/null || true; \
+    ln -sf /opt/nosofs/docker/mpiexec_wrapper.sh /usr/local/bin/mpiexec && \
+    ln -sf /opt/openmpi/4.1.6/bin/mpirun /usr/local/bin/mpirun && \
+    mkdir -p ${PACKAGEROOT} \
+             /lfs/h1/nos/ptmp/nosuser/com \
+             /lfs/h1/nos/ptmp/nosuser/work \
+             /lfs/h1/ops/prod/com \
+             /lfs/h1/ops/prod/dcom && \
+    ln -sf /opt/nosofs ${PACKAGEROOT}/nos-workflow && \
+    for f in /opt/nosofs/ush/nosofs/*.sh; do \
+        [ -e "$f" ] || continue; \
+        base=$(basename "$f"); \
+        [ ! -e "/opt/nosofs/ush/$base" ] && ln -sf "nosofs/$base" "/opt/nosofs/ush/$base" || true; \
+    done
+
+WORKDIR /lfs/h1/nos/ptmp/nosuser/work
+ENTRYPOINT ["/opt/nosofs/docker/run_secofs_ufs.sh"]
+CMD ["prep"]
+
+# ===========================================================================
+# Stage 3: full (DEFAULT) — runtime + model executables for nowcast/forecast
+# Reused from pre-built images on the SAME EPIC spack-stack base (ABI-compatible).
+# The model run itself targets Hercules (Apptainer + site MPI); these are baked
+# in so that capability ships with the image. Not built by CI (prep-only there).
+# ===========================================================================
+FROM ${UFS_IMAGE}    AS ufs_src
+FROM ${SCHISM_IMAGE} AS schism_src
+
+FROM runtime AS full
+COPY --from=ufs_src    /opt/ufs/bin/ufs_model                        /opt/nosofs/exec/fv3_coastalS.exe
+COPY --from=schism_src /opt/nosofs/exec/schism_combine_hotstart7.exe /opt/nosofs/exec/
+COPY --from=schism_src /opt/nosofs/exec/pschism_TVD-VL               /opt/nosofs/exec/
+RUN chmod +x /opt/nosofs/exec/* 2>/dev/null || true; \
+    ln -sf pschism_TVD-VL /opt/nosofs/exec/schism_secofs && \
+    ln -sf pschism_TVD-VL /opt/nosofs/exec/pschism_WCOSS2
