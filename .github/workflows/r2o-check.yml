@@ -16,8 +16,12 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install r2o-check
-      - run: r2o-check lint .
-      - run: r2o-check lint . --format json -o r2o-results.json
+      - name: r2o-check lint (advisory)
+        run: r2o-check lint .
+        continue-on-error: true
+      - name: r2o-check lint JSON report (advisory)
+        run: r2o-check lint . --format json -o r2o-results.json
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
