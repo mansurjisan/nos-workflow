@@ -17,8 +17,8 @@
 #   schism_tasks: 2794    # SECOFS-equivalent SCHISM compute rank count (was 4314)
 #   datm_tasks:    120    # MED+ATM share PETs 0-119 (same as SECOFS-UFS)
 #   nscribes:        0    # output handled by CMEPS, not SCHISM scribes
-#   total_tasks:  2916    # = 2794 + 120 + 2 mediator
-# PBS select: select=25:ncpus=128:mpiprocs=120:ompthreads=1 → 3000 slots (>= 2916).
+#   total_tasks:  2914    # = 2794 + 120 (MED+ATM share PETs; matches SECOFS-UFS)
+# PBS select: select=25:ncpus=128:mpiprocs=120:ompthreads=1 → 3000 slots (>= 2914).
 # ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
 # mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
 # mpiprocs= token, so per-node packing tracks the PBS allocation.
@@ -37,7 +37,7 @@
 # Resource layout vs SECOFS-UFS
 # -----------------------------
 #   SECOFS-UFS: 2914 total (2794 SCHISM + 120 DATM) on a 1.69M-node mesh.
-#   STOFS-UFS:  2916 total (2794 SCHISM + 120 DATM + 2 mediator) on the 2.93M-node
+#   STOFS-UFS:  2914 total (2794 SCHISM + 120 DATM) on the 2.93M-node
 #               v2.1 mesh. Same SCHISM compute rank count as SECOFS — same per-rank
 #               density tradeoffs, just on the bigger mesh (~2024 elem/rank here vs
 #               SECOFS's ~1191). Fits in 25 PBS nodes instead of 37.
@@ -265,8 +265,8 @@ ufs_coastal:
   # OCN PETs 120-2913 (2794 PETs — SECOFS-equivalent SCHISM compute rank count;
   # NO_PARMETIS build reads partition.prop regenerated for 2794 ranks on v2.1 hgrid)
   schism_tasks: 2794
-  # Total MPI tasks (MED+ATM overlap, +2 mediator → 2794 + 120 + 2 = 2916)
-  total_tasks: 2916
+  # Total MPI tasks (MED+ATM share PETs 0-119 → 2794 + 120 = 2914; matches SECOFS-UFS)
+  total_tasks: 2914
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
@@ -319,16 +319,16 @@ output:
     interval: 86400
 
 # Computational resources (DATM + SCHISM)
-# SECOFS-equivalent layout: 2794 SCHISM compute ranks + 120 DATM + 2 mediator = 2916.
+# SECOFS-equivalent layout: 2794 SCHISM compute ranks + 120 DATM = 2914 (matches SECOFS-UFS).
 # partition.prop must be regenerated for 2794 ranks against the v2.1 hgrid (the build
 # is -DNO_PARMETIS=ON) via tools/gen_stofs_partition_prop.sh and staged at
 # $PKG/fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.partition.prop.
-# PBS select: select=25:ncpus=128:mpiprocs=120:ompthreads=1 → 3000 slots (>= 2916).
+# PBS select: select=25:ncpus=128:mpiprocs=120:ompthreads=1 → 3000 slots (>= 2914).
 # ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
 # mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
 # mpiprocs= token, so per-node packing tracks the PBS allocation.
 resources:
-  nprocs: 2916
+  nprocs: 2914
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
@@ -585,9 +585,9 @@ ensemble:
   # Ensemble-specific resources (per member)
   # Same PBS select as deterministic; longer walltime for combined nowcast+forecast.
   resources:
-    select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
+    select: "select=25:ncpus=128:mpiprocs=120:ompthreads=1"
     walltime: "08:00:00"
-    total_tasks: 4436
+    total_tasks: 2914
     nscribes: 0
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"
