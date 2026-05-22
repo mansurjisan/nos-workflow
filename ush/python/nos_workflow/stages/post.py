@@ -87,7 +87,6 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if combine_script is None:
         searched = [
             shell_env.get("NOS_COMBINE_OUTPUTS_SCRIPT", "<NOS_COMBINE_OUTPUTS_SCRIPT unset>"),
-            str(homenos / "ush" / "nosofs" / "schism_combine_outputs.py"),
             str(homenos / "ush" / "schism_combine_outputs.py"),
             str(homenos / "ush" / "python" / "schism_combine_outputs.py"),
         ]
@@ -418,7 +417,6 @@ def _resolve_combine_script(
         if p.is_file():
             return p
     for candidate in (
-        homenos / "ush" / "nosofs" / "schism_combine_outputs.py",
         homenos / "ush" / "schism_combine_outputs.py",
         homenos / "ush" / "python" / "schism_combine_outputs.py",
     ):
