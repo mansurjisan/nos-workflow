@@ -214,6 +214,8 @@ class TestSystemConfigs:
         assert "system" in data
         assert data["system"]["name"] == "cbofs"
         assert data["_base"] == "roms"
+        assert data["model"]["ocean_model"] == "ROMS"
+        assert data["execution"]["mode"] == "standalone"
 
     def test_leofs_config(self, system_configs: Dict[str, Path]) -> None:
         if "leofs" not in system_configs:
@@ -253,6 +255,8 @@ class TestSystemConfigs:
         assert "system" in data
         assert data["system"]["name"] == "dbofs"
         assert data["_base"] == "roms"
+        assert data["model"]["ocean_model"] == "ROMS"
+        assert data["execution"]["mode"] == "standalone"
 
     def test_ngofs2_config(self, system_configs: Dict[str, Path]) -> None:
         if "ngofs2" not in system_configs:
@@ -265,6 +269,8 @@ class TestSystemConfigs:
         assert "system" in data
         assert data["system"]["name"] == "ngofs2"
         assert data["_base"] == "fvcom"
+        assert data["model"]["ocean_model"] == "FVCOM"
+        assert data["execution"]["mode"] == "standalone"
 
     def test_stofs_3d_pac_config(self, system_configs: Dict[str, Path]) -> None:
         if "stofs_3d_pac" not in system_configs:

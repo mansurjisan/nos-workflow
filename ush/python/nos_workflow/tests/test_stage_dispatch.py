@@ -89,6 +89,33 @@ def test_prep_adcirc_branch_raises_not_implemented(fake_env):
     assert "STOFS-2D-GLO" in str(exc_info.value)
 
 
+@pytest.mark.parametrize("stage_name", ["prep", "nowcast", "forecast", "post"])
+def test_comf_standalone_raises_not_implemented_all_stages(stage_name, fake_env):
+    """cbofs/dbofs/ngofs2 use ``framework="comf_standalone"``. Every stage must
+    raise a clear NotImplementedError and must NOT fall through to the
+    SCHISM-UFS ``_run_comf_*`` path.
+
+    Critically, no ``nos_utils`` stub is installed here: if a stage wrongly
+    dispatched into ``_run_comf_*`` it would try to import
+    ``nos_utils.nco_bridge`` and fail with ImportError/StageFailedError, not
+    NotImplementedError. Asserting NotImplementedError therefore proves the
+    ``comf_standalone`` label never reaches the SCHISM orchestrator — the
+    collision the dedicated label exists to prevent.
+    """
+    import importlib
+
+    stage_mod = importlib.import_module(f"nos_workflow.stages.{stage_name}")
+    desc = OFSDescriptor(
+        name="cbofs",
+        framework="comf_standalone",
+        canonical_stages=("prep", "nowcast", "forecast", "post"),
+        yaml_path=Path("parm/systems/cbofs.yaml"),
+    )
+    with pytest.raises(NotImplementedError) as exc_info:
+        stage_mod.run(desc, fake_env)
+    assert "comf_standalone" in str(exc_info.value)
+
+
 def test_prep_unknown_framework_raises_stage_failed(fake_env):
     desc = OFSDescriptor(
         name="weird",

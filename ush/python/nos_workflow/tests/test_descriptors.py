@@ -66,6 +66,35 @@ def test_stofs_2d_glo_is_adcirc_with_no_extras():
     assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
 
 
+def test_cbofs_descriptor_shape():
+    """cbofs is ROMS standalone. The dispatch label ``comf_standalone`` keeps
+    it off the SCHISM-UFS ``comf`` path (which is hardwired to
+    nos_utils.nco_bridge); the YAML schema is unchanged (system.framework
+    stays ``comf``)."""
+    desc = lookup("cbofs")
+    assert desc.framework == "comf_standalone"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.stage_aliases == {}
+    assert desc.yaml_path == Path("parm/systems/cbofs.yaml")
+    assert desc.runner_module == "nos_workflow.runners.comf_standalone"
+
+
+def test_dbofs_descriptor_shape():
+    desc = lookup("dbofs")
+    assert desc.framework == "comf_standalone"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.yaml_path == Path("parm/systems/dbofs.yaml")
+    assert desc.runner_module == "nos_workflow.runners.comf_standalone"
+
+
+def test_ngofs2_descriptor_shape():
+    desc = lookup("ngofs2")
+    assert desc.framework == "comf_standalone"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.yaml_path == Path("parm/systems/ngofs2.yaml")
+    assert desc.runner_module == "nos_workflow.runners.comf_standalone"
+
+
 def test_descriptors_are_frozen():
     """Frozen dataclass: no field can be mutated after construction."""
     desc = lookup("secofs_ufs")
