@@ -150,7 +150,7 @@ def _make_minimal_post_env(tmp_path: Path) -> dict:
 
     # Drop a stub combine script (just has to exist for the existence check;
     # subprocess.run is mocked so its body is never executed).
-    combine = homenos / "ush" / "nosofs" / "schism_combine_outputs.py"
+    combine = homenos / "ush" / "schism_combine_outputs.py"
     combine.parent.mkdir(parents=True, exist_ok=True)
     combine.write_text("# stub\n")
 
@@ -345,7 +345,7 @@ def test_post_comf_missing_combine_script_raises(tmp_path, fake_env):
     env = _make_minimal_post_env(tmp_path)
     # Yank the stub combine script.
     combine = (
-        Path(env["HOMEnos"]) / "ush" / "nosofs" / "schism_combine_outputs.py"
+        Path(env["HOMEnos"]) / "ush" / "schism_combine_outputs.py"
     )
     combine.unlink()
 

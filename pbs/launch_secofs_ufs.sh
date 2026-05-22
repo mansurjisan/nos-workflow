@@ -14,10 +14,10 @@
 #
 # Usage:   launch_secofs_ufs.sh <CYC>           CYC in {00,06,12,18}
 # Cron (UTC; prod launches each cycle at cycle+~1h15m):
-#   15 1  * * *  /lfs/h1/nos/estofs/noscrub/<you>/packages/nos-workflow/ush/launch_secofs_ufs.sh 00
-#   15 7  * * *  .../ush/launch_secofs_ufs.sh 06
-#   15 13 * * *  .../ush/launch_secofs_ufs.sh 12
-#   15 19 * * *  .../ush/launch_secofs_ufs.sh 18
+#   15 1  * * *  /lfs/h1/nos/estofs/noscrub/<you>/packages/nos-workflow/pbs/launch_secofs_ufs.sh 00
+#   15 7  * * *  .../pbs/launch_secofs_ufs.sh 06
+#   15 13 * * *  .../pbs/launch_secofs_ufs.sh 12
+#   15 19 * * *  .../pbs/launch_secofs_ufs.sh 18
 #
 # Safe test before going live:  DRYRUN=1 ./launch_secofs_ufs.sh 00
 # The clone MUST be on a ref that carries the PBS blind-retry (PR #99 /
