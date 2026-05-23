@@ -125,7 +125,8 @@ def test_load_all_descriptors_registers_known_ofses():
     # Wipe registry so we know the names we see came from the loader.
     registry._REGISTRY.clear()
     load_all_descriptors()
-    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs", "stofs_2d_glo"):
+    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs", "stofs_2d_glo",
+                 "cbofs", "dbofs", "ngofs2"):
         assert lookup(name).name == name
 
 

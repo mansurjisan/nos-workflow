@@ -282,6 +282,11 @@ def cmd_env(args: argparse.Namespace) -> int:
             load_all_descriptors()
             descriptor = lookup(ofs)
             framework = getattr(descriptor, "framework", "auto") or "auto"
+            # The comf_standalone dispatch label shares COMF's config-export
+            # shape (ROMS/FVCOM standalone configs use the same export block);
+            # only the stage-dispatch path diverges, not the YAML schema.
+            if framework == "comf_standalone":
+                framework = "comf"
             yaml_path = getattr(descriptor, "yaml_path", None)
             if yaml_path is None:
                 raise ConfigError(

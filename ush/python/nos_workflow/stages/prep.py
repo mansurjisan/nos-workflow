@@ -30,6 +30,11 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         raise NotImplementedError("STOFS-3D-ATL prep not yet ported")
     if descriptor.framework == "adcirc":
         raise NotImplementedError("STOFS-2D-GLO prep not yet ported")
+    if descriptor.framework == "comf_standalone":
+        raise NotImplementedError(
+            "comf_standalone prep (ROMS/FVCOM standalone) not yet wired; "
+            "model execution shells out to the legacy COMF scripts (WCOSS2-gated)"
+        )
 
     raise StageFailedError(
         stage=_STAGE,
