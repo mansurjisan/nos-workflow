@@ -9,10 +9,16 @@
 
 export OFS_CONFIG_LOADED=${OFS_CONFIG_LOADED:-0}
 
-# yaml_to_env.py lives in either ush/python/utils/ (nos-workflow layout) or
-# ush/python/nos_ofs/utils/ (legacy nosofs.v3.7.0); search both.
+# The YAML->shell resolver. The canonical implementation lives in
+# nos_workflow/utils/ (single source of truth). ush/python/utils/ is a
+# backward-compatible re-export shim of it (same code; removed in a later
+# cleanup), and ush/python/nos_ofs/utils/ is the legacy nosofs.v3.7.0 layout.
+# Prefer canonical; the rest are fallbacks for older deployments.
 _ofs_yaml_to_env=""
 for _search_path in \
+    "${HOMEnos:-}/ush/python/nos_workflow/utils/yaml_to_env.py" \
+    "${HOMEstofs:-}/ush/python/nos_workflow/utils/yaml_to_env.py" \
+    "$(dirname "${BASH_SOURCE[0]}")/python/nos_workflow/utils/yaml_to_env.py" \
     "${HOMEnos:-}/ush/python/utils/yaml_to_env.py" \
     "${HOMEstofs:-}/ush/python/utils/yaml_to_env.py" \
     "$(dirname "${BASH_SOURCE[0]}")/python/utils/yaml_to_env.py" \
