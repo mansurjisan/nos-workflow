@@ -31,7 +31,7 @@ on:
   push:
     branches:
       - main
-      - "nos-unified-workflow"
+      - develop
       - "feature/*"
     paths:
       - "ush/python/nos_workflow/stages/prep.py"
@@ -56,7 +56,7 @@ on:
   pull_request:
     branches:
       - main
-      - "nos-unified-workflow"
+      - develop
     paths:
       - "ush/python/nos_workflow/stages/prep.py"
       - "ush/python/nos_workflow/stages/post.py"
@@ -125,7 +125,11 @@ jobs:
       - name: Verify nos_workflow baseline tests still pass
         run: |
           set -eu
-          export PYTHONPATH=ush/python:ush/python/nos-utils
+          # Absolute PYTHONPATH: a baseline test spawns `python -m nos_workflow`
+          # as a subprocess, which must import the package AFTER the cd into the
+          # package dir below — a relative PYTHONPATH would resolve against the
+          # new cwd (ush/python/nos_workflow) and fail to find nos_workflow.
+          export PYTHONPATH="$PWD/ush/python:$PWD/ush/python/nos-utils"
           cd ush/python/nos_workflow
           python -m pytest -q
 
@@ -297,11 +301,22 @@ jobs:
   # One job per stage; each runs on the self-hosted secofs-docker
   # runner and depends on its own tier-1 job (catch manifest schema
   # bugs before paying the docker spin-up cost).
+  #
+  # OPT-IN: gated on the repository variable ENABLE_DOCKER_PARITY (set to
+  # '1' under Settings > Secrets and variables > Actions > Variables).
+  # Default off, so on hosted CI — where the secofs-docker runner is
+  # absent — tier-1 is the green structural gate and these jobs are
+  # skipped (rather than queuing until they time out). Enable on the dev
+  # box when the runner is online to exercise the full Docker diff.
+  #
+  # NOTE: the previous gate `env.SKIP_DOCKER_INTEGRATION != '1'` was
+  # invalid — the `env` context is not available in a job-level `if`, so
+  # the whole workflow failed to compile and produced zero jobs.
   # --------------------------------------------------------------------------
   prep-docker-parity:
     name: Prep Docker parity (self-hosted)
     runs-on: [self-hosted, secofs-docker]
-    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    if: ${{ vars.ENABLE_DOCKER_PARITY == '1' }}
     timeout-minutes: 45
     needs: prep-manifest-and-helpers
     steps:
@@ -353,7 +368,7 @@ jobs:
   post-docker-parity:
     name: Post Docker parity (self-hosted)
     runs-on: [self-hosted, secofs-docker]
-    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    if: ${{ vars.ENABLE_DOCKER_PARITY == '1' }}
     timeout-minutes: 45
     needs: post-manifest-and-helpers
     steps:
@@ -412,7 +427,7 @@ jobs:
   nowcast-parity:
     name: Nowcast Docker parity (self-hosted)
     runs-on: [self-hosted, secofs-docker]
-    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    if: ${{ vars.ENABLE_DOCKER_PARITY == '1' }}
     # Nowcast = real MPI launch inside the container; 20-30 min wall time
     # typical, plus container bootstrap. 60 minutes gives us 2x headroom.
     timeout-minutes: 60
@@ -474,7 +489,7 @@ jobs:
   forecast-parity:
     name: Forecast Docker parity (self-hosted)
     runs-on: [self-hosted, secofs-docker]
-    if: ${{ env.SKIP_DOCKER_INTEGRATION != '1' }}
+    if: ${{ vars.ENABLE_DOCKER_PARITY == '1' }}
     # Forecast = real MPI launch inside the container; 20-30 min wall time
     # typical, plus container bootstrap. 60 minutes gives us 2x headroom
     # (same as nowcast — same MPI machinery, same wall-time profile).
