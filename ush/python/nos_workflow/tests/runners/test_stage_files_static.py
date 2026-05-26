@@ -24,6 +24,10 @@ from typing import Optional
 import pytest
 
 from nos_workflow.runners.schism_ufs.context import SchismRunContext
+from nos_workflow.runners.schism_ufs.forcing import (
+    _NWM_PAYLOAD_NAMES,
+    _OBC_PAYLOAD_NAMES,
+)
 from nos_workflow.runners.schism_ufs.stage_files import (
     _NWM_FALLBACK_FILES,
     _RIVER_RENAMES,
@@ -31,6 +35,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     _SCHISM_PROPERTY_FILES,
     _UFS_AUX_FILES,
     _UFS_CONFIG_FILES,
+    collect_staged_inputs,
     copy_hgrid_to_outputs,
     fallback_nwm_files_from_fixofs,
     rename_river_th_files,
@@ -950,3 +955,157 @@ def test_copy_hgrid_to_outputs_skips_when_absent(tmp_path):
     n = copy_hgrid_to_outputs(ctx, "nowcast")
 
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# collect_staged_inputs (per-stage input manifest collector)
+# ---------------------------------------------------------------------------
+
+
+def _seed_staged_data(ctx: SchismRunContext, *, ufs: bool) -> None:
+    """Drop the canonical run-dir names run_python resolves into $DATA."""
+    # hotstart
+    (ctx.data / "hotstart.nc").write_bytes(b"hs\n")
+    # OBC tar payload
+    for name in _OBC_PAYLOAD_NAMES:
+        (ctx.data / name).write_bytes(b"obc\n")
+    # NWM source/sink
+    for name in _NWM_PAYLOAD_NAMES:
+        (ctx.data / name).write_text("nwm\n")
+    # river.th canonical names (post-rename)
+    for _src, dst in _RIVER_RENAMES:
+        (ctx.data / dst).write_text("river\n")
+    # tidal
+    (ctx.data / "bctides.in").write_text("tides\n")
+    # SCHISM bare names + partition props
+    (ctx.data / "hgrid.gr3").write_text("h\n")
+    (ctx.data / "vgrid.in").write_text("v\n")
+    (ctx.data / "station.in").write_text("s\n")
+    (ctx.data / "shapiro.gr3").write_text("p\n")
+    for prop in _SCHISM_PARTITION_FILES:
+        (ctx.data / prop).write_text("prop\n")
+    if ufs:
+        for f in _UFS_CONFIG_FILES + _UFS_AUX_FILES:
+            (ctx.data / f).write_text("cfg\n")
+        datm = ctx.data / "INPUT"
+        datm.mkdir(parents=True, exist_ok=True)
+        (datm / "datm_forcing.nc").write_bytes(b"\x89HDF\r\n")
+    else:
+        sflux = ctx.data / "sflux"
+        sflux.mkdir(parents=True, exist_ok=True)
+        for i in (1, 2, 3):
+            (sflux / f"sflux_air_{i}.nc").write_bytes(b"\x89HDF\r\n")
+
+
+def test_collect_staged_inputs_ufs_maps_categories(tmp_path):
+    """UFS: hotstart/OBC/NWM/river/tidal/FIX/UFS_CONFIG/DATM all surface
+    with the cross-repo category/source labels and full $DATA paths."""
+    ctx = _make_ctx(tmp_path)
+    _seed_staged_data(ctx, ufs=True)
+
+    collector = collect_staged_inputs(ctx, "nowcast", ufs=True)
+    keyed = {(g["category"], g["source"]): g for g in collector.groups()}
+
+    assert keyed[("hotstart", "HOTSTART")]["count"] == 1
+    assert keyed[("hotstart", "HOTSTART")]["files"] == [
+        str(ctx.data / "hotstart.nc")
+    ]
+    assert keyed[("ocean", "OBC")]["count"] == len(_OBC_PAYLOAD_NAMES)
+    assert keyed[("river", "NWM")]["count"] == len(_NWM_PAYLOAD_NAMES)
+    assert keyed[("river", "RIVER")]["count"] == len(_RIVER_RENAMES)
+    assert keyed[("tidal", "TIDAL")]["count"] == 1
+    # FIX: hgrid + vgrid + station + shapiro + 3 partition props = 7
+    assert keyed[("static", "FIX")]["count"] == 7
+    assert keyed[("static", "UFS_CONFIG")]["count"] == len(
+        _UFS_CONFIG_FILES + _UFS_AUX_FILES
+    )
+    assert keyed[("datm", "DATM")]["count"] == 1
+    # All file entries are full $DATA paths (str).
+    for g in collector.groups():
+        for f in g["files"]:
+            assert isinstance(f, str)
+            assert f.startswith(str(ctx.data))
+
+
+def test_collect_staged_inputs_standalone_uses_met_not_datm(tmp_path):
+    """Standalone (nws=2): met sflux_*.nc surface as atmospheric/MET; no
+    DATM / UFS_CONFIG groups."""
+    ctx = _make_ctx(tmp_path)
+    _seed_staged_data(ctx, ufs=False)
+
+    collector = collect_staged_inputs(ctx, "nowcast", ufs=False)
+    keyed = {(g["category"], g["source"]): g for g in collector.groups()}
+
+    assert keyed[("atmospheric", "MET")]["count"] == 3
+    assert ("datm", "DATM") not in keyed
+    assert ("static", "UFS_CONFIG") not in keyed
+
+
+def test_collect_staged_inputs_absent_files_yield_empty_groups(tmp_path):
+    """Nothing staged -> every group present but empty (count 0)."""
+    ctx = _make_ctx(tmp_path)
+
+    collector = collect_staged_inputs(ctx, "nowcast", ufs=True)
+    for g in collector.groups():
+        assert g["count"] == 0
+        assert g["files"] == []
+
+
+def test_run_python_returns_rc_and_collector(tmp_path, monkeypatch):
+    """run_python returns a ``(rc, collector)`` tuple. The heavy staging
+    sub-steps (configure patches, forcing untars, ESMF mesh) are stubbed
+    to no-ops; we pre-seed $DATA with the canonical bare names + tar
+    payloads so the collector reports the real staged set."""
+    import nos_workflow.runners.schism_ufs.configure as configure_mod
+    import nos_workflow.runners.schism_ufs.forcing as forcing_mod
+    import nos_workflow.runners.schism_ufs.mesh as mesh_mod
+    import nos_workflow.runners.schism_ufs.stage_files as sf
+
+    from nos_workflow.inputs_manifest import InputCollector
+
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_WCOSS2")
+
+    ctx = _make_ctx(tmp_path)
+    # Pre-seed $DATA exactly as a completed staging pass would leave it.
+    _seed_staged_data(ctx, ufs=False)
+    # Stub orchestration sub-steps invoked by run_python; collection runs
+    # against the pre-seeded $DATA above.
+    monkeypatch.setattr(sf, "_stage_standalone_param_nml", lambda c: True)
+    monkeypatch.setattr(sf, "stage_executable", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_schism_bare_names", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_partition_props", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_bctides_in", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_hotstart", lambda c, p: 1)
+    monkeypatch.setattr(sf, "fallback_nwm_files_from_fixofs", lambda c, p: 0)
+    monkeypatch.setattr(sf, "rename_river_th_files", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_st_lawrence_river", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_sflux_inputs_txt", lambda c, p: 0)
+    monkeypatch.setattr(sf, "copy_hgrid_to_outputs", lambda c, p: 0)
+    monkeypatch.setattr(sf, "stage_forecast_restart_outputs", lambda c, p: 0)
+    monkeypatch.setattr(configure_mod, "patch_param_nml", lambda c, p: 0)
+    monkeypatch.setattr(forcing_mod, "untar_nwm_source_sink", lambda c, p: 0)
+    monkeypatch.setattr(forcing_mod, "untar_obc_forcing", lambda c, p: 0)
+    monkeypatch.setattr(forcing_mod, "untar_river_forcing", lambda c, p: 0)
+    monkeypatch.setattr(forcing_mod, "untar_met_sflux", lambda c, p: 0)
+    monkeypatch.setattr(mesh_mod, "generate_esmf_mesh", lambda *a, **k: None)
+    # param.nml already present so the bare-name copy block is a no-op.
+    (ctx.data / "param.nml").write_text("&CORE\n/\n")
+
+    result = sf.run_python(ctx, "nowcast")
+    assert isinstance(result, tuple)
+    rc, collector = result
+    assert rc == 0
+    assert isinstance(collector, InputCollector)
+
+    keyed = {(g["category"], g["source"]): g for g in collector.groups()}
+    # Bare-name statics seeded into $DATA.
+    fix_files = keyed[("static", "FIX")]["files"]
+    assert any(f.endswith("/hgrid.gr3") for f in fix_files)
+    assert any(f.endswith("/vgrid.in") for f in fix_files)
+    # hotstart + tidal + OBC tar payload all surface.
+    assert keyed[("hotstart", "HOTSTART")]["count"] == 1
+    assert keyed[("tidal", "TIDAL")]["count"] == 1
+    assert keyed[("ocean", "OBC")]["count"] == len(_OBC_PAYLOAD_NAMES)
+    # standalone -> met sflux, not DATM.
+    assert keyed[("atmospheric", "MET")]["count"] == 3

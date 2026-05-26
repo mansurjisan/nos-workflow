@@ -181,6 +181,8 @@ def _patch_all_runner_steps(stage_module, *, returns):
     mocks = {}
     patches = []
 
+    from nos_workflow.inputs_manifest import InputCollector
+
     for step in ("stage_model_files", "prepare_restart", "execute_model", "archive_outputs"):
         spec = returns.get(step, 0)
         if isinstance(spec, BaseException) or (
@@ -189,6 +191,9 @@ def _patch_all_runner_steps(stage_module, *, returns):
             m = MagicMock(side_effect=spec)
         elif callable(spec):
             m = MagicMock(side_effect=spec)
+        elif step == "stage_model_files":
+            # Phase-2: stage_files.run_python now returns (rc, collector).
+            m = MagicMock(return_value=(spec, InputCollector()))
         else:
             m = MagicMock(return_value=spec)
         mocks[step] = m
