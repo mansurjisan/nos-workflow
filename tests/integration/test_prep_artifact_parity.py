@@ -561,6 +561,22 @@ def test_text_diff_passes_for_identical_files(tmp_path: Path) -> None:
     assert filecmp.cmp(str(fa), str(fb), shallow=False)
 
 
+def test_inputs_manifest_excluded_from_parity_diff(tmp_path: Path) -> None:
+    """The per-stage input manifest is provenance metadata the legacy shell
+    path never wrote; walk_relative must drop ``*.inputs.*.json`` so it can't
+    show up as only-in-python in the symmetric filename diff (or land in the
+    golden manifest)."""
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    (comout / "secofs_ufs.t12z.20260226.elev2D.th.nc").write_bytes(b"x")
+    (comout / "secofs_ufs.t12z.20260226.inputs.prep.json").write_text("{}")
+    (comout / "secofs_ufs.t12z.20260226.inputs.nowcast.json").write_text("{}")
+
+    names = {p.name for p in walk_relative(comout)}
+    assert "secofs_ufs.t12z.20260226.elev2D.th.nc" in names
+    assert not any(".inputs." in n and n.endswith(".json") for n in names)
+
+
 def test_netcdf_diff_detects_value_perturbation(tmp_path: Path) -> None:
     """An out-of-tolerance NetCDF perturbation must produce a clear msg."""
     netCDF4 = pytest.importorskip("netCDF4")

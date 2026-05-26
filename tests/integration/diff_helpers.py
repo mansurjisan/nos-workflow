@@ -109,6 +109,14 @@ LOG_PATTERNS = (
     "pgmout.*",
 )
 
+# Artifacts excluded from the parity comparison entirely. The legacy shell
+# path never wrote these, so including them would break the symmetric
+# filename-set diff (only-in-python) and the golden manifest. The per-stage
+# input-file manifest is provenance metadata, not a forcing/model artifact.
+PARITY_IGNORE_GLOBS = (
+    "*.inputs.*.json",
+)
+
 # Nowcast-stage non-deterministic artifacts.
 #
 # SCHISM model outputs that vary at byte/text level between otherwise
@@ -203,10 +211,17 @@ def classify_nowcast(name: str) -> str:
 
 
 def walk_relative(root: Path) -> List[Path]:
-    """Sorted list of files relative to root (no dirs, no symlinks-to-dir)."""
+    """Sorted list of files relative to root (no dirs, no symlinks-to-dir).
+
+    Files matching :data:`PARITY_IGNORE_GLOBS` are skipped — they are
+    provenance metadata (the per-stage input manifest) the legacy shell path
+    never produced, so they must not enter the symmetric filename diff or the
+    golden manifest. This is the single chokepoint feeding both the parity
+    diff (files_a/files_b) and :func:`build_manifest_entries`.
+    """
     out: List[Path] = []
     for p in root.rglob("*"):
-        if p.is_file():
+        if p.is_file() and not _matches_any(p.name, PARITY_IGNORE_GLOBS):
             out.append(p.relative_to(root))
     out.sort()
     return out
@@ -413,6 +428,7 @@ __all__ = [
     "SIZE_TOLERANCE_PCT",
     "TEXT_ARTIFACT_PATTERNS",
     "LOG_PATTERNS",
+    "PARITY_IGNORE_GLOBS",
     "sha256",
     "classify",
     "classify_nowcast",
