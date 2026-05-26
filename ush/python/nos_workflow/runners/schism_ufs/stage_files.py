@@ -532,8 +532,101 @@ def _stage_standalone_param_nml(ctx: SchismRunContext) -> bool:
     return True
 
 
-def run_python(ctx: SchismRunContext, phase: str) -> int:
-    """Compose all staging phases in shell order."""
+# Canonical $DATA destination names by manifest (category, source). Used by
+# collect_staged_inputs to surface what run_python staged WITHOUT changing the
+# count-returning signatures of the staging/untar helpers: every entry is a
+# deterministic run-dir name the helpers above resolve, so presence in $DATA
+# after staging is the source of truth.
+_HOTSTART_DEST: tuple = ("hotstart.nc",)
+_UFS_CONFIG_DEST: tuple = _UFS_CONFIG_FILES + _UFS_AUX_FILES
+_TIDAL_DEST: tuple = ("bctides.in",)
+
+# bare-name SCHISM static inputs (grid/vgrid/station/property/partition files).
+_FIX_DEST: tuple = (
+    "hgrid.gr3",
+    "vgrid.in",
+    "vgrid_nu.in",
+    "station.in",
+) + _SCHISM_PROPERTY_FILES + _SCHISM_PARTITION_FILES
+
+# St. Lawrence climatology run-dir names (subset of river; collected as a
+# distinct source only when the gated restage actually placed them).
+_ST_LAWRENCE_DEST: tuple = tuple(
+    dst for _src, dst in _ST_LAWRENCE_RESTAGE
+)
+# river.th canonical names produced by rename_river_th_files.
+_RIVER_DEST: tuple = tuple(dst for _src, dst in _RIVER_RENAMES)
+
+
+def _present_in_data(ctx: SchismRunContext, names: Iterable[str]) -> list:
+    """Return full $DATA paths for ``names`` that exist as non-empty files."""
+    out = []
+    for name in names:
+        p = ctx.data / name
+        if p.is_file() and p.stat().st_size > 0:
+            out.append(str(p))
+    return out
+
+
+def collect_staged_inputs(
+    ctx: SchismRunContext, phase: str, *, ufs: bool,
+) -> "InputCollector":
+    """Build an :class:`InputCollector` of the inputs staged into $DATA.
+
+    Reads the deterministic run-dir destinations the staging helpers
+    resolve (the helpers themselves return counts only; presence in $DATA
+    is the source of truth here). Mapped to the cross-repo category/source
+    convention shared with the prep manifest.
+    """
+    from ...inputs_manifest import InputCollector
+    from .forcing import (
+        _NWM_PAYLOAD_NAMES,
+        _OBC_PAYLOAD_NAMES,
+    )
+
+    collector = InputCollector()
+
+    collector.add("hotstart", "HOTSTART", _present_in_data(ctx, _HOTSTART_DEST))
+    collector.add("ocean", "OBC", _present_in_data(ctx, _OBC_PAYLOAD_NAMES))
+    collector.add("river", "NWM", _present_in_data(ctx, _NWM_PAYLOAD_NAMES))
+    collector.add("river", "RIVER", _present_in_data(ctx, _RIVER_DEST))
+    collector.add(
+        "river", "ST_LAWRENCE", _present_in_data(ctx, _ST_LAWRENCE_DEST),
+    )
+    collector.add("tidal", "TIDAL", _present_in_data(ctx, _TIDAL_DEST))
+    collector.add("static", "FIX", _present_in_data(ctx, _FIX_DEST))
+
+    if ufs:
+        collector.add(
+            "static", "UFS_CONFIG", _present_in_data(ctx, _UFS_CONFIG_DEST),
+        )
+        datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
+        datm_dir = ctx.data / datm_dir_name
+        datm_files = (
+            [str(p) for p in sorted(datm_dir.glob("*.nc"))]
+            if datm_dir.is_dir() else []
+        )
+        collector.add("datm", "DATM", datm_files)
+    else:
+        sflux_dir = ctx.data / "sflux"
+        sflux_files = (
+            [str(p) for p in sorted(sflux_dir.glob("sflux_*.nc"))]
+            if sflux_dir.is_dir() else []
+        )
+        collector.add("atmospheric", "MET", sflux_files)
+
+    return collector
+
+
+def run_python(ctx: SchismRunContext, phase: str):
+    """Compose all staging phases in shell order.
+
+    Returns ``(rc, collector)``: ``rc`` is the staging return code (0 on
+    success, preserved from the legacy int-returning contract) and
+    ``collector`` is an :class:`InputCollector` of the inputs staged into
+    $DATA, for the per-stage input manifest. Callers that only need the rc
+    can unpack the first element.
+    """
     from . import configure, forcing, mesh
 
     ufs = _is_ufs()
@@ -617,7 +710,15 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
         # of DATM; prep tarred it to $COMOUT.
         forcing.untar_met_sflux(ctx, phase)
 
-    return 0
+    # Input-manifest collection must never fail staging — on any error,
+    # fall back to an empty collector (the manifest is provenance metadata).
+    try:
+        collector = collect_staged_inputs(ctx, phase, ufs=ufs)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("input collection skipped: %s", exc)
+        from ...inputs_manifest import InputCollector
+        collector = InputCollector()
+    return 0, collector
 
 
 __all__ = [
@@ -634,5 +735,6 @@ __all__ = [
     "stage_st_lawrence_river",
     "stage_sflux_inputs_txt",
     "copy_hgrid_to_outputs",
+    "collect_staged_inputs",
     "run_python",
 ]

@@ -153,7 +153,7 @@ def test_run_python_ufs_unset_stages_configs_and_attempts_mesh(
         # Make the post-config DATM forcing exist so the ESMF block fires.
         (ctx.data / "INPUT").mkdir(parents=True, exist_ok=True)
         (ctx.data / "INPUT" / "datm_forcing.nc").write_bytes(b"x" * 64)
-        rc = stage_files.run_python(ctx, "nowcast")
+        rc, _collector = stage_files.run_python(ctx, "nowcast")
 
     assert rc == 0
     suc.assert_called_once()           # UFS configs staged
@@ -182,7 +182,7 @@ def test_run_python_ufs_true_is_identical_to_unset(tmp_path, monkeypatch):
                return_value=0), \
          patch("nos_workflow.runners.schism_ufs.forcing.untar_met_sflux") as ums, \
          patch.object(stage_files, "stage_hotstart", return_value=1):
-        rc = stage_files.run_python(ctx, "nowcast")
+        rc, _collector = stage_files.run_python(ctx, "nowcast")
 
     assert rc == 0
     suc.assert_called_once()
@@ -219,7 +219,7 @@ def test_run_python_standalone_skips_ufs_configs_and_mesh(
         # Even if a DATM forcing file existed, standalone must NOT regen.
         (ctx.data / "INPUT").mkdir(parents=True, exist_ok=True)
         (ctx.data / "INPUT" / "datm_forcing.nc").write_bytes(b"x" * 64)
-        rc = stage_files.run_python(ctx, "nowcast")
+        rc, _collector = stage_files.run_python(ctx, "nowcast")
 
     assert rc == 0
     suc.assert_not_called()            # UFS configs NOT staged

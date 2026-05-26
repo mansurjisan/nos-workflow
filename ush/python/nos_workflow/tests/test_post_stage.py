@@ -285,6 +285,59 @@ def test_post_comf_happy_path_writes_station_nc(
         assert sta_nc.is_file()
 
 
+def test_post_comf_writes_inputs_manifest(tmp_path, fake_env):
+    """post writes ``{run}.t{cyc}z.{pdy}.inputs.post.json`` to $COMOUT
+    listing the per-phase staout dirs/files + the resolved station.in."""
+    import json
+
+    env = _make_minimal_post_env(tmp_path)
+    comout = Path(env["COMOUT"])
+    nc_dir = _seed_staout(comout, env["RUN"], env["cycle"], "nowcast")
+    fc_dir = _seed_staout(comout, env["RUN"], env["cycle"], "forecast")
+
+    seen: list = []
+    fake_run = _fake_combine_subprocess_factory(
+        seen, env["PREFIXNOS"], env["PDY"], env["cyc"]
+    )
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=fake_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    manifest = comout / (
+        f"{env['RUN']}.t{env['cyc']}z.{env['PDY']}.inputs.post.json"
+    )
+    assert manifest.is_file()
+
+    data = json.loads(manifest.read_text())
+    assert data["ofs"] == env["RUN"]
+    assert data["stage"] == "post"
+    # post spans both phases -> phase serializes to null.
+    assert data["phase"] is None
+    assert data["schema_version"] == 1
+
+    keyed = {(g["category"], g["source"]): g for g in data["inputs"]}
+    # Seeded staout_1..3 in each phase dir.
+    assert keyed[("model_output", "STAOUT_NOWCAST")]["count"] == 3
+    assert keyed[("model_output", "STAOUT_FORECAST")]["count"] == 3
+    assert all(
+        f.startswith(str(nc_dir))
+        for f in keyed[("model_output", "STAOUT_NOWCAST")]["files"]
+    )
+    assert all(
+        f.startswith(str(fc_dir))
+        for f in keyed[("model_output", "STAOUT_FORECAST")]["files"]
+    )
+    # station.in surfaces as static/STATION.
+    station = keyed[("static", "STATION")]
+    assert station["count"] == 1
+    assert station["files"][0].endswith("nos.secofs_ufs.station.in")
+    # No per-file metadata in any group.
+    for g in data["inputs"]:
+        assert set(g.keys()) == {"category", "source", "count", "files"}
+
+
 def test_post_comf_phase_skipped_when_staout_missing(tmp_path, fake_env, caplog):
     """If a phase has no ``staout_1``, the body must log a WARNING and
     continue to the next phase rather than aborting."""

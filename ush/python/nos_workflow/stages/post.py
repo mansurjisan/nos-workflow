@@ -135,6 +135,15 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             pgmout=pgmout,
         )
 
+    _write_post_manifest(
+        comout=comout,
+        run_name=run_name,
+        cycle=cycle,
+        pdy=pdy,
+        cyc=cyc,
+        sta_in=sta_in,
+    )
+
     if _is_barotropic(shell_env):
         _maybe_bias_correct(
             descriptor=descriptor,
@@ -235,6 +244,54 @@ def _process_phase(
         logger.warning(
             "WARNING: Expected station NetCDF not found: %s", sta_nc
         )
+
+
+def _write_post_manifest(
+    *,
+    comout: Path,
+    run_name: str,
+    cycle: str,
+    pdy: str,
+    cyc: str,
+    sta_in: Path,
+) -> None:
+    """Write the post-stage input manifest; never fails the stage.
+
+    Post consumes the per-phase ``staout_*`` files combined this cycle
+    (under ``$COMOUT/{run}.{cycle}.{restart,forecast}_outputs``) plus the
+    resolved ``station.in``. ``phase`` is ``None`` -- post spans both
+    nowcast and forecast.
+    """
+    try:
+        from ..inputs_manifest import InputCollector, write_inputs_manifest
+
+        collector = InputCollector()
+        for phase, dir_suffix, src_label in (
+            ("nowcast", "restart_outputs", "STAOUT_NOWCAST"),
+            ("forecast", "forecast_outputs", "STAOUT_FORECAST"),
+        ):
+            staout_dir = comout / f"{run_name}.{cycle}.{dir_suffix}"
+            files = []
+            if staout_dir.is_dir():
+                for n in _STAOUT_INDICES:
+                    p = staout_dir / f"staout_{n}"
+                    if p.is_file():
+                        files.append(str(p))
+            collector.add("model_output", src_label, files)
+
+        collector.add("static", "STATION", [str(sta_in)])
+
+        write_inputs_manifest(
+            comout=comout,
+            run=run_name,
+            cyc=cyc,
+            pdy=pdy,
+            stage="post",
+            collector=collector,
+            phase=None,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("input manifest write skipped: %s", exc)
 
 
 def _maybe_bias_correct(

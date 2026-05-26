@@ -122,7 +122,9 @@ def _run_step(
         )
         env = NCOEnv.from_env(ofs=shell_env.get("OFS"))
         ctx = compute_paths(env, phase="forecast", runtype="forecast")
-        return _stage_files_python(ctx, "forecast")
+        rc, collector = _stage_files_python(ctx, "forecast")
+        _write_stage_manifest(ctx, "forecast", collector)
+        return rc
     elif step == "prepare_restart":
         ctx = _build_schism_context(shell_env, data, "forecast")
         from ..runners.schism_ufs.prepare_restart import (
@@ -147,6 +149,24 @@ def _run_step(
             returncode=1,
             msg=f"unknown step {step!r}",
         )
+
+
+def _write_stage_manifest(ctx, phase: str, collector) -> None:
+    """Write the per-stage input manifest; never fails the stage."""
+    from ..inputs_manifest import write_inputs_manifest
+    try:
+        write_inputs_manifest(
+            comout=ctx.comout,
+            run=ctx.run,
+            cyc=ctx.cyc,
+            pdy=ctx.pdy,
+            stage=phase,
+            collector=collector,
+            phase=phase,
+        )
+    except Exception as exc:  # noqa: BLE001
+        sl = stage_logger(_STAGE, ctx.run)
+        sl.warning("input manifest write skipped: %s", exc)
 
 
 def _build_schism_context(
