@@ -155,6 +155,9 @@ forcing:
     enabled: true
     primary: rtofs
     obc:
+      # iettype-4/5 elevation segments; excludes the iettype-0 St-Lawrence flow
+      # segment so OBC *.th.nc nOpenBndNodes=778 (not 781). Read by nos-utils from_yaml.
+      elev_segments: [0, 1]
       wl_source: RTOFS
       ts_source: RTOFS
       ssh_offset: 0.04
