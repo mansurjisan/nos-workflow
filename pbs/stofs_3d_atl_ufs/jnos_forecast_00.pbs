@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1
 #PBS  -l walltime=05:30:00
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -85,9 +85,9 @@ export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 
-# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-2913 (SECOFS-equivalent 2794 ranks)
-# 25 nodes x 120 mpiprocs = 3000 slots (>= 2916 tasks); ppn=120 + ompthreads=1 = STOFS operational parity
-export TOTAL_TASKS=${TOTAL_TASKS:-2916}
+# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-4433 (operational 4314 ranks)
+# 37 nodes x 120 mpiprocs = 4440 slots (>= 4434 tasks); ppn=120 + ompthreads=1 = STOFS operational parity
+export TOTAL_TASKS=${TOTAL_TASKS:-4434}
 
 ################################################
 # CALL executable job script here
