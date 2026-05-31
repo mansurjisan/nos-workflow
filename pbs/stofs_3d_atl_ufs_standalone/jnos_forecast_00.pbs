@@ -1,0 +1,126 @@
+#!/bin/bash
+#PBS  -N stofs_3d_atl_ufs_sa_fc_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /dev/null
+#PBS  -e /dev/null
+#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l walltime=05:00:00
+#PBS  -l debug=true
+
+# STOFS-3D-ATL STANDALONE forecast (pschism, nws=2, 6 scribes) — operational parity.
+# Same nos_workflow prep/stages as the UFS-coupled jnos; only the engine differs
+# (execution.mode=standalone in stofs_3d_atl_ufs_standalone.yaml -> the resolver emits
+# USE_DATM=false + pschism_WCOSS2 + 4320 ranks/36 nodes, and _schism_run_mpi runs
+# `mpiexec -n 4320 -ppn 120 pschism_WCOSS2 6`). The forecast hotstarts from the nowcast
+# rst (rank-independent global hotstart). Resources/module set/MPI tuning mirror
+# operational IT-STOFS (jstofs_3d_atl_now_forecast_v2.ecf).
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+
+# pschism_WCOSS2 module versions come from the IT-STOFS version file it was built
+# against. Override STOFS_RUNVER if your pschism was built against a different stack.
+STOFS_RUNVER=${STOFS_RUNVER:-${PACKAGEROOT}/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver}
+[ -r "${STOFS_RUNVER}" ] && . "${STOFS_RUNVER}"
+
+export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/stofs_3d_atl_ufs_standalone_forecast_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== stofs_3d_atl_ufs_standalone_forecast_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+cd ${WORKDIR}
+
+# MPI efficiency settings (operational IT-STOFS parity)
+export MPICH_OFI_STARTUP_CONNECT=1
+export MPICH_COLL_SYNC=MPI_Bcast
+export MPICH_REDUCE_NO_SMP=1
+
+# ----------------------------------------------------------------
+# Module setup: standalone pschism_WCOSS2 stack (NOT the UFS modules.fv3 hpc-stack)
+# ----------------------------------------------------------------
+module purge
+module reset
+module load intel/${intel_ver}
+module load PrgEnv-intel/${PrgEnv_intel_ver}
+module load craype/${craype_ver}
+module load cray-mpich/${cray_mpich_ver}
+module load cray-pals/${cray_pals_ver}
+module load hdf5/${hdf5_ver}
+module load netcdf/${netcdf_ver}
+module load jasper/${jasper_ver}
+module load udunits/${udunits_ver}
+module load zlib/${zlib_ver}
+module load bufr/${bufr_ver}
+module load g2/${g2_ver}
+module load w3nco/${w3nco_ver}
+module load w3emc/${w3emc_ver}
+module load libjpeg/${libjpeg_ver}
+module load grib_util/${grib_util_ver}
+module load gsl/${gsl_ver}
+module load wgrib2/${wgrib2_ver}
+module load nco/${nco_ver}
+# Infrastructure modules for J-job scripting
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+export cyc=${CYC:-00}
+export PDY=${PDY:-$(date +%Y%m%d)}
+export job=stofs_3d_atl_ufs_sa_fc_00_$envir
+export platform=ptmp
+export framework=stofs_ufs
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMPATH=/lfs/h1/ops/prod/com/nos
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+export COMIN=/lfs/h1/ops/prod/com
+
+# Input data paths (production WCOSS2)
+export COMINnam=/lfs/h1/ops/prod/com/nam/${nam_ver}
+export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
+export COMINrap=/lfs/h1/ops/prod/com/rap/${rap_ver}
+export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
+export COMINrtma=/lfs/h1/ops/prod/com/rtma/${rtma_ver}
+export COMINetss=/lfs/h1/ops/prod/com/petss/${petss_ver}
+export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+
+# Standalone: 4314 SCHISM compute + 6 I/O scribes = 4320 ranks on 36 nodes (operational
+# parity). The standalone overlay's TOTAL_TASKS/NSCRIBES are also emitted by the resolver
+# at stage time; this default just covers a direct/manual submit. partition.prop must be
+# staged for 4314 compute ranks (NO_PARMETIS pschism build).
+export TOTAL_TASKS=${TOTAL_TASKS:-4320}
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration for the standalone variant
+export HOMEnos=${PACKAGEROOT}/nos-workflow
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+${HOMEnos}/jobs/JNOS_FORECAST
+exit $?
