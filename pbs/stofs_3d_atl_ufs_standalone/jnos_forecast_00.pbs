@@ -24,7 +24,7 @@ PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 STOFS_RUNVER=${STOFS_RUNVER:-${PACKAGEROOT}/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver}
 [ -r "${STOFS_RUNVER}" ] && . "${STOFS_RUNVER}"
 
-export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
@@ -73,7 +73,7 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 export cyc=${CYC:-00}
 export PDY=${PDY:-$(date +%Y%m%d)}
 export job=stofs_3d_atl_ufs_sa_fc_00_$envir
@@ -119,7 +119,7 @@ export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for the standalone variant
 export HOMEnos=${PACKAGEROOT}/nos-workflow
-export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 ${HOMEnos}/jobs/JNOS_FORECAST

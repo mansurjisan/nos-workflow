@@ -6,7 +6,7 @@
 #PBS  -e /dev/null
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=02:00:00
+#PBS  -l walltime=05:00:00
 
 # STOFS-3D-ATL STANDALONE prep. Identical forcing pipeline to the UFS-coupled prep
 # (OBC / NWM river / St-Lawrence / bctides / hotstart are mode-independent), EXCEPT
@@ -19,7 +19,7 @@
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
-export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
@@ -64,7 +64,7 @@ module list
 # EXPORT list
 set +x
 export envir=dev
-export OFS=${OFS:-stofs_3d_atl_ufs_standalone}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 export cyc=${CYC:-00}
 export NET=nos
 export model=nosofs
@@ -99,7 +99,7 @@ export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for the standalone variant (execution.mode=standalone -> nws=2)
 export HOMEnos=${PACKAGEROOT}/nos-workflow
-export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 # Full Python prep pipeline (sflux atmo via nws=2 + OBC/river/bctides/hotstart).
