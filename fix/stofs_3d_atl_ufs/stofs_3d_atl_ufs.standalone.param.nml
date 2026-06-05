@@ -244,7 +244,7 @@
 !           nchi=1: bottom roughness (in meters) specified in rough.gr3.
 !           If iwbl/=0, nchi must =1.
 !-----------------------------------------------------------------------
-  nchi = 1
+  nchi = 0
   dzb_min = 0.5 !needed if nchi=1; min. bottom boundary layer thickness [m].
   hmin_man = 1. !needed if nchi=-1: min. depth in Manning's formulation [m]
 
