@@ -19,6 +19,10 @@ import yaml
 # Make ``nos_workflow`` importable regardless of CWD.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from nos_workflow.utils.yaml_to_env import (  # noqa: E402
+    load_yaml_with_inheritance,
+)
+
 
 # ---------------------------------------------------------------------------
 # Local fixtures (the package conftest only ships ``clean_env``)
@@ -299,8 +303,9 @@ class TestSystemConfigs:
         if len(system_configs) == 0:
             pytest.skip("No system configs found")
         for name, path in system_configs.items():
-            with open(path) as f:
-                data = yaml.safe_load(f)
+            # Resolve inheritance: a thin variant (e.g. the standalone yaml)
+            # gets its system.name from the system config it _base-inherits.
+            data = load_yaml_with_inheritance(path, base_dir=path.parent.parent)
             assert "system" in data, f"{name} missing system section"
             assert "name" in data["system"], f"{name} missing system.name"
 
@@ -336,7 +341,11 @@ class TestConfigInheritance:
 
             if "_base" in data:
                 base_name = data["_base"]
-                assert base_name in ["schism", "fvcom", "roms"], (
+                # A system config may inherit an abstract base (parm/base/)
+                # or another system config (parm/systems/) -- e.g. the
+                # standalone variant inheriting stofs_3d_atl_ufs.
+                valid = base_name in base_configs or base_name in system_configs
+                assert valid, (
                     f"{name} references unknown base config: {base_name}"
                 )
 

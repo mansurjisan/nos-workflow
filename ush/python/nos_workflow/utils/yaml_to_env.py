@@ -21,9 +21,11 @@ def load_yaml_with_inheritance(
 ) -> Dict[str, Any]:
     """Load a YAML file resolving ``_base: <name>`` deep-merge inheritance.
 
-    Looks for the base under ``<base_dir>/base/<name>.yaml`` first and
-    falls back to a sibling ``<base_dir>/<name>.yaml``. Inheritance is
-    recursive; child values override parent values via :func:`deep_merge`.
+    Looks for the base under ``<base_dir>/base/<name>.yaml`` (abstract
+    bases), then ``<base_dir>/systems/<name>.yaml`` (so a system yaml can
+    inherit another system yaml), then a sibling of the config, then
+    ``<base_dir>/<name>.yaml``. Inheritance is recursive; child values
+    override parent values via :func:`deep_merge`.
     """
     import yaml  # lazy import
 
@@ -36,11 +38,19 @@ def load_yaml_with_inheritance(
 
     base_name = data.pop("_base", None)
     if base_name:
-        base_path = base_dir / "base" / f"{base_name}.yaml"
-        if not base_path.exists():
-            base_path = base_dir / f"{base_name}.yaml"
-
-        if base_path.exists():
+        # Resolve the base from the abstract-base dir (parm/base/), the systems
+        # dir (parm/systems/ — so one system yaml can inherit another, e.g. the
+        # standalone variant inheriting stofs_3d_atl_ufs), the config's own
+        # directory (sibling), then base_dir itself. Without the systems/ and
+        # sibling candidates a system->system _base silently no-ops.
+        candidates = (
+            base_dir / "base" / f"{base_name}.yaml",
+            base_dir / "systems" / f"{base_name}.yaml",
+            yaml_path.parent / f"{base_name}.yaml",
+            base_dir / f"{base_name}.yaml",
+        )
+        base_path = next((p for p in candidates if p.exists()), None)
+        if base_path is not None:
             base_data = load_yaml_with_inheritance(base_path, base_dir)
             data = deep_merge(base_data, data)
 
