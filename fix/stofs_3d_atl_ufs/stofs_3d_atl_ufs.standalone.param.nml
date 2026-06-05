@@ -261,7 +261,7 @@
 ! Elevation initial condition flag for cold start only. For hotstart, set this to 0
 ! (and elev will be read in from hotstart.nc). If ic_elev=1, elev.ic is needed.
 !-----------------------------------------------------------------------
-  ic_elev = 1
+  ic_elev = 0
 
 !-----------------------------------------------------------------------
 ! Elevation boundary condition ramp-up flag. =0: ramp up from 0; =1: ramp up from
@@ -280,8 +280,8 @@
 ! If flag_ic(1:2)=1, the initial T,S field is read in from temp.ic and salt.ic.
 ! flag_ic(1) must =flag_ic(2)
 !-----------------------------------------------------------------------
-  flag_ic(1) = 1 !T
-  flag_ic(2) = 1 !S
+  flag_ic(1) = 0 !T
+  flag_ic(2) = 0 !S
 
 ! initial conditions for other tracers.
   flag_ic(3) = 1 !GEN (user defined module)
