@@ -268,65 +268,28 @@ stages:
 shell_mappings:
   framework: comf
   env_prefix: nos
-  # Only env vars that are actually read by downstream code remain here.
-  # Removed 42 unused entries (2026-05): physics constants are hardcoded in
-  # the param.nml template, UFS-Coastal knobs are read directly by
-  # nos_utils.config.OFSConfig from YAML, not via env vars.
+  # Only env vars actually read by downstream shell/python remain here.
+  # Resolver-redundant entries (re-emitted by get_standard_exports) and dead
+  # exports (no consumer) were dropped; data nodes are unaffected.
   variables:
-    # Grid files
+    # Grid / control files staged by the SCHISM-UFS runner
     GRIDFILE_LL: grid.files.horizontal_ll
     VGRID_CTL: grid.files.vertical
     VGRID_NU_CTL: grid.files.vertical_nu
     VGRID_FAKE_CTL: grid.files.vertical_fake
     STA_OUT_CTL: grid.files.station
     Nudging_weight: forcing.ocean.nudging.files.nudge_weight
-
-    # Domain bounds
-    IGRD_MET: grid.igrd_met
-    IGRD_OBC: grid.igrd_obc
-
-    # Atmospheric forcing
-    MET_NUM: forcing.atmospheric.met_num
-    DBASE_MET_NOW2: forcing.atmospheric.secondary
-    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
-
-    # Control files
-    RIVER_CTL_FILE: forcing.river.files.ctl_file
     NWM_REACHID_FILE: forcing.river.files.nwm_reach
-    OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
     HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
-    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
-    HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
-
-    # Runtime control
     RUNTIME_CTL: model.runtime.ctl_file
-    RUNTIME_MET_CTL: model.runtime.met_ctl_file
-    NDTFAST: model.physics.ndtfast
-    BASE_DATE: model.run.base_date
-    TIDE_START: model.physics.tide_start
 
-    # Run length
+    # Runtime control / run length read via os.environ downstream
+    BASE_DATE: model.run.base_date
     RNDAY_NOWCAST: _computed.rnday_nowcast
     RNDAY_FORECAST: _computed.rnday_forecast
 
-    # Output intervals
-    NSTA: output.stations.interval
-    NHIS: output.fields.interval
-    NDEFHIS: output.fields.def_interval
-    NQCK: output.quicksave.interval
-    NDEFQCK: output.quicksave.def_interval
-    NAVG: output.average.interval
-    NFLT: output.float.interval
-    NRST: output.restart.interval
-
-    # UFS-Coastal-specific env vars actually consumed downstream.
-    # (datm_tasks, schism_tasks, blend_*, coupling_interval, datm_domain,
-    # nhours_fcst, datm_forcing_source are read by nos_utils.config directly
-    # from the YAML, so no env var mapping is needed for those.)
+    # UFS-Coastal coupling toggle
     USE_DATM: ufs_coastal.enabled
-    DT_ATMOS: ufs_coastal.dt_atmos
-    NX_GLOBAL: ufs_coastal.nx_global
-    NY_GLOBAL: ufs_coastal.ny_global
 
 # GEFS atmospheric ensemble for UFS-Coastal (DATM forcing)
 # 7-member atmospheric-only ensemble (no physics perturbation).
