@@ -352,30 +352,18 @@ shell_mappings:
   env_prefix: nos
   variables:
     # Model identification
-    RUN: system.name
     PREFIXNOS: system.prefix
-    OCEAN_MODEL: model.ocean_model
 
     # Grid files
-    GRIDFILE: grid.files.horizontal
     GRIDFILE_LL: grid.files.horizontal_ll
     VGRID_CTL: grid.files.vertical
     STA_OUT_CTL: grid.files.station
 
     # Grid dimensions
-    np_global: grid.n_nodes
-    ne_global: grid.n_elements
-    ns_global: grid.n_sides
-    nvrt: grid.n_levels
-    KBm: grid.n_levels
     NNODE: grid.n_nodes
     NELE: grid.n_elements
 
     # Domain bounds (used by both COMF framework and STOFS legacy scripts)
-    MINLON: grid.domain.lon_min
-    MAXLON: grid.domain.lon_max
-    MINLAT: grid.domain.lat_min
-    MAXLAT: grid.domain.lat_max
     LONMIN: grid.domain.lon_min
     LONMAX: grid.domain.lon_max
     LATMIN: grid.domain.lat_min
@@ -436,7 +424,6 @@ shell_mappings:
     # Runtime control
     RUNTIME_CTL: model.runtime.ctl_file
     RUNTIME_MET_CTL: model.runtime.met_ctl_file
-    DELT_MODEL: model.physics.dt
     EXTSTEP_SECONDS: model.physics.extstep_seconds
     NDTFAST: model.physics.ndtfast
     NWS_VALUE: model.physics.nws
@@ -472,8 +459,6 @@ shell_mappings:
     TIDE_START: model.physics.tide_start
 
     # Run length
-    LEN_NOWCAST: _computed.len_nowcast_hours
-    LEN_FORECAST: _computed.len_forecast_hours
     RNDAY_NOWCAST: _computed.rnday_nowcast
     RNDAY_FORECAST: _computed.rnday_forecast
     N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
@@ -489,9 +474,6 @@ shell_mappings:
     NFLT: output.float.interval
     NRST: output.restart.interval
 
-    # Resources
-    TOTAL_TASKS: resources.nprocs
-
     # UFS-Coastal specific variables
     USE_DATM: ufs_coastal.enabled
     DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
@@ -499,7 +481,6 @@ shell_mappings:
     DATM_DOMAIN: ufs_coastal.datm_domain
     DATM_TASKS: ufs_coastal.datm_tasks
     SCHISM_TASKS: ufs_coastal.schism_tasks
-    NSCRIBES: ufs_coastal.nscribes
     BLEND_RESOLUTION: ufs_coastal.blend_resolution
     BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
     DT_ATMOS: ufs_coastal.dt_atmos
