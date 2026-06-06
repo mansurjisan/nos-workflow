@@ -355,16 +355,12 @@ shell_mappings:
   # exports (no consumer) were dropped; data nodes are unaffected. Physics
   # constants, output intervals, OBC/nudge ROI indices, etc. are read from the
   # YAML data nodes directly (nos-utils / param.nml templates), not via env.
+  # GRIDFILE_LL, VGRID_CTL, STA_OUT_CTL, HC_FILE_OBC, RUNTIME_CTL, BASE_DATE,
+  # RNDAY_NOWCAST, RNDAY_FORECAST, USE_DATM are inherited from base/schism.yaml
+  # (KEEP in both SCHISM-UFS systems). Only stofs-specific mappings remain here.
   variables:
     # Model identification
     PREFIXNOS: system.prefix
-
-    # Grid / control files staged by the SCHISM-UFS runner
-    GRIDFILE_LL: grid.files.horizontal_ll
-    VGRID_CTL: grid.files.vertical
-    STA_OUT_CTL: grid.files.station
-    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
-    RUNTIME_CTL: model.runtime.ctl_file
 
     # Ocean forcing source read via os.environ downstream
     DBASE_WL_NOW: forcing.ocean.obc.wl_source
@@ -372,14 +368,8 @@ shell_mappings:
     # Tidal forcing toggle
     CREATE_TIDEFORCING: forcing.tidal.create_forcing
 
-    # Runtime control / run length read via os.environ downstream
-    BASE_DATE: model.run.base_date
-    RNDAY_NOWCAST: _computed.rnday_nowcast
-    RNDAY_FORECAST: _computed.rnday_forecast
+    # Full run-period length (stofs-only; not a comf standard export)
     N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
-
-    # UFS-Coastal coupling toggle
-    USE_DATM: ufs_coastal.enabled
 
 # Ensemble configuration (DATM-based for UFS, atmospheric forcing only)
 # 6-member GEFS atmospheric ensemble (no physics perturbation).

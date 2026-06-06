@@ -271,25 +271,15 @@ shell_mappings:
   # Only env vars actually read by downstream shell/python remain here.
   # Resolver-redundant entries (re-emitted by get_standard_exports) and dead
   # exports (no consumer) were dropped; data nodes are unaffected.
+  # GRIDFILE_LL, VGRID_CTL, STA_OUT_CTL, HC_FILE_OBC, RUNTIME_CTL, BASE_DATE,
+  # RNDAY_NOWCAST, RNDAY_FORECAST, USE_DATM are inherited from base/schism.yaml
+  # (KEEP in both SCHISM-UFS systems). Only secofs-specific mappings remain here.
   variables:
-    # Grid / control files staged by the SCHISM-UFS runner
-    GRIDFILE_LL: grid.files.horizontal_ll
-    VGRID_CTL: grid.files.vertical
+    # Grid / control files staged by the SCHISM-UFS runner (secofs-specific)
     VGRID_NU_CTL: grid.files.vertical_nu
     VGRID_FAKE_CTL: grid.files.vertical_fake
-    STA_OUT_CTL: grid.files.station
     Nudging_weight: forcing.ocean.nudging.files.nudge_weight
     NWM_REACHID_FILE: forcing.river.files.nwm_reach
-    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
-    RUNTIME_CTL: model.runtime.ctl_file
-
-    # Runtime control / run length read via os.environ downstream
-    BASE_DATE: model.run.base_date
-    RNDAY_NOWCAST: _computed.rnday_nowcast
-    RNDAY_FORECAST: _computed.rnday_forecast
-
-    # UFS-Coastal coupling toggle
-    USE_DATM: ufs_coastal.enabled
 
 # GEFS atmospheric ensemble for UFS-Coastal (DATM forcing)
 # 7-member atmospheric-only ensemble (no physics perturbation).
