@@ -348,8 +348,6 @@ stages:
 
 # Environment variable mappings
 shell_mappings:
-  framework: stofs_ufs
-  env_prefix: nos
   # Only env vars actually read by downstream shell/python remain here.
   # Resolver-redundant entries (re-emitted by get_standard_exports) and dead
   # exports (no consumer) were dropped; data nodes are unaffected. Physics
