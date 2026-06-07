@@ -56,8 +56,8 @@ _schism_run_mpi() {
         fi
         local NSCRIBES=${NSCRIBES:-6}
         echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"
-        echo "  mpiexec -n ${NTASKS} -ppn ${PPN} ${SCHISM_EXEC} ${NSCRIBES}"
-        mpiexec -n ${NTASKS} -ppn ${PPN} ${SCHISM_EXEC} ${NSCRIBES}
+        echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}"
+        mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}
         local rc=$?
         echo "_schism_run_mpi: mpiexec returned rc=${rc}"
         return ${rc}
