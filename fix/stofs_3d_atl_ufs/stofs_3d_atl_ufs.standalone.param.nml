@@ -359,14 +359,14 @@
 ! Tracer transport method. itr_met=3 (horizontal TVD): implicit TVD in the
 ! vertical dimension. Requires tvd.prop.
 !-----------------------------------------------------------------------
-  itr_met = 3
+  itr_met = 4
   h_tvd = 5. !cut-off depth (m)
   !If itr_met=3 or 4, need the following 2 tolerances of convergence.
   eps1_tvd_imp = 1.e-4 !suggested value is 1.e-4
   eps2_tvd_imp = 1.e-14
 
   !Optional hybridized ELM transport for efficiency
-  ielm_transport = 0 !1: turn on
+  ielm_transport = 1 !1: turn on
   max_subcyc = 10 !used only if ielm_transport/=0
 
   !if itr_met = 4, the following parameters are needed
