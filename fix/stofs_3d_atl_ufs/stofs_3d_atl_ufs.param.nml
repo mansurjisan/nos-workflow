@@ -410,7 +410,7 @@
 ! Also if itr_met==3 and h_tvd>=1.e5, some parts of the code are bypassed for efficiency
 ! Controls for WENO are not yet in place
 !-----------------------------------------------------------------------
-  itr_met = 3 !Default: 1
+  itr_met = 4 !Default: 1
   h_tvd = 5. !used only if itr_met>=2; cut-off depth (m)
   !If itr_met=3 or 4, need the following 2 tolerances of convergence. The convergence
   !is achieved when sqrt[\sum_i(T_i^s+1-T_i^s)^2]<=eps1_tvd_imp*sqrt[\sum_i(T_i^s)^2]+eps2_tvd_imp
@@ -418,7 +418,7 @@
   eps2_tvd_imp = 1.e-14
 
   !Optional hybridized ELM transport for efficiency
-  ielm_transport = 0 !1: turn on. Used only with itr_met>=3
+  ielm_transport = 1 !1: turn on. Used only with itr_met>=3
   max_subcyc = 10 !used only if ielm_transport/=0. Max # of subcycling per time step in transport allowed
 
 
