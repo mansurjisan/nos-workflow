@@ -1,0 +1,109 @@
+#!/bin/bash
+#PBS  -N stofs_3d_atl_ufs_sa_prep_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /dev/null
+#PBS  -e /dev/null
+#PBS  -l select=1:ncpus=8:mpiprocs=8
+#PBS  -l place=vscatter
+#PBS  -l walltime=05:00:00
+
+# STOFS-3D-ATL STANDALONE prep. Identical forcing pipeline to the UFS-coupled prep
+# (OBC / NWM river / St-Lawrence / bctides / hotstart are mode-independent), EXCEPT
+# the atmosphere: execution.mode=standalone (in stofs_3d_atl_ufs_standalone.yaml) makes
+# the resolver force nws=2, so prep writes sflux_*.nc and tars them to
+# {prefix}.{cycle}.{pdy}.met.{phase}.nc.tar -- what the standalone nowcast/forecast's
+# untar_met_sflux consumes (vs the UFS DATM atmo). Same Python forcing stack; prep does
+# not run the model, so no pschism/4320-rank/module.fv3 changes are needed here.
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+
+export OFS=${OFS:-stofs_3d_atl_ufs}
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/stofs_3d_atl_ufs_standalone_prep_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== stofs_3d_atl_ufs_standalone_prep_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+cd ${WORKDIR}
+
+# Module setup (COMF/nosofs forcing stack + ESMF; engine-agnostic forcing generation)
+module purge
+module load envvar/${envvar_ver:-1.0}
+module load intel/${intel_ver:-19.1.3.304}
+module load PrgEnv-intel/${PrgEnv_intel_ver:-8.1.0}
+module load craype/${craype_ver:-2.7.8}
+module load cray-mpich/${cray_mpich_ver:-8.1.7}
+module load cray-pals/${cray_pals_ver:-1.0.12}
+module load hdf5/${hdf5_ver:-1.10.6}
+module load netcdf/${netcdf_ver:-4.7.4}
+module load jasper/${jasper_ver:-2.0.25}
+module load udunits/${udunits_ver:-2.2.28}
+module load zlib/${zlib_ver:-1.2.11}
+module load bufr/${bufr_ver:-11.5.0}
+module load g2/${g2_ver:-3.4.5}
+module load w3nco/${w3nco_ver:-2.4.1}
+module load w3emc/${w3emc_ver:-2.9.2}
+module load subversion/${subversion_ver:-1.14.0}
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module load cfp/${cfp_ver:-2.0.4}
+module load libjpeg/${libjpeg_ver:-9c}
+module load grib_util/${grib_util_ver:-1.2.4}
+module load gsl/${gsl_ver:-2.7}
+module load wgrib2/${wgrib2_ver:-2.0.8}
+module load nco/${nco_ver:-5.0.6}
+module load esmf/${esmf_ver:-8.4.2} 2>/dev/null || echo "WARNING: esmf module not available"
+
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=${OFS:-stofs_3d_atl_ufs}
+export cyc=${CYC:-00}
+export NET=nos
+export model=nosofs
+export job=stofs_3d_atl_ufs_sa_prep_${cyc}_$envir
+export platform=ptmp
+export framework=stofs_ufs
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+
+# Input data paths for forcing generation
+export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
+export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
+export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration for the standalone variant (execution.mode=standalone -> nws=2)
+export HOMEnos=${PACKAGEROOT}/nos-workflow
+export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Full Python prep pipeline (sflux atmo via nws=2 + OBC/river/bctides/hotstart).
+export USE_PYTHON_PREP=YES
+export FULL_PYTHON_PREP=YES
+
+${HOMEnos}/jobs/JNOS_PREP

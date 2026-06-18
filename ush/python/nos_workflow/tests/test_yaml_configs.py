@@ -19,6 +19,10 @@ import yaml
 # Make ``nos_workflow`` importable regardless of CWD.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
+from nos_workflow.utils.yaml_to_env import (  # noqa: E402
+    load_yaml_with_inheritance,
+)
+
 
 # ---------------------------------------------------------------------------
 # Local fixtures (the package conftest only ships ``clean_env``)
@@ -136,12 +140,12 @@ class TestSystemConfigs:
         rank counts, v2.1 operational grid dimensions, and the PBS ``select=``
         line. These are pinned because the runtime dispatcher and the PBS
         jobcard generator both depend on them — drifting any of these silently
-        is the kind of bug that only surfaces inside a 2914-rank allocation.
+        is the kind of bug that only surfaces inside a 4434-rank allocation.
 
         Grid dimensions match the v2.1 operational STOFS-3D-ATL mesh extracted
         from /lfs/h1/ops/prod/com/stofs/v2.1/.../rerun/*.restart.nc on
-        2026-05-11. The UFS rank layout matches SECOFS-UFS: partition.prop is
-        regenerated for 2794 SCHISM OCN ranks (+120 DATM = 2914 total).
+        2026-05-11. The UFS rank layout uses the operational 4314 SCHISM OCN
+        ranks (+120 DATM = 4434 total), sharing the standalone 4314 partition.prop.
         """
         if "stofs_3d_atl_ufs" not in system_configs:
             pytest.skip("stofs_3d_atl_ufs.yaml not found")
@@ -157,8 +161,8 @@ class TestSystemConfigs:
 
         # Resources / UFS-Coastal task split (v2.1 operational partition.prop)
         ufs = data.get("ufs_coastal", {})
-        assert ufs.get("total_tasks") == 2914
-        assert ufs.get("schism_tasks") == 2794
+        assert ufs.get("total_tasks") == 4434
+        assert ufs.get("schism_tasks") == 4314
         assert ufs.get("datm_tasks") == 120
         assert ufs.get("nscribes") == 0
 
@@ -169,11 +173,10 @@ class TestSystemConfigs:
         assert grid.get("n_sides") == 8580540
         assert grid.get("n_levels") == 49
 
-        # PBS select — operational ppn=120 + ompthreads=1 packing (25 nodes, 3000 >= 2914)
-        ens = data.get("ensemble", {}).get("resources", {})
+        # PBS select — operational ppn=120 + ompthreads=1 packing (37 nodes, 4440 >= 4434)
         det = data.get("resources", {})
-        select_str = ens.get("select") or det.get("select")
-        assert select_str == "select=25:ncpus=128:mpiprocs=120:ompthreads=1"
+        select_str = det.get("select")
+        assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
 
     def test_stofs_3d_atl_config(self, system_configs: Dict[str, Path]) -> None:
         if "stofs_3d_atl" not in system_configs:
@@ -299,8 +302,9 @@ class TestSystemConfigs:
         if len(system_configs) == 0:
             pytest.skip("No system configs found")
         for name, path in system_configs.items():
-            with open(path) as f:
-                data = yaml.safe_load(f)
+            # Resolve inheritance: a thin variant (e.g. the standalone yaml)
+            # gets its system.name from the system config it _base-inherits.
+            data = load_yaml_with_inheritance(path, base_dir=path.parent.parent)
             assert "system" in data, f"{name} missing system section"
             assert "name" in data["system"], f"{name} missing system.name"
 
@@ -336,7 +340,11 @@ class TestConfigInheritance:
 
             if "_base" in data:
                 base_name = data["_base"]
-                assert base_name in ["schism", "fvcom", "roms"], (
+                # A system config may inherit an abstract base (parm/base/)
+                # or another system config (parm/systems/) -- e.g. the
+                # standalone variant inheriting stofs_3d_atl_ufs.
+                valid = base_name in base_configs or base_name in system_configs
+                assert valid, (
                     f"{name} references unknown base config: {base_name}"
                 )
 

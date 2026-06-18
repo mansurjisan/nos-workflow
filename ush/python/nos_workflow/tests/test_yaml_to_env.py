@@ -350,6 +350,82 @@ class TestBaseInheritance:
         # nvrt comes from the base's grid.n_levels.
         assert "export nvrt=51" in output
 
+    def test_system_inherits_another_system(self, base_dir: Path) -> None:
+        """A ``systems/`` yaml may ``_base`` another ``systems/`` yaml.
+
+        Reproduces the standalone-variant bug: stofs_3d_atl_ufs_standalone
+        (systems/) inherits stofs_3d_atl_ufs (systems/), which itself
+        inherits schism (base/) -- a two-level chain. The loader used to
+        search only ``base/`` and ``parm/``, so the middle ``systems/``
+        yaml was never found and the child inherited nothing.
+        """
+        (base_dir / "base" / "grandbase.yaml").write_text(
+            "model:\n"
+            "  type: schism\n"
+            "  run:\n"
+            "    hindcast_days: 1.0\n"
+            "    forecast_days: 4.5\n"
+        )
+        (base_dir / "systems" / "middle.yaml").write_text(
+            "_base: grandbase\n"
+            "system:\n"
+            "  name: middle_ofs\n"
+            "grid:\n"
+            "  n_levels: 51\n"
+        )
+        leaf_path = base_dir / "systems" / "leaf.yaml"
+        leaf_path.write_text(
+            "_base: middle\n"
+            "execution:\n"
+            "  mode: standalone\n"
+        )
+
+        merged = load_yaml_with_inheritance(leaf_path, base_dir=base_dir)
+
+        # from the middle systems/ yaml
+        assert merged["grid"]["n_levels"] == 51
+        assert merged["system"]["name"] == "middle_ofs"
+        # from the grandparent abstract base (two levels up)
+        assert merged["model"]["run"]["hindcast_days"] == 1.0
+        assert merged["model"]["run"]["forecast_days"] == 4.5
+        assert merged["model"]["type"] == "schism"
+        # the leaf's own value survives the merge
+        assert merged["execution"]["mode"] == "standalone"
+
+    def test_system_to_system_export_durations(self, base_dir: Path) -> None:
+        """Durations inherited through a systems->systems chain reach export.
+
+        The exact failure mode the standalone nowcast hit: without the
+        ``systems/`` lookup, ``model.run`` never merged in and LEN_NOWCAST
+        fell back to the 6h default (hindcast_days=0.25), running a 6h
+        nowcast that never reached the step-576 hotstart write.
+        """
+        (base_dir / "base" / "grandbase.yaml").write_text(
+            "model:\n"
+            "  run:\n"
+            "    hindcast_days: 1.0\n"
+            "    forecast_days: 4.5\n"
+        )
+        (base_dir / "systems" / "middle.yaml").write_text(
+            "_base: grandbase\n"
+            "system:\n"
+            "  name: middle_ofs\n"
+            "  framework: stofs\n"
+            "grid:\n"
+            "  domain:\n"
+            "    lon_min: -98.0\n"
+            "    lon_max: -52.0\n"
+            "    lat_min: 7.0\n"
+            "    lat_max: 52.0\n"
+        )
+        leaf_path = base_dir / "systems" / "leaf.yaml"
+        leaf_path.write_text("_base: middle\n")
+
+        output = export_for_shell(leaf_path, framework="stofs")
+
+        assert "export LEN_NOWCAST=24" in output     # 1.0*24, not the 6h default
+        assert "export LEN_FORECAST=108" in output   # 4.5*24, not the 120h default
+
     def test_deep_merge_preserves_base(self) -> None:
         """``deep_merge`` must not mutate the ``base`` dict."""
         base = {"a": {"b": 1, "c": 2}}

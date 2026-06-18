@@ -1,0 +1,15 @@
+# STOFS-3D-ATL standalone (pschism) — operational-parity execution within nos_workflow.
+#
+# Inherits the entire UFS-coupled config (mesh / grid / prep / forcing / stages) from
+# stofs_3d_atl_ufs.yaml and only flips execution.mode. The resolver then applies the
+# `standalone:` overlay already defined in the base yaml (pschism_WCOSS2, nws=2,
+# nscribes=6, 4320 ranks / 36 nodes) and emits USE_DATM=false, so the run side launches
+# standalone pschism with sflux forcing instead of fv3_coastalS.exe + CDEPS/CMEPS.
+#
+# Why standalone: the NUOPC mediator regrid onto the 5.65M-node STOFS mesh (on the 120
+# MED/ATM PETs, every coupling step) is a runtime bottleneck the coupled path hits; the
+# standalone engine has no mediator and matches operational IT-STOFS speed. Prep and all
+# staged inputs are identical to the UFS config — only the execution engine differs.
+_base: stofs_3d_atl_ufs
+execution:
+  mode: standalone

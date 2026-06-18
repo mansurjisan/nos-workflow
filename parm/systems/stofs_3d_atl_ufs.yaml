@@ -265,11 +265,11 @@ ufs_coastal:
   coupling_interval: 150
   # MED+ATM share PETs 0-119 (120 PETs)
   datm_tasks: 120
-  # OCN PETs 120-2913 (2794 PETs — SECOFS-equivalent SCHISM compute rank count;
-  # NO_PARMETIS build reads partition.prop regenerated for 2794 ranks on v2.1 hgrid)
-  schism_tasks: 2794
-  # Total MPI tasks (MED+ATM share PETs 0-119 → 2794 + 120 = 2914; matches SECOFS-UFS)
-  total_tasks: 2914
+  # OCN PETs 120-4433 (4314 PETs — operational SCHISM compute rank count, shared
+  # with the standalone variant so the SAME 4314-rank partition.prop is reused)
+  schism_tasks: 4314
+  # Total MPI tasks (MED+ATM share PETs 0-119 → 4314 + 120 = 4434)
+  total_tasks: 4434
   # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
   # Source for DATM atmospheric forcing:
@@ -331,11 +331,11 @@ output:
 # mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
 # mpiprocs= token, so per-node packing tracks the PBS allocation.
 resources:
-  nprocs: 2914
+  nprocs: 4434
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
-  select: "select=25:ncpus=128:mpiprocs=120:ompthreads=1"
+  select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
   walltime_nowcast: "01:30:00"
   walltime_forecast: "05:30:00"
 
