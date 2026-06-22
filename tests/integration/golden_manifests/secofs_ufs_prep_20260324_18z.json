@@ -92,12 +92,6 @@
       "size": 2107
     },
     {
-      "mode": "text",
-      "path": "secofs.t18z.20260324.forecast.in",
-      "sha256": "589cf40029a8cc50fb0f2b9be27c52c68602bc2ab706c72a51ec2398dcb00505",
-      "size": 36667
-    },
-    {
       "mode": "netcdf",
       "path": "secofs.t18z.20260324.init.nowcast.nc",
       "size": 18655536869
@@ -106,12 +100,6 @@
       "mode": "log",
       "path": "secofs.t18z.20260324.jlogfile.log",
       "size": 4424773
-    },
-    {
-      "mode": "text",
-      "path": "secofs.t18z.20260324.nowcast.in",
-      "sha256": "6775418cf8954897cbb7a375c24bb0a71af3060c05aa44b46a373168666016e3",
-      "size": 36666
     },
     {
       "mode": "log",

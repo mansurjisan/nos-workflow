@@ -137,8 +137,6 @@ def _compute_filenames(prefix: str, cycle: str, pdy1: str) -> dict:
         "HIS_2D_FORECAST":   f"{base}.surface.forecast.nc",
         "MODEL_LOG_NOWCAST": f"{base}.nowcast.log",
         "MODEL_LOG_FORECAST": f"{base}.forecast.log",
-        "RUNTIME_CTL_NOWCAST":                  f"{base}.nowcast.in",
-        "RUNTIME_CTL_FORECAST":                 f"{base}.forecast.in",
         "RUNTIME_MET_CTL_NOWCAST":              f"{base}.met_ctl.nowcast.in",
         "RUNTIME_MET_CTL_FORECAST":             f"{base}.met_ctl.forecast.in",
         "RUNTIME_COMBINE_RST_NOWCAST":          f"{base}.combine.hotstart.nowcast.in",
