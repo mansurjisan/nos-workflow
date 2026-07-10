@@ -259,8 +259,10 @@ resources:
 
 # Post-stage products (nos_workflow.post registry; override with NOS_POST_PRODUCTS)
 post:
+  archive_fields: true   # run stages normalize + stage global field stacks
   products:
     - stations_nc
+    - fields_nc
     - bias_correct
 
 # Workflow stages
