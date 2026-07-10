@@ -334,3 +334,187 @@ def test_yaml_selection_drives_the_stage(tmp_path, fake_env):
     data = _load_outputs_manifest(env)
     names = [p["name"] for p in data["products"]]
     assert names == ["stations_nc"]
+
+
+# ---------------------------------------------------------------------------
+# Canonical naming helpers
+# ---------------------------------------------------------------------------
+
+
+def test_naming_helpers():
+    from nos_workflow.post.naming import (
+        fields_stack_name,
+        phase_mode_flag,
+        product_stem,
+        stations_nc_name,
+    )
+
+    assert product_stem("secofs", "00", "20260710") == "secofs.t00z.20260710"
+    assert stations_nc_name("secofs", "00", "20260710", "nowcast") == (
+        "secofs.t00z.20260710.stations.nowcast.nc"
+    )
+    assert fields_stack_name(
+        "secofs", "00", "20260710", "out2d", "nowcast", 1, 6
+    ) == "secofs.t00z.20260710.fields.out2d.n001_006.nc"
+    assert fields_stack_name(
+        "stofs_3d_atl", "12", "20260710", "temperature", "forecast", 25, 48
+    ) == "stofs_3d_atl.t12z.20260710.fields.temperature.f025_048.nc"
+    assert phase_mode_flag("nowcast") == "n"
+    assert phase_mode_flag("forecast") == "f"
+    with pytest.raises(ValueError):
+        phase_mode_flag("bogus")
+
+
+# ---------------------------------------------------------------------------
+# archive_fields flag resolution
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_archive_fields_env_precedence():
+    from nos_workflow.post.registry import resolve_archive_fields
+
+    assert resolve_archive_fields({"NOS_ARCHIVE_FIELDS": "YES"}) is True
+    assert resolve_archive_fields({"NOS_ARCHIVE_FIELDS": "true"}) is True
+    assert resolve_archive_fields({"NOS_ARCHIVE_FIELDS": "1"}) is True
+    assert resolve_archive_fields({"NOS_ARCHIVE_FIELDS": "no"}) is False
+    assert resolve_archive_fields({}) is False
+
+
+def test_resolve_archive_fields_from_yaml(tmp_path):
+    from nos_workflow.post.registry import resolve_archive_fields
+
+    yml = tmp_path / "sys.yaml"
+    yml.write_text("post:\n  archive_fields: true\n")
+    assert resolve_archive_fields({"OFS_CONFIG": str(yml)}) is True
+
+    yml.write_text("post:\n  archive_fields: false\n")
+    assert resolve_archive_fields({"OFS_CONFIG": str(yml)}) is False
+    # Env override beats the yaml.
+    assert resolve_archive_fields(
+        {"OFS_CONFIG": str(yml), "NOS_ARCHIVE_FIELDS": "yes"}
+    ) is True
+
+
+def test_post_mapping_merges_across_base_chain(tmp_path):
+    """Overlay keys and base keys both surface through the _base merge."""
+    from nos_workflow.post.registry import resolve_archive_fields
+
+    base = tmp_path / "parent.yaml"
+    base.write_text("post:\n  products:\n    - stations_nc\n")
+    overlay = tmp_path / "child.yaml"
+    overlay.write_text("_base: parent\npost:\n  archive_fields: true\n")
+    env = {"OFS_CONFIG": str(overlay)}
+    # products come from the base, the flag from the overlay.
+    assert resolve_product_names("comf", env) == ["stations_nc"]
+    assert resolve_archive_fields(env) is True
+
+
+# ---------------------------------------------------------------------------
+# fields_nc product wiring (worker subprocess mocked)
+# ---------------------------------------------------------------------------
+
+
+def _seed_field_staging(comout: Path, run: str, cycle: str, phase: str) -> Path:
+    dir_name = "restart_outputs" if phase == "nowcast" else "forecast_outputs"
+    staging = comout / f"{run}.{cycle}.{dir_name}"
+    staging.mkdir(parents=True, exist_ok=True)
+    (staging / "out2d_1.nc").write_bytes(b"\x89HDF\r\n")
+    return staging
+
+
+def _fake_fields_subprocess(comout: Path):
+    """Fake subprocess.run for the fields worker: drops the canonical
+    file + result json the way the real worker would."""
+    import subprocess as _sp
+
+    calls: list = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        args = {cmd[i]: cmd[i + 1] for i in range(len(cmd) - 1)}
+        phase = args.get("--phase", "nowcast")
+        mode = "n" if phase == "nowcast" else "f"
+        prefix = args.get("--prefix", "p")
+        name = (
+            f"{prefix}.t{args['--cyc']}z.{args['--pdy']}"
+            f".fields.out2d.{mode}001_006.nc"
+        )
+        created = comout / name
+        created.write_bytes(b"\x89HDF\r\n")
+        result_json = args.get("--result-json")
+        if result_json:
+            Path(result_json).write_text(
+                json.dumps({"created": [str(created)]})
+            )
+        return _sp.CompletedProcess(args=cmd, returncode=0)
+
+    return fake_run, calls
+
+
+def test_fields_nc_skipped_without_staged_stacks(tmp_path, fake_env):
+    env = _post_env(tmp_path)
+    env["NOS_POST_PRODUCTS"] = "fields_nc"
+    # No staged field files anywhere.
+    _seed_staout(Path(env["COMOUT"]), env["RUN"], env["cycle"], "nowcast")
+
+    rc, seen = _run_post(env, fake_env)
+    assert rc == 0
+    assert len(seen) == 0  # worker never invoked
+
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    assert by_name["fields_nc"]["status"] == "skipped"
+    assert by_name["fields_nc"]["detail"] == "no field stacks staged"
+
+
+def test_fields_nc_runs_worker_per_staged_phase(tmp_path, fake_env):
+    env = _post_env(tmp_path)
+    env["NOS_POST_PRODUCTS"] = "fields_nc"
+    comout = Path(env["COMOUT"])
+    # Stage nowcast only -> exactly one worker call.
+    _seed_field_staging(comout, env["RUN"], env["cycle"], "nowcast")
+
+    fake_run, calls = _fake_fields_subprocess(comout)
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=fake_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert "-m" in calls[0] and "nos_workflow.post.products.fields" in calls[0]
+
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    assert by_name["fields_nc"]["status"] == "ok"
+    assert by_name["fields_nc"]["count"] == 1
+    assert by_name["fields_nc"]["outputs"][0].endswith(
+        ".fields.out2d.n001_006.nc"
+    )
+
+
+def test_fields_nc_worker_failure_warns_not_fatal(tmp_path, fake_env, caplog):
+    import subprocess as _sp
+
+    caplog.set_level("WARNING", logger="nos_workflow.stages.post")
+    env = _post_env(tmp_path)
+    env["NOS_POST_PRODUCTS"] = "fields_nc"
+    comout = Path(env["COMOUT"])
+    _seed_field_staging(comout, env["RUN"], env["cycle"], "nowcast")
+
+    def failing_run(cmd, **kwargs):
+        return _sp.CompletedProcess(args=cmd, returncode=4)
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=failing_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    # Worker failed for the only staged phase -> ok with zero outputs
+    # (phase-level failures warn and continue, same as stations).
+    assert by_name["fields_nc"]["status"] == "ok"
+    assert by_name["fields_nc"]["count"] == 0
+    assert any(
+        "fields worker failed" in rec.getMessage() for rec in caplog.records
+    )

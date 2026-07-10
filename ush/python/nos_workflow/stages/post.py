@@ -1,6 +1,7 @@
 """Post stage entry point."""
 from __future__ import annotations
 
+import json
 import logging
 import os
 import subprocess
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, List, Optional
 from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
+from ..post.naming import stations_nc_name
 from ..post.registry import get_product, register, resolve_product_names
 from ..registry import OFSDescriptor
 
@@ -300,7 +302,7 @@ def _process_phase(
         )
         return None
 
-    sta_nc = work_post / f"{prefix_nos}.t{cyc}z.{pdy}.stations.{phase}.nc"
+    sta_nc = work_post / stations_nc_name(prefix_nos, cyc, pdy, phase)
     if sta_nc.is_file():
         target = comout / sta_nc.name
         _copy_preserve(sta_nc, target)
@@ -701,6 +703,103 @@ class StationsNcProduct(PostProduct):
             )
             if created is not None:
                 outputs.append(str(created))
+        return ProductResult(name=self.name, status="ok", outputs=outputs)
+
+
+_FIELD_STACK_GLOBS = (
+    "out2d_[0-9]*.nc",
+    "temperature_[0-9]*.nc",
+    "salinity_[0-9]*.nc",
+    "horizontalVelX_[0-9]*.nc",
+    "horizontalVelY_[0-9]*.nc",
+    "zCoordinates_[0-9]*.nc",
+    "verticalVelocity_[0-9]*.nc",
+    "diffusivity_[0-9]*.nc",
+)
+
+
+def _has_staged_field_stacks(staging: Path) -> bool:
+    """True when the staging dir holds split stacks or combined schout."""
+    if not staging.is_dir():
+        return False
+    for pattern in _FIELD_STACK_GLOBS:
+        if any(staging.glob(pattern)):
+            return True
+    return any(
+        f.name.count("_") == 1 for f in staging.glob("schout_[0-9]*.nc")
+    )
+
+
+def _read_fields_result(result_json: Path) -> List[str]:
+    """Created-file list from the fields worker's result json."""
+    try:
+        data = json.loads(result_json.read_text())
+        return [str(p) for p in data.get("created", [])]
+    except Exception:  # noqa: BLE001
+        logger.warning("fields_nc: result json unreadable: %s", result_json)
+        return []
+
+
+@register
+class FieldsNcProduct(PostProduct):
+    """Canonical per-variable field stacks from the staged model outputs.
+
+    Delegates to the ``nos_workflow.post.products.fields`` worker in a
+    subprocess so the netCDF4 work stays out of the stage process (same
+    LD_PRELOAD rationale as the stations combine). Skips cleanly when
+    the run stages did not stage field files (``post.archive_fields``
+    off).
+    """
+
+    name = "fields_nc"
+
+    def produce(self, ctx: ProductContext) -> ProductResult:
+        outputs: List[str] = []
+        staged_any = False
+        for phase, dir_suffix in (
+            ("nowcast", "restart_outputs"),
+            ("forecast", "forecast_outputs"),
+        ):
+            staging = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{dir_suffix}"
+            if not _has_staged_field_stacks(staging):
+                logger.info(
+                    "fields_nc: no field stacks staged for %s, skipping",
+                    phase,
+                )
+                continue
+            staged_any = True
+            work = ctx.data / f"post_fields_{phase}"
+            work.mkdir(parents=True, exist_ok=True)
+            result_json = work / "fields_result.json"
+            rc = _run_subprocess_appending(
+                [
+                    "python3", "-m", "nos_workflow.post.products.fields",
+                    "--staging", str(staging),
+                    "--comout", str(ctx.comout),
+                    "--prefix", ctx.prefix_nos,
+                    "--cyc", ctx.cyc,
+                    "--pdy", ctx.pdy,
+                    "--phase", phase,
+                    "--combine-script", str(ctx.combine_script),
+                    "--result-json", str(result_json),
+                ],
+                cwd=work,
+                log_path=ctx.pgmout,
+                scrub_ld_preload=True,
+            )
+            if rc != 0:
+                logger.warning(
+                    "WARNING: fields worker failed for %s (rc=%d)", phase, rc,
+                )
+                continue
+            outputs.extend(_read_fields_result(result_json))
+
+        if not staged_any:
+            return ProductResult(
+                name=self.name,
+                status="skipped",
+                detail="no field stacks staged",
+            )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
 
