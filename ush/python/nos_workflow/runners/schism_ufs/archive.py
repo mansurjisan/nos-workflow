@@ -2,12 +2,27 @@
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 from pathlib import Path
+from typing import List
 
+from ...post.registry import resolve_archive_fields
 from .context import SchismRunContext
 
 logger = logging.getLogger(__name__)
+
+# Global (scribe-shaped) field files staged when post.archive_fields is on.
+_FIELD_PATTERNS = (
+    "out2d_[0-9]*.nc",
+    "temperature_[0-9]*.nc",
+    "salinity_[0-9]*.nc",
+    "horizontalVelX_[0-9]*.nc",
+    "horizontalVelY_[0-9]*.nc",
+    "zCoordinates_[0-9]*.nc",
+    "verticalVelocity_[0-9]*.nc",
+    "diffusivity_[0-9]*.nc",
+)
 
 
 def run_python(ctx: SchismRunContext, phase: str) -> int:
@@ -40,11 +55,34 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
             shutil.copy2(src, dst)
             copied += 1
 
+    if resolve_archive_fields(os.environ):
+        field_files = _global_field_files(source)
+        for src in field_files:
+            shutil.copy2(src, target / src.name)
+        copied += len(field_files)
+        logger.info(
+            "archive_outputs: staged %d global field file(s) to %s",
+            len(field_files), target,
+        )
+
     logger.info(
         "archive_outputs: copied %d files from %s to %s",
         copied, source, target,
     )
     return 0
+
+
+def _global_field_files(source: Path) -> List[Path]:
+    """Global field stacks in ``source``: scribe files plus combined
+    ``schout_<stack>.nc`` -- never the OLDIO per-rank
+    ``schout_<rank>_<stack>.nc`` (those stay in $DATA)."""
+    files: List[Path] = []
+    for pattern in _FIELD_PATTERNS:
+        files.extend(source.glob(pattern))
+    for f in source.glob("schout_*.nc"):
+        if f.name.count("_") == 1:  # schout_<stack>.nc, not per-rank
+            files.append(f)
+    return sorted(set(files))
 
 
 __all__ = ["run_python"]

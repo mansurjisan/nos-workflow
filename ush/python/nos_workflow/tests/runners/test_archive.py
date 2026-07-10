@@ -305,3 +305,56 @@ def test_archive_target_dir_uses_ctx_run_and_cycle(tmp_path):
     run_python(ctx, "forecast")
 
     assert (ctx.comout / "nos.stofs_3d_atl_ufs.t18z.forecast_outputs").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# Field staging (post.archive_fields / NOS_ARCHIVE_FIELDS)
+# ---------------------------------------------------------------------------
+
+
+def _seed_field_outputs(outputs: Path) -> None:
+    """Mixed global + per-rank field files next to the time-series set."""
+    for name in (
+        "out2d_1.nc",
+        "temperature_2.nc",
+        "schout_1.nc",             # combined stack -> staged
+        "schout_000000_1.nc",      # OLDIO per-rank -> never staged
+        "hotstart_000000_1.nc",    # restart path, not a field stack
+    ):
+        (outputs / name).write_bytes(b"\x89HDF\r\n")
+
+
+def test_archive_fields_flag_off_keeps_narrow_globs(tmp_path):
+    """Without the flag, field files are NOT staged (P1 behavior)."""
+    import os
+    from unittest.mock import patch
+
+    ctx = _make_ctx(tmp_path)
+    outputs = _seed_outputs(ctx.data, n_staout=1, with_mirror=False, with_flux=False)
+    _seed_field_outputs(outputs)
+
+    with patch.dict(os.environ, {"NOS_ARCHIVE_FIELDS": "no"}, clear=False):
+        rc = run_python(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.restart_outputs"
+    assert {p.name for p in target.iterdir()} == {"staout_1"}
+
+
+def test_archive_fields_flag_on_stages_global_stacks_only(tmp_path):
+    """With the flag, scribe files + combined schout are staged; OLDIO
+    per-rank schout and hotstart files never reach COMOUT."""
+    import os
+    from unittest.mock import patch
+
+    ctx = _make_ctx(tmp_path)
+    outputs = _seed_outputs(ctx.data, n_staout=1, with_mirror=False, with_flux=False)
+    _seed_field_outputs(outputs)
+
+    with patch.dict(os.environ, {"NOS_ARCHIVE_FIELDS": "yes"}, clear=False):
+        rc = run_python(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.restart_outputs"
+    names = {p.name for p in target.iterdir()}
+    assert names == {"staout_1", "out2d_1.nc", "temperature_2.nc", "schout_1.nc"}
