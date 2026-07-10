@@ -110,21 +110,31 @@ def _locate_yaml(
 
 
 def _read_yaml_post_products(yaml_file: Path) -> Optional[List[str]]:
-    """Extract ``post.products`` from ``yaml_file``, following ``_base``.
+    """Extract ``post.products`` from ``yaml_file`` (with ``_base`` merge)."""
+    post = _read_yaml_post_mapping(yaml_file)
+    if post is None or "products" not in post:
+        return None
+    return _parse_products(post["products"], yaml_file)
 
-    Returns None when no ``post:`` section (or no ``products`` key) is
-    found anywhere in the overlay chain, or on any read/parse error.
+
+def _read_yaml_post_mapping(yaml_file: Path) -> Optional[dict]:
+    """Collect the merged ``post:`` mapping along the ``_base`` chain.
+
+    Overlay keys win over base keys (key-level merge). Returns None when
+    no ``post:`` mapping exists anywhere in the chain, or on any
+    read/parse error.
     """
     try:
         import yaml
     except ImportError:
-        logger.warning("PyYAML unavailable; using framework defaults")
+        logger.warning("PyYAML unavailable; using defaults")
         return None
 
+    merged: Optional[dict] = None
     current: Optional[Path] = yaml_file
     for _ in range(_MAX_BASE_HOPS):
         if current is None or not current.is_file():
-            return None
+            return merged
         try:
             with current.open("r") as fh:
                 doc = yaml.safe_load(fh) or {}
@@ -138,18 +148,74 @@ def _read_yaml_post_products(yaml_file: Path) -> Optional[List[str]]:
             return None
 
         post_section = doc.get("post")
-        if isinstance(post_section, dict) and "products" in post_section:
-            return _parse_products(post_section["products"], current)
+        if isinstance(post_section, dict):
+            if merged is None:
+                merged = dict(post_section)
+            else:
+                for key, val in post_section.items():
+                    merged.setdefault(key, val)
 
         base = doc.get("_base")
         if not base:
-            return None
+            return merged
         base_name = str(base)
         if not base_name.endswith((".yaml", ".yml")):
             base_name += ".yaml"
         current = current.parent / base_name
-    logger.warning("_base chain from %s too deep; using defaults", yaml_file)
-    return None
+    logger.warning("_base chain from %s too deep", yaml_file)
+    return merged
+
+
+_ARCHIVE_FIELDS_ENV = "NOS_ARCHIVE_FIELDS"
+
+
+def resolve_archive_fields(env: Mapping[str, str]) -> bool:
+    """True when the run stages should normalize and stage field outputs.
+
+    Precedence: ``NOS_ARCHIVE_FIELDS`` env (yes/true/1 vs no/false/0) >
+    yaml ``post.archive_fields`` (via ``$OFS_CONFIG``, else the
+    registered descriptor's yaml under ``$HOMEnos``) > False.
+    Best-effort: never raises.
+    """
+    raw = env.get(_ARCHIVE_FIELDS_ENV, "").strip().lower()
+    if raw in ("yes", "true", "1"):
+        return True
+    if raw in ("no", "false", "0"):
+        return False
+
+    try:
+        homenos, yaml_path = _descriptor_yaml_hint(env)
+        yaml_file = _locate_yaml(env, homenos, yaml_path)
+        if yaml_file is None:
+            return False
+        post = _read_yaml_post_mapping(yaml_file)
+        if post is None:
+            return False
+        return bool(post.get("archive_fields", False))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("archive_fields resolution failed: %s", exc)
+        return False
+
+
+def _descriptor_yaml_hint(
+    env: Mapping[str, str],
+) -> "tuple[Optional[Path], Optional[Path]]":
+    """(homenos, yaml_path) from the registered descriptor for $OFS."""
+    homenos = env.get("HOMEnos")
+    ofs = env.get("OFS")
+    if not homenos or not ofs:
+        return None, None
+    try:
+        from ..registry import load_all_descriptors, lookup
+
+        load_all_descriptors()
+        desc = lookup(ofs)
+    except Exception:  # noqa: BLE001
+        return None, None
+    yaml_path = getattr(desc, "yaml_path", None)
+    if yaml_path is None:
+        return None, None
+    return Path(homenos), Path(yaml_path)
 
 
 def _parse_products(raw: object, src: Path) -> Optional[List[str]]:
@@ -179,5 +245,6 @@ __all__ = [
     "available_products",
     "get_product",
     "register",
+    "resolve_archive_fields",
     "resolve_product_names",
 ]

@@ -6,6 +6,7 @@ from .registry import (
     available_products,
     get_product,
     register,
+    resolve_archive_fields,
     resolve_product_names,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "available_products",
     "get_product",
     "register",
+    "resolve_archive_fields",
     "resolve_product_names",
     "write_outputs_manifest",
 ]
