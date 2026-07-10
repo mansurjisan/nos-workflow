@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, List, Optional
 
 from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
+from ..post.base import PostProduct, ProductContext, ProductResult
+from ..post.registry import get_product, register, resolve_product_names
 from ..registry import OFSDescriptor
 
 if TYPE_CHECKING:
@@ -119,21 +121,43 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
     nc_hour = _nowcast_base_hour(cyc, shell_env.get("LEN_NOWCAST"))
 
-    for phase in ("nowcast", "forecast"):
-        _process_phase(
-            phase=phase,
-            data=data,
-            comout=comout,
-            run_name=run_name,
-            cycle=cycle,
-            pdy=pdy,
-            cyc=cyc,
-            nc_hour=nc_hour,
-            prefix_nos=prefix_nos,
-            sta_in=sta_in,
-            combine_script=combine_script,
-            pgmout=pgmout,
-        )
+    ctx = ProductContext(
+        descriptor=descriptor,
+        shell_env=shell_env,
+        homenos=homenos,
+        fixofs=fixofs,
+        comout=comout,
+        data=data,
+        pdy=pdy,
+        cyc=cyc,
+        cycle=cycle,
+        run_name=run_name,
+        prefix_nos=prefix_nos,
+        nc_hour=nc_hour,
+        sta_in=sta_in,
+        combine_script=combine_script,
+        pgmout=pgmout,
+    )
+
+    results: List[ProductResult] = []
+    for name in resolve_product_names(
+        descriptor.framework,
+        shell_env,
+        homenos=homenos,
+        yaml_path=descriptor.yaml_path,
+    ):
+        product_cls = get_product(name)
+        if product_cls is None:
+            logger.warning(
+                "WARNING: unknown post product %r, skipping", name
+            )
+            results.append(
+                ProductResult(
+                    name=name, status="skipped", detail="unregistered product"
+                )
+            )
+            continue
+        results.append(_execute_product(product_cls(), ctx))
 
     _write_post_manifest(
         comout=comout,
@@ -144,23 +168,55 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         sta_in=sta_in,
     )
 
-    if _is_barotropic(shell_env):
-        _maybe_bias_correct(
-            descriptor=descriptor,
-            shell_env=shell_env,
-            homenos=homenos,
-            comout=comout,
-            run_name=run_name,
-            cycle=cycle,
-            pdy=pdy,
-            cyc=cyc,
-            nc_hour=nc_hour,
-            sta_in=sta_in,
-            pgmout=pgmout,
-        )
+    _write_post_outputs_manifest(
+        comout=comout,
+        run_name=run_name,
+        cyc=cyc,
+        pdy=pdy,
+        results=results,
+    )
 
     sl.info("post-processing completed")
     return 0
+
+
+def _execute_product(product: PostProduct, ctx: ProductContext) -> ProductResult:
+    """Run one product with isolation: unexpected exceptions warn and mark
+    the product failed so the remaining products still run;
+    ``StageFailedError`` stays fatal."""
+    t0 = time.monotonic()
+    try:
+        result = product.produce(ctx)
+    except StageFailedError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "WARNING: post product %s failed: %s", product.name, exc
+        )
+        result = ProductResult(
+            name=product.name, status="failed", detail=str(exc)
+        )
+    result.duration_s = time.monotonic() - t0
+    return result
+
+
+def _write_post_outputs_manifest(
+    *,
+    comout: Path,
+    run_name: str,
+    cyc: str,
+    pdy: str,
+    results: List[ProductResult],
+) -> None:
+    """Write the product-outcome manifest; never fails the stage."""
+    try:
+        from ..post.outputs_manifest import write_outputs_manifest
+
+        write_outputs_manifest(
+            comout=comout, run=run_name, cyc=cyc, pdy=pdy, results=results,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("outputs manifest write skipped: %s", exc)
 
 
 def _process_phase(
@@ -177,8 +233,12 @@ def _process_phase(
     sta_in: Path,
     combine_script: Path,
     pgmout: str,
-) -> None:
-    """Build the working dir for ``phase`` and run the combine script."""
+) -> Optional[Path]:
+    """Build the working dir for ``phase`` and run the combine script.
+
+    Returns the COMOUT path of the copied station NetCDF, or None when
+    the phase was skipped or produced nothing.
+    """
     logger.info("")
     logger.info("--- Processing %s ---", phase)
 
@@ -196,7 +256,7 @@ def _process_phase(
         logger.warning(
             "WARNING: %s not found, skipping %s", staout_1, phase
         )
-        return
+        return None
 
     work_post = data / f"post_{phase}"
     work_post.mkdir(parents=True, exist_ok=True)
@@ -233,17 +293,18 @@ def _process_phase(
             "WARNING: schism_combine_outputs.py failed for %s (rc=%d)",
             phase, rc,
         )
-        return
+        return None
 
     sta_nc = work_post / f"{prefix_nos}.t{cyc}z.{pdy}.stations.{phase}.nc"
     if sta_nc.is_file():
         target = comout / sta_nc.name
         _copy_preserve(sta_nc, target)
         logger.info("Created: %s", sta_nc.name)
-    else:
-        logger.warning(
-            "WARNING: Expected station NetCDF not found: %s", sta_nc
-        )
+        return target
+    logger.warning(
+        "WARNING: Expected station NetCDF not found: %s", sta_nc
+    )
+    return None
 
 
 def _write_post_manifest(
@@ -604,6 +665,69 @@ def _run_subprocess_appending(
     finally:
         if log_fh is not None:
             log_fh.close()
+
+
+@register
+class StationsNcProduct(PostProduct):
+    """Station-timeseries NetCDF per phase via ``schism_combine_outputs.py``.
+
+    Wraps the legacy per-phase flow (control file, station.lat.lon,
+    staout symlinks, combine subprocess, COMOUT copy) unchanged.
+    """
+
+    name = "stations_nc"
+
+    def produce(self, ctx: ProductContext) -> ProductResult:
+        outputs: List[str] = []
+        for phase in ("nowcast", "forecast"):
+            created = _process_phase(
+                phase=phase,
+                data=ctx.data,
+                comout=ctx.comout,
+                run_name=ctx.run_name,
+                cycle=ctx.cycle,
+                pdy=ctx.pdy,
+                cyc=ctx.cyc,
+                nc_hour=ctx.nc_hour,
+                prefix_nos=ctx.prefix_nos,
+                sta_in=ctx.sta_in,
+                combine_script=ctx.combine_script,
+                pgmout=ctx.pgmout,
+            )
+            if created is not None:
+                outputs.append(str(created))
+        return ProductResult(name=self.name, status="ok", outputs=outputs)
+
+
+@register
+class BiasCorrectProduct(PostProduct):
+    """Ensemble 2D->3D bias correction; no-op unless ``BAROTROPIC`` is set."""
+
+    name = "bias_correct"
+
+    def produce(self, ctx: ProductContext) -> ProductResult:
+        if not _is_barotropic(ctx.shell_env):
+            return ProductResult(
+                name=self.name, status="skipped", detail="BAROTROPIC not set",
+            )
+        _maybe_bias_correct(
+            descriptor=ctx.descriptor,
+            shell_env=ctx.shell_env,
+            homenos=ctx.homenos,
+            comout=ctx.comout,
+            run_name=ctx.run_name,
+            cycle=ctx.cycle,
+            pdy=ctx.pdy,
+            cyc=ctx.cyc,
+            nc_hour=ctx.nc_hour,
+            sta_in=ctx.sta_in,
+            pgmout=ctx.pgmout,
+        )
+        outputs: List[str] = []
+        coeff = ctx.comout / "bias_coefficients.json"
+        if coeff.is_file():
+            outputs.append(str(coeff))
+        return ProductResult(name=self.name, status="ok", outputs=outputs)
 
 
 __all__ = ["run"]
