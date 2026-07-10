@@ -7,7 +7,7 @@ import shutil
 from pathlib import Path
 
 from ...bash_compat import run_shell_function
-from . import combine_hotstart, mesh
+from . import combine_hotstart, mesh, normalize_fields
 from .context import SchismRunContext
 from .stage_files import _is_ufs
 
@@ -43,6 +43,13 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     if combine_rc != 0:
         logger.warning(
             "execute: combine_hotstart returned rc=%d (non-fatal)", combine_rc,
+        )
+
+    # OLDIO field normalization (no-op unless post.archive_fields is on).
+    fields_rc = normalize_fields.normalize_field_outputs(ctx, phase)
+    if fields_rc != 0:
+        logger.warning(
+            "execute: fields normalize returned rc=%d (non-fatal)", fields_rc,
         )
 
     archive_rc = _archive_restart(ctx, phase)

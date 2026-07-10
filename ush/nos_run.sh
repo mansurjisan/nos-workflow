@@ -158,4 +158,83 @@ _schism_run_combine_hotstart() {
     return ${rc}
 }
 
+# _schism_run_combine_fields <phase> - combine_output11(_MPI) wrapper for
+#   OLDIO per-rank field output (schout_<rank>_<stack>.nc). Combines every
+#   stack into global schout_<stack>.nc inside ${DATA}/outputs. No-op when
+#   the run is scribed (global out2d_* already present) or no per-rank
+#   files exist. Stays in shell for the same hpc-stack module-env reason
+#   as _schism_run_combine_hotstart.
+#   Required env: DATA; EXECnos / HOMEnos for exe resolution.
+_schism_run_combine_fields() {
+    local phase=${1:-nowcast}
+
+    cd ${DATA}/outputs || {
+        echo "_schism_run_combine_fields: missing ${DATA}/outputs"
+        return 2
+    }
+
+    if ls out2d_[0-9]*.nc >/dev/null 2>&1; then
+        echo "_schism_run_combine_fields: scribed outputs present; nothing to combine"
+        return 0
+    fi
+
+    # Stack range from rank 0's per-rank files: schout_000000_<stack>.nc
+    local _stacks=$(ls schout_000000_*.nc 2>/dev/null \
+        | sed 's/.*_\([0-9][0-9]*\)\.nc$/\1/' | sort -n)
+    if [ -z "${_stacks}" ]; then
+        echo "_schism_run_combine_fields: no per-rank schout files; nothing to combine"
+        return 0
+    fi
+    local _b=$(echo "${_stacks}" | head -1)
+    local _e=$(echo "${_stacks}" | tail -1)
+    local _n=$(echo "${_stacks}" | wc -l)
+
+    local MPI_EXE="" SERIAL_EXE=""
+    for _cand in \
+        "${EXECnos:-}/combine_output11_MPI" \
+        "${HOMEnos:-}/exec/combine_output11_MPI"; do
+        if [ -x "$_cand" ]; then MPI_EXE="$_cand"; break; fi
+    done
+    for _cand in \
+        "${EXECnos:-}/combine_output11" \
+        "${HOMEnos:-}/exec/combine_output11"; do
+        if [ -x "$_cand" ]; then SERIAL_EXE="$_cand"; break; fi
+    done
+    if [ -z "$MPI_EXE" ] && [ -z "$SERIAL_EXE" ]; then
+        echo "WARNING: combine_output11(_MPI) not found under EXECnos/HOMEnos; fields combine skipped"
+        return 3
+    fi
+
+    # Same hpc-stack LD_LIBRARY_PATH patch as the hotstart combine.
+    for _lib in \
+        /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+        /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+        /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+        /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
+        [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
+    done
+
+    echo "_schism_run_combine_fields: phase=${phase} stacks=${_b}..${_e} (${_n})"
+    local rc=1
+    if [ -n "$MPI_EXE" ]; then
+        echo "  mpiexec -n ${_n} ${MPI_EXE} -b ${_b} -e ${_e}"
+        mpiexec -n ${_n} ${MPI_EXE} -b ${_b} -e ${_e}
+        rc=$?
+        [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
+    fi
+    if [ $rc -ne 0 ] && [ -n "$SERIAL_EXE" ]; then
+        echo "  ${SERIAL_EXE} -b ${_b} -e ${_e} (serial)"
+        ${SERIAL_EXE} -b ${_b} -e ${_e}
+        rc=$?
+    fi
+
+    if [ $rc -eq 0 ] && [ -s "schout_${_e}.nc" ]; then
+        echo "_schism_run_combine_fields: combined schout_${_b}..${_e}.nc OK"
+    else
+        echo "WARNING: fields combine failed (rc=${rc}) or schout_${_e}.nc missing"
+        [ $rc -eq 0 ] && rc=4
+    fi
+    return ${rc}
+}
+
 # End of nos_run.sh
