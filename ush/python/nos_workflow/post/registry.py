@@ -131,6 +131,11 @@ def _read_yaml_post_products(yaml_file: Path) -> Optional[List[str]]:
         except Exception as exc:  # noqa: BLE001
             logger.warning("could not read %s: %s", current, exc)
             return None
+        if not isinstance(doc, dict):
+            logger.warning(
+                "%s: yaml root is not a mapping; ignoring", current
+            )
+            return None
 
         post_section = doc.get("post")
         if isinstance(post_section, dict) and "products" in post_section:

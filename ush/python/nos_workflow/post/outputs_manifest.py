@@ -3,8 +3,8 @@
 Companion to ``nos_workflow.inputs_manifest``: post writes
 ``{run}.t{cyc}z.{pdy}.outputs.post.json`` to $COMOUT recording every
 product that ran, its status, and the COMOUT files it created. Same
-ground rules as the inputs side -- filenames only, best-effort, never
-fails the stage.
+ground rules as the inputs side -- full file paths with no metadata
+(no checksums, sizes, or mtimes), best-effort, never fails the stage.
 """
 from __future__ import annotations
 

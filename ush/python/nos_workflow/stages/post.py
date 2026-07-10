@@ -187,6 +187,11 @@ def _execute_product(product: PostProduct, ctx: ProductContext) -> ProductResult
     t0 = time.monotonic()
     try:
         result = product.produce(ctx)
+        if not isinstance(result, ProductResult):
+            raise TypeError(
+                f"produce() returned {type(result).__name__}, "
+                "expected ProductResult"
+            )
     except StageFailedError:
         raise
     except Exception as exc:  # noqa: BLE001

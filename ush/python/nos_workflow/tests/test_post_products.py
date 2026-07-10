@@ -157,6 +157,17 @@ def test_resolve_yaml_malformed_falls_back_to_defaults(tmp_path):
     ]
 
 
+def test_resolve_yaml_non_mapping_root_falls_back(tmp_path):
+    """A YAML whose root is a list/scalar must not raise -- selection
+    falls back to defaults instead of failing the stage."""
+    yml = tmp_path / "sys.yaml"
+    yml.write_text("- just\n- a\n- list\n")
+    env = {"OFS_CONFIG": str(yml)}
+    assert resolve_product_names("comf", env) == [
+        "stations_nc", "bias_correct",
+    ]
+
+
 def test_resolve_descriptor_yaml_under_homenos(tmp_path):
     homenos = tmp_path / "home"
     rel = Path("parm/systems/secofs_ufs.yaml")
@@ -253,6 +264,36 @@ def test_failing_product_is_isolated(tmp_path, fake_env, caplog, registry_snapsh
     assert "kaboom" in by_name["boom"]["detail"]
     assert by_name["stations_nc"]["status"] == "ok"
     assert any("boom failed" in rec.getMessage() for rec in caplog.records)
+
+
+def test_product_returning_non_result_is_isolated(
+    tmp_path, fake_env, registry_snapshot
+):
+    """A product whose produce() returns something other than a
+    ProductResult is marked failed, not allowed to crash the driver."""
+
+    @register
+    class NoneProduct(PostProduct):
+        name = "returns_none"
+
+        def produce(self, ctx: ProductContext):
+            return None
+
+    env = _post_env(tmp_path)
+    env["NOS_POST_PRODUCTS"] = "returns_none,stations_nc"
+    comout = Path(env["COMOUT"])
+    _seed_staout(comout, env["RUN"], env["cycle"], "nowcast")
+    _seed_staout(comout, env["RUN"], env["cycle"], "forecast")
+
+    rc, seen = _run_post(env, fake_env)
+    assert rc == 0
+    assert len(seen) == 2  # stations_nc still ran
+
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    assert by_name["returns_none"]["status"] == "failed"
+    assert "ProductResult" in by_name["returns_none"]["detail"]
+    assert by_name["stations_nc"]["status"] == "ok"
 
 
 def test_unknown_product_name_warns_and_skips(tmp_path, fake_env, caplog):
