@@ -257,6 +257,12 @@ resources:
   memory_gb: 1500
   walltime_hours: 2
 
+# Post-stage products (nos_workflow.post registry; override with NOS_POST_PRODUCTS)
+post:
+  products:
+    - stations_nc
+    - bias_correct
+
 # Workflow stages
 stages:
   - prep

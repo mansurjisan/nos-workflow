@@ -339,6 +339,12 @@ resources:
   walltime_nowcast: "01:30:00"
   walltime_forecast: "05:30:00"
 
+# Post-stage products (nos_workflow.post registry; override with NOS_POST_PRODUCTS)
+post:
+  products:
+    - stations_nc
+    - bias_correct
+
 # Workflow stages
 stages:
   - prep
