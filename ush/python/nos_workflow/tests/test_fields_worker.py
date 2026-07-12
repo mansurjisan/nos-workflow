@@ -123,6 +123,43 @@ def test_combined_schout_is_split_then_published(tmp_path):
     assert (staging / "out2d_1.nc").is_file()
 
 
+def test_multi_stack_combined_schout_labels(tmp_path):
+    """Two combined stacks split and publish with per-stack hour ranges."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_combined_schout(staging / "schout_1.nc", hours=[1, 2, 3])
+    _write_combined_schout(staging / "schout_2.nc", hours=[4, 5, 6])
+
+    result = _run_worker(staging, comout, "forecast", tmp_path)
+
+    names = sorted(Path(p).name for p in result["created"])
+    assert names == [
+        "secofs.t00z.20260710.fields.out2d.f001_003.nc",
+        "secofs.t00z.20260710.fields.out2d.f004_006.nc",
+    ]
+
+
+def test_rerun_resplits_changed_schout(tmp_path):
+    """A rerun after the combined schout changed must republish fresh
+    values, not reuse the stale split files from the prior run."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_combined_schout(staging / "schout_1.nc", hours=[1, 2])
+    first = _run_worker(staging, comout, "nowcast", tmp_path)
+
+    # Re-forecast: same stack index, different content.
+    _write_combined_schout(staging / "schout_1.nc", hours=[1, 2, 3])
+    second = _run_worker(staging, comout, "nowcast", tmp_path)
+
+    names = [Path(p).name for p in second["created"]]
+    assert "secofs.t00z.20260710.fields.out2d.n001_003.nc" in names
+    assert first["created"] != second["created"]
+
+
 def test_missing_staging_dir_fails(tmp_path):
     rc = fields.main([
         "--staging", str(tmp_path / "nope"),

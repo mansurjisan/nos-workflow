@@ -56,13 +56,22 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
             copied += 1
 
     if resolve_archive_fields(os.environ):
-        field_files = _global_field_files(source)
-        for src in field_files:
-            shutil.copy2(src, target / src.name)
-        copied += len(field_files)
+        # Field staging must never fail the model job -- fields are
+        # products; a failed copy (disk, vanished file) warns and moves on.
+        staged = 0
+        for src in _global_field_files(source):
+            try:
+                shutil.copy2(src, target / src.name)
+                staged += 1
+            except OSError as exc:
+                logger.warning(
+                    "archive_outputs: field staging failed for %s: %s",
+                    src.name, exc,
+                )
+        copied += staged
         logger.info(
             "archive_outputs: staged %d global field file(s) to %s",
-            len(field_files), target,
+            staged, target,
         )
 
     logger.info(

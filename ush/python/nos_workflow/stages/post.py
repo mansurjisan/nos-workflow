@@ -756,6 +756,7 @@ class FieldsNcProduct(PostProduct):
     def produce(self, ctx: ProductContext) -> ProductResult:
         outputs: List[str] = []
         staged_any = False
+        failed_phases: List[str] = []
         for phase, dir_suffix in (
             ("nowcast", "restart_outputs"),
             ("forecast", "forecast_outputs"),
@@ -791,6 +792,7 @@ class FieldsNcProduct(PostProduct):
                 logger.warning(
                     "WARNING: fields worker failed for %s (rc=%d)", phase, rc,
                 )
+                failed_phases.append(phase)
                 continue
             outputs.extend(_read_fields_result(result_json))
 
@@ -799,6 +801,14 @@ class FieldsNcProduct(PostProduct):
                 name=self.name,
                 status="skipped",
                 detail="no field stacks staged",
+            )
+        if failed_phases:
+            # Non-fatal to the stage, but surfaced for monitoring.
+            return ProductResult(
+                name=self.name,
+                status="failed",
+                outputs=outputs,
+                detail="worker failed for: " + ", ".join(failed_phases),
             )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 

@@ -23,7 +23,9 @@ from .context import SchismRunContext
 
 logger = logging.getLogger(__name__)
 
-_PER_RANK_SCHOUT_RE = re.compile(r"schout_\d+_\d+\.nc$")
+# SCHISM writes per-rank files with a fixed 6-digit rank (i6.6), and the
+# shell combine wrapper globs schout_000000_* -- keep the two consistent.
+_PER_RANK_SCHOUT_RE = re.compile(r"schout_\d{6}_\d+\.nc$")
 
 
 def normalize_field_outputs(ctx: SchismRunContext, phase: str) -> int:

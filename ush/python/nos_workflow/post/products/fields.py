@@ -64,7 +64,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     os.chdir(staging)
 
-    if not _has_split_stacks(staging) and _has_combined_schout(staging):
+    # Always re-split when combined schout is present: the converter
+    # overwrites the split files, so a rerun after a re-forecast never
+    # republishes stale splits left from a prior run.
+    if _has_combined_schout(staging):
         rc = _split_combined_schout(args.combine_script)
         if rc != 0:
             return rc
@@ -108,12 +111,6 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)
-
-
-def _has_split_stacks(staging: Path) -> bool:
-    return any(
-        _stack_files(staging, var) for var in _VAR_FILE_PREFIXES
-    )
 
 
 def _has_combined_schout(staging: Path) -> bool:

@@ -511,10 +511,11 @@ def test_fields_nc_worker_failure_warns_not_fatal(tmp_path, fake_env, caplog):
     assert rc == 0
     data = _load_outputs_manifest(env)
     by_name = {p["name"]: p for p in data["products"]}
-    # Worker failed for the only staged phase -> ok with zero outputs
-    # (phase-level failures warn and continue, same as stations).
-    assert by_name["fields_nc"]["status"] == "ok"
+    # Worker failure is non-fatal to the stage but surfaced in the
+    # product status for monitoring.
+    assert by_name["fields_nc"]["status"] == "failed"
     assert by_name["fields_nc"]["count"] == 0
+    assert "nowcast" in by_name["fields_nc"]["detail"]
     assert any(
         "fields worker failed" in rec.getMessage() for rec in caplog.records
     )

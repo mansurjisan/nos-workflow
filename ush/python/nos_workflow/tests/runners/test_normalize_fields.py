@@ -107,3 +107,6 @@ def test_combined_schout_alone_is_noop(tmp_path):
 def test_per_rank_detection():
     assert normalize_fields._PER_RANK_SCHOUT_RE.match("schout_000000_12.nc")
     assert not normalize_fields._PER_RANK_SCHOUT_RE.match("schout_1.nc")
+    # SCHISM ranks are fixed 6-digit (i6.6); other widths must not match,
+    # keeping the Python guard consistent with the shell's rank-0 glob.
+    assert not normalize_fields._PER_RANK_SCHOUT_RE.match("schout_00_1.nc")
