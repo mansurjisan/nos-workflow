@@ -33,8 +33,19 @@ def _write_split_stack(
         vv[:] = 0.5
 
 
-def _write_combined_schout(path: Path, hours: "list[int]", n_nodes: int = 4) -> None:
-    """Minimal combined OLDIO stack: elev + time, as combine_output11 emits."""
+def _write_combined_schout(
+    path: Path,
+    hours: "list[int]",
+    n_nodes: int = 4,
+    with_vectors: bool = False,
+    nvrt: int = 3,
+) -> None:
+    """Minimal combined OLDIO stack: elev + time, as combine_output11 emits.
+
+    ``with_vectors`` adds the OLDIO vector/3D variables (hvel,
+    wind_speed, zcor, temp) in the combiner's (time, layers, node)
+    layout with a trailing size-2 component axis for the vectors.
+    """
     with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
         ds.createDimension("time", None)
         ds.createDimension("nSCHISM_hgrid_node", n_nodes)
@@ -43,6 +54,31 @@ def _write_combined_schout(path: Path, hours: "list[int]", n_nodes: int = 4) -> 
         tv[:] = [h * 3600.0 for h in hours]
         ev = ds.createVariable("elev", "f4", ("time", "nSCHISM_hgrid_node"))
         ev[:] = 0.25
+        if with_vectors:
+            ds.createDimension("nSCHISM_vgrid_layers", nvrt)
+            ds.createDimension("two", 2)
+            zc = ds.createVariable(
+                "zcor", "f4",
+                ("time", "nSCHISM_vgrid_layers", "nSCHISM_hgrid_node"),
+            )
+            zc[:] = -1.5
+            tp = ds.createVariable(
+                "temp", "f4",
+                ("time", "nSCHISM_vgrid_layers", "nSCHISM_hgrid_node"),
+            )
+            tp[:] = 20.0
+            hv = ds.createVariable(
+                "hvel", "f4",
+                ("time", "nSCHISM_vgrid_layers", "nSCHISM_hgrid_node", "two"),
+            )
+            hv[..., 0] = 0.5
+            hv[..., 1] = -0.5
+            ws = ds.createVariable(
+                "wind_speed", "f4",
+                ("time", "nSCHISM_hgrid_node", "two"),
+            )
+            ws[..., 0] = 3.0
+            ws[..., 1] = -3.0
 
 
 def _run_worker(staging: Path, comout: Path, phase: str, tmp_path: Path) -> dict:
@@ -121,6 +157,41 @@ def test_combined_schout_is_split_then_published(tmp_path):
     assert "secofs.t00z.20260710.fields.out2d.f001_003.nc" in names
     # The converter dropped the split file into the staging dir.
     assert (staging / "out2d_1.nc").is_file()
+
+
+def test_combined_schout_vector_variables_split(tmp_path):
+    """OLDIO vector/3D variables (hvel, wind_speed, zcor, temp) publish
+    as the scribe-named families instead of being silently dropped."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_combined_schout(
+        staging / "schout_1.nc", hours=[1, 2, 3], with_vectors=True
+    )
+
+    result = _run_worker(staging, comout, "nowcast", tmp_path)
+
+    names = sorted(Path(p).name for p in result["created"])
+    stem = "secofs.t00z.20260710.fields"
+    assert f"{stem}.horizontalVelX.n001_003.nc" in names
+    assert f"{stem}.horizontalVelY.n001_003.nc" in names
+    assert f"{stem}.zCoordinates.n001_003.nc" in names
+    assert f"{stem}.temperature.n001_003.nc" in names
+
+    import numpy as np
+    with netCDF4.Dataset(
+        comout / f"{stem}.horizontalVelX.n001_003.nc"
+    ) as ds:
+        assert np.allclose(ds["horizontalVelX"][:], 0.5)
+    with netCDF4.Dataset(
+        comout / f"{stem}.horizontalVelY.n001_003.nc"
+    ) as ds:
+        assert np.allclose(ds["horizontalVelY"][:], -0.5)
+    # Wind components land inside the out2d product.
+    with netCDF4.Dataset(comout / f"{stem}.out2d.n001_003.nc") as ds:
+        assert np.allclose(ds["windSpeedX"][:], 3.0)
+        assert np.allclose(ds["windSpeedY"][:], -3.0)
 
 
 def test_multi_stack_combined_schout_labels(tmp_path):

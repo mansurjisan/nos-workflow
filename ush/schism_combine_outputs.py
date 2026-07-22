@@ -509,9 +509,54 @@ def convert_schout_to_split():
     VAR_3D = {
         'temp': ('temperature', 'temperature'),
         'salt': ('salinity', 'salinity'),
+        'zcor': ('zCoordinates', 'zCoordinates'),
         'horizontalVelX': ('horizontalVelX', 'horizontalVelX'),
         'horizontalVelY': ('horizontalVelY', 'horizontalVelY'),
     }
+    # OLDIO combined schout stores vectors with a size-2 component axis:
+    # hvel (3D velocity) and wind_speed (2D wind). Scribe-shaped output
+    # wants per-component files/vars instead.
+    VECTOR_3D = {
+        'hvel': ('horizontalVelX', 'horizontalVelY'),
+    }
+    VECTOR_2D = {
+        'wind_speed': ('windSpeedX', 'windSpeedY'),
+    }
+    # Variables that are consumed elsewhere or deliberately not split.
+    KNOWN_STATIC = {
+        'time', 'elev', 'elevation', 'depth',
+        'SCHISM_hgrid_node_x', 'SCHISM_hgrid_node_y',
+        'SCHISM_hgrid', 'SCHISM_hgrid_face_nodes', 'SCHISM_hgrid_edge_nodes',
+        'SCHISM_hgrid_face_x', 'SCHISM_hgrid_face_y',
+        'SCHISM_hgrid_edge_x', 'SCHISM_hgrid_edge_y',
+        'node_bottom_index', 'ele_bottom_index', 'edge_bottom_index',
+        'sigma', 'Cs', 'coordinate_system_flag', 'minimum_depth',
+        'sigma_h_c', 'sigma_theta_b', 'sigma_theta_f', 'sigma_maxdepth',
+        'dry_value_flag', 'wetdry_node', 'wetdry_elem', 'wetdry_side',
+    }
+
+    def _component_axis(shape):
+        """Index of the size-2 vector-component axis, or None."""
+        for ax, size in enumerate(shape):
+            if size == 2:
+                return ax
+        return None
+
+    def _dims_for(shape, n_nodes, n_vert):
+        """Map an array shape to canonical split-file dim names.
+
+        Axis 0 is always time; remaining axes are matched by size.
+        Returns None when an axis can't be identified.
+        """
+        dims = ['time']
+        for size in shape[1:]:
+            if size == n_nodes:
+                dims.append('nSCHISM_hgrid_node')
+            elif n_vert > 0 and size == n_vert:
+                dims.append('nSCHISM_vgrid_layers')
+            else:
+                return None
+        return tuple(dims)
 
     for i in range(1, 999):
         schout_file = f"schout_{i}.nc"
@@ -618,6 +663,63 @@ def convert_schout_to_split():
                 var[:] = ds.variables[src_name][:]
 
             ds_split.close()
+
+        # --- Vector variables: split the size-2 component axis ---
+        import numpy as _np
+
+        for src_name, comps in VECTOR_3D.items():
+            if src_name not in ds.variables:
+                continue
+            arr = ds.variables[src_name][:]
+            ax = _component_axis(arr.shape)
+            if ax is None or ax == 0:
+                print(f"    WARNING: {src_name}: no component axis, skipped")
+                continue
+            for ci, comp_name in enumerate(comps):
+                comp = _np.take(arr, ci, axis=ax)
+                dims = _dims_for(comp.shape, n_nodes, n_vert)
+                if dims is None:
+                    print(f"    WARNING: {src_name}[{comp_name}]: "
+                          f"unrecognized shape {comp.shape}, skipped")
+                    break
+                ds_split = Dataset(f"{comp_name}_{i}.nc", 'w',
+                                   format='NETCDF4')
+                ds_split.createDimension('time', None)
+                ds_split.createDimension('nSCHISM_hgrid_node', n_nodes)
+                if 'nSCHISM_vgrid_layers' in dims:
+                    ds_split.createDimension('nSCHISM_vgrid_layers', n_vert)
+                tv = ds_split.createVariable('time', 'f8', ('time',))
+                tv[:] = time_data
+                var = ds_split.createVariable(comp_name, 'f4', dims)
+                var[:] = comp
+                ds_split.close()
+
+        for src_name, comps in VECTOR_2D.items():
+            if src_name not in ds.variables:
+                continue
+            arr = ds.variables[src_name][:]
+            ax = _component_axis(arr.shape)
+            if ax is None or ax == 0:
+                print(f"    WARNING: {src_name}: no component axis, skipped")
+                continue
+            ds_out2 = Dataset(out2d_file, 'a')
+            for ci, comp_name in enumerate(comps):
+                comp = _np.take(arr, ci, axis=ax)
+                dims = _dims_for(comp.shape, n_nodes, 0)
+                if dims != ('time', 'nSCHISM_hgrid_node'):
+                    print(f"    WARNING: {src_name}[{comp_name}]: "
+                          f"unrecognized shape {comp.shape}, skipped")
+                    break
+                wv = ds_out2.createVariable(comp_name, 'f4', dims)
+                wv[:] = comp
+            ds_out2.close()
+
+        # Anything time-varying we didn't split gets named, never lost silently.
+        handled = (set(VAR_2D) | set(VAR_3D) | set(VECTOR_3D)
+                   | set(VECTOR_2D) | KNOWN_STATIC)
+        unmapped = [v for v in schout_vars if v not in handled]
+        if unmapped:
+            print(f"    NOTE: unmapped schout variables (not split): {unmapped}")
 
         ds.close()
         print(f"    -> {out2d_file} + 3D split files created")
