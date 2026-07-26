@@ -27,7 +27,11 @@ PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
 PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs_standalone"
 VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
 
-for stage in prep nowcast forecast; do
+# STAGES is overridable so a rerun can skip completed legs, e.g.
+#   STAGES="post" ./launch_stofs_standalone.sh 20260722 00
+STAGES="${STAGES:-prep nowcast forecast post}"
+
+for stage in ${STAGES}; do
   if [ ! -f "${PBSDIR}/jnos_${stage}_00.pbs" ]; then
     echo "ERROR: missing ${PBSDIR}/jnos_${stage}_00.pbs -- is the branch checked out and pulled?" >&2
     exit 1
@@ -39,23 +43,26 @@ echo "  PDY=${PDY}  CYC=${CYC}"
 echo "  PKG=${PKG}"
 echo "=============================================="
 
-# 1. prep
-PREP=$(qsub -v "${VARS}" "${PBSDIR}/jnos_prep_00.pbs")
-echo "prep     : ${PREP}"
-
-# 2. nowcast -- runs only if prep exits 0
-NOWCAST=$(qsub -W depend=afterok:"${PREP}" -v "${VARS}" "${PBSDIR}/jnos_nowcast_00.pbs")
-echo "nowcast  : ${NOWCAST}   (afterok:${PREP})"
-
-# 3. forecast -- runs only if nowcast exits 0
-FORECAST=$(qsub -W depend=afterok:"${NOWCAST}" -v "${VARS}" "${PBSDIR}/jnos_forecast_00.pbs")
-echo "forecast : ${FORECAST}   (afterok:${NOWCAST})"
+# Submit the requested stages in order, each gated on the previous one's
+# success. A subset works too -- STAGES="post" reruns just post against
+# already-archived outputs, with no dependency to wait on.
+DEP=""
+for stage in ${STAGES}; do
+  if [ -n "${DEP}" ]; then
+    JID=$(qsub -W depend=afterok:"${DEP}" -v "${VARS}" "${PBSDIR}/jnos_${stage}_00.pbs")
+    printf '%-9s: %s   (afterok:%s)\n' "${stage}" "${JID}" "${DEP}"
+  else
+    JID=$(qsub -v "${VARS}" "${PBSDIR}/jnos_${stage}_00.pbs")
+    printf '%-9s: %s\n' "${stage}" "${JID}"
+  fi
+  DEP="${JID}"
+done
 
 cat <<EOM
 
-Chain submitted (prep -> nowcast -> forecast, gated on afterok).
+Chain submitted (${STAGES}), each gated on afterok of the previous.
   Monitor : qstat -u ${LOGNAME}
-  Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_standalone_{prep,nowcast,forecast}_00.<jobid>.{out,err}
+  Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_standalone_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
   COMOUT  : /lfs/h1/nos/ptmp/${LOGNAME}/com/nos/stofs_3d_atl_ufs.${PDY}
 
 If prep fails, the downstream jobs stay queued with an unsatisfied dependency
