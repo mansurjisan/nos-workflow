@@ -14,6 +14,7 @@ from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
 from ..post.naming import stations_nc_name
 from ..post.registry import get_product, register, resolve_product_names
+from ..post.worker_base import NosUtilsProduct, fix_file, has_field_stacks, has_staout
 from ..registry import OFSDescriptor
 
 if TYPE_CHECKING:
@@ -730,6 +731,16 @@ def _has_staged_field_stacks(staging: Path) -> bool:
     )
 
 
+def _product_base_date(ctx) -> str:
+    """Time-units base for nos-utils writers: the run origin.
+
+    Products stamp ``seconds since <base_date>``; the model clock starts
+    at the nowcast origin (cycle - LEN_NOWCAST), which is what the
+    staged stacks' own time axes are relative to.
+    """
+    return f"{ctx.pdy[:4]}-{ctx.pdy[4:6]}-{ctx.pdy[6:8]} {ctx.nc_hour}:00"
+
+
 def _len_nowcast_hours(env) -> str:
     """LEN_NOWCAST as a string for the fields worker (default 6 h)."""
     raw = env.get("LEN_NOWCAST", "")
@@ -821,6 +832,31 @@ class FieldsNcProduct(PostProduct):
                 detail="worker failed for: " + ", ".join(failed_phases),
             )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
+
+
+@register
+class MaxeleProduct(NosUtilsProduct):
+    """Maximum water level over the forecast window (autoval product).
+
+    Ops reduces the forecast stacks only, so this runs on the forecast
+    phase alone and passes the ops-hardcoded time window.
+    """
+
+    name = "maxele"
+    worker = "nos_workflow.post.products.maxele"
+    phases = ("forecast",)
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--base-date", _product_base_date(ctx),
+        ]
 
 
 @register
