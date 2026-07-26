@@ -187,9 +187,11 @@ def _phase_start_hours(
             earliest = h0 if earliest is None else min(earliest, h0)
     if earliest is None:
         return 0.0
-    # Tolerance of half a nowcast: comfortably separates "restarted near
-    # zero" from "continued past the nowcast".
-    return nowcast_hours if earliest >= nowcast_hours * 0.5 else 0.0
+    # A continued clock places the first forecast record AFTER the nowcast
+    # ends, so require the earliest record to reach the nowcast length.
+    # A looser threshold (e.g. half) admits false positives that would push
+    # labels negative -- the guard below is the backstop, this is the rule.
+    return nowcast_hours if earliest >= nowcast_hours else 0.0
 
 
 def _hour_range(
@@ -214,6 +216,16 @@ def _hour_range(
             return None
         h0 = int(round(float(t[0]) / 3600.0 - phase_start_hours))
         h1 = int(round(float(t[-1]) / 3600.0 - phase_start_hours))
+    if h0 < 0 or h1 < 0:
+        # Subtracting the offset should never push a label negative; if it
+        # does, the continued-clock detection was wrong for these inputs.
+        # Fall back to the raw axis rather than emitting a name like
+        # "f-02_000", which formats badly and reads as corruption.
+        print(
+            f"fields: {src.name}: offset {phase_start_hours:g} h would give a "
+            f"negative label; using the raw time axis instead"
+        )
+        return _hour_range(Dataset, src, 0.0)
     return h0, h1
 
 

@@ -860,6 +860,102 @@ class MaxeleProduct(NosUtilsProduct):
 
 
 @register
+class PointsCwlProduct(NosUtilsProduct):
+    """Ops-style station timeseries from the staged staout files.
+
+    Needs the ops staout-nc metadata pair in $FIXofs; a system without
+    it (SECOFS has none) skips cleanly. Fix names are tried under both
+    PREFIXNOS and the ops system prefix, since the variant suffix is
+    ours (``stofs_3d_atl_ufs`` -> ``stofs_3d_atl_staout_nc.json``).
+    """
+
+    name = "points_cwl"
+    worker = "nos_workflow.post.products.points_cwl"
+
+    def worker_args(self, ctx, phase, staging, work):
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        var_defs = fix_file(ctx, "staout_nc.json", f"{ops}_staout_nc.json")
+        meta = fix_file(ctx, "staout_nc.csv", f"{ops}_staout_nc.csv")
+        if not has_staout(staging) or var_defs is None or meta is None:
+            return None
+        args = [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx),
+            "--var-defs", str(var_defs),
+            "--station-meta", str(meta),
+        ]
+        # The JSON labels zeta NAVD88, which is true only after the ops
+        # ncap2 datum shift, so apply it whenever its .nco is staged.
+        nco = fix_file(
+            ctx, "sta_cwl_xgeoid_to_navd.nco",
+            f"{ops}_sta_cwl_xgeoid_to_navd.nco",
+        )
+        if nco is not None:
+            args += ["--datum-offsets", str(nco)]
+        return args
+
+
+@register
+class Slab2dProduct(NosUtilsProduct):
+    """2D slabs (surface/bottom/fixed-depth) per staged output stack.
+
+    Ops extracts a ``field2d`` per output stack of the run, so both
+    phases run here; the worker skips any stack index missing one of the
+    six families it needs.
+    """
+
+    name = "slab2d"
+    worker = "nos_workflow.post.products.slab2d"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx),
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+        ]
+
+
+@register
+class GeopkgProduct(NosUtilsProduct):
+    """Per-timestep disturbance GeoPackages for the nowCOAST feed.
+
+    Needs only the out2d stacks. The contour/geometry stack
+    (matplotlib/shapely/geopandas) is optional at runtime, so a worker
+    that wrote nothing reads as skipped rather than failed.
+    """
+
+    name = "geopkg"
+    worker = "nos_workflow.post.products.geopkg"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+        ]
+
+
+
+@register
 class BiasCorrectProduct(PostProduct):
     """Ensemble 2D->3D bias correction; no-op unless ``BAROTROPIC`` is set."""
 

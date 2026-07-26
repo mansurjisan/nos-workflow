@@ -1,0 +1,450 @@
+"""Tests for the points_cwl product (worker + stage registration).
+
+Fixtures are synthetic but reproduce the real fix-file layout: the
+staout-nc JSON with its ``stardard_name`` typo key, and the ';'-separated
+station CSV whose ``lat``/``lon`` headers are swapped relative to its data
+(the writer reads by header name, so ops ``x`` carries latitudes -- that
+quirk is asserted here, not corrected).
+"""
+from __future__ import annotations
+
+import importlib
+import json
+import sys
+from pathlib import Path
+from unittest.mock import patch
+
+import pytest
+
+from nos_workflow.post.base import ProductContext
+from nos_workflow.post.naming import points_cwl_name
+from nos_workflow.post.registry import get_product
+from nos_workflow.post.products import points_cwl
+from nos_workflow.stages import post as post_stage
+
+
+def _prefer_in_tree_nos_utils() -> None:
+    """Import nos-utils from the pinned submodule when the installed copy
+    predates ``nos_utils.post``.
+
+    Development happens in git worktrees, where an editable install of
+    the main checkout shadows the worktree's own (newer) submodule.
+    """
+    try:
+        import nos_utils.post  # noqa: F401
+        return
+    except ImportError:
+        pass
+    submodule = Path(__file__).resolve().parents[2] / "nos-utils"
+    if not (submodule / "nos_utils" / "post").is_dir():
+        return
+    for name in [m for m in sys.modules if m.split(".")[0] == "nos_utils"]:
+        del sys.modules[name]
+    sys.path.insert(0, str(submodule))
+    importlib.invalidate_caches()
+
+
+def _have(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except ImportError:
+        return False
+
+
+_prefer_in_tree_nos_utils()
+
+needs_writer = pytest.mark.skipif(
+    not all(_have(m) for m in ("nos_utils.post", "scipy", "netCDF4")),
+    reason="nos_utils.post / scipy / netCDF4 unavailable",
+)
+
+# Ops ATL variable set, in fix-file order (elev first defines the axis).
+VAR_DEFS = {
+    "elev": {
+        "name": "zeta",
+        "long_name": "water surface elevation above navd88",
+        "stardard_name": "sea_surface_height_above_navd88",
+        "units": "m",
+        "staout_fname": "staout_1",
+    },
+    "temp": {
+        "name": "temperature",
+        "long_name": "temperature at water surface",
+        "stardard_name": "sea_surface_temperature",
+        "units": "degree_C",
+        "staout_fname": "staout_5",
+    },
+    "salt": {
+        "name": "salinity",
+        "long_name": "salinity at water surface",
+        "stardard_name": "sea_surface_salinity",
+        "units": "psu",
+        "staout_fname": "staout_6",
+    },
+    "uvel": {
+        "name": "u",
+        "long_name": "u component of surface velocity",
+        "stardard_name": "eastward_surface_velocity",
+        "units": "meters s-1",
+        "staout_fname": "staout_7",
+    },
+    "vvel": {
+        "name": "v",
+        "long_name": "v component of surface velocity",
+        "stardard_name": "northward_surface_velocity",
+        "units": "meters s-1",
+        "staout_fname": "staout_8",
+    },
+}
+
+STAOUT_INDICES = (1, 5, 6, 7, 8)
+TIMES = (0.0, 360.0, 720.0, 1080.0)
+NSTATION = 3
+# name, lon, lat -- as the data columns are actually ordered.
+STATIONS = (
+    ("PSBM1 SOUS41 8410140 ME Eastport", -66.9829080647, 44.9046093476),
+    ("CASM1 SOUS41 8418150 ME Portland", -70.2441759693, 43.6580707255),
+    ("BHBM3 SOUS41 8443970 MA Boston", -71.0502859522, 42.3539103827),
+)
+DATUM_CONSTANTS = (-0.30516, -0.32039, 0.00371)
+
+
+def _value(idx: int, station: int, t: float) -> float:
+    """Distinct, linear-in-time value so interpolation is exact."""
+    return 100.0 * idx + 10.0 * station + t / 360.0
+
+
+def _write_staout(staging: Path, idx: int) -> None:
+    lines = [
+        " ".join(
+            [f"{t:.1f}"]
+            + [f"{_value(idx, s, t):.6f}" for s in range(NSTATION)]
+        )
+        for t in TIMES
+    ]
+    (staging / f"staout_{idx}").write_text("\n".join(lines) + "\n")
+
+
+def _stage_staout(staging: Path, indices=STAOUT_INDICES) -> Path:
+    staging.mkdir(parents=True, exist_ok=True)
+    for idx in indices:
+        _write_staout(staging, idx)
+    return staging
+
+
+def _write_fix_pair(fixofs: Path, stem: str = "stofs_3d_atl") -> None:
+    """The ops staout-nc JSON/CSV pair under their real ATL names."""
+    fixofs.mkdir(parents=True, exist_ok=True)
+    (fixofs / f"{stem}_staout_nc.json").write_text(json.dumps(VAR_DEFS))
+    rows = [";station_info;lat;lon"] + [
+        f"{i};{name};{lon};{lat}"
+        for i, (name, lon, lat) in enumerate(STATIONS)
+    ]
+    (fixofs / f"{stem}_staout_nc.csv").write_text("\n".join(rows) + "\n")
+
+
+def _write_nco(path: Path, constants=DATUM_CONSTANTS) -> Path:
+    path.write_text(
+        "\n".join(
+            f"zeta(:,{i + 1})=zeta(:,{i + 1})-float({c});"
+            for i, c in enumerate(constants)
+        )
+        + "\n"
+    )
+    return path
+
+
+def _run_worker(staging: Path, comout: Path, tmp_path: Path, **extra) -> dict:
+    fixofs = tmp_path / "fix"
+    _write_fix_pair(fixofs)
+    result_json = tmp_path / "result.json"
+    argv = [
+        "--staging", str(staging),
+        "--comout", str(comout),
+        "--prefix", "stofs_3d_atl_ufs",
+        "--cyc", "12",
+        "--pdy", "20260722",
+        "--phase", "nowcast",
+        "--base-date", "2026-07-22 06:00",
+        "--var-defs", str(fixofs / "stofs_3d_atl_staout_nc.json"),
+        "--station-meta", str(fixofs / "stofs_3d_atl_staout_nc.csv"),
+        "--result-json", str(result_json),
+    ]
+    for flag, value in extra.items():
+        argv += [f"--{flag.replace('_', '-')}", str(value)]
+    rc = points_cwl.main(argv)
+    assert rc == 0
+    return json.loads(result_json.read_text())
+
+
+# ---------------------------------------------------------------------------
+# Naming / registration
+# ---------------------------------------------------------------------------
+
+
+def test_canonical_name_carries_stem_and_phase():
+    assert points_cwl_name(
+        "stofs_3d_atl_ufs", "12", "20260722", "forecast"
+    ) == "stofs_3d_atl_ufs.t12z.20260722.points.cwl.forecast.nc"
+
+
+def test_product_is_registered_for_both_phases():
+    cls = get_product("points_cwl")
+    assert cls is post_stage.PointsCwlProduct
+    assert cls.worker == "nos_workflow.post.products.points_cwl"
+    assert tuple(cls.phases) == ("nowcast", "forecast")
+
+
+# ---------------------------------------------------------------------------
+# Worker
+# ---------------------------------------------------------------------------
+
+
+@needs_writer
+def test_publishes_canonical_nc_with_writer_values(tmp_path):
+    import netCDF4
+    import numpy as np
+
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    result = _run_worker(_stage_staout(tmp_path / "staging"), comout, tmp_path)
+
+    out = comout / "stofs_3d_atl_ufs.t12z.20260722.points.cwl.nowcast.nc"
+    assert result["created"] == [str(out)]
+    assert out.is_file()
+
+    with netCDF4.Dataset(out) as ds:
+        assert ds.dimensions["station"].size == NSTATION
+        assert ds.dimensions["namelen"].size == 50
+        # 6-minute axis from the first sample to the last staout time.
+        assert list(np.asarray(ds["time"][:])) == [360.0, 720.0, 1080.0]
+        assert ds["time"].units == "seconds since 2026-07-22 06:00"
+        assert sorted(
+            v for v in ds.variables
+            if v not in ("time", "station_name", "x", "y")
+        ) == ["salinity", "temperature", "u", "v", "zeta"]
+
+        for var, idx in (
+            ("zeta", 1), ("temperature", 5), ("salinity", 6),
+            ("u", 7), ("v", 8),
+        ):
+            expected = np.array([
+                [_value(idx, s, t) for s in range(NSTATION)]
+                for t in (360.0, 720.0, 1080.0)
+            ])
+            assert np.asarray(ds[var][:]) == pytest.approx(expected)
+
+        assert ds["zeta"].standard_name == "sea_surface_height_above_navd88"
+        assert ds["salinity"].units == "psu"
+
+        names = [
+            b"".join(row).decode().rstrip("\x00")
+            for row in np.asarray(ds["station_name"][:])
+        ]
+        assert names == [s[0] for s in STATIONS]
+        # Ops quirk preserved: the column headed "lon" holds latitudes.
+        assert np.asarray(ds["x"][:]) == pytest.approx(
+            [lat for _n, _lon, lat in STATIONS]
+        )
+        assert np.asarray(ds["y"][:]) == pytest.approx(
+            [lon for _n, lon, _lat in STATIONS]
+        )
+
+
+@needs_writer
+def test_datum_offsets_negate_the_nco_constants(tmp_path):
+    import netCDF4
+    import numpy as np
+
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    _run_worker(
+        _stage_staout(tmp_path / "staging"), comout, tmp_path,
+        datum_offsets=_write_nco(tmp_path / "xgeoid_to_navd.nco"),
+    )
+
+    out = comout / "stofs_3d_atl_ufs.t12z.20260722.points.cwl.nowcast.nc"
+    with netCDF4.Dataset(out) as ds:
+        # ops subtracts the .nco constant; the writer adds what we pass.
+        expected = np.array([
+            [_value(1, s, t) - DATUM_CONSTANTS[s] for s in range(NSTATION)]
+            for t in (360.0, 720.0, 1080.0)
+        ])
+        assert np.asarray(ds["zeta"][:]) == pytest.approx(expected)
+        # Only the elevation variable is shifted.
+        assert np.asarray(ds["temperature"][:]) == pytest.approx(
+            np.array([
+                [_value(5, s, t) for s in range(NSTATION)]
+                for t in (360.0, 720.0, 1080.0)
+            ])
+        )
+
+
+def test_worker_skips_when_staout_1_absent(tmp_path):
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    fixofs = tmp_path / "fix"
+    _write_fix_pair(fixofs)
+    staging = _stage_staout(tmp_path / "staging", indices=(5, 6, 7, 8))
+
+    rc = points_cwl.main([
+        "--staging", str(staging),
+        "--comout", str(comout),
+        "--prefix", "stofs_3d_atl_ufs",
+        "--cyc", "12", "--pdy", "20260722", "--phase", "nowcast",
+        "--base-date", "2026-07-22 06:00",
+        "--var-defs", str(fixofs / "stofs_3d_atl_staout_nc.json"),
+        "--station-meta", str(fixofs / "stofs_3d_atl_staout_nc.csv"),
+    ])
+
+    assert rc == 3
+    assert list(comout.iterdir()) == []
+
+
+def test_worker_reports_missing_staging_and_metadata(tmp_path):
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    base = [
+        "--comout", str(comout), "--prefix", "stofs_3d_atl_ufs",
+        "--cyc", "12", "--pdy", "20260722", "--phase", "nowcast",
+        "--base-date", "2026-07-22 06:00",
+        "--station-meta", str(tmp_path / "nope.csv"),
+    ]
+    assert points_cwl.main(
+        ["--staging", str(tmp_path / "nope"),
+         "--var-defs", str(tmp_path / "nope.json")] + base
+    ) == 2
+
+    staging = _stage_staout(tmp_path / "staging")
+    assert points_cwl.main(
+        ["--staging", str(staging),
+         "--var-defs", str(tmp_path / "nope.json")] + base
+    ) == 5
+
+
+def test_worker_rejects_a_partial_datum_file(tmp_path):
+    """A gap in the .nco numbering must not silently half-shift zeta."""
+    nco = tmp_path / "partial.nco"
+    nco.write_text(
+        "zeta(:,1)=zeta(:,1)-float(-0.30516);\n"
+        "zeta(:,3)=zeta(:,3)-float(0.00371);\n"
+    )
+    with pytest.raises(ValueError, match="station"):
+        points_cwl._nco_offsets(nco)
+
+    empty = tmp_path / "empty.nco"
+    empty.write_text("// nothing here\n")
+    assert points_cwl._nco_offsets(empty) is None
+
+
+# ---------------------------------------------------------------------------
+# Product wiring
+# ---------------------------------------------------------------------------
+
+
+def _ctx(tmp_path: Path, fixofs: Path) -> ProductContext:
+    comout = tmp_path / "comout"
+    comout.mkdir(exist_ok=True)
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    return ProductContext(
+        descriptor=None,
+        shell_env={},
+        homenos=tmp_path,
+        fixofs=fixofs,
+        comout=comout,
+        data=data,
+        pdy="20260722",
+        cyc="12",
+        cycle="t12z",
+        run_name="stofs_3d_atl_ufs",
+        prefix_nos="stofs_3d_atl_ufs",
+        nc_hour="06",
+        sta_in=tmp_path / "station.in",
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+
+
+def _fake_worker(calls: list):
+    def run(cmd, *, cwd, log_path, scrub_ld_preload):
+        calls.append(cmd)
+        result_json = Path(cmd[cmd.index("--result-json") + 1])
+        result_json.write_text(
+            json.dumps({"created": [str(result_json.parent / "out.nc")]})
+        )
+        return 0
+    return run
+
+
+def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
+    fixofs = tmp_path / "fix"
+    _write_fix_pair(fixofs)
+    _write_nco(fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco")
+    ctx = _ctx(tmp_path, fixofs)
+    for suffix in ("restart_outputs", "forecast_outputs"):
+        _stage_staout(ctx.comout / f"stofs_3d_atl_ufs.t12z.{suffix}")
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        result = post_stage.PointsCwlProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert len(result.outputs) == 2
+    assert [c[c.index("--phase") + 1] for c in calls] == [
+        "nowcast", "forecast",
+    ]
+    args = calls[0]
+    assert args[:3] == [
+        "python3", "-m", "nos_workflow.post.products.points_cwl",
+    ]
+    # PREFIXNOS is stofs_3d_atl_ufs; the fix files carry the ops prefix.
+    assert args[args.index("--var-defs") + 1] == str(
+        fixofs / "stofs_3d_atl_staout_nc.json"
+    )
+    assert args[args.index("--station-meta") + 1] == str(
+        fixofs / "stofs_3d_atl_staout_nc.csv"
+    )
+    assert args[args.index("--datum-offsets") + 1] == str(
+        fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco"
+    )
+    assert args[args.index("--base-date") + 1] == "2026-07-22 06:00"
+
+
+def test_product_skips_a_phase_without_staout(tmp_path):
+    fixofs = tmp_path / "fix"
+    _write_fix_pair(fixofs)
+    ctx = _ctx(tmp_path, fixofs)
+    _stage_staout(ctx.comout / "stofs_3d_atl_ufs.t12z.restart_outputs")
+    (ctx.comout / "stofs_3d_atl_ufs.t12z.forecast_outputs").mkdir()
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        result = post_stage.PointsCwlProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert [c[c.index("--phase") + 1] for c in calls] == ["nowcast"]
+    # No datum file staged -> the flag is omitted entirely.
+    assert "--datum-offsets" not in calls[0]
+
+
+def test_product_skipped_when_fix_metadata_absent(tmp_path):
+    """SECOFS has no staout-nc fix pair: skip, do not fail."""
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir()
+    ctx = _ctx(tmp_path, fixofs)
+    for suffix in ("restart_outputs", "forecast_outputs"):
+        _stage_staout(ctx.comout / f"stofs_3d_atl_ufs.t12z.{suffix}")
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        result = post_stage.PointsCwlProduct().produce(ctx)
+
+    assert result.status == "skipped"
+    assert calls == []

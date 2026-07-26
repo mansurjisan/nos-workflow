@@ -624,6 +624,26 @@ def convert_schout_to_split():
             dv = ds_out.createVariable('depth', 'f4', ('nSCHISM_hgrid_node',))
             dv[:] = ds.variables['depth'][:]
 
+        # Mesh topology: scribed out2d files carry the element table, so the
+        # split files must too or downstream products that triangulate the
+        # domain (geopkg contours, adcirc, slab2d) break on the coupled path
+        # only. combine_output11 puts these in the combined schout.
+        if 'SCHISM_hgrid_face_nodes' in ds.variables:
+            src = ds.variables['SCHISM_hgrid_face_nodes']
+            for dname, dsize in zip(src.dimensions, src.shape):
+                if dname not in ds_out.dimensions:
+                    ds_out.createDimension(dname, dsize)
+            fv = ds_out.createVariable(
+                'SCHISM_hgrid_face_nodes', src.dtype, src.dimensions)
+            fv[:] = src[:]
+            for att in src.ncattrs():
+                if att != '_FillValue':
+                    fv.setncattr(att, src.getncattr(att))
+        if 'bottom_index_node' in ds.variables:
+            bv = ds_out.createVariable(
+                'bottom_index_node', 'i4', ('nSCHISM_hgrid_node',))
+            bv[:] = ds.variables['bottom_index_node'][:]
+
         ds_out.close()
 
         # --- Create 3D split files ---

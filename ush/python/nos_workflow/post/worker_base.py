@@ -81,6 +81,11 @@ class NosUtilsProduct(PostProduct):
 
     worker: str = ""
     phases: Sequence[str] = ("nowcast", "forecast")
+    #: When the worker succeeds but writes nothing, report "skipped"
+    #: rather than "ok". True for products whose inputs may legitimately
+    #: yield no output (an optional geometry stack, a cycle with no
+    #: complete stack), so an empty result never reads as success.
+    empty_is_skipped: bool = False
 
     def worker_args(
         self, ctx: ProductContext, phase: str, staging: Path, work: Path
@@ -133,6 +138,12 @@ class NosUtilsProduct(PostProduct):
             return ProductResult(
                 name=self.name, status="failed", outputs=outputs,
                 detail="worker failed for: " + ", ".join(failed),
+            )
+        if self.empty_is_skipped and not outputs:
+            return ProductResult(
+                name=self.name, status="skipped", outputs=outputs,
+                detail="worker wrote nothing (inputs incomplete or "
+                       "optional dependency unavailable)",
             )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
