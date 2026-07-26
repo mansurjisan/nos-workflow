@@ -65,6 +65,6 @@ Chain submitted (${STAGES}), each gated on afterok of the previous.
   Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_standalone_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
   COMOUT  : /lfs/h1/nos/ptmp/${LOGNAME}/com/nos/stofs_3d_atl_ufs.${PDY}
 
-If prep fails, the downstream jobs stay queued with an unsatisfied dependency
-(state 'H'); clear them with:  qdel ${NOWCAST} ${FORECAST}
+If an upstream stage fails, the downstream jobs stay queued with an unsatisfied
+dependency (state 'H'); clear them with:  qdel <jobid> ...  (see the ids above)
 EOM
