@@ -72,10 +72,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         if rc != 0:
             return rc
 
+    phase_start = _phase_start_hours(
+        Dataset, staging, args.phase, args.nowcast_hours
+    )
+    if phase_start:
+        print(f"fields: labels are phase-relative (offset {phase_start:g} h)")
+
     created: List[str] = []
     for var in _VAR_FILE_PREFIXES:
         for src, stack in _stack_files(staging, var):
-            hours = _hour_range(Dataset, src)
+            hours = _hour_range(Dataset, src, phase_start)
             if hours is None:
                 print(f"fields: {src.name}: empty/no time axis, skipped")
                 continue
@@ -108,6 +114,13 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument("--cyc", required=True)
     p.add_argument("--pdy", required=True)
     p.add_argument("--phase", required=True, choices=("nowcast", "forecast"))
+    p.add_argument(
+        "--nowcast-hours", type=float, default=0.0,
+        help="length of the nowcast leg. Used only for the forecast phase, "
+             "to detect whether this system's forecast continues the nowcast "
+             "clock (STOFS-3D-ATL standalone) or restarts it (SECOFS), so "
+             "hour labels come out phase-relative either way.",
+    )
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)
@@ -148,16 +161,59 @@ def _split_combined_schout(combine_script: str) -> int:
     return 0
 
 
-def _hour_range(Dataset, src: Path) -> Optional["tuple[int, int]"]:
-    """(start, end) hours from the stack's time axis; None when empty."""
+def _phase_start_hours(
+    Dataset, staging: Path, phase: str, nowcast_hours: float
+) -> float:
+    """Hours to subtract so this phase's labels start near 1.
+
+    Detected from the data rather than configured: a forecast leg whose
+    earliest record already sits at/after the nowcast length is running
+    on a continued nowcast clock (STOFS-3D-ATL standalone), so the
+    nowcast length is subtracted; one that restarts near zero (SECOFS)
+    needs no shift. Nowcast legs are always already phase-relative.
+    """
+    if phase != "forecast" or nowcast_hours <= 0:
+        return 0.0
+    earliest = None
+    for var in _VAR_FILE_PREFIXES:
+        for src, _stack in _stack_files(staging, var):
+            with Dataset(src, "r") as ds:
+                if "time" not in ds.variables:
+                    continue
+                t = ds.variables["time"][:]
+                if t.size == 0:
+                    continue
+                h0 = float(t[0]) / 3600.0
+            earliest = h0 if earliest is None else min(earliest, h0)
+    if earliest is None:
+        return 0.0
+    # Tolerance of half a nowcast: comfortably separates "restarted near
+    # zero" from "continued past the nowcast".
+    return nowcast_hours if earliest >= nowcast_hours * 0.5 else 0.0
+
+
+def _hour_range(
+    Dataset, src: Path, phase_start_hours: float = 0.0
+) -> Optional["tuple[int, int]"]:
+    """(start, end) hours **relative to the phase start**; None when empty.
+
+    A stack's ``time`` axis is anchored to the model clock, and systems
+    differ in where that clock starts for the forecast leg: SECOFS
+    restarts it near zero, while STOFS-3D-ATL standalone continues the
+    nowcast clock (so its first forecast stack begins at hour 25, not 1).
+    Labelling straight off the raw axis therefore made the same product
+    name mean different things per system -- and diverge from ops, which
+    numbers forecast stacks from f001. Subtracting the phase start makes
+    the label phase-relative everywhere.
+    """
     with Dataset(src, "r") as ds:
         if "time" not in ds.variables:
             return None
         t = ds.variables["time"][:]
         if t.size == 0:
             return None
-        h0 = int(round(float(t[0]) / 3600.0))
-        h1 = int(round(float(t[-1]) / 3600.0))
+        h0 = int(round(float(t[0]) / 3600.0 - phase_start_hours))
+        h1 = int(round(float(t[-1]) / 3600.0 - phase_start_hours))
     return h0, h1
 
 

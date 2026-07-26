@@ -730,6 +730,15 @@ def _has_staged_field_stacks(staging: Path) -> bool:
     )
 
 
+def _len_nowcast_hours(env) -> str:
+    """LEN_NOWCAST as a string for the fields worker (default 6 h)."""
+    raw = env.get("LEN_NOWCAST", "")
+    try:
+        return str(float(raw))
+    except (TypeError, ValueError):
+        return "6.0"
+
+
 def _read_fields_result(result_json: Path) -> List[str]:
     """Created-file list from the fields worker's result json."""
     try:
@@ -781,6 +790,7 @@ class FieldsNcProduct(PostProduct):
                     "--cyc", ctx.cyc,
                     "--pdy", ctx.pdy,
                     "--phase", phase,
+                    "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
                     "--combine-script", str(ctx.combine_script),
                     "--result-json", str(result_json),
                 ],

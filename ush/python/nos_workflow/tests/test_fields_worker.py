@@ -254,3 +254,65 @@ def test_rerun_is_idempotent(tmp_path):
     second = _run_worker(staging, comout, "nowcast", tmp_path)
     assert first["created"] == second["created"]
     assert Path(first["created"][0]).is_file()
+
+
+def test_forecast_labels_phase_relative_continued_clock(tmp_path):
+    """STOFS-3D-ATL standalone: the forecast leg continues the nowcast
+    clock, so raw stack times start at hour 25. Labels must still be
+    phase-relative (f001_012...), matching ops and SECOFS."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    # stacks 3 and 4 of a continued 24 h clock: hours 25-36 and 37-48
+    _write_split_stack(staging / "out2d_3.nc", hours=list(range(25, 37)))
+    _write_split_stack(staging / "out2d_4.nc", hours=list(range(37, 49)))
+
+    result = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "stofs_3d_atl_ufs", "--cyc", "12", "--pdy", "20260722",
+        "--phase", "forecast", "--nowcast-hours", "24",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert result == 0
+    names = sorted(p.name for p in comout.glob("*.nc"))
+    assert names == [
+        "stofs_3d_atl_ufs.t12z.20260722.fields.out2d.f001_012.nc",
+        "stofs_3d_atl_ufs.t12z.20260722.fields.out2d.f013_024.nc",
+    ]
+
+
+def test_forecast_labels_unshifted_when_clock_restarts(tmp_path):
+    """SECOFS: the forecast leg restarts the clock near zero, so no
+    shift is applied even though --nowcast-hours is passed."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=[1, 2, 3, 4, 5, 6])
+
+    result = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+        "--phase", "forecast", "--nowcast-hours", "6",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert result == 0
+    assert (comout / "secofs.t00z.20260710.fields.out2d.f001_006.nc").is_file()
+
+
+def test_nowcast_labels_never_shifted(tmp_path):
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=list(range(1, 13)))
+
+    result = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "stofs_3d_atl_ufs", "--cyc", "12", "--pdy", "20260722",
+        "--phase", "nowcast", "--nowcast-hours", "24",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert result == 0
+    assert (comout / "stofs_3d_atl_ufs.t12z.20260722.fields.out2d.n001_012.nc").is_file()
