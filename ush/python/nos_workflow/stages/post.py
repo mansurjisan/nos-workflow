@@ -877,7 +877,14 @@ class MaxeleProduct(NosUtilsProduct):
     """Maximum water level over the forecast window (autoval product).
 
     Ops reduces the forecast stacks only, so this runs on the forecast
-    phase alone and passes the ops-hardcoded time window.
+    phase alone. The time window is derived from the data rather than
+    stamped with ops' hardcoded (90000, 432000) s: that constant is
+    simply ops' own 5-day run expressed in seconds, and this branch
+    forecasts longer. Pass --ops-window to opt back in.
+
+    NOTE the published name carries no phase token, so this product is
+    only safe while ``phases`` names exactly one leg -- widening it would
+    make both legs write the same COMOUT file.
     """
 
     name = "maxele"
