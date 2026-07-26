@@ -216,16 +216,21 @@ def _hour_range(
             return None
         h0 = int(round(float(t[0]) / 3600.0 - phase_start_hours))
         h1 = int(round(float(t[-1]) / 3600.0 - phase_start_hours))
-    if h0 < 0 or h1 < 0:
+    if (h0 < 0 or h1 < 0) and phase_start_hours:
         # Subtracting the offset should never push a label negative; if it
         # does, the continued-clock detection was wrong for these inputs.
-        # Fall back to the raw axis rather than emitting a name like
-        # "f-02_000", which formats badly and reads as corruption.
+        # Retry once on the raw axis -- guarded by `phase_start_hours` so a
+        # genuinely negative time axis cannot recurse forever.
         print(
             f"fields: {src.name}: offset {phase_start_hours:g} h would give a "
             f"negative label; using the raw time axis instead"
         )
         return _hour_range(Dataset, src, 0.0)
+    if h0 < 0 or h1 < 0:
+        # Raw axis itself is negative (records before the model origin):
+        # nothing sensible to label, so let the caller skip the stack.
+        print(f"fields: {src.name}: time axis is negative ({h0}..{h1}); skipped")
+        return None
     return h0, h1
 
 

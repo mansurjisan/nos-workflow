@@ -171,7 +171,11 @@ def test_publishes_one_field2d_per_stack(tmp_path):
     with netCDF4.Dataset(result["created"][0]) as ds:
         ds.set_auto_mask(False)
         np.testing.assert_allclose(ds["time"][:], [3600.0, 7200.0])
-        assert ds["time"].base_date == "2026-07-10 00:00"
+        # The product inherits the STACKS' own time origin (ops behaviour)
+        # rather than the --base-date argument, so the stamp cannot drift
+        # from the data across phases or engines. Fixture units are
+        # "seconds since 2026-07-10 00:00:00".
+        assert ds["time"].base_date == "2026-07-10 00:00:00"
         np.testing.assert_allclose(ds["x"][:], X)
         np.testing.assert_array_equal(ds["element"][:], [[1, 2, 3], [2, 4, 3]])
         np.testing.assert_allclose(ds["zeta"][:], 0.0)

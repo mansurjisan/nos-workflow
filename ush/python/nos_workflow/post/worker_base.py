@@ -45,10 +45,21 @@ def staging_dir(ctx: ProductContext, phase: str) -> Path:
 
 
 def has_field_stacks(staging: Path) -> bool:
-    """True when ``staging`` holds canonical field stacks."""
+    """True when ``staging`` holds field data these products can use.
+
+    Counts the canonical split stacks AND the coupled path's combined
+    ``schout_<stack>.nc``: on that path the split files only appear once
+    the fields worker has run, so gating on the split shape alone made
+    every other product silently skip unless ``fields_nc`` happened to be
+    ordered first -- an undeclared dependency that a
+    ``NOS_POST_PRODUCTS=maxele`` rerun would trip over.
+    """
     if not staging.is_dir():
         return False
-    return any(any(staging.glob(g)) for g in FIELD_GLOBS)
+    if any(any(staging.glob(g)) for g in FIELD_GLOBS):
+        return True
+    # Combined schout is schout_<stack>.nc; per-rank is schout_<rank>_<stack>.nc.
+    return any(f.name.count("_") == 1 for f in staging.glob("schout_[0-9]*.nc"))
 
 
 def has_staout(staging: Path) -> bool:

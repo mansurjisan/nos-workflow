@@ -101,7 +101,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             write_slab2d(
                 *(found[family] for family in SLAB_FAMILIES),
                 out_path,
-                args.base_date,
+                base_date,
                 depths=depths,
                 datum=args.datum,
             )
