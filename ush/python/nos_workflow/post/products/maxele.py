@@ -23,7 +23,8 @@ from typing import List, Optional
 
 from ..naming import product_stem
 
-# Ops autoval window: 25 h .. 120 h from the run origin.
+# Ops autoval window: 25 h .. 120 h from the run origin -- correct only
+# for a 24 h nowcast + 96 h forecast, which is ops' configuration.
 OPS_WINDOW_SECONDS = (90000.0, 432000.0)
 
 _STACK_RE = re.compile(r"^out2d_(\d+)\.nc$")
@@ -51,11 +52,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     out_path = comout / (
         f"{product_stem(args.prefix, args.cyc, args.pdy)}.fields.cwl.maxele.nc"
     )
-    window = None if args.window_from_data else OPS_WINDOW_SECONDS
+    # Ops copies the model's own time origin through; inherit it when the
+    # stacks carry it so the stamp cannot drift from the data.
+    from ..worker_base import base_date_from_staging
+    base_date = base_date_from_staging(staging) or args.base_date
+    window = OPS_WINDOW_SECONDS if args.ops_window else None
 
     print(f"maxele: reducing {len(stacks)} stack(s) -> {out_path.name}")
     write_maxele(
-        stacks, out_path, base_date=args.base_date, window_seconds=window,
+        stacks, out_path, base_date=base_date, window_seconds=window,
     )
 
     if args.result_json:
@@ -78,9 +83,12 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         help="time-units base, e.g. '2026-07-22 12:00'",
     )
     p.add_argument(
-        "--window-from-data", action="store_true",
-        help="derive the 2-point time coordinate from the stacks instead of "
-             "the ops-hardcoded (90000, 432000) s",
+        "--ops-window", action="store_true",
+        help="stamp the ops-hardcoded (90000, 432000) s time coordinate. "
+             "OFF by default: that constant is simply the data-derived "
+             "window of ops' own 5-day run, so on a run of a different "
+             "length (this branch forecasts 108 h, not 96) it would "
+             "advertise a window the data does not cover.",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)

@@ -410,7 +410,9 @@ def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
     assert args[args.index("--datum-offsets") + 1] == str(
         fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco"
     )
-    assert args[args.index("--base-date") + 1] == "2026-07-22 06:00"
+    # cyc 12 - 6 h nowcast = same day 06Z (no midnight wrap here).
+    # Seconds are present: ops units strings carry them.
+    assert args[args.index("--base-date") + 1] == "2026-07-22 06:00:00"
 
 
 def test_product_skips_a_phase_without_staout(tmp_path):

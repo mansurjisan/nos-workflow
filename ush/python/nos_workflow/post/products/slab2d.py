@@ -76,6 +76,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if phase_start:
         print(f"slab2d: labels are phase-relative (offset {phase_start:g} h)")
 
+    from ..worker_base import base_date_from_staging
+    base_date = base_date_from_staging(staging) or args.base_date
+
     created: List[str] = []
     for index in sorted(stacks):
         found = stacks[index]

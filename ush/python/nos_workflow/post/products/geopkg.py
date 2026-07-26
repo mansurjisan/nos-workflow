@@ -53,7 +53,23 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         # Nowcast numbering counts down to the cycle time, so it needs
         # the phase's record count up front.
-        n_records = _record_count(stacks) if args.phase == "nowcast" else 0
+        # Ops hardcodes a 24-record nowcast countdown and err_exits on a
+        # missing stack. We derive the expected count from LEN_NOWCAST and
+        # cross-check the staged records: anchoring the countdown to whatever
+        # happened to stage would silently relabel every frame if a stack were
+        # missing (n011..n000 for records that are really n023..n012).
+        n_records = 0
+        if args.phase == "nowcast":
+            staged = _record_count(stacks)
+            expected = int(round(args.nowcast_hours)) if args.nowcast_hours else 0
+            if expected and staged != expected:
+                print(
+                    f"geopkg: staged {staged} nowcast records but LEN_NOWCAST "
+                    f"implies {expected}; refusing to guess the countdown "
+                    "anchor (frames would be mislabelled)"
+                )
+                return 5
+            n_records = expected or staged
         written = write_disturbance_series(
             stacks,
             comout,
@@ -99,6 +115,11 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         "--max-workers", type=int, default=1,
         help="fan the timesteps out to this many processes (ops used a "
              "fork pool over the merged field)",
+    )
+    p.add_argument(
+        "--nowcast-hours", type=float, default=0.0,
+        help="expected hourly nowcast records; anchors the n### countdown "
+             "and guards against a partially staged nowcast.",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)

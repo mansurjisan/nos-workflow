@@ -56,6 +56,36 @@ def has_staout(staging: Path) -> bool:
     return staging.is_dir() and (staging / "staout_1").is_file()
 
 
+def base_date_from_staging(staging: Path) -> Optional[str]:
+    """The staged stacks' own time origin, as ops uses.
+
+    Operational post copies the model's ``time:units`` / ``base_date``
+    through rather than recomputing them (e.g. maxele reads them back
+    from param.nml, slab2d off the input file). Inheriting the source
+    string is both simpler and safer: it cannot drift from the data, it
+    is automatically correct per phase and per engine (a coupled
+    forecast resets its clock, a standalone one continues the nowcast
+    clock), and it preserves the ops units format.
+
+    Returns the text after "seconds since", or None when no stack is
+    readable -- callers then fall back to a computed value.
+    """
+    try:
+        from netCDF4 import Dataset
+    except ImportError:
+        return None
+    for cand in sorted(staging.glob("out2d_[0-9]*.nc")):
+        try:
+            with Dataset(cand, "r") as ds:
+                units = getattr(ds.variables["time"], "units", "")
+        except Exception:  # noqa: BLE001
+            continue
+        low = units.lower()
+        if "since" in low:
+            return units[low.index("since") + len("since"):].strip()
+    return None
+
+
 def read_created(result_json: Path, product: str) -> List[str]:
     """Files a worker reports having created; [] when unreadable."""
     try:

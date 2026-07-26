@@ -731,14 +731,52 @@ def _has_staged_field_stacks(staging: Path) -> bool:
     )
 
 
-def _product_base_date(ctx) -> str:
-    """Time-units base for nos-utils writers: the run origin.
+def _product_base_date(ctx, phase: str) -> str:
+    """Fallback time origin for products whose inputs carry no units.
 
-    Products stamp ``seconds since <base_date>``; the model clock starts
-    at the nowcast origin (cycle - LEN_NOWCAST), which is what the
-    staged stacks' own time axes are relative to.
+    Preferred source is the staged stacks themselves (see
+    ``worker_base.base_date_from_staging``); this is used only when no
+    stack is readable, e.g. points_cwl on staout text alone.
+
+    Real date arithmetic, NOT ``(cyc - LEN_NOWCAST) % 24`` glued to PDY:
+    when the nowcast reaches back past midnight -- every standard cycle
+    of both target systems -- the hour wraps but the DATE must roll back
+    too, or every timestamp lands exactly one day late.
+
+    Phase anchors follow the engine: the nowcast leg starts at
+    cycle - LEN_NOWCAST; a forecast leg that restarts its clock (coupled,
+    ihot=1) starts at the cycle time, while one that continues the
+    nowcast clock (standalone, ihot=2) keeps the nowcast origin. When the
+    engine is unknown the nowcast origin is used, matching the ops
+    convention of a single continuous run.
     """
-    return f"{ctx.pdy[:4]}-{ctx.pdy[4:6]}-{ctx.pdy[6:8]} {ctx.nc_hour}:00"
+    from datetime import datetime, timedelta
+
+    try:
+        cycle_dt = datetime.strptime(f"{ctx.pdy}{int(ctx.cyc):02d}", "%Y%m%d%H")
+    except (TypeError, ValueError):
+        return f"{ctx.pdy[:4]}-{ctx.pdy[4:6]}-{ctx.pdy[6:8]} 00:00:00"
+
+    try:
+        len_nowcast = float(ctx.shell_env.get("LEN_NOWCAST", "") or 6.0)
+    except (TypeError, ValueError):
+        len_nowcast = 6.0
+
+    origin = cycle_dt - timedelta(hours=len_nowcast)
+    if phase == "forecast" and _forecast_clock_restarts(ctx):
+        origin = cycle_dt
+    # ops units format: whitespace-separated, seconds present.
+    return origin.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _forecast_clock_restarts(ctx) -> bool:
+    """True when the forecast leg starts its model clock afresh.
+
+    The coupled build hot-starts with ihot=1 (clock reset); the
+    standalone build uses ihot=2 and continues the nowcast clock. USE_DATM
+    is the resolver's coupled/standalone switch.
+    """
+    return str(ctx.shell_env.get("USE_DATM", "")).lower() not in ("false", "0", "no")
 
 
 def _len_nowcast_hours(env) -> str:
@@ -855,7 +893,7 @@ class MaxeleProduct(NosUtilsProduct):
             "--prefix", ctx.prefix_nos,
             "--cyc", ctx.cyc,
             "--pdy", ctx.pdy,
-            "--base-date", _product_base_date(ctx),
+            "--base-date", _product_base_date(ctx, phase),
         ]
 
 
@@ -885,18 +923,31 @@ class PointsCwlProduct(NosUtilsProduct):
             "--cyc", ctx.cyc,
             "--pdy", ctx.pdy,
             "--phase", phase,
-            "--base-date", _product_base_date(ctx),
+            "--base-date", _product_base_date(ctx, phase),
             "--var-defs", str(var_defs),
             "--station-meta", str(meta),
         ]
-        # The JSON labels zeta NAVD88, which is true only after the ops
-        # ncap2 datum shift, so apply it whenever its .nco is staged.
-        nco = fix_file(
-            ctx, "sta_cwl_xgeoid_to_navd.nco",
-            f"{ops}_sta_cwl_xgeoid_to_navd.nco",
-        )
+        # The station JSON labels zeta with a datum (NAVD88 on the ATL
+        # fix set) that is only true AFTER the ops ncap2 shift, so the
+        # .nco must be applied whenever the metadata claims one.
+        # Current ops uses the _msl file; the older lineage used _navd --
+        # try both, newest first.
+        nco = None
+        for stem in ("sta_cwl_xgeoid_to_msl.nco", "sta_cwl_xgeoid_to_navd.nco"):
+            nco = fix_file(ctx, stem, f"{ops}_{stem}")
+            if nco is not None:
+                break
         if nco is not None:
             args += ["--datum-offsets", str(nco)]
+        else:
+            # Publishing raw xGEOID values under a NAVD88/MSL label would be
+            # a silent ~0.3 m bias, so say so loudly rather than shipping it.
+            logger.warning(
+                "WARNING: points_cwl: no xgeoid->datum .nco found under %s; "
+                "publishing UNSHIFTED elevations even though %s labels them "
+                "with a datum. Stage the .nco or expect a ~0.3 m bias.",
+                ctx.fixofs, var_defs.name,
+            )
         return args
 
 
@@ -923,7 +974,7 @@ class Slab2dProduct(NosUtilsProduct):
             "--cyc", ctx.cyc,
             "--pdy", ctx.pdy,
             "--phase", phase,
-            "--base-date", _product_base_date(ctx),
+            "--base-date", _product_base_date(ctx, phase),
             "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
         ]
 
@@ -951,6 +1002,7 @@ class GeopkgProduct(NosUtilsProduct):
             "--cyc", ctx.cyc,
             "--pdy", ctx.pdy,
             "--phase", phase,
+                    "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
         ]
 
 

@@ -332,7 +332,9 @@ def test_product_passes_canonical_worker_args(tmp_path):
     assert "nos_workflow.post.products.slab2d" in cmd
     args = {cmd[i]: cmd[i + 1] for i in range(len(cmd) - 1)}
     assert args["--phase"] == "forecast"
-    assert args["--base-date"] == "2026-05-07 18:00"  # cyc 00 - 6 h nowcast
+    # Forecast leg on a coupled system: the model clock RESTARTS at the
+    # cycle time (ihot=1), so that is the origin -- not the nowcast begin.
+    assert args["--base-date"] == "2026-05-07 00:00:00"
     assert args["--nowcast-hours"] == "6.0"
     assert args["--prefix"] == env["PREFIXNOS"]
 
@@ -360,3 +362,27 @@ def test_naming_helper():
     assert field2d_stack_name(
         "stofs_3d_atl_ufs", "12", "20260722", "forecast", 25, 48
     ) == "stofs_3d_atl_ufs.t12z.20260722.field2d.f025_048.nc"
+
+
+def test_base_date_nowcast_rolls_the_date_back_over_midnight(tmp_path):
+    """cyc 00 with a 6 h nowcast begins on the PREVIOUS day.
+
+    Computing the hour as ``(cyc - LEN_NOWCAST) % 24`` and pasting it onto
+    PDY yields 18:00 of the SAME day -- a silent 24 h error in every
+    product's time units. This pins the corrected arithmetic, and the
+    forecast counterpart above pins the phase distinction.
+    """
+    from nos_workflow.stages.post import _product_base_date
+
+    class Ctx:
+        pdy = "20260507"
+        cyc = "00"
+        shell_env = {"LEN_NOWCAST": "6"}
+
+    assert _product_base_date(Ctx(), "nowcast") == "2026-05-06 18:00:00"
+    # Standalone forecast continues the nowcast clock -> same origin.
+    Ctx.shell_env = {"LEN_NOWCAST": "6", "USE_DATM": "false"}
+    assert _product_base_date(Ctx(), "forecast") == "2026-05-06 18:00:00"
+    # Coupled forecast restarts it -> cycle time.
+    Ctx.shell_env = {"LEN_NOWCAST": "6", "USE_DATM": "true"}
+    assert _product_base_date(Ctx(), "forecast") == "2026-05-07 00:00:00"
