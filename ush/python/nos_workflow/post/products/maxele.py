@@ -54,14 +54,15 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     # Ops copies the model's own time origin through; inherit it when the
     # stacks carry it so the stamp cannot drift from the data.
-    from ..worker_base import base_date_from_staging
+    from ..worker_base import atomic_publish, base_date_from_staging
     base_date = base_date_from_staging(staging) or args.base_date
     window = OPS_WINDOW_SECONDS if args.ops_window else None
 
     print(f"maxele: reducing {len(stacks)} stack(s) -> {out_path.name}")
-    write_maxele(
-        stacks, out_path, base_date=base_date, window_seconds=window,
-    )
+    with atomic_publish(out_path) as tmp:
+        write_maxele(
+            stacks, tmp, base_date=base_date, window_seconds=window,
+        )
 
     if args.result_json:
         Path(args.result_json).write_text(

@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..naming import field2d_stack_name
+from ..worker_base import atomic_publish
 from .fields import _hour_range, _phase_start_hours
 
 # The six co-indexed stacks one slab needs, in write_slab2d() order.
@@ -98,18 +99,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
         out_path = comout / name
         try:
-            write_slab2d(
-                *(found[family] for family in SLAB_FAMILIES),
-                out_path,
-                base_date,
-                depths=depths,
-                datum=args.datum,
-            )
-        except (OSError, ValueError) as exc:
-            # Unreadable stack or an out2d without the mesh variables:
-            # drop the partial file and keep the other stacks.
-            print(f"slab2d: stack {index} skipped: {exc}")
-            out_path.unlink(missing_ok=True)
+            with atomic_publish(out_path) as tmp:
+                write_slab2d(
+                    *(found[family] for family in SLAB_FAMILIES),
+                    tmp,
+                    base_date,
+                    depths=depths,
+                    datum=args.datum,
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Unreadable stack, an out2d without the mesh variables, a
+            # short/ragged column -- keep the other stacks. Catching broadly
+            # because the writer raises OSError/ValueError/KeyError/IndexError
+            # depending on which input is malformed; atomic_publish has
+            # already removed the partial, so nothing half-written survives.
+            print(f"slab2d: stack {index} skipped: {exc!r}")
             continue
         created.append(str(out_path))
         print(f"slab2d: stack {index} -> {name}")

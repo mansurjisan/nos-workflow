@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
@@ -95,6 +97,30 @@ def base_date_from_staging(staging: Path) -> Optional[str]:
         if "since" in low:
             return units[low.index("since") + len("since"):].strip()
     return None
+
+
+@contextmanager
+def atomic_publish(out_path: Path):
+    """Write via a hidden sibling, move into place only on success.
+
+    Writers open their output before filling it, so any mid-write failure
+    leaves a structurally valid but incomplete file sitting in $COMOUT
+    under the published name -- the product reports "failed" with no
+    outputs while a consumer globbing COMOUT happily reads a truncated
+    product. Staging the write next to the target keeps the move on one
+    filesystem (so ``os.replace`` is atomic) and the leading dot keeps the
+    partial out of ``*.nc`` globs.
+
+    Yields the temporary path; the caller writes to it.
+    """
+    tmp = out_path.with_name(f".{out_path.name}.tmp")
+    tmp.unlink(missing_ok=True)
+    try:
+        yield tmp
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    os.replace(tmp, out_path)
 
 
 def read_created(result_json: Path, product: str) -> List[str]:
@@ -209,6 +235,7 @@ def fix_file(ctx: ProductContext, *names: str) -> Optional[Path]:
 
 __all__ = [
     "FIELD_GLOBS",
+    "atomic_publish",
     "NosUtilsProduct",
     "PHASE_DIRS",
     "fix_file",

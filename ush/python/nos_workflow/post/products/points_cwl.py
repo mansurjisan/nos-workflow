@@ -85,14 +85,17 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(
         f"points_cwl: {len(staout_files)} staout file(s) -> {out_path.name}"
     )
-    write_station_timeseries(
-        staout_files,
-        var_defs,
-        args.station_meta,
-        out_path,
-        base_date=args.base_date,
-        datum_offsets=offsets,
-    )
+    from ..worker_base import atomic_publish
+
+    with atomic_publish(out_path) as tmp:
+        write_station_timeseries(
+            staout_files,
+            var_defs,
+            args.station_meta,
+            tmp,
+            base_date=args.base_date,
+            datum_offsets=offsets,
+        )
 
     if args.result_json:
         Path(args.result_json).write_text(
