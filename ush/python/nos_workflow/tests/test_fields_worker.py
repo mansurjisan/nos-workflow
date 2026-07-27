@@ -455,3 +455,26 @@ def test_deflate_preserves_a_classic_data_model(tmp_path):
     with netCDF4.Dataset(published) as ds:
         assert ds.data_model == "NETCDF4_CLASSIC"
         assert (ds["elevation"].filters() or {}).get("zlib")
+
+
+@pytest.mark.parametrize("bad", ["10", "-1", "99", "notanumber"])
+def test_deflate_rejects_out_of_range_levels(bad, tmp_path, capsys):
+    """netCDF4 raises from inside createVariable on a bad level, naming
+    nothing useful; catch it at the CLI instead."""
+    with pytest.raises(SystemExit):
+        fields.main([
+            "--staging", str(tmp_path), "--comout", str(tmp_path),
+            "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+            "--phase", "nowcast", "--deflate", bad,
+        ])
+    assert "--deflate" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("level", ["0", "9"])
+def test_deflate_accepts_the_range_bounds(level):
+    args = fields._parse_args([
+        "--staging", "s", "--comout", "c", "--prefix", "p",
+        "--cyc", "00", "--pdy", "20260710", "--phase", "nowcast",
+        "--deflate", level,
+    ])
+    assert args.deflate == int(level)

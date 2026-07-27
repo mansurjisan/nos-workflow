@@ -822,9 +822,11 @@ def _product_base_date(ctx, phase: str) -> str:
     Phase anchors follow the engine: the nowcast leg starts at
     cycle - LEN_NOWCAST; a forecast leg that restarts its clock (coupled,
     ihot=1) starts at the cycle time, while one that continues the
-    nowcast clock (standalone, ihot=2) keeps the nowcast origin. When the
-    engine is unknown the nowcast origin is used, matching the ops
-    convention of a single continuous run.
+    nowcast clock (standalone, ihot=2) keeps the nowcast origin. With
+    USE_DATM unset the coupled anchor is used, which is the repo-wide
+    reading of that variable (see ``runners/schism_ufs/stage_files.py``:
+    standalone is the only thing that ever sets it, and it sets it to
+    false).
     """
     from datetime import datetime, timedelta
 
@@ -850,9 +852,16 @@ def _forecast_clock_restarts(ctx) -> bool:
 
     The coupled build hot-starts with ihot=1 (clock reset); the
     standalone build uses ihot=2 and continues the nowcast clock. USE_DATM
-    is the resolver's coupled/standalone switch.
+    is the resolver's coupled/standalone switch, and only standalone ever
+    sets it -- so unset means coupled.
+
+    Tested exactly as the rest of the repo tests it (``!= "false"``, cf.
+    ``stage_files.py`` and ``nos_run.sh``) rather than against a wider
+    set of falsey spellings: accepting "0"/"no" here while the run side
+    accepts only "false" would let one value route the run coupled and
+    the timestamps standalone, which is a silent six-hour offset.
     """
-    return str(ctx.shell_env.get("USE_DATM", "")).lower() not in ("false", "0", "no")
+    return str(ctx.shell_env.get("USE_DATM", "true")).strip().lower() != "false"
 
 
 def _len_nowcast_hours(env) -> str:

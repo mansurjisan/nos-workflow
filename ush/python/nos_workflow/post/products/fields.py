@@ -124,6 +124,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
+def _zlib_level(raw: str) -> int:
+    """A valid netCDF deflate level.
+
+    Rejected at the CLI rather than passed through: netCDF4 raises from
+    inside createVariable on an out-of-range level, which turns a typo in
+    one env var into a failed product with a traceback that never names
+    the setting responsible.
+    """
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        raise argparse.ArgumentTypeError(f"not an integer: {raw!r}")
+    if not 0 <= level <= 9:
+        raise argparse.ArgumentTypeError(
+            f"zlib level must be 0-9 (0 = off), got {level}"
+        )
+    return level
+
+
 def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Publish canonical per-variable field stacks to COMOUT",
@@ -142,8 +161,8 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
              "hour labels come out phase-relative either way.",
     )
     p.add_argument(
-        "--deflate", type=int, default=0,
-        help="zlib level for stacks that arrive uncompressed (0 = off, "
+        "--deflate", type=_zlib_level, default=0,
+        help="zlib level 0-9 for stacks that arrive uncompressed (0 = off, "
              "the ops-parity default: publish by hardlink). Level 1 gets "
              "essentially all of the available compression; see the module "
              "docstring for measured ratios.",
