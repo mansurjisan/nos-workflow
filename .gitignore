@@ -43,3 +43,6 @@ fix/secofs_ufs/*.nco
 !fix/secofs_ufs/fd_ufs.yaml
 !fix/secofs_ufs/ufs.configure
 !fix/secofs_ufs/noahmptable.tbl
+
+# Shell pgmout artifacts (pgmout=OUTPUT.$$)
+OUTPUT.$$
