@@ -205,6 +205,9 @@ def test_publishes_canonical_nc_with_writer_values(tmp_path):
     import netCDF4
     import numpy as np
 
+    # The writer interpolates staout via scipy before it writes.
+    pytest.importorskip("scipy")
+
     comout = tmp_path / "comout"
     comout.mkdir()
     result = _run_worker(_stage_staout(tmp_path / "staging"), comout, tmp_path)
@@ -255,6 +258,9 @@ def test_publishes_canonical_nc_with_writer_values(tmp_path):
 def test_datum_offsets_negate_the_nco_constants(tmp_path):
     import netCDF4
     import numpy as np
+
+    # The writer interpolates staout via scipy before it writes.
+    pytest.importorskip("scipy")
 
     comout = tmp_path / "comout"
     comout.mkdir()

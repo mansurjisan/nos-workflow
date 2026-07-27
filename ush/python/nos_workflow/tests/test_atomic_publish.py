@@ -68,6 +68,10 @@ def test_points_cwl_leaves_nothing_when_the_writer_raises(tmp_path):
     """End-to-end: a staout whose station count disagrees with the CSV
     raises inside the writer, after the output has been created."""
     pytest.importorskip("nos_utils.post.stations")
+    # read_staout imports scipy before it reaches the shape check, so
+    # without scipy the writer raises ModuleNotFoundError rather than the
+    # ValueError this test is about.
+    pytest.importorskip("scipy")
     from nos_workflow.post.products import points_cwl
 
     staging = tmp_path / "staging"
