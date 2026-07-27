@@ -698,9 +698,25 @@ def convert_schout_to_split():
             # data (or raises deep inside a downstream writer).
             src_var = ds.variables[src_name]
             src_dims = []
+            # Trust the source's own name for the record axis; only guess
+            # from size when it has no axis literally called 'time', and
+            # only once. Size alone is not evidence: any axis can happen
+            # to match the record count (a small test mesh, or a layer
+            # count equal to the stack length), and mislabelling one
+            # transposes the data silently.
+            named_time = 'time' in src_var.dimensions
+            have_time = False
             for dname, dsize in zip(src_var.dimensions, src_var.shape):
-                if dname == 'time' or dsize == len(time_data) and dname not in ds_split.dimensions:
+                if dname == 'time':
                     src_dims.append('time')
+                    have_time = True
+                elif (
+                    not named_time and not have_time
+                    and dsize == len(time_data)
+                    and dname not in ds_split.dimensions
+                ):
+                    src_dims.append('time')
+                    have_time = True
                 elif dsize == n_nodes:
                     src_dims.append('nSCHISM_hgrid_node')
                 elif n_vert > 0 and dsize == n_vert:

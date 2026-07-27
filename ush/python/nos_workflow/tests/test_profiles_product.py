@@ -425,7 +425,10 @@ def _stage_stacks(ctx: ProductContext, *phases) -> None:
     for suffix in phases:
         d = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
         d.mkdir(parents=True, exist_ok=True)
-        (d / "out2d_1.nc").write_bytes(b"\x89HDF\r\n")
+        # Profiles gate on the vertical families, not just out2d: a
+        # 2D-only run has nothing for them to extract.
+        for var in ("out2d", "zCoordinates"):
+            (d / f"{var}_1.nc").write_bytes(b"\x89HDF\r\n")
 
 
 def _fake_worker(calls: list):
@@ -567,7 +570,8 @@ def test_stage_runs_profiles_on_both_legs(tmp_path):
     for sub in ("restart_outputs", "forecast_outputs"):
         d = comout / f"{env['RUN']}.{env['cycle']}.{sub}"
         d.mkdir(parents=True)
-        (d / "out2d_1.nc").write_bytes(b"\x89HDF\r\n")
+        for var in ("out2d", "zCoordinates"):
+            (d / f"{var}_1.nc").write_bytes(b"\x89HDF\r\n")
 
     calls: list = []
 
@@ -597,3 +601,24 @@ def test_stage_runs_profiles_on_both_legs(tmp_path):
     entry = {p["name"]: p for p in manifest["products"]}["profiles"]
     assert entry["status"] == "ok"
     assert len(entry["outputs"]) == 2
+
+
+def test_profiles_skips_a_2d_only_staging_dir(tmp_path):
+    """A barotropic run stages out2d and nothing else. Reporting failure
+    there would repeat the same error every cycle for a system that can
+    never produce a vertical profile."""
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir(exist_ok=True)
+    ctx = _ctx(tmp_path, fixofs, "stofs_3d_atl_ufs")
+    for suffix in ("restart_outputs", "forecast_outputs"):
+        d = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "out2d_1.nc").write_bytes(b"\x89HDF\r\n")
+    _write_hgrid(fixofs / f"{ctx.prefix_nos}.hgrid.gr3")
+    _write_vgrid(fixofs / f"{ctx.prefix_nos}.vgrid.in")
+    _write_station_in(fixofs / f"{ctx.prefix_nos}.station.in")
+
+    result = get_product("profiles")().produce(ctx)
+
+    assert result.status == "skipped"
+    assert not result.outputs

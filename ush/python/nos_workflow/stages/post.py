@@ -17,6 +17,7 @@ from ..post.registry import get_product, register, resolve_product_names
 from ..post.worker_base import (
     NosUtilsProduct,
     fix_file,
+    has_3d_stacks,
     has_field_stacks,
     has_staout,
     staging_dir,
@@ -149,11 +150,13 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     )
 
     results: List[ProductResult] = []
-    for name in resolve_product_names(
-        descriptor.framework,
-        shell_env,
-        homenos=homenos,
-        yaml_path=descriptor.yaml_path,
+    for name in _ordered_products(
+        resolve_product_names(
+            descriptor.framework,
+            shell_env,
+            homenos=homenos,
+            yaml_path=descriptor.yaml_path,
+        )
     ):
         product_cls = get_product(name)
         if product_cls is None:
@@ -187,6 +190,42 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
     sl.info("post-processing completed")
     return 0
+
+
+#: Products that read the split field stacks, and so must not run before
+#: ``fields_nc`` has materialised them on the coupled (OLDIO) path.
+_SPLIT_CONSUMERS = ("maxele", "slab2d", "geopkg", "adcirc", "profiles")
+
+
+def _ordered_products(names: List[str]) -> List[str]:
+    """Run ``fields_nc`` ahead of the products that consume its output.
+
+    On the coupled path the run stage stages combined ``schout_*.nc`` and
+    ``fields_nc`` is what splits them into the per-variable stacks every
+    other field product reads. That is a real dependency, and leaving it
+    to the order someone happened to write in the YAML makes the whole
+    suite's success depend on a list's spelling. Declaring it here is
+    cheaper than teaching five products to detect and recover from
+    "inputs exist but are not split yet" -- and much cheaper than the
+    alternative of having them skip silently, which would turn a missed
+    split into no output and no complaint.
+
+    Only reorders when both sides are present; otherwise the caller's
+    order is preserved exactly.
+    """
+    if "fields_nc" not in names:
+        return names
+    if not any(n in _SPLIT_CONSUMERS for n in names):
+        return names
+    if names.index("fields_nc") == 0:
+        return names
+    reordered = ["fields_nc"] + [n for n in names if n != "fields_nc"]
+    logger.info(
+        "post: running fields_nc first; it splits the combined stacks that "
+        "%s read",
+        ", ".join(n for n in names if n in _SPLIT_CONSUMERS),
+    )
+    return reordered
 
 
 def _execute_product(product: PostProduct, ctx: ProductContext) -> ProductResult:
@@ -1110,7 +1149,7 @@ class GeopkgProduct(NosUtilsProduct):
             "--cyc", ctx.cyc,
             "--pdy", ctx.pdy,
             "--phase", phase,
-                    "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
         ]
 
 
@@ -1141,7 +1180,10 @@ class ProfilesProduct(NosUtilsProduct):
         station = fix_file(ctx, "station.in", f"{ops}_station.in")
         if station is None and ctx.sta_in and Path(ctx.sta_in).is_file():
             station = ctx.sta_in
-        if not has_field_stacks(staging) or None in (hgrid, vgrid, station):
+        # zCoordinates, not just any stack: a 2D-only run stages out2d and
+        # nothing else, and reporting "failed" every cycle for a system
+        # that has no vertical output is noise, not a signal.
+        if not has_3d_stacks(staging) or None in (hgrid, vgrid, station):
             return None
         return [
             "--staging", str(staging),

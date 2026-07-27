@@ -545,3 +545,43 @@ def test_fields_nc_worker_failure_warns_not_fatal(tmp_path, fake_env, caplog):
     assert any(
         "fields worker failed" in rec.getMessage() for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Product ordering: fields_nc materialises what the others read
+# ---------------------------------------------------------------------------
+
+
+def test_fields_nc_is_hoisted_ahead_of_its_consumers():
+    """On the coupled path fields_nc splits the combined schout stacks
+    that maxele/slab2d/geopkg/adcirc/profiles read, so it cannot be left
+    to run after them just because the YAML lists it that way."""
+    from nos_workflow.stages.post import _ordered_products
+
+    assert _ordered_products(["maxele", "fields_nc", "slab2d"]) == [
+        "fields_nc", "maxele", "slab2d",
+    ]
+
+
+def test_ordering_preserves_the_list_when_nothing_depends_on_fields():
+    from nos_workflow.stages.post import _ordered_products
+
+    names = ["stations_nc", "bias_correct", "fields_nc"]
+    assert _ordered_products(names) == names
+
+
+def test_ordering_leaves_consumers_alone_without_fields_nc():
+    """No fields_nc means no split will happen; the consumers must still
+    run (and fail loudly) rather than be quietly reordered or dropped."""
+    from nos_workflow.stages.post import _ordered_products
+
+    names = ["maxele", "slab2d"]
+    assert _ordered_products(names) == names
+
+
+def test_ordering_is_stable_for_the_rest():
+    from nos_workflow.stages.post import _ordered_products
+
+    assert _ordered_products(
+        ["geopkg", "bias_correct", "fields_nc", "adcirc", "stations_nc"]
+    ) == ["fields_nc", "geopkg", "bias_correct", "adcirc", "stations_nc"]

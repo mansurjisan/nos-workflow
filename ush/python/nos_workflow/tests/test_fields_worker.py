@@ -422,3 +422,36 @@ def test_deflate_leaves_nothing_behind_when_repack_fails(tmp_path, monkeypatch):
         ])
 
     assert list(comout.iterdir()) == []
+
+
+def test_deflate_preserves_a_classic_data_model(tmp_path):
+    """Repacking is a storage change, not a format change: a
+    NETCDF4_CLASSIC stack (what ops' SECOFS writer produces) must not be
+    silently promoted to the full netCDF-4 model."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    src = staging / "out2d_1.nc"
+    with netCDF4.Dataset(src, "w", format="NETCDF4_CLASSIC") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 512)
+        tv = ds.createVariable("time", "f8", ("time",))
+        tv.units = "seconds since 2026-07-10 00:00:00"
+        tv[:] = [3600.0, 7200.0]
+        ds.createVariable(
+            "elevation", "f4", ("time", "nSCHISM_hgrid_node")
+        )[:] = 0.5
+
+    rc = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+        "--phase", "nowcast", "--deflate", "1",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert rc == 0
+
+    published = comout / "secofs.t00z.20260710.fields.out2d.n001_002.nc"
+    with netCDF4.Dataset(published) as ds:
+        assert ds.data_model == "NETCDF4_CLASSIC"
+        assert (ds["elevation"].filters() or {}).get("zlib")

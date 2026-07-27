@@ -64,6 +64,18 @@ def has_field_stacks(staging: Path) -> bool:
     return any(f.name.count("_") == 1 for f in staging.glob("schout_[0-9]*.nc"))
 
 
+def has_3d_stacks(staging: Path) -> bool:
+    """True when ``staging`` holds the vertical families 3D products need.
+
+    A barotropic/2D-only configuration writes out2d and nothing else, so
+    ``has_field_stacks`` is satisfied while a product that reads
+    zCoordinates has no input at all. Treating that as a failure would
+    report the same error every cycle for a system that can never
+    produce the product.
+    """
+    return staging.is_dir() and any(staging.glob("zCoordinates_[0-9]*.nc"))
+
+
 def has_staout(staging: Path) -> bool:
     """True when ``staging`` holds station timeseries files."""
     return staging.is_dir() and (staging / "staout_1").is_file()
@@ -239,6 +251,7 @@ __all__ = [
     "NosUtilsProduct",
     "PHASE_DIRS",
     "fix_file",
+    "has_3d_stacks",
     "has_field_stacks",
     "has_staout",
     "read_created",

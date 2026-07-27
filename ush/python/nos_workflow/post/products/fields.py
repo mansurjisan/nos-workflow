@@ -311,7 +311,9 @@ def _repack_deflated(Dataset, src: Path, dst: Path, level: int) -> None:
     the published stack reads back the way the model wrote it.
     """
     with atomic_publish(dst) as tmp:
-        with Dataset(src, "r") as s, Dataset(tmp, "w", format="NETCDF4") as d:
+        with Dataset(src, "r") as s, Dataset(
+            tmp, "w", format=_repack_format(s)
+        ) as d:
             for dim_name, dim in s.dimensions.items():
                 d.createDimension(
                     dim_name, None if dim.isunlimited() else len(dim)
@@ -330,6 +332,22 @@ def _repack_deflated(Dataset, src: Path, dst: Path, level: int) -> None:
                     for a in var.ncattrs() if a != "_FillValue"
                 })
                 new[...] = var[...]
+
+
+def _repack_format(src_ds) -> str:
+    """Keep the source's data model; deflation needs at least netCDF-4.
+
+    Writing everything as NETCDF4 would silently promote a
+    NETCDF4_CLASSIC stack (what ops' own SECOFS writer produces) to the
+    full model, which is a format change dressed up as a storage change.
+    A classic-3D source has no compression at all, so that one is
+    promoted to NETCDF4_CLASSIC -- the smallest model that can hold the
+    result.
+    """
+    model = getattr(src_ds, "data_model", "NETCDF4")
+    if model in ("NETCDF4", "NETCDF4_CLASSIC"):
+        return model
+    return "NETCDF4_CLASSIC"
 
 
 def _repack_kwargs(ds, var, level: int) -> dict:
