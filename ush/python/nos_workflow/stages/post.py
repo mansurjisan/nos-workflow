@@ -905,6 +905,54 @@ class MaxeleProduct(NosUtilsProduct):
 
 
 @register
+class AdcircProduct(NosUtilsProduct):
+    """ADCIRC-format water-level fields: the CERA feed and the AWIPS
+    grib2 step's input.
+
+    Both legs run: the published name carries the phase token (and the
+    hour range), so the nowcast and forecast files cannot collide -- the
+    guard test pins that. The urban small-disturbance mask is optional,
+    so a system without the ops node-id fix file publishes unmasked
+    rather than skipping.
+    """
+
+    name = "adcirc"
+    worker = "nos_workflow.post.products.adcirc"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        args = [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+        ]
+        # Fix name is the ops system's, not our variant's (points_cwl
+        # precedent): stofs_3d_atl_ufs -> stofs_3d_atl_node_id_*.txt.
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        city = fix_file(
+            ctx,
+            "node_id_city_poly_adcirc.txt",
+            f"{ops}_node_id_city_poly_adcirc.txt",
+        )
+        if city is not None:
+            args += ["--city-nodes", str(city)]
+        else:
+            logger.info(
+                "adcirc: no city node-id file under %s; urban "
+                "small-disturbance masking off (ops uses "
+                "%s_node_id_city_poly_adcirc.txt)", ctx.fixofs, ops,
+            )
+        return args
+
+
+@register
 class PointsCwlProduct(NosUtilsProduct):
     """Ops-style station timeseries from the staged staout files.
 
@@ -1012,6 +1060,49 @@ class GeopkgProduct(NosUtilsProduct):
                     "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
         ]
 
+
+
+@register
+class ProfilesProduct(NosUtilsProduct):
+    """Station vertical profiles (ops ``{ncast,fcast}.station.profile.nc``).
+
+    Needs the mesh (hgrid.gr3 + vgrid.in) and the station list from
+    $FIXofs, tried under both spellings: the ATL fix set carries the ops
+    system prefix (``stofs_3d_atl_station.in``) while ours carries
+    PREFIXNOS (``{prefix}.station.in``). A system missing any of the
+    three skips cleanly, and the station list falls back to the one the
+    stage already resolved (which also honours $STA_OUT_CTL).
+
+    A station outside the mesh fails the phase, as the ops driver does;
+    ``NOS_PROFILES_OUTSIDE=nearest`` opts into pylib's nearest-node
+    fallback instead (see the worker).
+    """
+
+    name = "profiles"
+    worker = "nos_workflow.post.products.profiles"
+
+    def worker_args(self, ctx, phase, staging, work):
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        hgrid = fix_file(ctx, "hgrid.gr3", f"{ops}_hgrid.gr3")
+        vgrid = fix_file(ctx, "vgrid.in", f"{ops}_vgrid.in")
+        station = fix_file(ctx, "station.in", f"{ops}_station.in")
+        if station is None and ctx.sta_in and Path(ctx.sta_in).is_file():
+            station = ctx.sta_in
+        if not has_field_stacks(staging) or None in (hgrid, vgrid, station):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--hgrid", str(hgrid),
+            "--vgrid", str(vgrid),
+            "--station-in", str(station),
+            "--outside", ctx.shell_env.get("NOS_PROFILES_OUTSIDE") or "error",
+        ]
 
 
 @register
