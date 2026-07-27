@@ -19,6 +19,22 @@ hardlink when possible (COMOUT staging and products share a filesystem)
 with a copy fallback, then stamped with identifying global attributes.
 Note the hardlink means the staged split file shares the attribute
 stamp -- staging files are internal, so that is acceptable.
+
+``--deflate`` opts into repacking the stack with zlib on the way out
+instead of linking it. It is off by default because that matches ops,
+which publishes these stacks uncompressed (STOFS ``cpreq -pf`` in
+``stofs_3d_atl_add_attr_2d_3d_nc.sh``; SECOFS writes plain
+NETCDF4_CLASSIC in ``schism_fields_station_redo.py``). Measured on a
+real 1.69M-node SECOFS cycle, the win is far smaller than raw volume
+suggests, because SCHISM already deflates the 3D stacks itself at
+level 4 -- only out2d arrives uncompressed:
+
+    out2d 3.0 GB + 3D 11.3 GB = 14.3 GB published per cycle
+    out2d alone repacks 155 MB -> 103 MB (1.5x), ~1.6 s at level 1
+
+so roughly 7% off the cycle for ~26 s of post CPU. Levels above 1 are
+not worth it here (level 4 buys another 1% for 5x the time), and
+already-compressed variables are passed through untouched.
 """
 from __future__ import annotations
 
@@ -33,6 +49,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from ..naming import fields_stack_name
+from ..worker_base import atomic_publish
 
 _VAR_FILE_PREFIXES = (
     "out2d",
@@ -90,7 +107,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.prefix, args.cyc, args.pdy, var, args.phase, h0, h1,
             )
             dst = comout / name
-            _link_or_copy(src, dst)
+            if args.deflate > 0 and _worth_deflating(Dataset, src):
+                _repack_deflated(Dataset, src, dst, args.deflate)
+            else:
+                _link_or_copy(src, dst)
             _stamp_attrs(Dataset, dst, args)
             created.append(str(dst))
             print(f"fields: {src.name} -> {name}")
@@ -120,6 +140,13 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
              "to detect whether this system's forecast continues the nowcast "
              "clock (STOFS-3D-ATL standalone) or restarts it (SECOFS), so "
              "hour labels come out phase-relative either way.",
+    )
+    p.add_argument(
+        "--deflate", type=int, default=0,
+        help="zlib level for stacks that arrive uncompressed (0 = off, "
+             "the ops-parity default: publish by hardlink). Level 1 gets "
+             "essentially all of the available compression; see the module "
+             "docstring for measured ratios.",
     )
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")
@@ -241,6 +268,100 @@ def _link_or_copy(src: Path, dst: Path) -> None:
         os.link(src, dst)
     except OSError:
         shutil.copy2(src, dst)
+
+
+#: Repack only when this share of a stack's payload arrives uncompressed.
+#: A repack decompresses and recompresses everything, so a stack that is
+#: already compressed costs a full read/write cycle to save nothing --
+#: measured at 60 s per 3D stack to shave 3 KB off 303 MB.
+_DEFLATE_WORTH_FRACTION = 0.05
+
+
+def _worth_deflating(Dataset, src: Path) -> bool:
+    """True when enough of ``src`` is uncompressed to justify a repack."""
+    try:
+        raw = 0
+        with Dataset(src, "r") as ds:
+            for var in ds.variables.values():
+                if (var.filters() or {}).get("zlib"):
+                    continue
+                count = 1
+                for dim in var.dimensions:
+                    count *= len(ds.dimensions[dim])
+                raw += count * var.dtype.itemsize
+        on_disk = src.stat().st_size
+    except Exception as exc:  # noqa: BLE001
+        print(f"fields: {src.name}: cannot size for deflate ({exc}); linking")
+        return False
+    if on_disk and raw < on_disk * _DEFLATE_WORTH_FRACTION:
+        print(
+            f"fields: {src.name}: already compressed "
+            f"({raw / 1e6:.1f} MB of {on_disk / 1e6:.1f} MB raw); linking"
+        )
+        return False
+    return True
+
+
+def _repack_deflated(Dataset, src: Path, dst: Path, level: int) -> None:
+    """Copy ``src`` to ``dst``, deflating variables that arrive raw.
+
+    Variables SCHISM already wrote compressed (the 3D stacks come out at
+    level 4) keep their own filters: re-deflating them costs the whole
+    read/write cycle for no measurable gain. Chunking is carried over so
+    the published stack reads back the way the model wrote it.
+    """
+    with atomic_publish(dst) as tmp:
+        with Dataset(src, "r") as s, Dataset(tmp, "w", format="NETCDF4") as d:
+            for dim_name, dim in s.dimensions.items():
+                d.createDimension(
+                    dim_name, None if dim.isunlimited() else len(dim)
+                )
+            d.setncatts({k: s.getncattr(k) for k in s.ncattrs()})
+            for var_name, var in s.variables.items():
+                kwargs = _repack_kwargs(s, var, level)
+                fill = kwargs.pop("_fill_value", None)
+                if fill is not None:
+                    kwargs["fill_value"] = fill
+                new = d.createVariable(
+                    var_name, var.dtype, var.dimensions, **kwargs
+                )
+                new.setncatts({
+                    a: var.getncattr(a)
+                    for a in var.ncattrs() if a != "_FillValue"
+                })
+                new[...] = var[...]
+
+
+def _repack_kwargs(ds, var, level: int) -> dict:
+    """createVariable kwargs preserving ``var``'s storage, deflating if raw."""
+    kwargs: dict = {}
+    if "_FillValue" in var.ncattrs():
+        kwargs["_fill_value"] = var.getncattr("_FillValue")
+    if not var.dimensions:
+        return kwargs
+
+    filters = var.filters() or {}
+    if filters.get("zlib"):
+        # Already compressed by the model -- pass its settings through.
+        kwargs["zlib"] = True
+        kwargs["complevel"] = filters.get("complevel", level)
+        kwargs["shuffle"] = bool(filters.get("shuffle", False))
+    else:
+        kwargs["zlib"] = True
+        kwargs["complevel"] = level
+
+    chunking = var.chunking()
+    if isinstance(chunking, (list, tuple)):
+        # A chunk may exceed a dimension only when that dimension is
+        # unlimited; passing an oversized chunk on a fixed dimension is an
+        # error, so fall back to library-chosen chunking in that case.
+        ok = all(
+            ds.dimensions[dim].isunlimited() or size <= len(ds.dimensions[dim])
+            for dim, size in zip(var.dimensions, chunking)
+        )
+        if ok:
+            kwargs["chunksizes"] = list(chunking)
+    return kwargs
 
 
 def _stamp_attrs(Dataset, dst: Path, args: argparse.Namespace) -> None:

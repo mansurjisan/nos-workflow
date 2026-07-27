@@ -788,6 +788,21 @@ def _len_nowcast_hours(env) -> str:
         return "6.0"
 
 
+def _fields_deflate(env: "os._Environ") -> str:
+    """zlib level for published field stacks (``POST_FIELDS_DEFLATE``).
+
+    Defaults to 0 -- ops publishes these stacks uncompressed, and SCHISM
+    already deflates the 3D ones itself, so compressing here is an opt-in
+    trade of post CPU for roughly 7% of cycle volume.
+    """
+    raw = env.get("POST_FIELDS_DEFLATE", "")
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        return "0"
+    return str(level) if 0 <= level <= 9 else "0"
+
+
 def _read_fields_result(result_json: Path) -> List[str]:
     """Created-file list from the fields worker's result json."""
     try:
@@ -840,6 +855,7 @@ class FieldsNcProduct(PostProduct):
                     "--pdy", ctx.pdy,
                     "--phase", phase,
                     "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+                    "--deflate", _fields_deflate(ctx.shell_env),
                     "--combine-script", str(ctx.combine_script),
                     "--result-json", str(result_json),
                 ],
