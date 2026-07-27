@@ -456,3 +456,72 @@ def test_product_skipped_when_fix_metadata_absent(tmp_path):
 
     assert result.status == "skipped"
     assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# Station coordinate plausibility (advisory; never rewrites values)
+# ---------------------------------------------------------------------------
+
+
+def _write_coord_nc(path: Path, coords, names=None):
+    netCDF4 = pytest.importorskip("netCDF4")
+    import numpy as np
+
+    names = names or [f"S{i}" for i in range(len(coords))]
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("station", len(coords))
+        ds.createDimension("namelen", 24)
+        xv = ds.createVariable("x", "f8", ("station",))
+        yv = ds.createVariable("y", "f8", ("station",))
+        xv[:] = [c[0] for c in coords]
+        yv[:] = [c[1] for c in coords]
+        nv = ds.createVariable("station_name", "S1", ("station", "namelen"))
+        nv[:] = np.array(
+            [list(n.ljust(24)[:24]) for n in names], dtype="S1"
+        )
+
+
+def test_transposed_station_is_named(tmp_path, capsys):
+    """The ops ATL fix set keys 3 of its 108 rows the opposite way round
+    to the rest; those stations publish transposed, silently."""
+    nc = tmp_path / "p.nc"
+    # x carries latitudes and y longitudes here, as the ops pair yields.
+    coords = [(30.0 + i * 0.5, -80.0 - i * 0.5) for i in range(10)]
+    # A station in the middle of the domain, keyed the other way round.
+    coords.insert(5, (-82.0, 32.0))
+    _write_coord_nc(nc, coords, names=[f"STA{i}" for i in range(11)])
+
+    points_cwl._warn_transposed_coords(nc, "fix.csv")
+
+    out = capsys.readouterr().out
+    assert "1 of 11 stations" in out
+    assert "STA5" in out
+    assert "fix.csv" in out
+
+
+def test_consistent_stations_are_not_flagged(tmp_path, capsys):
+    nc = tmp_path / "p.nc"
+    _write_coord_nc(nc, [(30.0 + i * 0.5, -80.0 - i * 0.5) for i in range(11)])
+
+    points_cwl._warn_transposed_coords(nc, "fix.csv")
+
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_far_flung_station_is_not_flagged_as_transposed(tmp_path, capsys):
+    """An outlier only counts as transposed if the swap actually fits --
+    a genuinely distant station must not be reported."""
+    nc = tmp_path / "p.nc"
+    coords = [(30.0 + i * 0.5, -80.0 - i * 0.5) for i in range(10)]
+    coords.insert(5, (12.0, -140.0))  # far away, but not a swap
+    _write_coord_nc(nc, coords)
+
+    points_cwl._warn_transposed_coords(nc, "fix.csv")
+
+    assert "WARNING" not in capsys.readouterr().out
+
+
+def test_coordinate_check_never_raises_on_a_bad_file(tmp_path, capsys):
+    missing = tmp_path / "nope.nc"
+    points_cwl._warn_transposed_coords(missing, "fix.csv")
+    assert "coordinate check skipped" in capsys.readouterr().out

@@ -343,7 +343,16 @@ resources:
 post:
   archive_fields: true   # run stages normalize + stage global field stacks
   products:
-    - stations_nc
+    # points_cwl, not stations_nc: stations_nc assembles SECOFS' 3D station
+    # profiles, whose staout_5..8 carry nvrt values per station plus nvrt
+    # z-coordinates. This system writes one value per station per step in
+    # those same files (verified against a real cycle: staout_5 is 109
+    # columns for 108 stations, identical in shape to staout_1), so there
+    # is no profile to assemble and the combine reshape cannot succeed.
+    # points.cwl is what ops produces here anyway. Needs the ops metadata
+    # pair (stofs_3d_atl_staout_nc.json/.csv) in $FIXofs; without it the
+    # product skips cleanly.
+    - points_cwl
     - fields_nc
     - bias_correct
 

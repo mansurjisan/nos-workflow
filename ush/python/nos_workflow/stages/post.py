@@ -14,7 +14,13 @@ from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
 from ..post.naming import stations_nc_name
 from ..post.registry import get_product, register, resolve_product_names
-from ..post.worker_base import NosUtilsProduct, fix_file, has_field_stacks, has_staout
+from ..post.worker_base import (
+    NosUtilsProduct,
+    fix_file,
+    has_field_stacks,
+    has_staout,
+    staging_dir,
+)
 from ..registry import OFSDescriptor
 
 if TYPE_CHECKING:
@@ -681,13 +687,28 @@ class StationsNcProduct(PostProduct):
 
     Wraps the legacy per-phase flow (control file, station.lat.lon,
     staout symlinks, combine subprocess, COMOUT copy) unchanged.
+
+    This is a SECOFS-shaped product: the combine script reads the 3D
+    staout files in the layout SECOFS' SCHISM build writes (per station,
+    nvrt values of the variable followed by nvrt z-coordinates, wrapped
+    onto alternating lines). STOFS-3D-ATL writes one value per station
+    per step in those same files, so there is no profile to assemble
+    there and the reshape fails -- ATL's station product is
+    ``points_cwl``, which is what ops itself produces for that system.
     """
 
     name = "stations_nc"
 
     def produce(self, ctx: ProductContext) -> ProductResult:
         outputs: List[str] = []
+        attempted: List[str] = []
+        failed: List[str] = []
         for phase in ("nowcast", "forecast"):
+            # Checked up front only to classify the outcome; the call
+            # below still does its own warn-and-continue on absent input.
+            staged = has_staout(staging_dir(ctx, phase))
+            if staged:
+                attempted.append(phase)
             created = _process_phase(
                 phase=phase,
                 data=ctx.data,
@@ -704,6 +725,22 @@ class StationsNcProduct(PostProduct):
             )
             if created is not None:
                 outputs.append(str(created))
+            elif staged:
+                # Inputs were there and we still have nothing: a real
+                # failure, not an absent-input skip. Reporting "ok" here
+                # is how ATL's every-cycle breakage stayed invisible.
+                failed.append(phase)
+
+        if not attempted:
+            return ProductResult(
+                name=self.name, status="skipped",
+                detail="no staout files staged",
+            )
+        if failed:
+            return ProductResult(
+                name=self.name, status="failed", outputs=outputs,
+                detail="produced nothing for: " + ", ".join(failed),
+            )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
 

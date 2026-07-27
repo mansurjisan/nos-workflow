@@ -168,6 +168,32 @@ def test_resolve_yaml_non_mapping_root_falls_back(tmp_path):
     ]
 
 
+_PARM = Path(__file__).resolve().parents[4] / "parm" / "systems"
+
+
+def test_shipped_yaml_station_products_match_each_system():
+    """The two systems need different station products, and the wrong one
+    cannot merely underperform -- it fails every cycle.
+
+    stations_nc assembles SECOFS' 3D station profiles from staout_5..8,
+    which on that build carry nvrt values per station plus nvrt
+    z-coordinates on alternating lines. STOFS-3D-ATL writes one value per
+    station per step in those same files, so the reshape has nothing to
+    work with. ATL's product is points_cwl, which is also what ops
+    publishes there.
+    """
+    from nos_workflow.post.registry import _read_yaml_post_products
+
+    secofs = _read_yaml_post_products(_PARM / "secofs_ufs.yaml")
+    assert "stations_nc" in secofs
+    assert "points_cwl" not in secofs
+
+    for name in ("stofs_3d_atl_ufs.yaml", "stofs_3d_atl_ufs_standalone.yaml"):
+        atl = _read_yaml_post_products(_PARM / name)
+        assert "points_cwl" in atl, name
+        assert "stations_nc" not in atl, name
+
+
 def test_resolve_descriptor_yaml_under_homenos(tmp_path):
     homenos = tmp_path / "home"
     rel = Path("parm/systems/secofs_ufs.yaml")

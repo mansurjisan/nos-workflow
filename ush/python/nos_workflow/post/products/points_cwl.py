@@ -96,6 +96,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             base_date=args.base_date,
             datum_offsets=offsets,
         )
+        _warn_transposed_coords(tmp, args.station_meta)
 
     if args.result_json:
         Path(args.result_json).write_text(
@@ -103,6 +104,77 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     print(f"points_cwl: wrote {out_path.name}")
     return 0
+
+
+def _warn_transposed_coords(path: Path, meta_source: str) -> None:
+    """Name stations whose x/y look swapped relative to the rest.
+
+    The ops station CSV labels its coordinate columns ``lat``/``lon``
+    while the data under them runs lon-first, and the writer reads by
+    header name -- so ops' ``x`` ends up carrying latitudes. That
+    mismatch is ops', and reproduced deliberately. What is not
+    deliberate: a few rows in the ops fix file are keyed the other way
+    round from the rest, so those stations come out transposed relative
+    to their own file, with nothing in the output to say so. On the
+    current ATL fix set that is 3 of 108.
+
+    This only reports. Correcting the values would diverge from the ops
+    product for the same input, which is a call for whoever owns the fix
+    file, not for post.
+    """
+    try:
+        import numpy as np
+        from netCDF4 import Dataset
+
+        with Dataset(path, "r") as ds:
+            x = np.asarray(ds.variables["x"][:], dtype=float)
+            y = np.asarray(ds.variables["y"][:], dtype=float)
+            names = _station_names(ds)
+    except Exception as exc:  # noqa: BLE001 -- advisory only
+        print(f"points_cwl: coordinate check skipped ({exc})")
+        return
+    if x.size < 4:
+        return
+
+    # Calibrate on the bulk of the stations rather than on fixed bounds,
+    # so this works for any domain (including one crossing the dateline).
+    xlo, xhi = np.percentile(x, [10, 90])
+    ylo, yhi = np.percentile(y, [10, 90])
+    suspect = [
+        i for i in range(x.size)
+        if not (xlo <= x[i] <= xhi or ylo <= y[i] <= yhi)
+        and (ylo <= x[i] <= yhi and xlo <= y[i] <= xhi)
+    ]
+    if not suspect:
+        return
+    print(
+        f"points_cwl: WARNING: {len(suspect)} of {x.size} stations have x/y "
+        f"that fit only when swapped -- their rows in {meta_source} look "
+        "keyed the opposite way round to the rest. Values published as-is "
+        "(ops parity); these stations will plot in the wrong place:"
+    )
+    for i in suspect:
+        label = names[i] if i < len(names) else ""
+        print(f"points_cwl:   station {i} x={x[i]:.4f} y={y[i]:.4f} {label}")
+
+
+def _station_names(ds) -> List[str]:
+    """Station names as text, or [] when the variable is absent/odd."""
+    try:
+        raw = ds.variables["station_name"][:]
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for row in raw:
+        try:
+            out.append(
+                b"".join(
+                    c for c in row.tobytes().split(b"\x00") if c
+                ).decode("utf-8", "replace").strip()
+            )
+        except Exception:  # noqa: BLE001
+            out.append("")
+    return out
 
 
 def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
