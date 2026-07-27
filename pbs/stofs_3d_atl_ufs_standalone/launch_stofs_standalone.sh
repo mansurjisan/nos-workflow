@@ -26,6 +26,18 @@ CYC="${2:-12}"
 PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
 PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs_standalone"
 VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
+# qsub -v replaces the job environment wholesale, so a post override
+# exported before calling this script would be silently dropped.
+# PBS splits -v on commas only, so a space-separated product list
+# survives as one value.
+# Written as `if` rather than `[ ... ] && VAR=`: the latter returns non-zero
+# when the variable is unset, which is a hair away from aborting under `set -e`.
+if [ -n "${NOS_POST_PRODUCTS:-}" ]; then
+  VARS="${VARS},NOS_POST_PRODUCTS=${NOS_POST_PRODUCTS}"
+fi
+if [ -n "${POST_FIELDS_DEFLATE:-}" ]; then
+  VARS="${VARS},POST_FIELDS_DEFLATE=${POST_FIELDS_DEFLATE}"
+fi
 
 # STAGES is overridable so a rerun can skip completed legs, e.g.
 #   STAGES="post" ./launch_stofs_standalone.sh 20260722 00

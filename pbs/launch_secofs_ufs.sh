@@ -98,13 +98,27 @@ submit_and_wait(){
   : > "$sentinel"          # mtime reference; fresh = .out newer than this
   local t0; t0=$(date +%s)
 
+  # Post-stage overrides are opt-in and only meaningful to the post job,
+  # but qsub -v replaces the job environment wholesale: anything not
+  # listed here is silently dropped, so exporting NOS_POST_PRODUCTS
+  # before calling this script would quietly do nothing. Forward them
+  # when set. Values may contain spaces (a product list); PBS splits -v
+  # on commas only, so a space-separated value survives.
+  local vars="PDY=${PDY},CYC=${cyc}"
+  if [ -n "${NOS_POST_PRODUCTS:-}" ]; then
+    vars="${vars},NOS_POST_PRODUCTS=${NOS_POST_PRODUCTS}"
+  fi
+  if [ -n "${POST_FIELDS_DEFLATE:-}" ]; then
+    vars="${vars},POST_FIELDS_DEFLATE=${POST_FIELDS_DEFLATE}"
+  fi
+
   if [ "$DRYRUN" = "1" ]; then
-    log "DRYRUN[$stage]: would qsub -v PDY=${PDY},CYC=${cyc} $pbs"
+    log "DRYRUN[$stage]: would qsub -v ${vars} $pbs"
     return 0
   fi
 
   local jid
-  jid=$(qsub -v "PDY=${PDY},CYC=${cyc}" "$pbs" 2>&1)
+  jid=$(qsub -v "${vars}" "$pbs" 2>&1)
   if [ $? -ne 0 ] || [ -z "$jid" ]; then
     log "FATAL[$stage]: qsub failed: ${jid}"
     return 3
