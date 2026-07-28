@@ -641,3 +641,59 @@ def test_profiles_skips_a_2d_only_staging_dir(tmp_path):
 
     assert result.status == "skipped"
     assert not result.outputs
+
+
+def test_outside_drop_publishes_the_rest_and_names_what_went(tmp_path, capsys):
+    """The 20260728 SECOFS case: one of 430 stations sits 0.27 m outside
+    the mesh. 'error' loses the other 429; 'nearest' fabricates a column
+    for the bad one. 'drop' does neither."""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+
+    rc, result_json = _run(
+        staging, comout, tmp_path, extra=("--outside", "drop"),
+        stations=STATIONS + (OUTSIDE_STATION,),
+    )
+    assert rc == 0
+
+    out = capsys.readouterr().out
+    assert "dropping 1 of" in out
+    assert "nearest node at" in out          # distance, the discriminator
+
+    created = json.loads(result_json.read_text())["created"]
+    assert len(created) == 1
+    with netCDF4.Dataset(created[0]) as ds:
+        # The good stations survive; the dropped one is absent, not faked.
+        assert ds.dimensions["station"].size == len(STATIONS)
+
+
+def test_outside_drop_is_a_no_op_when_every_station_is_inside(tmp_path, capsys):
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+
+    rc, result_json = _run(
+        staging, comout, tmp_path, extra=("--outside", "drop"),
+    )
+    assert rc == 0
+    assert "dropping" not in capsys.readouterr().out
+
+    created = json.loads(result_json.read_text())["created"]
+    with netCDF4.Dataset(created[0]) as ds:
+        assert ds.dimensions["station"].size == len(STATIONS)
+
+
+def test_outside_choices_are_the_three_documented_modes():
+    for mode in ("error", "nearest", "drop"):
+        assert profiles._parse_args([
+            "--staging", "s", "--comout", "c", "--prefix", "p", "--cyc", "12",
+            "--pdy", "20260722", "--phase", "nowcast", "--base-date", "d",
+            "--hgrid", "h", "--vgrid", "v", "--station-in", "i",
+            "--outside", mode,
+        ]).outside == mode
+    with pytest.raises(SystemExit):
+        profiles._parse_args([
+            "--staging", "s", "--comout", "c", "--prefix", "p", "--cyc", "12",
+            "--pdy", "20260722", "--phase", "nowcast", "--base-date", "d",
+            "--hgrid", "h", "--vgrid", "v", "--station-in", "i",
+            "--outside", "ignore",
+        ])

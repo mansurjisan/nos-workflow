@@ -111,6 +111,21 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"profiles: {len(stacks)} stack(s), outside={args.outside} "
         f"-> {out_path.name}"
     )
+    station_kwargs = {"station_file": Path(args.station_in)}
+    outside = args.outside
+    if outside == "drop":
+        kept = _keep_in_mesh_stations(args)
+        if kept is None:
+            return 6
+        lons, lats, names = kept
+        if not len(lons):
+            print("profiles: no stations left inside the mesh")
+            return 6
+        # Filtered already, so anything still outside is a genuine
+        # surprise and should stop us rather than pass silently.
+        station_kwargs = {"lons": lons, "lats": lats, "names": names}
+        outside = "error"
+
     try:
         with atomic_publish(out_path) as tmp:
             write_station_profiles(
@@ -119,8 +134,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                 Path(args.vgrid),
                 tmp,
                 base_date=base_date,
-                station_file=Path(args.station_in),
-                outside=args.outside,
+                outside=outside,
+                **station_kwargs,
             )
     except ValueError as exc:
         if "outside of domain" not in str(exc):
@@ -140,6 +155,60 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
+def _locate_stations(args: argparse.Namespace):
+    """``(lons, lats, names, ie)`` for the station list against the mesh."""
+    from nos_utils.post.profiles import (
+        compute_area_coords, read_station_in, _read_elements,
+    )
+    from nos_utils.io.schism_grid import SchismGrid
+
+    lons, lats, names = read_station_in(Path(args.station_in))
+    grid = SchismGrid.read(Path(args.hgrid), read_boundaries=False)
+    elnode = _read_elements(Path(args.hgrid), grid.n_nodes, grid.n_elements)
+    ie, _ip, _acor = compute_area_coords(
+        grid.node_lons, grid.node_lats, elnode, lons, lats
+    )
+    return lons, lats, names, ie, grid
+
+
+def _keep_in_mesh_stations(args: argparse.Namespace):
+    """Stations inside the mesh, naming every one dropped.
+
+    ``--outside drop`` exists because the two ops-inherited choices both
+    fail this case badly on a 430-station list: ``error`` loses the other
+    429 to one bad entry, and ``nearest`` publishes some other node's
+    water column under the bad station's name. Dropping is the only
+    option that neither discards good data nor invents any -- the
+    station is simply absent, and the log says which and why.
+
+    Returns None when the station list or mesh cannot be read.
+    """
+    try:
+        import numpy as np
+
+        lons, lats, names, ie, grid = _locate_stations(args)
+    except Exception as exc:  # noqa: BLE001
+        print(f"profiles: cannot locate stations against the mesh ({exc})")
+        return None
+
+    bad = np.nonzero(ie == -1)[0]
+    if not bad.size:
+        return lons, lats, names
+    print(
+        f"profiles: dropping {bad.size} of {lons.size} station(s) outside "
+        f"{Path(args.hgrid).name}:"
+    )
+    for k in bad:
+        d = np.hypot(grid.node_lons - lons[k], grid.node_lats - lats[k])
+        print(
+            f"profiles:   [{k}] {str(names[k])[:32]:32s} "
+            f"({lons[k]:.6f}, {lats[k]:.6f})  "
+            f"nearest node at {d.min() * 111000:.2f} m"
+        )
+    keep = ie != -1
+    return lons[keep], lats[keep], np.asarray(names)[keep]
+
+
 def _diagnose_outside(args: argparse.Namespace) -> None:
     """Name the out-of-domain stations and their distance to the mesh.
 
@@ -151,19 +220,8 @@ def _diagnose_outside(args: argparse.Namespace) -> None:
     """
     try:
         import numpy as np
-        from nos_utils.post.profiles import (
-            compute_area_coords, read_station_in, _read_elements,
-        )
-        from nos_utils.io.schism_grid import SchismGrid
 
-        lons, lats, names = read_station_in(Path(args.station_in))
-        grid = SchismGrid.read(Path(args.hgrid), read_boundaries=False)
-        elnode = _read_elements(
-            Path(args.hgrid), grid.n_nodes, grid.n_elements
-        )
-        ie, _ip, _acor = compute_area_coords(
-            grid.node_lons, grid.node_lats, elnode, lons, lats
-        )
+        lons, lats, names, ie, grid = _locate_stations(args)
         bad = np.nonzero(ie == -1)[0]
         print(
             f"profiles: {bad.size} of {lons.size} station(s) outside "
@@ -206,11 +264,14 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         help="SCHISM station.in -- the ops station list",
     )
     p.add_argument(
-        "--outside", default="error", choices=("error", "nearest"),
+        "--outside", default="error", choices=("error", "nearest", "drop"),
         help="what to do with a station outside the mesh. 'error' (default) "
              "is ops parity: the operational driver sys.exit()s on one. "
              "'nearest' takes pylib's nearest-node fallback, which publishes "
-             "another node's column under the misplaced station's name.",
+             "another node's column under the misplaced station's name. "
+             "'drop' excludes it and publishes the rest, naming what went -- "
+             "the only choice that neither loses good stations to one bad "
+             "entry nor invents data for it.",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)
