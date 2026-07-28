@@ -32,14 +32,20 @@ VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
 # exported before calling this script would be silently dropped.
 # PBS splits -v on commas only, so a space-separated product list
 # survives as one value.
-# Written as `if` rather than `[ ... ] && VAR=`: the latter returns non-zero
-# when the variable is unset, which is a hair away from aborting under `set -e`.
-if [ -n "${NOS_POST_PRODUCTS:-}" ]; then
-  VARS="${VARS},NOS_POST_PRODUCTS=${NOS_POST_PRODUCTS}"
-fi
-if [ -n "${POST_FIELDS_DEFLATE:-}" ]; then
-  VARS="${VARS},POST_FIELDS_DEFLATE=${POST_FIELDS_DEFLATE}"
-fi
+# qsub -v replaces the job environment wholesale, so anything not listed
+# here is silently dropped. Enumerating them one at a time already cost a
+# test run -- NOS_PROFILES_OUTSIDE was missing, so `--outside drop` was
+# asked for, never arrived, and the job did the default thing instead.
+# Keep this list in step with the post stage's env knobs:
+#   grep -rhoE '"(NOS_[A-Z_]+|POST_[A-Z_]+)"' ush/python/nos_workflow/post/
+# PBS splits -v on commas only, so a space-separated value survives whole.
+for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
+          POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT; do
+  eval "_val=\${${_v}:-}"
+  if [ -n "${_val}" ]; then
+    VARS="${VARS},${_v}=${_val}"
+  fi
+done
 
 # STAGES is overridable so a rerun can skip completed legs, e.g.
 #   STAGES="post" ./launch_stofs_3d_atl_ufs.sh 20260722 12
