@@ -23,7 +23,7 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
 from ..naming import disturbance_gpkg_name
 
@@ -38,7 +38,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"geopkg: staging dir missing: {staging}")
         return 2
 
-    stacks = _out2d_stacks(staging)
+    stacks, dropped = _usable_out2d_stacks(_out2d_stacks(staging))
+    for note in dropped:
+        print(f"geopkg: {note}")
     if not stacks:
         print(f"geopkg: no out2d stacks in {staging}")
         return 3
@@ -88,7 +90,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         # table / coordinates). Warn and skip rather than failing the
         # product -- slab2d treats the same condition the same way.
         print(
-            f"geopkg: out2d stacks missing mesh variable {exc}; "
+            f"geopkg: out2d stacks missing variable {exc}; "
             "no GeoPackages written"
         )
         written = []
@@ -133,6 +135,45 @@ def _out2d_stacks(staging: Path) -> List[Path]:
         if m:
             hits.append((int(m.group(1)), f))
     return [f for _i, f in sorted(hits)]
+
+
+def _usable_out2d_stacks(
+    stacks: Sequence[Path],
+) -> Tuple[List[Path], List[str]]:
+    """Split ``stacks`` into ones the writer can read, and why the rest went.
+
+    A leg's trailing stack is routinely empty -- the model closes the
+    window before writing any record into it -- and such a file carries
+    no ``elevation`` at all. The writer reads elevation from every stack
+    it is handed, so a single empty one raised KeyError and cost the
+    WHOLE phase its GeoPackages, not just that stack. Every sibling
+    product already filters these (fields, slab2d, adcirc, profiles);
+    this one did not.
+    """
+    try:
+        from netCDF4 import Dataset
+    except ImportError:
+        return list(stacks), []
+
+    usable: List[Path] = []
+    dropped: List[str] = []
+    for path in stacks:
+        try:
+            with Dataset(path, "r") as ds:
+                has_elev = "elevation" in ds.variables
+                nrec = (
+                    int(ds.variables["time"].shape[0])
+                    if "time" in ds.variables else 0
+                )
+        except Exception as exc:  # noqa: BLE001
+            dropped.append(f"{path.name}: unreadable ({exc}); skipped")
+            continue
+        if not has_elev or nrec == 0:
+            why = "no elevation" if not has_elev else "no records"
+            dropped.append(f"{path.name}: {why}; skipped")
+            continue
+        usable.append(path)
+    return usable, dropped
 
 
 def _record_count(stacks: Sequence[Path]) -> int:

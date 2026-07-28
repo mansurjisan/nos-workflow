@@ -258,3 +258,68 @@ def test_naming_helper():
     assert disturbance_gpkg_name(
         "stofs_3d_atl_ufs", "12", "20260722", "forecast", 96
     ) == "stofs_3d_atl_ufs.t12z.20260722.disturbance.f096.gpkg"
+
+
+def _write_empty_trailing_stack(path: Path) -> Path:
+    """A leg's trailing stack as the model actually leaves it.
+
+    The window closes before any record is written, so the file carries
+    the mesh but no time records and no ``elevation`` variable at all --
+    exactly what stack 2 (nowcast) and stack 9 (forecast) looked like on
+    the 20260728 00z SECOFS cycle.
+    """
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 4)
+        tv = ds.createVariable("time", "f8", ("time",))
+        tv.units = "seconds since 2026-07-10 00:00:00"
+    return path
+
+
+def test_empty_trailing_stack_does_not_cost_the_phase_its_output(tmp_path):
+    """One empty stack used to raise KeyError('elevation') out of the
+    writer and zero the WHOLE phase, because every stack was handed
+    through unfiltered."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_out2d(staging / "out2d_1.nc", hours=range(1, 7))
+    _write_empty_trailing_stack(staging / "out2d_2.nc")
+
+    usable, dropped = geopkg._usable_out2d_stacks(
+        geopkg._out2d_stacks(staging)
+    )
+
+    assert [p.name for p in usable] == ["out2d_1.nc"]
+    assert len(dropped) == 1
+    assert "out2d_2.nc" in dropped[0]
+    # Named, never dropped silently.
+    assert "skipped" in dropped[0]
+
+
+def test_unreadable_stack_is_named_and_dropped(tmp_path):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _write_out2d(staging / "out2d_1.nc", hours=range(1, 3))
+    (staging / "out2d_2.nc").write_bytes(b"not a netcdf file")
+
+    usable, dropped = geopkg._usable_out2d_stacks(
+        geopkg._out2d_stacks(staging)
+    )
+
+    assert [p.name for p in usable] == ["out2d_1.nc"]
+    assert "out2d_2.nc" in dropped[0] and "unreadable" in dropped[0]
+
+
+def test_all_stacks_usable_drops_nothing(tmp_path):
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    _write_out2d(staging / "out2d_1.nc", hours=range(1, 4))
+    _write_out2d(staging / "out2d_2.nc", hours=range(4, 7))
+
+    usable, dropped = geopkg._usable_out2d_stacks(
+        geopkg._out2d_stacks(staging)
+    )
+
+    assert len(usable) == 2 and dropped == []
