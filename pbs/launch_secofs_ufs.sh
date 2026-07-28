@@ -38,10 +38,27 @@ PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
 RPTDIR=${RPTDIR:-/lfs/h1/nos/ptmp/${USER}/rpt/secofs_ufs}
 DRYRUN=${DRYRUN:-0}
 POLL=${POLL:-60}                       # seconds between status polls
-PREP_TIMEOUT=${PREP_TIMEOUT:-5400}     # 90 min  (prep has no retry)
-NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-10800}  # 3 h   (clean ~30m + retry headroom)
-FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-14400} # 4 h  (clean ~60m + retry headroom)
-POST_TIMEOUT=${POST_TIMEOUT:-1800}     # 30 min
+# Every stage timeout must be at least its PBS job's walltime. The job
+# cannot outlive that, and this poll does not qdel -- it only stops
+# watching -- so a shorter value can only mislabel a healthy cycle.
+# Pinned by tests/test_launcher_timeouts.py.
+PREP_TIMEOUT=${PREP_TIMEOUT:-7800}         # walltime 2:00 + 10 min (no retry)
+NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-10800}  # walltime 1:30, x2 for blind retry
+FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-20400} # walltime 5:30 + 10 min
+# NOTE: forecast retries blind on a crash, resubmitting under a new jobid.
+# This covers ONE full-walltime attempt; waiting out a retry as nowcast
+# does would need ~11 h, which is a cadence decision, not a correctness
+# one -- a retry that outruns this is reported FAILED though it may pass.
+# 2 h 10 m. Sized off the PBS walltime (02:00:00), not off a typical
+# runtime: the job cannot outlive its walltime, so anything shorter
+# only ever produces a false FAIL on a healthy cycle, and this poll
+# does not qdel -- it just stops watching. The extra 10 min lets the
+# launcher OBSERVE a walltime kill rather than race it.
+# 1800 was sized when post was stations-only (~13 min). The full
+# product suite measured 33:11 on the 20260728 coupled cycle, so that
+# value reported FAILED on a run that exited 0 and aborted the
+# dependent stages behind it.
+POST_TIMEOUT=${POST_TIMEOUT:-7800}
 STAGES=${STAGES:-"prep nowcast forecast post"}   # override e.g. STAGES=post for single-stage recovery
 
 # ---- args -------------------------------------------------------------------
