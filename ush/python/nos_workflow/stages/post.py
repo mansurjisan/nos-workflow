@@ -104,6 +104,10 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     pgmout = shell_env.get("pgmout", "OUTPUT.$$")
 
     sl.info("phase=POST pdy=%s cyc=%s comout=%s", pdy, cyc, comout)
+    # Worker output is echoed here as each finishes, but a worker still
+    # running when the job is killed only has its lines in $pgmout. Say
+    # where that is so it can be tailed live rather than reconstructed.
+    sl.info("worker output also at $pgmout=%s (tail -f during the run)", pgmout)
 
     combine_script = _resolve_combine_script(homenos, shell_env)
     if combine_script is None:
@@ -697,7 +701,18 @@ def _run_subprocess_appending(
     log_path: str,
     scrub_ld_preload: bool,
 ) -> int:
-    """Run ``cmd``, appending merged stdout/stderr to ``log_path``.
+    """Run ``cmd``, echoing merged stdout/stderr into the stage log.
+
+    Output reaches the stage log as each worker finishes, as well as
+    ``log_path`` (the NCO ``$pgmout``). The echo is not cosmetic:
+    $pgmout is only surfaced by the J-job's closing ``cat``, so a post
+    job that is killed -- walltime, OOM -- lost every product's output at
+    once, and the log gave no way to tell which products had finished or
+    where it stopped.
+
+    A worker still in flight when the kill lands does lose its output
+    here; its lines are in $pgmout on disk and can be tailed live during
+    the run, which is why that path is logged up front.
 
     ``scrub_ld_preload=True`` removes ``LD_PRELOAD`` from the child env to
     keep netCDF4 / numpy from segfaulting when the J-job preloaded
@@ -706,26 +721,31 @@ def _run_subprocess_appending(
     child_env = os.environ.copy()
     if scrub_ld_preload and "LD_PRELOAD" in child_env:
         del child_env["LD_PRELOAD"]
+    # Unbuffered child stdout, or a killed worker's last lines die in its
+    # own pipe buffer -- which is the failure this streaming exists to fix.
+    child_env["PYTHONUNBUFFERED"] = "1"
 
-    log_fh = None
-    try:
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd is not None else None,
+        env=child_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    captured = getattr(proc, "stdout", None) or ""
+    for line in captured.splitlines():
+        logger.info("%s", line)
+    if captured:
         try:
-            log_fh = open(log_path, "a")
+            with open(log_path, "a") as log_fh:
+                log_fh.write(
+                    captured if captured.endswith("\n") else captured + "\n"
+                )
         except OSError:
-            log_fh = None
-
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd is not None else None,
-            env=child_env,
-            stdout=log_fh if log_fh is not None else None,
-            stderr=subprocess.STDOUT if log_fh is not None else None,
-            check=False,
-        )
-        return proc.returncode
-    finally:
-        if log_fh is not None:
-            log_fh.close()
+            pass
+    return proc.returncode
 
 
 @register
