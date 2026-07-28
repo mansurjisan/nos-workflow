@@ -316,3 +316,165 @@ def test_nowcast_labels_never_shifted(tmp_path):
     ])
     assert result == 0
     assert (comout / "stofs_3d_atl_ufs.t12z.20260722.fields.out2d.n001_012.nc").is_file()
+
+
+def _write_compressed_stack(path: Path, hours: "list[int]", n_nodes: int = 64):
+    """A stack SCHISM already deflated, as the 3D scribe files arrive."""
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", n_nodes)
+        ds.createDimension("nSCHISM_vgrid_layers", 8)
+        tv = ds.createVariable("time", "f8", ("time",))
+        tv.units = "seconds since 2026-07-10 00:00:00"
+        tv[:] = [h * 3600.0 for h in hours]
+        vv = ds.createVariable(
+            "temperature", "f4",
+            ("time", "nSCHISM_hgrid_node", "nSCHISM_vgrid_layers"),
+            zlib=True, complevel=4,
+        )
+        vv[:] = 20.0
+
+
+def test_deflate_off_by_default_publishes_uncompressed(tmp_path):
+    """The default matches ops, which publishes these stacks as-is."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=[1, 2])
+
+    result = _run_worker(staging, comout, "nowcast", tmp_path)
+
+    published = Path(result["created"][0])
+    with netCDF4.Dataset(published) as ds:
+        assert not (ds["elevation"].filters() or {}).get("zlib")
+
+
+def test_deflate_compresses_raw_stacks_preserving_values(tmp_path):
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=[1, 2], n_nodes=512)
+
+    with netCDF4.Dataset(staging / "out2d_1.nc") as ds:
+        expected = ds["elevation"][...]
+
+    rc = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+        "--phase", "nowcast", "--deflate", "1",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert rc == 0
+
+    published = comout / "secofs.t00z.20260710.fields.out2d.n001_002.nc"
+    with netCDF4.Dataset(published) as ds:
+        assert (ds["elevation"].filters() or {}).get("zlib")
+        assert (ds["elevation"].filters() or {}).get("complevel") == 1
+        assert (ds["elevation"][...] == expected).all()
+        # Still a published product, not just a repacked file.
+        assert ds.getncattr("product") == "fields_nc"
+
+
+def test_deflate_links_stacks_schism_already_compressed(tmp_path):
+    """Repacking an already-deflated stack costs a full rewrite to save
+    nothing, so those are linked through even with --deflate on."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    src = staging / "temperature_1.nc"
+    _write_compressed_stack(src, hours=[1, 2])
+
+    rc = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+        "--phase", "nowcast", "--deflate", "1",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert rc == 0
+
+    published = comout / "secofs.t00z.20260710.fields.temperature.n001_002.nc"
+    assert published.stat().st_ino == src.stat().st_ino
+    with netCDF4.Dataset(published) as ds:
+        assert (ds["temperature"].filters() or {}).get("complevel") == 4
+
+
+def test_deflate_leaves_nothing_behind_when_repack_fails(tmp_path, monkeypatch):
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=[1, 2], n_nodes=512)
+
+    def boom(*_a, **_k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(fields, "_repack_kwargs", boom)
+
+    with pytest.raises(RuntimeError):
+        fields.main([
+            "--staging", str(staging), "--comout", str(comout),
+            "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+            "--phase", "nowcast", "--deflate", "1",
+            "--result-json", str(tmp_path / "r.json"),
+        ])
+
+    assert list(comout.iterdir()) == []
+
+
+def test_deflate_preserves_a_classic_data_model(tmp_path):
+    """Repacking is a storage change, not a format change: a
+    NETCDF4_CLASSIC stack (what ops' SECOFS writer produces) must not be
+    silently promoted to the full netCDF-4 model."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    src = staging / "out2d_1.nc"
+    with netCDF4.Dataset(src, "w", format="NETCDF4_CLASSIC") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 512)
+        tv = ds.createVariable("time", "f8", ("time",))
+        tv.units = "seconds since 2026-07-10 00:00:00"
+        tv[:] = [3600.0, 7200.0]
+        ds.createVariable(
+            "elevation", "f4", ("time", "nSCHISM_hgrid_node")
+        )[:] = 0.5
+
+    rc = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+        "--phase", "nowcast", "--deflate", "1",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert rc == 0
+
+    published = comout / "secofs.t00z.20260710.fields.out2d.n001_002.nc"
+    with netCDF4.Dataset(published) as ds:
+        assert ds.data_model == "NETCDF4_CLASSIC"
+        assert (ds["elevation"].filters() or {}).get("zlib")
+
+
+@pytest.mark.parametrize("bad", ["10", "-1", "99", "notanumber"])
+def test_deflate_rejects_out_of_range_levels(bad, tmp_path, capsys):
+    """netCDF4 raises from inside createVariable on a bad level, naming
+    nothing useful; catch it at the CLI instead."""
+    with pytest.raises(SystemExit):
+        fields.main([
+            "--staging", str(tmp_path), "--comout", str(tmp_path),
+            "--prefix", "secofs", "--cyc", "00", "--pdy", "20260710",
+            "--phase", "nowcast", "--deflate", bad,
+        ])
+    assert "--deflate" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("level", ["0", "9"])
+def test_deflate_accepts_the_range_bounds(level):
+    args = fields._parse_args([
+        "--staging", "s", "--comout", "c", "--prefix", "p",
+        "--cyc", "00", "--pdy", "20260710", "--phase", "nowcast",
+        "--deflate", level,
+    ])
+    assert args.deflate == int(level)

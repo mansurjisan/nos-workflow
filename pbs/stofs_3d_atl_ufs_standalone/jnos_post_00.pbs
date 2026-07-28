@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS  -N secofs_ufs_post_00
+#PBS  -N stofs_3d_atl_ufs_sa_post_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
 # NOT /dev/null: PBS writes its own epilogue here -- "walltime exceeded",
@@ -13,20 +13,26 @@
 #PBS  -l walltime=02:00:00
 
 # ------------------------------------------------------------------
-# SECOFS UFS Post-Processing PBS Job
+# STOFS-3D-ATL STANDALONE Post-Processing PBS Job
 #
 # Generates station NetCDF and field products from SCHISM raw outputs.
 # Runs after both nowcast and forecast complete.
 #
+# Identical post stage to the UFS-coupled job; only OFS_CONFIG differs
+# (execution.mode=standalone). The standalone engine writes scribed
+# outputs, so normalize_fields is a pass-through and the fields worker
+# publishes the scribe stacks directly (zCoordinates included).
+#
 # Submit via launcher or manually:
-#   qsub -v "PDY=20260322,CYC=18,OFS=secofs_ufs" jnos_post_00.pbs
+#   qsub -v "PDY=20260322,CYC=00" \
+#        pbs/stofs_3d_atl_ufs_standalone/jnos_post_00.pbs
 # ------------------------------------------------------------------
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
-export OFS=${OFS:-secofs_ufs}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 mkdir -p -m 755 $RPTDIR $WORKDIR
@@ -34,9 +40,9 @@ mkdir -p -m 755 $RPTDIR $WORKDIR
 # Per-job log files (PBS jobid as suffix). PBS -o/-e are pointed at
 # /dev/null above; this redirect is what populates post logs.
 _JOBID=${PBS_JOBID%%.*}
-_LOG_PREFIX="$RPTDIR/secofs_ufs_post_00.${_JOBID}"
+_LOG_PREFIX="$RPTDIR/stofs_3d_atl_ufs_standalone_post_00.${_JOBID}"
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
-echo "=== secofs_ufs_post_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+echo "=== stofs_3d_atl_ufs_standalone_post_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
 # Module setup — post-processing only needs Python + NCO, not UFS hpc-stack
@@ -93,11 +99,12 @@ PYPROBE
 # EXPORT list
 set +x
 export envir=dev
-export OFS=${OFS:-secofs_ufs}
+export OFS=${OFS:-stofs_3d_atl_ufs}
 export cyc=${CYC:-00}
 export PDY=${PDY:-$(date +%Y%m%d)}
-export job=secofs_ufs_post_${cyc}_$envir
+export job=stofs_3d_atl_ufs_sa_post_${cyc}_$envir
 export platform=ptmp
+export framework=stofs_ufs
 
 export KEEPDATA=YES
 export SENDCOM=NO
@@ -120,9 +127,11 @@ export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-# YAML configuration for secofs_ufs
+# YAML configuration for the standalone variant (execution.mode=standalone).
+# Set explicitly rather than from ${OFS} so post reads the same config the
+# run stages used and cannot silently diverge on naming or paths.
 export HOMEnos=${PACKAGEROOT}/nos-workflow
-export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 ${HOMEnos}/jobs/JNOS_POST

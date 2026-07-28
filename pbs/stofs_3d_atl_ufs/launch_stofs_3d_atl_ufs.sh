@@ -1,20 +1,22 @@
 #!/bin/bash
-# launch_stofs_standalone.sh
+# ---------------------------------------------------------------------------
+# STOFS-3D-ATL UFS-COUPLED chained launch (prep -> nowcast -> forecast -> post)
 #
-# Chain STOFS-3D-ATL standalone (pschism) prep -> nowcast -> forecast within
-# nos_workflow using PBS afterok dependencies. Mirrors the operational
-# IT-STOFS launch_stofs.sh pattern, adapted for the nos_workflow standalone PBS.
+# The coupled counterpart of
+# pbs/stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh. Same chaining
+# contract; the difference is the engine: these jobs run fv3_coastalS.exe with
+# the NUOPC/DATM layer and OFS_CONFIG=parm/systems/stofs_3d_atl_ufs.yaml (each
+# PBS job sets it from ${OFS}), whereas the standalone jobs pin the
+# *_standalone.yaml overlay and run pschism_WCOSS2.
 #
-# Usage:    ./launch_stofs_standalone.sh <PDY:YYYYMMDD> [CYC:HH (default 12)]
-# Example:  ./launch_stofs_standalone.sh 20260603 12
+# Because the coupled build uses OLDIO, the run stages combine per-rank
+# schout_<rank>_<stack>.nc into global stacks before archiving; the standalone
+# (scribed) path skips that. Both feed the same canonical post products.
 #
-# Override $PKG / $NOS_ARCHIVE_MANIFEST via env if needed.
-#
-# CRITICAL: this script intentionally does NOT pass OFS. The standalone PBS
-# default OFS=stofs_3d_atl_ufs is load-bearing for fix/asset resolution; the
-# standalone mode switch comes from OFS_CONFIG=stofs_3d_atl_ufs_standalone.yaml
-# set inside the PBS. Passing OFS=stofs_3d_atl_ufs_standalone re-paths FIXofs to
-# a nonexistent namespace and breaks prep.
+# Usage:
+#   ./launch_stofs_3d_atl_ufs.sh <PDY:YYYYMMDD> [CYC:HH (default 12)]
+#   STAGES="post" ./launch_stofs_3d_atl_ufs.sh 20260722 12   # rerun one stage
+# ---------------------------------------------------------------------------
 set -eu
 
 if [ "$#" -lt 1 ]; then
@@ -24,7 +26,7 @@ fi
 PDY="$1"
 CYC="${2:-12}"
 PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
-PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs_standalone"
+PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs"
 VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
 # qsub -v replaces the job environment wholesale, so a post override
 # exported before calling this script would be silently dropped.
@@ -46,7 +48,7 @@ for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
 done
 
 # STAGES is overridable so a rerun can skip completed legs, e.g.
-#   STAGES="post" ./launch_stofs_standalone.sh 20260722 00
+#   STAGES="post" ./launch_stofs_3d_atl_ufs.sh 20260722 12
 STAGES="${STAGES:-prep nowcast forecast post}"
 
 for stage in ${STAGES}; do
@@ -56,10 +58,10 @@ for stage in ${STAGES}; do
   fi
 done
 
-echo "=== STOFS-3D-ATL standalone chained launch ==="
+echo "=== STOFS-3D-ATL UFS-coupled chained launch ==="
 echo "  PDY=${PDY}  CYC=${CYC}"
 echo "  PKG=${PKG}"
-echo "=============================================="
+echo "==============================================="
 
 # Submit the requested stages in order, each gated on the previous one's
 # success. A subset works too -- STAGES="post" reruns just post against
@@ -80,9 +82,16 @@ cat <<EOM
 
 Chain submitted (${STAGES}), each gated on afterok of the previous.
   Monitor : qstat -u ${LOGNAME}
-  Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_standalone_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
+  Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
   COMOUT  : /lfs/h1/nos/ptmp/${LOGNAME}/com/nos/stofs_3d_atl_ufs.${PDY}
 
-If an upstream stage fails, the downstream jobs stay queued with an unsatisfied
-dependency (state 'H'); clear them with:  qdel <jobid> ...  (see the ids above)
+Note: the coupled path is roughly 5x slower than the standalone variant
+(pbs/stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh) and, being
+OLDIO, adds a per-rank field combine in the run stages. This launcher has
+never been exercised end to end -- the coupled OLDIO chain itself is
+validated on secofs_ufs at 2914 ranks, and the ATL post products on the
+standalone variant. Watch the forecast hour labels on a first run: the
+fields worker derives the phase offset from the data, so it handles a
+continued or a restarted forecast clock either way, but ATL-coupled's
+convention has not been observed yet.
 EOM

@@ -13,6 +13,7 @@ the COMOUT copy step.
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -387,6 +388,55 @@ def test_post_comf_combine_failure_warns_and_continues(tmp_path, fake_env, caplo
     assert any("failed for forecast" in m for m in msgs)
 
 
+def test_post_stations_nc_reports_failed_when_it_produces_nothing(
+    tmp_path, fake_env
+):
+    """A staged phase that yields no NetCDF is a failure, not a success.
+
+    stations_nc used to return ok unconditionally, so STOFS-3D-ATL --
+    where the combine script cannot work at all, its staout_5 having one
+    value per station per step rather than SECOFS' nvrt profile pairs --
+    reported a clean post every cycle while publishing nothing.
+    """
+    env = _make_minimal_post_env(tmp_path)
+    comout = Path(env["COMOUT"])
+    _seed_staout(comout, env["RUN"], env["cycle"], "nowcast")
+    _seed_staout(comout, env["RUN"], env["cycle"], "forecast")
+
+    def failing_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(args=cmd, returncode=1)
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=failing_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0  # per-product isolation: still not fatal to the stage
+    written = list(comout.glob("*.outputs.post.json"))
+    assert len(written) == 1, f"expected one outputs manifest, got {written}"
+    manifest = json.loads(written[0].read_text())
+    stations = [p for p in manifest["products"] if p["name"] == "stations_nc"]
+    assert stations, "stations_nc missing from the outputs manifest"
+    assert stations[0]["status"] == "failed"
+    assert "nowcast" in stations[0]["detail"]
+    assert "forecast" in stations[0]["detail"]
+
+
+def test_post_stations_nc_skipped_when_no_staout_staged(tmp_path, fake_env):
+    """No inputs at all is a skip -- distinct from produced-nothing."""
+    env = _make_minimal_post_env(tmp_path)
+    comout = Path(env["COMOUT"])
+
+    with patch.dict(os.environ, env, clear=False):
+        rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    written = list(comout.glob("*.outputs.post.json"))
+    assert len(written) == 1, f"expected one outputs manifest, got {written}"
+    manifest = json.loads(written[0].read_text())
+    stations = [p for p in manifest["products"] if p["name"] == "stations_nc"]
+    assert stations and stations[0]["status"] == "skipped"
+
+
 # ---------------------------------------------------------------------------
 # COMF body — fatal paths
 # ---------------------------------------------------------------------------
@@ -494,3 +544,26 @@ def test_write_station_latlon_skips_headers_and_short_rows(tmp_path):
     rows = out.read_text().strip().splitlines()
     # Blank + short rows skipped; surviving rows reindexed 1..3.
     assert rows == ["1 -76.5 38.5", "3 -75.5 37.5", "5 -74.5 36.5"]
+
+
+@pytest.mark.parametrize(
+    "use_datm,restarts",
+    [
+        (None, True),      # unset means coupled, repo-wide
+        ("true", True),
+        ("TRUE", True),
+        ("false", False),  # only standalone ever sets it, and to this
+        (" False ", False),
+        ("0", True),       # NOT standalone: the run side reads only "false"
+        ("no", True),
+    ],
+)
+def test_forecast_clock_restart_matches_the_repo_use_datm_convention(
+    use_datm, restarts
+):
+    """Accepting extra falsey spellings here while the run side accepts
+    only "false" would route one value coupled and its timestamps
+    standalone -- a silent six-hour offset."""
+    env = {} if use_datm is None else {"USE_DATM": use_datm}
+    ctx = type("C", (), {"shell_env": env})()
+    assert post_stage._forecast_clock_restarts(ctx) is restarts

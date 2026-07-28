@@ -14,6 +14,14 @@ from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
 from ..post.naming import stations_nc_name
 from ..post.registry import get_product, register, resolve_product_names
+from ..post.worker_base import (
+    NosUtilsProduct,
+    fix_file,
+    has_3d_stacks,
+    has_field_stacks,
+    has_staout,
+    staging_dir,
+)
 from ..registry import OFSDescriptor
 
 if TYPE_CHECKING:
@@ -142,11 +150,13 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     )
 
     results: List[ProductResult] = []
-    for name in resolve_product_names(
-        descriptor.framework,
-        shell_env,
-        homenos=homenos,
-        yaml_path=descriptor.yaml_path,
+    for name in _ordered_products(
+        resolve_product_names(
+            descriptor.framework,
+            shell_env,
+            homenos=homenos,
+            yaml_path=descriptor.yaml_path,
+        )
     ):
         product_cls = get_product(name)
         if product_cls is None:
@@ -180,6 +190,42 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
     sl.info("post-processing completed")
     return 0
+
+
+#: Products that read the split field stacks, and so must not run before
+#: ``fields_nc`` has materialised them on the coupled (OLDIO) path.
+_SPLIT_CONSUMERS = ("maxele", "slab2d", "geopkg", "adcirc", "profiles")
+
+
+def _ordered_products(names: List[str]) -> List[str]:
+    """Run ``fields_nc`` ahead of the products that consume its output.
+
+    On the coupled path the run stage stages combined ``schout_*.nc`` and
+    ``fields_nc`` is what splits them into the per-variable stacks every
+    other field product reads. That is a real dependency, and leaving it
+    to the order someone happened to write in the YAML makes the whole
+    suite's success depend on a list's spelling. Declaring it here is
+    cheaper than teaching five products to detect and recover from
+    "inputs exist but are not split yet" -- and much cheaper than the
+    alternative of having them skip silently, which would turn a missed
+    split into no output and no complaint.
+
+    Only reorders when both sides are present; otherwise the caller's
+    order is preserved exactly.
+    """
+    if "fields_nc" not in names:
+        return names
+    if not any(n in _SPLIT_CONSUMERS for n in names):
+        return names
+    if names.index("fields_nc") == 0:
+        return names
+    reordered = ["fields_nc"] + [n for n in names if n != "fields_nc"]
+    logger.info(
+        "post: running fields_nc first; it splits the combined stacks that "
+        "%s read",
+        ", ".join(n for n in names if n in _SPLIT_CONSUMERS),
+    )
+    return reordered
 
 
 def _execute_product(product: PostProduct, ctx: ProductContext) -> ProductResult:
@@ -680,13 +726,28 @@ class StationsNcProduct(PostProduct):
 
     Wraps the legacy per-phase flow (control file, station.lat.lon,
     staout symlinks, combine subprocess, COMOUT copy) unchanged.
+
+    This is a SECOFS-shaped product: the combine script reads the 3D
+    staout files in the layout SECOFS' SCHISM build writes (per station,
+    nvrt values of the variable followed by nvrt z-coordinates, wrapped
+    onto alternating lines). STOFS-3D-ATL writes one value per station
+    per step in those same files, so there is no profile to assemble
+    there and the reshape fails -- ATL's station product is
+    ``points_cwl``, which is what ops itself produces for that system.
     """
 
     name = "stations_nc"
 
     def produce(self, ctx: ProductContext) -> ProductResult:
         outputs: List[str] = []
+        attempted: List[str] = []
+        failed: List[str] = []
         for phase in ("nowcast", "forecast"):
+            # Checked up front only to classify the outcome; the call
+            # below still does its own warn-and-continue on absent input.
+            staged = has_staout(staging_dir(ctx, phase))
+            if staged:
+                attempted.append(phase)
             created = _process_phase(
                 phase=phase,
                 data=ctx.data,
@@ -703,6 +764,22 @@ class StationsNcProduct(PostProduct):
             )
             if created is not None:
                 outputs.append(str(created))
+            elif staged:
+                # Inputs were there and we still have nothing: a real
+                # failure, not an absent-input skip. Reporting "ok" here
+                # is how ATL's every-cycle breakage stayed invisible.
+                failed.append(phase)
+
+        if not attempted:
+            return ProductResult(
+                name=self.name, status="skipped",
+                detail="no staout files staged",
+            )
+        if failed:
+            return ProductResult(
+                name=self.name, status="failed", outputs=outputs,
+                detail="produced nothing for: " + ", ".join(failed),
+            )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
 
@@ -730,6 +807,63 @@ def _has_staged_field_stacks(staging: Path) -> bool:
     )
 
 
+def _product_base_date(ctx, phase: str) -> str:
+    """Fallback time origin for products whose inputs carry no units.
+
+    Preferred source is the staged stacks themselves (see
+    ``worker_base.base_date_from_staging``); this is used only when no
+    stack is readable, e.g. points_cwl on staout text alone.
+
+    Real date arithmetic, NOT ``(cyc - LEN_NOWCAST) % 24`` glued to PDY:
+    when the nowcast reaches back past midnight -- every standard cycle
+    of both target systems -- the hour wraps but the DATE must roll back
+    too, or every timestamp lands exactly one day late.
+
+    Phase anchors follow the engine: the nowcast leg starts at
+    cycle - LEN_NOWCAST; a forecast leg that restarts its clock (coupled,
+    ihot=1) starts at the cycle time, while one that continues the
+    nowcast clock (standalone, ihot=2) keeps the nowcast origin. With
+    USE_DATM unset the coupled anchor is used, which is the repo-wide
+    reading of that variable (see ``runners/schism_ufs/stage_files.py``:
+    standalone is the only thing that ever sets it, and it sets it to
+    false).
+    """
+    from datetime import datetime, timedelta
+
+    try:
+        cycle_dt = datetime.strptime(f"{ctx.pdy}{int(ctx.cyc):02d}", "%Y%m%d%H")
+    except (TypeError, ValueError):
+        return f"{ctx.pdy[:4]}-{ctx.pdy[4:6]}-{ctx.pdy[6:8]} 00:00:00"
+
+    try:
+        len_nowcast = float(ctx.shell_env.get("LEN_NOWCAST", "") or 6.0)
+    except (TypeError, ValueError):
+        len_nowcast = 6.0
+
+    origin = cycle_dt - timedelta(hours=len_nowcast)
+    if phase == "forecast" and _forecast_clock_restarts(ctx):
+        origin = cycle_dt
+    # ops units format: whitespace-separated, seconds present.
+    return origin.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _forecast_clock_restarts(ctx) -> bool:
+    """True when the forecast leg starts its model clock afresh.
+
+    The coupled build hot-starts with ihot=1 (clock reset); the
+    standalone build uses ihot=2 and continues the nowcast clock. USE_DATM
+    is the resolver's coupled/standalone switch, and only standalone ever
+    sets it -- so unset means coupled.
+
+    Tested exactly as the rest of the repo tests it (``!= "false"``, cf.
+    ``stage_files.py`` and ``nos_run.sh``) rather than against a wider
+    set of falsey spellings: accepting "0"/"no" here while the run side
+    accepts only "false" would let one value route the run coupled and
+    the timestamps standalone, which is a silent six-hour offset.
+    """
+    return str(ctx.shell_env.get("USE_DATM", "true")).strip().lower() != "false"
+
+
 def _len_nowcast_hours(env) -> str:
     """LEN_NOWCAST as a string for the fields worker (default 6 h)."""
     raw = env.get("LEN_NOWCAST", "")
@@ -737,6 +871,41 @@ def _len_nowcast_hours(env) -> str:
         return str(float(raw))
     except (TypeError, ValueError):
         return "6.0"
+
+
+def _post_max_workers(env: "os._Environ") -> str:
+    """Worker count for the timestep-parallel products (geopkg).
+
+    Contouring one SECOFS timestep means a 1.69M-node triangulation, and
+    a cycle has tens of them; ops fanned that over a fork pool, so
+    leaving it serial is not a small difference -- it is the difference
+    between finishing inside the job's walltime and not. Defaults to the
+    cores PBS gave us rather than 1.
+    """
+    for key in ("NOS_POST_MAX_WORKERS", "NCPUS"):
+        raw = env.get(key, "")
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return str(n)
+    return str(max(1, (os.cpu_count() or 2) - 1))
+
+
+def _fields_deflate(env: "os._Environ") -> str:
+    """zlib level for published field stacks (``POST_FIELDS_DEFLATE``).
+
+    Defaults to 0 -- ops publishes these stacks uncompressed, and SCHISM
+    already deflates the 3D ones itself, so compressing here is an opt-in
+    trade of post CPU for roughly 7% of cycle volume.
+    """
+    raw = env.get("POST_FIELDS_DEFLATE", "")
+    try:
+        level = int(raw)
+    except (TypeError, ValueError):
+        return "0"
+    return str(level) if 0 <= level <= 9 else "0"
 
 
 def _read_fields_result(result_json: Path) -> List[str]:
@@ -791,6 +960,7 @@ class FieldsNcProduct(PostProduct):
                     "--pdy", ctx.pdy,
                     "--phase", phase,
                     "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+                    "--deflate", _fields_deflate(ctx.shell_env),
                     "--combine-script", str(ctx.combine_script),
                     "--result-json", str(result_json),
                 ],
@@ -821,6 +991,242 @@ class FieldsNcProduct(PostProduct):
                 detail="worker failed for: " + ", ".join(failed_phases),
             )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
+
+
+@register
+class MaxeleProduct(NosUtilsProduct):
+    """Maximum water level over the forecast window (autoval product).
+
+    Ops reduces the forecast stacks only, so this runs on the forecast
+    phase alone. The time window is derived from the data rather than
+    stamped with ops' hardcoded (90000, 432000) s: that constant is
+    simply ops' own 5-day run expressed in seconds, and this branch
+    forecasts longer. Pass --ops-window to opt back in.
+
+    NOTE the published name carries no phase token, so this product is
+    only safe while ``phases`` names exactly one leg -- widening it would
+    make both legs write the same COMOUT file.
+    """
+
+    name = "maxele"
+    worker = "nos_workflow.post.products.maxele"
+    phases = ("forecast",)
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--base-date", _product_base_date(ctx, phase),
+        ]
+
+
+@register
+class AdcircProduct(NosUtilsProduct):
+    """ADCIRC-format water-level fields: the CERA feed and the AWIPS
+    grib2 step's input.
+
+    Both legs run: the published name carries the phase token (and the
+    hour range), so the nowcast and forecast files cannot collide -- the
+    guard test pins that. The urban small-disturbance mask is optional,
+    so a system without the ops node-id fix file publishes unmasked
+    rather than skipping.
+    """
+
+    name = "adcirc"
+    worker = "nos_workflow.post.products.adcirc"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        args = [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+        ]
+        # Fix name is the ops system's, not our variant's (points_cwl
+        # precedent): stofs_3d_atl_ufs -> stofs_3d_atl_node_id_*.txt.
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        city = fix_file(
+            ctx,
+            "node_id_city_poly_adcirc.txt",
+            f"{ops}_node_id_city_poly_adcirc.txt",
+        )
+        if city is not None:
+            args += ["--city-nodes", str(city)]
+        else:
+            logger.info(
+                "adcirc: no city node-id file under %s; urban "
+                "small-disturbance masking off (ops uses "
+                "%s_node_id_city_poly_adcirc.txt)", ctx.fixofs, ops,
+            )
+        return args
+
+
+@register
+class PointsCwlProduct(NosUtilsProduct):
+    """Ops-style station timeseries from the staged staout files.
+
+    Needs the ops staout-nc metadata pair in $FIXofs; a system without
+    it (SECOFS has none) skips cleanly. Fix names are tried under both
+    PREFIXNOS and the ops system prefix, since the variant suffix is
+    ours (``stofs_3d_atl_ufs`` -> ``stofs_3d_atl_staout_nc.json``).
+    """
+
+    name = "points_cwl"
+    worker = "nos_workflow.post.products.points_cwl"
+
+    def worker_args(self, ctx, phase, staging, work):
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        var_defs = fix_file(ctx, "staout_nc.json", f"{ops}_staout_nc.json")
+        meta = fix_file(ctx, "staout_nc.csv", f"{ops}_staout_nc.csv")
+        if not has_staout(staging) or var_defs is None or meta is None:
+            return None
+        args = [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--var-defs", str(var_defs),
+            "--station-meta", str(meta),
+        ]
+        # The station JSON labels zeta with a datum (NAVD88 on the ATL
+        # fix set) that is only true AFTER the ops ncap2 shift, so the
+        # .nco must be applied whenever the metadata claims one.
+        # Current ops uses the _msl file; the older lineage used _navd --
+        # try both, newest first.
+        nco = None
+        for stem in ("sta_cwl_xgeoid_to_msl.nco", "sta_cwl_xgeoid_to_navd.nco"):
+            nco = fix_file(ctx, stem, f"{ops}_{stem}")
+            if nco is not None:
+                break
+        if nco is not None:
+            args += ["--datum-offsets", str(nco)]
+        else:
+            # Publishing raw xGEOID values under a NAVD88/MSL label would be
+            # a silent ~0.3 m bias, so say so loudly rather than shipping it.
+            logger.warning(
+                "WARNING: points_cwl: no xgeoid->datum .nco found under %s; "
+                "publishing UNSHIFTED elevations even though %s labels them "
+                "with a datum. Stage the .nco or expect a ~0.3 m bias.",
+                ctx.fixofs, var_defs.name,
+            )
+        return args
+
+
+@register
+class Slab2dProduct(NosUtilsProduct):
+    """2D slabs (surface/bottom/fixed-depth) per staged output stack.
+
+    Ops extracts a ``field2d`` per output stack of the run, so both
+    phases run here; the worker skips any stack index missing one of the
+    six families it needs.
+    """
+
+    name = "slab2d"
+    worker = "nos_workflow.post.products.slab2d"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+        ]
+
+
+@register
+class GeopkgProduct(NosUtilsProduct):
+    """Per-timestep disturbance GeoPackages for the nowCOAST feed.
+
+    Needs only the out2d stacks. The contour/geometry stack
+    (matplotlib/shapely/geopandas) is optional at runtime, so a worker
+    that wrote nothing reads as skipped rather than failed.
+    """
+
+    name = "geopkg"
+    worker = "nos_workflow.post.products.geopkg"
+    empty_is_skipped = True
+
+    def worker_args(self, ctx, phase, staging, work):
+        if not has_field_stacks(staging):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+            "--max-workers", _post_max_workers(ctx.shell_env),
+        ]
+
+
+@register
+class ProfilesProduct(NosUtilsProduct):
+    """Station vertical profiles (ops ``{ncast,fcast}.station.profile.nc``).
+
+    Needs the mesh (hgrid.gr3 + vgrid.in) and the station list from
+    $FIXofs, tried under both spellings: the ATL fix set carries the ops
+    system prefix (``stofs_3d_atl_station.in``) while ours carries
+    PREFIXNOS (``{prefix}.station.in``). A system missing any of the
+    three skips cleanly, and the station list falls back to the one the
+    stage already resolved (which also honours $STA_OUT_CTL).
+
+    A station outside the mesh fails the phase, as the ops driver does;
+    ``NOS_PROFILES_OUTSIDE=nearest`` opts into pylib's nearest-node
+    fallback instead (see the worker).
+    """
+
+    name = "profiles"
+    worker = "nos_workflow.post.products.profiles"
+
+    def worker_args(self, ctx, phase, staging, work):
+        ops = ctx.prefix_nos.split("_ufs")[0]
+        hgrid = fix_file(ctx, "hgrid.gr3", f"{ops}_hgrid.gr3")
+        vgrid = fix_file(ctx, "vgrid.in", f"{ops}_vgrid.in")
+        station = fix_file(ctx, "station.in", f"{ops}_station.in")
+        if station is None and ctx.sta_in and Path(ctx.sta_in).is_file():
+            station = ctx.sta_in
+        # zCoordinates, not just any stack: a 2D-only run stages out2d and
+        # nothing else, and reporting "failed" every cycle for a system
+        # that has no vertical output is noise, not a signal.
+        if not has_3d_stacks(staging) or None in (hgrid, vgrid, station):
+            return None
+        return [
+            "--staging", str(staging),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--base-date", _product_base_date(ctx, phase),
+            "--hgrid", str(hgrid),
+            "--vgrid", str(vgrid),
+            "--station-in", str(station),
+            "--outside", ctx.shell_env.get("NOS_PROFILES_OUTSIDE") or "error",
+        ]
 
 
 @register

@@ -168,6 +168,32 @@ def test_resolve_yaml_non_mapping_root_falls_back(tmp_path):
     ]
 
 
+_PARM = Path(__file__).resolve().parents[4] / "parm" / "systems"
+
+
+def test_shipped_yaml_station_products_match_each_system():
+    """The two systems need different station products, and the wrong one
+    cannot merely underperform -- it fails every cycle.
+
+    stations_nc assembles SECOFS' 3D station profiles from staout_5..8,
+    which on that build carry nvrt values per station plus nvrt
+    z-coordinates on alternating lines. STOFS-3D-ATL writes one value per
+    station per step in those same files, so the reshape has nothing to
+    work with. ATL's product is points_cwl, which is also what ops
+    publishes there.
+    """
+    from nos_workflow.post.registry import _read_yaml_post_products
+
+    secofs = _read_yaml_post_products(_PARM / "secofs_ufs.yaml")
+    assert "stations_nc" in secofs
+    assert "points_cwl" not in secofs
+
+    for name in ("stofs_3d_atl_ufs.yaml", "stofs_3d_atl_ufs_standalone.yaml"):
+        atl = _read_yaml_post_products(_PARM / name)
+        assert "points_cwl" in atl, name
+        assert "stations_nc" not in atl, name
+
+
 def test_resolve_descriptor_yaml_under_homenos(tmp_path):
     homenos = tmp_path / "home"
     rel = Path("parm/systems/secofs_ufs.yaml")
@@ -519,3 +545,43 @@ def test_fields_nc_worker_failure_warns_not_fatal(tmp_path, fake_env, caplog):
     assert any(
         "fields worker failed" in rec.getMessage() for rec in caplog.records
     )
+
+
+# ---------------------------------------------------------------------------
+# Product ordering: fields_nc materialises what the others read
+# ---------------------------------------------------------------------------
+
+
+def test_fields_nc_is_hoisted_ahead_of_its_consumers():
+    """On the coupled path fields_nc splits the combined schout stacks
+    that maxele/slab2d/geopkg/adcirc/profiles read, so it cannot be left
+    to run after them just because the YAML lists it that way."""
+    from nos_workflow.stages.post import _ordered_products
+
+    assert _ordered_products(["maxele", "fields_nc", "slab2d"]) == [
+        "fields_nc", "maxele", "slab2d",
+    ]
+
+
+def test_ordering_preserves_the_list_when_nothing_depends_on_fields():
+    from nos_workflow.stages.post import _ordered_products
+
+    names = ["stations_nc", "bias_correct", "fields_nc"]
+    assert _ordered_products(names) == names
+
+
+def test_ordering_leaves_consumers_alone_without_fields_nc():
+    """No fields_nc means no split will happen; the consumers must still
+    run (and fail loudly) rather than be quietly reordered or dropped."""
+    from nos_workflow.stages.post import _ordered_products
+
+    names = ["maxele", "slab2d"]
+    assert _ordered_products(names) == names
+
+
+def test_ordering_is_stable_for_the_rest():
+    from nos_workflow.stages.post import _ordered_products
+
+    assert _ordered_products(
+        ["geopkg", "bias_correct", "fields_nc", "adcirc", "stations_nc"]
+    ) == ["fields_nc", "geopkg", "bias_correct", "adcirc", "stations_nc"]

@@ -2,11 +2,15 @@
 #PBS  -N stofs_3d_atl_ufs_post_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /dev/null
-#PBS  -e /dev/null
+# NOT /dev/null: PBS writes its own epilogue here -- "walltime exceeded",
+# cgroup/OOM kills, node failures -- and that is the one message the
+# in-script redirect below cannot capture, because a SIGKILLed job never
+# reaches any trap. Sending it to /dev/null once cost a diagnosis: a post
+# job died with no traceback and no summary, and nothing said why. These
+# files stay near-empty; the real logs are the redirect below.
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=01:00:00
+#PBS  -l walltime=02:00:00
 
 # ------------------------------------------------------------------
 # STOFS-3D-ATL UFS Post-Processing PBS Job
@@ -46,7 +50,17 @@ module load cray-mpich/${cray_mpich_ver:-8.1.7}
 module load cray-pals/${cray_pals_ver:-1.0.12}
 module load hdf5/${hdf5_ver:-1.10.6}
 module load netcdf/${netcdf_ver:-4.7.4}
-module load python/${python_ver:-3.12.0}
+# Python for post comes from the STOFS virtualenv, not the stock module.
+# Ops does exactly this in jstofs_3d_atl_post{1,2}_t12z.ecf:
+#     #module load python/${python_ver}
+#     module unload python
+#     module load ve/stofs/${ve_stofs}
+# The stock module ships a shapely predating make_valid (1.8), which the
+# geopackage product needs and which ops' own gen_geojson.py imports --
+# so on the module set, geopkg reports its geometry stack unavailable and
+# writes nothing. Pinned when ${ve_stofs} is set, default version otherwise.
+module unload python 2>/dev/null || true
+module load ve/stofs${ve_stofs:+/${ve_stofs}}
 module load prod_envir/${prod_envir_ver:-2.0.6}
 module load prod_util/${prod_util_ver:-2.0.17}
 module load udunits/${udunits_ver:-2.2.28}
@@ -54,6 +68,28 @@ module load gsl/${gsl_ver:-2.7}
 module load nco/${nco_ver:-5.0.6}
 
 module list
+
+# Say which interpreter and which optional deps this job actually has.
+# Everything downstream shells out to `python3`, so if the virtualenv
+# exposed only `python` we would silently fall back to a system python3
+# without geopandas/shapely and lose the geometry products with a
+# confusing error. Non-fatal: this reports, it does not gate.
+echo "post: python3 -> $(command -v python3 || echo NOT FOUND)"
+python3 - <<'PYPROBE' || true
+import sys
+print(f"post: python  {sys.version.split()[0]}  ({sys.executable})")
+for m in ("netCDF4", "numpy", "scipy", "geopandas", "shapely"):
+    try:
+        mod = __import__(m)
+        print(f"post:   OK      {m} {getattr(mod, '__version__', '')}")
+    except Exception as exc:
+        print(f"post:   MISSING {m} ({type(exc).__name__})")
+try:
+    from shapely.validation import make_valid  # noqa: F401
+    print("post:   OK      shapely.validation.make_valid (geopkg usable)")
+except Exception as exc:
+    print(f"post:   MISSING shapely.validation.make_valid -- geopkg will skip ({exc})")
+PYPROBE
 
 # EXPORT list
 set +x

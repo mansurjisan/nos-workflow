@@ -98,13 +98,35 @@ submit_and_wait(){
   : > "$sentinel"          # mtime reference; fresh = .out newer than this
   local t0; t0=$(date +%s)
 
+  # Post-stage overrides are opt-in and only meaningful to the post job,
+  # but qsub -v replaces the job environment wholesale: anything not
+  # listed here is silently dropped, so exporting NOS_POST_PRODUCTS
+  # before calling this script would quietly do nothing. Forward them
+  # when set. Values may contain spaces (a product list); PBS splits -v
+  # on commas only, so a space-separated value survives.
+  local vars="PDY=${PDY},CYC=${cyc}"
+  # qsub -v replaces the job environment wholesale, so anything not listed
+  # here is silently dropped. Enumerating them one at a time already cost a
+  # test run -- NOS_PROFILES_OUTSIDE was missing, so `--outside drop` was
+  # asked for, never arrived, and the job did the default thing instead.
+  # Keep this list in step with the post stage's env knobs:
+  #   grep -rhoE '"(NOS_[A-Z_]+|POST_[A-Z_]+)"' ush/python/nos_workflow/post/
+  # PBS splits -v on commas only, so a space-separated value survives whole.
+  for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
+            POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT; do
+    eval "_val=\${${_v}:-}"
+    if [ -n "${_val}" ]; then
+      vars="${vars},${_v}=${_val}"
+    fi
+  done
+
   if [ "$DRYRUN" = "1" ]; then
-    log "DRYRUN[$stage]: would qsub -v PDY=${PDY},CYC=${cyc} $pbs"
+    log "DRYRUN[$stage]: would qsub -v ${vars} $pbs"
     return 0
   fi
 
   local jid
-  jid=$(qsub -v "PDY=${PDY},CYC=${cyc}" "$pbs" 2>&1)
+  jid=$(qsub -v "${vars}" "$pbs" 2>&1)
   if [ $? -ne 0 ] || [ -z "$jid" ]; then
     log "FATAL[$stage]: qsub failed: ${jid}"
     return 3

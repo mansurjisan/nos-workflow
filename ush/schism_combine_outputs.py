@@ -529,16 +529,28 @@ def convert_schout_to_split():
         'SCHISM_hgrid', 'SCHISM_hgrid_face_nodes', 'SCHISM_hgrid_edge_nodes',
         'SCHISM_hgrid_face_x', 'SCHISM_hgrid_face_y',
         'SCHISM_hgrid_edge_x', 'SCHISM_hgrid_edge_y',
-        'node_bottom_index', 'ele_bottom_index', 'edge_bottom_index',
+        'node_bottom_index', 'bottom_index_node',
+        'ele_bottom_index', 'edge_bottom_index',
         'sigma', 'Cs', 'coordinate_system_flag', 'minimum_depth',
         'sigma_h_c', 'sigma_theta_b', 'sigma_theta_f', 'sigma_maxdepth',
         'dry_value_flag', 'wetdry_node', 'wetdry_elem', 'wetdry_side',
     }
 
-    def _component_axis(shape):
-        """Index of the size-2 vector-component axis, or None."""
-        for ax, size in enumerate(shape):
-            if size == 2:
+    def _component_axis(shape, dims=()):
+        """Index of the size-2 vector-component axis, or None.
+
+        Prefer the dimension NAME when available (SCHISM calls it 'two'),
+        then search from the trailing axis inward, skipping axis 0. Taking
+        the first size-2 axis instead would grab the TIME axis on a stack
+        with exactly 2 records -- a real case for short legs and spill
+        stacks -- silently dropping horizontalVelX/Y and, downstream,
+        making slab2d skip the whole stack.
+        """
+        for ax, name in enumerate(dims):
+            if name == 'two' and shape[ax] == 2:
+                return ax
+        for ax in range(len(shape) - 1, 0, -1):
+            if shape[ax] == 2:
                 return ax
         return None
 
@@ -624,6 +636,35 @@ def convert_schout_to_split():
             dv = ds_out.createVariable('depth', 'f4', ('nSCHISM_hgrid_node',))
             dv[:] = ds.variables['depth'][:]
 
+        # Mesh topology: scribed out2d files carry the element table, so the
+        # split files must too or downstream products that triangulate the
+        # domain (geopkg contours, adcirc, slab2d) break on the coupled path
+        # only. combine_output11 puts these in the combined schout.
+        if 'SCHISM_hgrid_face_nodes' in ds.variables:
+            src = ds.variables['SCHISM_hgrid_face_nodes']
+            for dname, dsize in zip(src.dimensions, src.shape):
+                if dname not in ds_out.dimensions:
+                    ds_out.createDimension(dname, dsize)
+            _fill = getattr(src, '_FillValue', None)
+            fv = ds_out.createVariable(
+                'SCHISM_hgrid_face_nodes', src.dtype, src.dimensions,
+                **({'fill_value': _fill} if _fill is not None else {}))
+            fv[:] = src[:]
+            for att in src.ncattrs():
+                if att != '_FillValue':
+                    fv.setncattr(att, src.getncattr(att))
+        # The two engines spell this differently: scribe_io writes
+        # 'bottom_index_node', combine_output11 (the coupled/OLDIO path)
+        # writes 'node_bottom_index'. Accept either, always emit the
+        # scribe name, or slab2d silently produces nothing on the
+        # coupled path while passing every scribe-shaped test.
+        for _bsrc in ('bottom_index_node', 'node_bottom_index'):
+            if _bsrc in ds.variables:
+                bv = ds_out.createVariable(
+                    'bottom_index_node', 'i4', ('nSCHISM_hgrid_node',))
+                bv[:] = ds.variables[_bsrc][:]
+                break
+
         ds_out.close()
 
         # --- Create 3D split files ---
@@ -650,17 +691,43 @@ def convert_schout_to_split():
             tv = ds_split.createVariable('time', 'f8', ('time',))
             tv[:] = time_data
 
-            if n_vert > 0:
-                var = ds_split.createVariable(
-                    split_var, 'f4',
-                    ('time', 'nSCHISM_hgrid_layers', 'nSCHISM_hgrid_node')
-                    if f'nSCHISM_hgrid_layers' in ds.variables[src_name].dimensions
-                    else ('time', 'nSCHISM_vgrid_layers', 'nSCHISM_hgrid_node'))
-                var[:] = ds.variables[src_name][:]
-            else:
-                var = ds_split.createVariable(split_var, 'f4',
-                                               ('time', 'nSCHISM_hgrid_node'))
-                var[:] = ds.variables[src_name][:]
+            # Preserve the SOURCE's dimension order rather than assuming one.
+            # combine_output11 and the scribe writer do not necessarily agree
+            # on whether 3D vars are (time, node, layers) or
+            # (time, layers, node); hardcoding either silently transposes the
+            # data (or raises deep inside a downstream writer).
+            src_var = ds.variables[src_name]
+            src_dims = []
+            # Trust the source's own name for the record axis; only guess
+            # from size when it has no axis literally called 'time', and
+            # only once. Size alone is not evidence: any axis can happen
+            # to match the record count (a small test mesh, or a layer
+            # count equal to the stack length), and mislabelling one
+            # transposes the data silently.
+            named_time = 'time' in src_var.dimensions
+            have_time = False
+            for dname, dsize in zip(src_var.dimensions, src_var.shape):
+                if dname == 'time':
+                    src_dims.append('time')
+                    have_time = True
+                elif (
+                    not named_time and not have_time
+                    and dsize == len(time_data)
+                    and dname not in ds_split.dimensions
+                ):
+                    src_dims.append('time')
+                    have_time = True
+                elif dsize == n_nodes:
+                    src_dims.append('nSCHISM_hgrid_node')
+                elif n_vert > 0 and dsize == n_vert:
+                    src_dims.append('nSCHISM_vgrid_layers')
+                else:
+                    # Unrecognized axis: carry it through under its own name.
+                    if dname not in ds_split.dimensions:
+                        ds_split.createDimension(dname, dsize)
+                    src_dims.append(dname)
+            var = ds_split.createVariable(split_var, 'f4', tuple(src_dims))
+            var[:] = src_var[:]
 
             ds_split.close()
 
@@ -671,7 +738,7 @@ def convert_schout_to_split():
             if src_name not in ds.variables:
                 continue
             arr = ds.variables[src_name][:]
-            ax = _component_axis(arr.shape)
+            ax = _component_axis(arr.shape, ds.variables[src_name].dimensions)
             if ax is None or ax == 0:
                 print(f"    WARNING: {src_name}: no component axis, skipped")
                 continue
@@ -698,7 +765,7 @@ def convert_schout_to_split():
             if src_name not in ds.variables:
                 continue
             arr = ds.variables[src_name][:]
-            ax = _component_axis(arr.shape)
+            ax = _component_axis(arr.shape, ds.variables[src_name].dimensions)
             if ax is None or ax == 0:
                 print(f"    WARNING: {src_name}: no component axis, skipped")
                 continue
