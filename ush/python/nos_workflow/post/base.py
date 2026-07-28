@@ -46,6 +46,12 @@ class ProductContext:
     sta_in: Path
     combine_script: Path
     pgmout: str
+    #: Per-product settings from the YAML ``post.products`` entries,
+    #: keyed by product name. Defaulted so every existing construction
+    #: (and every test) keeps working without one.
+    product_options: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict
+    )
 
 
 @dataclass
@@ -70,6 +76,42 @@ class PostProduct(ABC):
     """
 
     name: ClassVar[str] = ""
+
+    def option(
+        self,
+        ctx: ProductContext,
+        key: str,
+        default: object = None,
+        env_key: Optional[str] = None,
+    ) -> object:
+        """One setting for this product: env > YAML > default.
+
+        Same precedence as product *selection* (``NOS_POST_PRODUCTS``
+        beats ``post.products``), so an operator can always override a
+        configured value for one run without editing config.
+
+        Settings live under the product's YAML entry::
+
+            post:
+              products:
+                - name: profiles
+                  options:
+                    outside: drop
+
+        which matters because some of them are not optional. ``profiles``
+        aborts the whole product on a single out-of-mesh station, and a
+        station list can legitimately contain one; without a way to say
+        ``outside: drop`` in config, enabling it would mean a product
+        that fails every cycle.
+        """
+        if env_key:
+            raw = ctx.shell_env.get(env_key, "")
+            if raw != "":
+                return raw
+        opts = ctx.product_options.get(self.name) or {}
+        if key in opts:
+            return opts[key]
+        return default
 
     @abstractmethod
     def produce(self, ctx: ProductContext) -> ProductResult:

@@ -264,6 +264,24 @@ post:
     - stations_nc
     - fields_nc
     - bias_correct
+    # Enabled after a full coupled cycle (20260728 00z) published every one
+    # of these from real 1.69M-node output. Counts from that run in comments.
+    - maxele                        # 1 file
+    - slab2d                        # 9 field2d
+    - adcirc                        # 3, ops 24 h grouping
+    - name: profiles                # 2
+      options:
+        # Station 335 of 430 sits 0.27 m outside the mesh and its own name
+        # in station.in says "out of domain". The default (ops parity) is
+        # to abort, which would cost the other 429 every cycle; "nearest"
+        # would publish another node's column under that station's name.
+        # Revisit if the station.in coordinate is ever corrected.
+        outside: drop
+    - name: geopkg                  # 54 GeoPackages, ~13 min of the post job
+      options:
+        # Serial contouring of this mesh does not finish inside the
+        # walltime; unset this and it falls back to the job's $NCPUS.
+        max_workers: 8
 
 # Workflow stages
 stages:

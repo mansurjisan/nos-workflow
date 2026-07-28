@@ -355,6 +355,19 @@ post:
     - points_cwl
     - fields_nc
     - bias_correct
+    # Only the products that need no fix files beyond the field stacks and
+    # cannot overrun the job. Nothing here has yet run against a real ATL
+    # cycle -- the standalone gate run was fields-only -- so this is
+    # deliberately narrower than SECOFS:
+    #   geopkg   held: ~4x SECOFS' timestep count on a larger mesh with 8
+    #            cores, and a walltime overrun kills the WHOLE post job,
+    #            not just the product. Enable after timing it on ATL.
+    #   profiles held: needs hgrid.gr3 / vgrid.in / station.in in $FIXofs,
+    #            and whether this station list has out-of-mesh entries (as
+    #            SECOFS' does) is unknown until it runs.
+    - maxele
+    - slab2d
+    - adcirc
 
 # Workflow stages
 stages:

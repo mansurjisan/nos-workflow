@@ -13,7 +13,12 @@ from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
 from ..post.naming import stations_nc_name
-from ..post.registry import get_product, register, resolve_product_names
+from ..post.registry import (
+    get_product,
+    register,
+    resolve_product_names,
+    resolve_product_options,
+)
 from ..post.worker_base import (
     NosUtilsProduct,
     fix_file,
@@ -99,6 +104,10 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     pgmout = shell_env.get("pgmout", "OUTPUT.$$")
 
     sl.info("phase=POST pdy=%s cyc=%s comout=%s", pdy, cyc, comout)
+    # Worker output is echoed here as each finishes, but a worker still
+    # running when the job is killed only has its lines in $pgmout. Say
+    # where that is so it can be tailed live rather than reconstructed.
+    sl.info("worker output also at $pgmout=%s (tail -f during the run)", pgmout)
 
     combine_script = _resolve_combine_script(homenos, shell_env)
     if combine_script is None:
@@ -147,6 +156,9 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         sta_in=sta_in,
         combine_script=combine_script,
         pgmout=pgmout,
+        product_options=resolve_product_options(
+            shell_env, homenos=homenos, yaml_path=descriptor.yaml_path,
+        ),
     )
 
     results: List[ProductResult] = []
@@ -689,7 +701,18 @@ def _run_subprocess_appending(
     log_path: str,
     scrub_ld_preload: bool,
 ) -> int:
-    """Run ``cmd``, appending merged stdout/stderr to ``log_path``.
+    """Run ``cmd``, echoing merged stdout/stderr into the stage log.
+
+    Output reaches the stage log as each worker finishes, as well as
+    ``log_path`` (the NCO ``$pgmout``). The echo is not cosmetic:
+    $pgmout is only surfaced by the J-job's closing ``cat``, so a post
+    job that is killed -- walltime, OOM -- lost every product's output at
+    once, and the log gave no way to tell which products had finished or
+    where it stopped.
+
+    A worker still in flight when the kill lands does lose its output
+    here; its lines are in $pgmout on disk and can be tailed live during
+    the run, which is why that path is logged up front.
 
     ``scrub_ld_preload=True`` removes ``LD_PRELOAD`` from the child env to
     keep netCDF4 / numpy from segfaulting when the J-job preloaded
@@ -698,26 +721,31 @@ def _run_subprocess_appending(
     child_env = os.environ.copy()
     if scrub_ld_preload and "LD_PRELOAD" in child_env:
         del child_env["LD_PRELOAD"]
+    # Unbuffered child stdout, or a killed worker's last lines die in its
+    # own pipe buffer -- which is the failure this streaming exists to fix.
+    child_env["PYTHONUNBUFFERED"] = "1"
 
-    log_fh = None
-    try:
+    proc = subprocess.run(
+        cmd,
+        cwd=str(cwd) if cwd is not None else None,
+        env=child_env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        check=False,
+    )
+    captured = getattr(proc, "stdout", None) or ""
+    for line in captured.splitlines():
+        logger.info("%s", line)
+    if captured:
         try:
-            log_fh = open(log_path, "a")
+            with open(log_path, "a") as log_fh:
+                log_fh.write(
+                    captured if captured.endswith("\n") else captured + "\n"
+                )
         except OSError:
-            log_fh = None
-
-        proc = subprocess.run(
-            cmd,
-            cwd=str(cwd) if cwd is not None else None,
-            env=child_env,
-            stdout=log_fh if log_fh is not None else None,
-            stderr=subprocess.STDOUT if log_fh is not None else None,
-            check=False,
-        )
-        return proc.returncode
-    finally:
-        if log_fh is not None:
-            log_fh.close()
+            pass
+    return proc.returncode
 
 
 @register
@@ -873,7 +901,7 @@ def _len_nowcast_hours(env) -> str:
         return "6.0"
 
 
-def _post_max_workers(env: "os._Environ") -> str:
+def _post_max_workers(env: "os._Environ", configured=None) -> str:
     """Worker count for the timestep-parallel products (geopkg).
 
     Contouring one SECOFS timestep means a 1.69M-node triangulation, and
@@ -882,25 +910,35 @@ def _post_max_workers(env: "os._Environ") -> str:
     between finishing inside the job's walltime and not. Defaults to the
     cores PBS gave us rather than 1.
     """
-    for key in ("NOS_POST_MAX_WORKERS", "NCPUS"):
-        raw = env.get(key, "")
+    if configured is not None:
         try:
-            n = int(raw)
+            n = int(configured)
+            if n > 0:
+                return str(n)
         except (TypeError, ValueError):
-            continue
+            logger.warning(
+                "post: max_workers %r is not a positive integer; falling "
+                "back to the job's core count", configured,
+            )
+    # $NCPUS is what PBS allocated, not a preference, so it ranks below
+    # anything explicitly asked for.
+    raw = env.get("NCPUS", "")
+    try:
+        n = int(raw)
         if n > 0:
             return str(n)
+    except (TypeError, ValueError):
+        pass
     return str(max(1, (os.cpu_count() or 2) - 1))
 
 
-def _fields_deflate(env: "os._Environ") -> str:
+def _fields_deflate(raw: object) -> str:
     """zlib level for published field stacks (``POST_FIELDS_DEFLATE``).
 
     Defaults to 0 -- ops publishes these stacks uncompressed, and SCHISM
     already deflates the 3D ones itself, so compressing here is an opt-in
     trade of post CPU for roughly 7% of cycle volume.
     """
-    raw = env.get("POST_FIELDS_DEFLATE", "")
     try:
         level = int(raw)
     except (TypeError, ValueError):
@@ -960,7 +998,12 @@ class FieldsNcProduct(PostProduct):
                     "--pdy", ctx.pdy,
                     "--phase", phase,
                     "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
-                    "--deflate", _fields_deflate(ctx.shell_env),
+                    "--deflate", _fields_deflate(
+                        self.option(
+                            ctx, "deflate", default="0",
+                            env_key="POST_FIELDS_DEFLATE",
+                        )
+                    ),
                     "--combine-script", str(ctx.combine_script),
                     "--result-json", str(result_json),
                 ],
@@ -1179,7 +1222,12 @@ class GeopkgProduct(NosUtilsProduct):
             "--pdy", ctx.pdy,
             "--phase", phase,
             "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
-            "--max-workers", _post_max_workers(ctx.shell_env),
+            "--max-workers", _post_max_workers(
+                ctx.shell_env,
+                self.option(
+                    ctx, "max_workers", env_key="NOS_POST_MAX_WORKERS"
+                ),
+            ),
         ]
 
 
@@ -1225,7 +1273,12 @@ class ProfilesProduct(NosUtilsProduct):
             "--hgrid", str(hgrid),
             "--vgrid", str(vgrid),
             "--station-in", str(station),
-            "--outside", ctx.shell_env.get("NOS_PROFILES_OUTSIDE") or "error",
+            "--outside", str(
+                self.option(
+                    ctx, "outside", default="error",
+                    env_key="NOS_PROFILES_OUTSIDE",
+                )
+            ),
         ]
 
 

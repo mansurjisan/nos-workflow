@@ -567,3 +567,48 @@ def test_forecast_clock_restart_matches_the_repo_use_datm_convention(
     env = {} if use_datm is None else {"USE_DATM": use_datm}
     ctx = type("C", (), {"shell_env": env})()
     assert post_stage._forecast_clock_restarts(ctx) is restarts
+
+
+def test_worker_output_reaches_the_stage_log(tmp_path, fake_env, caplog):
+    """A killed post job used to lose every product's output at once,
+    because $pgmout is only surfaced by the J-job's closing cat. Each
+    worker's lines must reach the stage log as it finishes."""
+    caplog.set_level("INFO", logger="nos_workflow.stages.post")
+    env = _make_minimal_post_env(tmp_path)
+    comout = Path(env["COMOUT"])
+    _seed_staout(comout, env["RUN"], env["cycle"], "nowcast")
+
+    def talking_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=1,
+            stdout="worker: did a thing\nworker: and another\n",
+        )
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=talking_run):
+            post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    msgs = [r.getMessage() for r in caplog.records]
+    assert "worker: did a thing" in msgs
+    assert "worker: and another" in msgs
+    # And the $pgmout location is named, for the worker killed mid-flight.
+    assert any("$pgmout=" in m for m in msgs)
+
+
+def test_worker_output_still_lands_in_pgmout(tmp_path, fake_env):
+    env = _make_minimal_post_env(tmp_path)
+    pgmout = tmp_path / "OUTPUT.test"
+    env["pgmout"] = str(pgmout)
+    comout = Path(env["COMOUT"])
+    _seed_staout(comout, env["RUN"], env["cycle"], "nowcast")
+
+    def talking_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(
+            args=cmd, returncode=1, stdout="worker: pgmout line\n",
+        )
+
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=talking_run):
+            post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert "worker: pgmout line" in pgmout.read_text()
