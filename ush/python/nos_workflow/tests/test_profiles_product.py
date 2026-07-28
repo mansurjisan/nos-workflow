@@ -286,11 +286,30 @@ def test_outside_error_is_the_default_and_reaches_the_writer(tmp_path):
     staging, comout = _dirs(tmp_path)
     _seed_stack(staging, 1, hours=[1])
 
-    with pytest.raises(ValueError, match="outside of domain"):
-        _run(staging, comout, tmp_path,
-             stations=STATIONS + (OUTSIDE_STATION,))
-
+    # Fails, but with a diagnosis rather than a traceback: the base class
+    # reads any non-zero rc as "failed", so the product outcome is
+    # unchanged while the log now names the station and how far out it is.
+    rc, _result_json = _run(
+        staging, comout, tmp_path,
+        stations=STATIONS + (OUTSIDE_STATION,),
+    )
+    assert rc == 6
     assert list(comout.iterdir()) == [], "a partial product survived"
+
+
+def test_outside_error_names_the_offending_station(tmp_path, capsys):
+    """A bad coordinate and a mismatched mesh look identical in the log
+    unless the distance is reported."""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+
+    _run(staging, comout, tmp_path,
+         stations=STATIONS + (OUTSIDE_STATION,))
+
+    out = capsys.readouterr().out
+    assert "outside of domain" in out
+    assert "nearest node" in out          # the discriminator
+    assert "station(s) outside" in out
 
 
 def test_outside_nearest_opts_into_the_pylib_fallback(tmp_path):

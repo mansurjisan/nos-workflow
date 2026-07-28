@@ -77,6 +77,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"profiles: fix input(s) not readable: {'; '.join(missing_fix)}")
         return 5
 
+    # Name the resolved inputs. fix_file() accepts several spellings and
+    # tries the bare name first, so "which mesh did it actually use" is
+    # not answerable from the arguments -- and it is the first question
+    # asked when a station comes out of the domain.
+    print(f"profiles: hgrid      {args.hgrid}")
+    print(f"profiles: vgrid      {args.vgrid}")
+    print(f"profiles: station.in {args.station_in}")
+
     try:
         from nos_utils.post.profiles import (
             stack_inputs,
@@ -103,16 +111,26 @@ def main(argv: Optional[List[str]] = None) -> int:
         f"profiles: {len(stacks)} stack(s), outside={args.outside} "
         f"-> {out_path.name}"
     )
-    with atomic_publish(out_path) as tmp:
-        write_station_profiles(
-            stacks,
-            Path(args.hgrid),
-            Path(args.vgrid),
-            tmp,
-            base_date=base_date,
-            station_file=Path(args.station_in),
-            outside=args.outside,
-        )
+    try:
+        with atomic_publish(out_path) as tmp:
+            write_station_profiles(
+                stacks,
+                Path(args.hgrid),
+                Path(args.vgrid),
+                tmp,
+                base_date=base_date,
+                station_file=Path(args.station_in),
+                outside=args.outside,
+            )
+    except ValueError as exc:
+        if "outside of domain" not in str(exc):
+            raise
+        # Aborting here is the ops behaviour and is kept. What ops does
+        # not do is say WHICH station or how far out, and without that a
+        # bad coordinate and a mismatched mesh look identical in the log.
+        print(f"profiles: {exc}")
+        _diagnose_outside(args)
+        return 6
 
     if args.result_json:
         Path(args.result_json).write_text(
@@ -120,6 +138,49 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     print(f"profiles: wrote {out_path.name} (zeta on the model datum)")
     return 0
+
+
+def _diagnose_outside(args: argparse.Namespace) -> None:
+    """Name the out-of-domain stations and their distance to the mesh.
+
+    The distance is the discriminator an operator needs: metres out
+    means a coordinate that wants nudging onto the mesh, kilometres out
+    means the station list and the hgrid are from different domains.
+    Best effort only -- this runs on a path that has already failed, so
+    nothing here may raise.
+    """
+    try:
+        import numpy as np
+        from nos_utils.post.profiles import (
+            compute_area_coords, read_station_in, _read_elements,
+        )
+        from nos_utils.io.schism_grid import SchismGrid
+
+        lons, lats, names = read_station_in(Path(args.station_in))
+        grid = SchismGrid.read(Path(args.hgrid), read_boundaries=False)
+        elnode = _read_elements(
+            Path(args.hgrid), grid.n_nodes, grid.n_elements
+        )
+        ie, _ip, _acor = compute_area_coords(
+            grid.node_lons, grid.node_lats, elnode, lons, lats
+        )
+        bad = np.nonzero(ie == -1)[0]
+        print(
+            f"profiles: {bad.size} of {lons.size} station(s) outside "
+            f"{Path(args.hgrid).name} ({grid.n_nodes} nodes):"
+        )
+        for k in bad[:20]:
+            d = np.hypot(grid.node_lons - lons[k], grid.node_lats - lats[k])
+            j = int(d.argmin())
+            print(
+                f"profiles:   [{k}] {str(names[k])[:32]:32s} "
+                f"({lons[k]:.6f}, {lats[k]:.6f})  "
+                f"nearest node {j} at {d[j] * 111000:.2f} m"
+            )
+        if bad.size > 20:
+            print(f"profiles:   ... and {bad.size - 20} more")
+    except Exception as exc:  # noqa: BLE001
+        print(f"profiles: could not diagnose the out-of-domain stations ({exc})")
 
 
 def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
