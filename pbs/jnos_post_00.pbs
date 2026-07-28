@@ -2,11 +2,15 @@
 #PBS  -N secofs_ufs_post_00
 #PBS  -A ESTOFS-DEV
 #PBS  -q dev
-#PBS  -o /dev/null
-#PBS  -e /dev/null
+# NOT /dev/null: PBS writes its own epilogue here -- "walltime exceeded",
+# cgroup/OOM kills, node failures -- and that is the one message the
+# in-script redirect below cannot capture, because a SIGKILLed job never
+# reaches any trap. Sending it to /dev/null once cost a diagnosis: a post
+# job died with no traceback and no summary, and nothing said why. These
+# files stay near-empty; the real logs are the redirect below.
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=01:00:00
+#PBS  -l walltime=02:00:00
 
 # ------------------------------------------------------------------
 # SECOFS UFS Post-Processing PBS Job

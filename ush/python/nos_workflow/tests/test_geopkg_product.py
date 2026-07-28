@@ -323,3 +323,49 @@ def test_all_stacks_usable_drops_nothing(tmp_path):
     )
 
     assert len(usable) == 2 and dropped == []
+
+
+def test_geopkg_is_given_the_cores_the_job_has(tmp_path):
+    """Serial contouring of a 1.69M-node mesh does not finish a cycle
+    inside the post walltime; ops fanned the timesteps out."""
+    from nos_workflow.post.registry import get_product
+    from nos_workflow.stages.post import _post_max_workers
+
+    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "12"}) == "12"
+    assert _post_max_workers({"NCPUS": "8"}) == "8"
+    # An explicit setting beats what PBS handed us.
+    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "4", "NCPUS": "8"}) == "4"
+    # Junk falls through rather than crashing the stage.
+    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "x", "NCPUS": "8"}) == "8"
+    assert int(_post_max_workers({})) >= 1
+
+    from nos_workflow.post.base import ProductContext
+
+    comout = tmp_path / "com"
+    comout.mkdir(exist_ok=True)
+    ctx = ProductContext(
+        descriptor=None,
+        shell_env={"NCPUS": "8", "LEN_NOWCAST": "6"},
+        homenos=tmp_path,
+        fixofs=tmp_path,
+        comout=comout,
+        data=tmp_path,
+        pdy="20260728",
+        cyc="00",
+        cycle="t00z",
+        run_name="secofs_ufs",
+        prefix_nos="secofs_ufs",
+        nc_hour="18",
+        sta_in=tmp_path / "sta.in",
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+    staging = tmp_path / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    _write_out2d(staging / "out2d_1.nc", hours=range(1, 7))
+
+    args = get_product("geopkg")().worker_args(
+        ctx, "nowcast", staging, tmp_path
+    )
+    assert "--max-workers" in args
+    assert args[args.index("--max-workers") + 1] == "8"

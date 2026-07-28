@@ -873,6 +873,26 @@ def _len_nowcast_hours(env) -> str:
         return "6.0"
 
 
+def _post_max_workers(env: "os._Environ") -> str:
+    """Worker count for the timestep-parallel products (geopkg).
+
+    Contouring one SECOFS timestep means a 1.69M-node triangulation, and
+    a cycle has tens of them; ops fanned that over a fork pool, so
+    leaving it serial is not a small difference -- it is the difference
+    between finishing inside the job's walltime and not. Defaults to the
+    cores PBS gave us rather than 1.
+    """
+    for key in ("NOS_POST_MAX_WORKERS", "NCPUS"):
+        raw = env.get(key, "")
+        try:
+            n = int(raw)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return str(n)
+    return str(max(1, (os.cpu_count() or 2) - 1))
+
+
 def _fields_deflate(env: "os._Environ") -> str:
     """zlib level for published field stacks (``POST_FIELDS_DEFLATE``).
 
@@ -1159,8 +1179,8 @@ class GeopkgProduct(NosUtilsProduct):
             "--pdy", ctx.pdy,
             "--phase", phase,
             "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+            "--max-workers", _post_max_workers(ctx.shell_env),
         ]
-
 
 
 @register
