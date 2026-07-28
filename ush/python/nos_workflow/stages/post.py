@@ -13,7 +13,12 @@ from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
 from ..post.naming import stations_nc_name
-from ..post.registry import get_product, register, resolve_product_names
+from ..post.registry import (
+    get_product,
+    register,
+    resolve_product_names,
+    resolve_product_options,
+)
 from ..post.worker_base import (
     NosUtilsProduct,
     fix_file,
@@ -147,6 +152,9 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         sta_in=sta_in,
         combine_script=combine_script,
         pgmout=pgmout,
+        product_options=resolve_product_options(
+            shell_env, homenos=homenos, yaml_path=descriptor.yaml_path,
+        ),
     )
 
     results: List[ProductResult] = []
@@ -873,7 +881,7 @@ def _len_nowcast_hours(env) -> str:
         return "6.0"
 
 
-def _post_max_workers(env: "os._Environ") -> str:
+def _post_max_workers(env: "os._Environ", configured=None) -> str:
     """Worker count for the timestep-parallel products (geopkg).
 
     Contouring one SECOFS timestep means a 1.69M-node triangulation, and
@@ -882,25 +890,35 @@ def _post_max_workers(env: "os._Environ") -> str:
     between finishing inside the job's walltime and not. Defaults to the
     cores PBS gave us rather than 1.
     """
-    for key in ("NOS_POST_MAX_WORKERS", "NCPUS"):
-        raw = env.get(key, "")
+    if configured is not None:
         try:
-            n = int(raw)
+            n = int(configured)
+            if n > 0:
+                return str(n)
         except (TypeError, ValueError):
-            continue
+            logger.warning(
+                "post: max_workers %r is not a positive integer; falling "
+                "back to the job's core count", configured,
+            )
+    # $NCPUS is what PBS allocated, not a preference, so it ranks below
+    # anything explicitly asked for.
+    raw = env.get("NCPUS", "")
+    try:
+        n = int(raw)
         if n > 0:
             return str(n)
+    except (TypeError, ValueError):
+        pass
     return str(max(1, (os.cpu_count() or 2) - 1))
 
 
-def _fields_deflate(env: "os._Environ") -> str:
+def _fields_deflate(raw: object) -> str:
     """zlib level for published field stacks (``POST_FIELDS_DEFLATE``).
 
     Defaults to 0 -- ops publishes these stacks uncompressed, and SCHISM
     already deflates the 3D ones itself, so compressing here is an opt-in
     trade of post CPU for roughly 7% of cycle volume.
     """
-    raw = env.get("POST_FIELDS_DEFLATE", "")
     try:
         level = int(raw)
     except (TypeError, ValueError):
@@ -960,7 +978,12 @@ class FieldsNcProduct(PostProduct):
                     "--pdy", ctx.pdy,
                     "--phase", phase,
                     "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
-                    "--deflate", _fields_deflate(ctx.shell_env),
+                    "--deflate", _fields_deflate(
+                        self.option(
+                            ctx, "deflate", default="0",
+                            env_key="POST_FIELDS_DEFLATE",
+                        )
+                    ),
                     "--combine-script", str(ctx.combine_script),
                     "--result-json", str(result_json),
                 ],
@@ -1179,7 +1202,12 @@ class GeopkgProduct(NosUtilsProduct):
             "--pdy", ctx.pdy,
             "--phase", phase,
             "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
-            "--max-workers", _post_max_workers(ctx.shell_env),
+            "--max-workers", _post_max_workers(
+                ctx.shell_env,
+                self.option(
+                    ctx, "max_workers", env_key="NOS_POST_MAX_WORKERS"
+                ),
+            ),
         ]
 
 
@@ -1225,7 +1253,12 @@ class ProfilesProduct(NosUtilsProduct):
             "--hgrid", str(hgrid),
             "--vgrid", str(vgrid),
             "--station-in", str(station),
-            "--outside", ctx.shell_env.get("NOS_PROFILES_OUTSIDE") or "error",
+            "--outside", str(
+                self.option(
+                    ctx, "outside", default="error",
+                    env_key="NOS_PROFILES_OUTSIDE",
+                )
+            ),
         ]
 
 

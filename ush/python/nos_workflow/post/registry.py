@@ -7,8 +7,13 @@ Selection precedence (first hit wins):
 2. The system YAML ``post.products`` list -- read from ``$OFS_CONFIG``
    when set, else ``$HOMEnos/<descriptor.yaml_path>``; follows the
    ``_base`` overlay chain until a ``post:`` section is found. Entries
-   are either bare names or ``{name: ..., enabled: bool}`` mappings.
-   An explicit empty list means "run no products".
+   are either bare names or ``{name: ..., enabled: bool, options: {...}}``
+   mappings. An explicit empty list means "run no products".
+
+   ``options`` are per-product settings, read separately by
+   :func:`resolve_product_options` so they survive a name-only
+   ``NOS_POST_PRODUCTS`` override, and consumed via
+   ``PostProduct.option`` (env > YAML > default).
 3. Framework defaults (:data:`DEFAULT_PRODUCTS`).
 
 YAML reading is best-effort: any parse/IO problem logs a warning and
@@ -89,6 +94,46 @@ def resolve_product_names(
         "post products from %s defaults: %s", framework, defaults
     )
     return defaults
+
+
+def resolve_product_options(
+    env: Mapping[str, str],
+    homenos: Optional[Path] = None,
+    yaml_path: Optional[Path] = None,
+) -> Dict[str, dict]:
+    """Per-product ``options`` from the YAML, keyed by product name.
+
+    Deliberately separate from :func:`resolve_product_names`: selection
+    can come from ``NOS_POST_PRODUCTS``, which carries names only, and a
+    product named that way must still get its configured settings.
+    Returns {} when there is no YAML or nothing declares options --
+    never raises, for the same reason selection never does.
+    """
+    yaml_file = _locate_yaml(env, homenos, yaml_path)
+    if yaml_file is None:
+        return {}
+    post = _read_yaml_post_mapping(yaml_file)
+    if post is None or not isinstance(post.get("products"), list):
+        return {}
+    options: Dict[str, dict] = {}
+    for entry in post["products"]:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        opts = entry.get("options")
+        if isinstance(opts, dict) and opts:
+            options[str(entry["name"])] = dict(opts)
+        elif opts is not None:
+            logger.warning(
+                "post.products options for %r in %s is not a mapping; "
+                "ignoring", entry.get("name"), yaml_file,
+            )
+    if options:
+        logger.info(
+            "post product options from %s: %s",
+            yaml_file.name,
+            {k: sorted(v) for k, v in options.items()},
+        )
+    return options
 
 
 def _locate_yaml(
@@ -241,6 +286,7 @@ def _parse_products(raw: object, src: Path) -> Optional[List[str]]:
 
 
 __all__ = [
+    "resolve_product_options",
     "DEFAULT_PRODUCTS",
     "available_products",
     "get_product",

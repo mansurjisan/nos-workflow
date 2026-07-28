@@ -585,3 +585,143 @@ def test_ordering_is_stable_for_the_rest():
     assert _ordered_products(
         ["geopkg", "bias_correct", "fields_nc", "adcirc", "stations_nc"]
     ) == ["fields_nc", "geopkg", "bias_correct", "adcirc", "stations_nc"]
+
+
+# ---------------------------------------------------------------------------
+# Per-product options
+# ---------------------------------------------------------------------------
+
+
+def _ctx_with(options, shell_env=None, tmp_path=None):
+    from nos_workflow.post.base import ProductContext
+
+    base = tmp_path or Path("/tmp")
+    return ProductContext(
+        descriptor=None, shell_env=shell_env or {}, homenos=base,
+        fixofs=base, comout=base, data=base, pdy="20260728", cyc="00",
+        cycle="t00z", run_name="r", prefix_nos="p", nc_hour="18",
+        sta_in=base / "s.in", combine_script=base / "c.py", pgmout="log",
+        product_options=options,
+    )
+
+
+def _probe(name="profiles"):
+    class Probe(PostProduct):
+        def produce(self, ctx):  # pragma: no cover - never called
+            return ProductResult(name=self.name, status="ok")
+
+    Probe.name = name
+    return Probe()
+
+
+def test_option_precedence_is_env_then_yaml_then_default():
+    prod = _probe()
+    yaml_only = _ctx_with({"profiles": {"outside": "drop"}})
+    assert prod.option(yaml_only, "outside", default="error") == "drop"
+
+    # Env wins, so an operator can override config for one run -- same
+    # precedence as NOS_POST_PRODUCTS over post.products.
+    both = _ctx_with(
+        {"profiles": {"outside": "drop"}},
+        shell_env={"NOS_PROFILES_OUTSIDE": "nearest"},
+    )
+    assert prod.option(
+        both, "outside", default="error", env_key="NOS_PROFILES_OUTSIDE"
+    ) == "nearest"
+
+    # An empty env var is not an override.
+    empty = _ctx_with(
+        {"profiles": {"outside": "drop"}},
+        shell_env={"NOS_PROFILES_OUTSIDE": ""},
+    )
+    assert prod.option(
+        empty, "outside", default="error", env_key="NOS_PROFILES_OUTSIDE"
+    ) == "drop"
+
+    assert prod.option(_ctx_with({}), "outside", default="error") == "error"
+    # Options for another product must not leak.
+    assert _probe("geopkg").option(
+        _ctx_with({"profiles": {"outside": "drop"}}), "outside", default="error"
+    ) == "error"
+
+
+def test_options_parse_from_yaml_and_survive_an_env_name_override(tmp_path):
+    from nos_workflow.post.registry import resolve_product_options
+
+    yml = tmp_path / "sys.yaml"
+    yml.write_text(
+        "post:\n"
+        "  products:\n"
+        "    - stations_nc\n"
+        "    - name: profiles\n"
+        "      options:\n"
+        "        outside: drop\n"
+        "    - name: geopkg\n"
+        "      options:\n"
+        "        max_workers: 8\n"
+    )
+    env = {"OFS_CONFIG": str(yml)}
+    assert resolve_product_options(env) == {
+        "profiles": {"outside": "drop"},
+        "geopkg": {"max_workers": 8},
+    }
+
+    # Selecting by env carries names only, so options must still resolve --
+    # otherwise NOS_POST_PRODUCTS=profiles would silently lose outside=drop.
+    env_override = dict(env, NOS_POST_PRODUCTS="profiles")
+    assert resolve_product_names("comf", env_override) == ["profiles"]
+    assert resolve_product_options(env_override)["profiles"] == {
+        "outside": "drop"
+    }
+
+
+def test_malformed_options_are_ignored_not_fatal(tmp_path):
+    from nos_workflow.post.registry import resolve_product_options
+
+    yml = tmp_path / "sys.yaml"
+    yml.write_text(
+        "post:\n  products:\n    - name: profiles\n      options: not-a-map\n"
+    )
+    assert resolve_product_options({"OFS_CONFIG": str(yml)}) == {}
+    assert resolve_product_options({}) == {}
+
+
+def test_shipped_yaml_enables_only_what_has_been_validated():
+    """SECOFS ran every one of these on a real coupled cycle. ATL has not,
+    so it stays narrower."""
+    from nos_workflow.post.registry import (
+        _read_yaml_post_products, resolve_product_options,
+    )
+
+    secofs = _read_yaml_post_products(_PARM / "secofs_ufs.yaml")
+    for name in ("maxele", "slab2d", "adcirc", "profiles", "geopkg"):
+        assert name in secofs, name
+
+    for name in ("stofs_3d_atl_ufs.yaml", "stofs_3d_atl_ufs_standalone.yaml"):
+        atl = _read_yaml_post_products(_PARM / name)
+        for ready in ("maxele", "slab2d", "adcirc"):
+            assert ready in atl, (name, ready)
+        # Held until timed / fix files staged on ATL.
+        assert "geopkg" not in atl, name
+        assert "profiles" not in atl, name
+
+
+def test_no_system_enables_profiles_without_an_outside_setting():
+    """A standing guard, not a snapshot: profiles defaults to ops parity
+    (abort on one out-of-mesh station), so enabling it anywhere without
+    saying what to do about that ships a product that fails every cycle."""
+    from nos_workflow.post.registry import (
+        _read_yaml_post_products, resolve_product_options,
+    )
+
+    checked = 0
+    for yml in sorted(_PARM.glob("*.yaml")):
+        names = _read_yaml_post_products(yml) or []
+        if "profiles" not in names:
+            continue
+        checked += 1
+        opts = resolve_product_options({"OFS_CONFIG": str(yml)})
+        assert opts.get("profiles", {}).get("outside"), (
+            f"{yml.name} enables profiles with no options.outside"
+        )
+    assert checked, "no system enables profiles -- guard would be vacuous"

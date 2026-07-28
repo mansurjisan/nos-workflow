@@ -331,13 +331,15 @@ def test_geopkg_is_given_the_cores_the_job_has(tmp_path):
     from nos_workflow.post.registry import get_product
     from nos_workflow.stages.post import _post_max_workers
 
-    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "12"}) == "12"
-    assert _post_max_workers({"NCPUS": "8"}) == "8"
-    # An explicit setting beats what PBS handed us.
-    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "4", "NCPUS": "8"}) == "4"
-    # Junk falls through rather than crashing the stage.
-    assert _post_max_workers({"NOS_POST_MAX_WORKERS": "x", "NCPUS": "8"}) == "8"
-    assert int(_post_max_workers({})) >= 1
+    # $NCPUS is what PBS allocated, not a preference, so anything asked
+    # for explicitly outranks it.
+    assert _post_max_workers({"NCPUS": "8"}, None) == "8"
+    assert _post_max_workers({"NCPUS": "8"}, 4) == "4"
+    assert _post_max_workers({"NCPUS": "8"}, "4") == "4"
+    # Junk falls back rather than crashing the stage.
+    assert _post_max_workers({"NCPUS": "8"}, "x") == "8"
+    assert _post_max_workers({"NCPUS": "0"}, None) != "0"
+    assert int(_post_max_workers({}, None)) >= 1
 
     from nos_workflow.post.base import ProductContext
 
