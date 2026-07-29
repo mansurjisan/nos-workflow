@@ -136,10 +136,8 @@ def test_parity_attributes_byte_identical_to_heredoc(tmp_path):
 
 
 def test_parity_quad_connectivity_order_preserved(tmp_path):
-    """The heredoc emits quad nodes in the order (n0, n0+1, n0+nx+1,
-    n0+nx). Swapping this order changes element orientation and breaks
-    CMEPS bilinear regrid. Verify the canonical CCW ordering for the
-    first element."""
+    """Quad nodes are emitted CCW as (SW, SE, NE, NW). Swapping this order
+    changes element orientation and breaks CMEPS bilinear regrid."""
     forcing = _build_synthetic_forcing(tmp_path / "forcing.nc")
     out = tmp_path / "mesh.nc"
     generate_esmf_mesh(forcing, out)
@@ -150,25 +148,61 @@ def test_parity_quad_connectivity_order_preserved(tmp_path):
     finally:
         ds.close()
 
-    # First quad covers nodes (0,0), (0,1), (1,1), (1,0) in (j,i) terms,
-    # which in 1-based linear indexing with row-major ravel of shape
-    # (ny, nx) is: 1, 2, nx+2, nx+1.
-    expected_first_quad = np.array([1, 2, NX + 2, NX + 1], dtype=np.int32)
+    # Corners live on the staggered (ny+1) x (nx+1) node grid, so a row of
+    # nodes is nxe = NX + 1 wide -- not NX. The first element's corners are
+    # therefore 1, 2, nxe+2, nxe+1.
+    nxe = NX + 1
+    expected_first_quad = np.array([1, 2, nxe + 2, nxe + 1], dtype=np.int32)
     assert (conn[0] == expected_first_quad).all(), (
         f"first quad ordering drift: got {conn[0]}, want {expected_first_quad}"
     )
 
 
-def test_parity_counts_match_nx_times_ny(tmp_path):
-    """nodeCount = nx*ny, elementCount = (nx-1)*(ny-1). Sanity guard
-    against ny/nx swap bugs."""
+def test_parity_counts_are_cell_centred(tmp_path):
+    """elementCount = nx*ny, nodeCount = (nx+1)*(ny+1).
+
+    CDEPS reads stream fields at ESMF_MESHLOC_ELEMENT, so there must be one
+    element per data point. The earlier cell-cornered layout gave
+    (nx-1)*(ny-1) elements; PIO then read the first (nx-1)*(ny-1) values in
+    flat order and the mapping sheared one cell per row. Also guards against
+    an ny/nx swap.
+    """
     forcing = _build_synthetic_forcing(tmp_path / "forcing.nc")
     out = tmp_path / "mesh.nc"
     generate_esmf_mesh(forcing, out)
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == NX * NY
-        assert len(ds.dimensions['elementCount']) == (NX - 1) * (NY - 1)
+        assert len(ds.dimensions['elementCount']) == NX * NY
+        assert len(ds.dimensions['nodeCount']) == (NX + 1) * (NY + 1)
     finally:
         ds.close()
+
+
+def test_parity_element_centres_are_the_data_points(tmp_path):
+    """The load-bearing property: centerCoords[k] is the forcing file's own
+    k-th point, in the same flattened (y, x) order the data is stored in."""
+    forcing = _build_synthetic_forcing(tmp_path / "forcing.nc")
+    out = tmp_path / "mesh.nc"
+    generate_esmf_mesh(forcing, out)
+
+    src = netCDF4.Dataset(str(forcing), 'r')
+    try:
+        lons = np.asarray(src.variables['longitude'][:])
+        lats = np.asarray(src.variables['latitude'][:])
+    finally:
+        src.close()
+    if lons.ndim == 2:
+        lons, lats = lons[0, :], lats[:, 0]
+
+    ds = netCDF4.Dataset(str(out), 'r')
+    try:
+        centres = ds.variables['centerCoords'][:]
+    finally:
+        ds.close()
+
+    expected = np.column_stack([np.tile(lons, len(lats)), np.repeat(lats, len(lons))])
+    assert np.allclose(centres, expected), (
+        "element centres are not the data points — the cell-cornered "
+        "regression is back"
+    )

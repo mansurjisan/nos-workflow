@@ -11,8 +11,59 @@ from ...bash_compat import preserve_preload
 logger = logging.getLogger(__name__)
 
 
+def _cell_edges(centers):
+    """Cell boundaries for ``centers``: midpoints, extrapolated at the ends.
+
+    Handles non-uniform spacing, so a stretched or subset grid works the same
+    way as the regular 0.025 deg DATM grid.
+    """
+    import numpy as np
+
+    centers = np.asarray(centers, dtype=float)
+    if centers.size < 2:
+        raise ValueError("need at least 2 grid points to build cell edges")
+    edges = np.empty(centers.size + 1, dtype=float)
+    edges[1:-1] = 0.5 * (centers[:-1] + centers[1:])
+    edges[0] = centers[0] - 0.5 * (centers[1] - centers[0])
+    edges[-1] = centers[-1] + 0.5 * (centers[-1] - centers[-2])
+    return edges
+
+
+def _axes_from(lon2d, lat2d):
+    """Reduce 2-D coordinate arrays to the 1-D axes of a separable grid.
+
+    The DATM forcing grid is built on a regular lat/lon mesh, so the rows of
+    ``lon2d`` and the columns of ``lat2d`` are constant. Verified rather than
+    assumed: a curvilinear grid cannot be expressed as element centres this
+    way, and silently taking row 0 would misplace every point.
+    """
+    import numpy as np
+
+    lon_axis = np.asarray(lon2d)[0, :]
+    lat_axis = np.asarray(lat2d)[:, 0]
+    if not np.allclose(np.asarray(lon2d), lon_axis[None, :]):
+        raise ValueError("longitude varies along y — grid is not separable")
+    if not np.allclose(np.asarray(lat2d), lat_axis[:, None]):
+        raise ValueError("latitude varies along x — grid is not separable")
+    return lon_axis, lat_axis
+
+
 def generate_esmf_mesh(forcing: Path, output: Path) -> int:
     """Build a CMEPS-compatible ESMF unstructured mesh from a DATM forcing file.
+
+    The mesh ELEMENTS are the data points. CDEPS reads every stream field at
+    ``ESMF_MESHLOC_ELEMENT`` (``dshr_strdata_mod.F90`` creates all stream
+    fields that way; there is no node-based read path), so a forcing file
+    with ``nx*ny`` values needs exactly ``nx*ny`` elements centred ON those
+    points.
+
+    This previously treated the forcing coordinates as cell CORNERS --
+    ``n_elems = (ny-1)*(nx-1)`` with centres half a cell to the north-east.
+    CDEPS does not check element count against the file's dimensions, and
+    since (nx-1)*(ny-1) < nx*ny, PIO silently read the first
+    (nx-1)*(ny-1) values in flat order. The data is row-major with nx per
+    row while elements ran nx-1 per row, so the mapping slipped one cell per
+    row and sheared with latitude. Mirrors nos-utils esmf_mesh.py (#37).
 
     Returns 0 on success, non-zero on failure.
     """
@@ -40,9 +91,15 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
                 lat2d = ds.variables['y'][:]
             ds.close()
 
-            ny, nx = lon2d.shape
-            n_nodes = ny * nx
-            n_elems = (ny - 1) * (nx - 1)
+            lon_axis, lat_axis = _axes_from(lon2d, lat2d)
+            nx = lon_axis.size
+            ny = lat_axis.size
+            n_elems = nx * ny
+
+            lon_edges = _cell_edges(lon_axis)
+            lat_edges = _cell_edges(lat_axis)
+            nxe, nye = nx + 1, ny + 1
+            n_nodes = nxe * nye
 
             out = Dataset(str(output), 'w')
             out.createDimension('nodeCount', n_nodes)
@@ -50,14 +107,23 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
             out.createDimension('maxNodePElement', 4)
             out.createDimension('coordDim', 2)
 
+            # Corner nodes on the staggered grid, x-fastest.
             nodeCoords = out.createVariable('nodeCoords', 'f8', ('nodeCount', 'coordDim'))
             nodeCoords.units = 'degrees'
-            coords = np.column_stack([lon2d.ravel(), lat2d.ravel()])
-            nodeCoords[:] = coords
+            nodeCoords[:] = np.column_stack(
+                [np.tile(lon_edges, nye), np.repeat(lat_edges, nxe)]
+            )
 
-            j_idx, i_idx = np.mgrid[0:ny-1, 0:nx-1]
-            n0 = (j_idx * nx + i_idx + 1).ravel()
-            conn = np.column_stack([n0, n0 + 1, n0 + nx + 1, n0 + nx]).astype(np.int32)
+            # Connectivity into the (ny+1) x (nx+1) node grid, 1-based CCW.
+            # Element order is k = j*nx + i so it matches the forcing file's
+            # flattened (y, x).
+            jj, ii = np.meshgrid(np.arange(ny), np.arange(nx), indexing='ij')
+            sw = (jj * nxe + ii + 1).ravel()
+            conn = np.empty((n_elems, 4), dtype=np.int32)
+            conn[:, 0] = sw               # SW
+            conn[:, 1] = sw + 1           # SE
+            conn[:, 2] = sw + nxe + 1     # NE
+            conn[:, 3] = sw + nxe         # NW
 
             elemConn = out.createVariable('elementConn', 'i4', ('elementCount', 'maxNodePElement'))
             elemConn.long_name = 'Node indices that define the element connectivity'
@@ -73,17 +139,18 @@ def generate_esmf_mesh(forcing: Path, output: Path) -> int:
             elementMask = out.createVariable('elementMask', 'i4', ('elementCount',))
             elementMask[:] = np.ones(n_elems, dtype=np.int32)
 
+            # Element centres ARE the data points -- this is the whole fix.
             centerCoords = out.createVariable('centerCoords', 'f8', ('elementCount', 'coordDim'))
             centerCoords.units = 'degrees'
-            clon = 0.25 * (coords[conn[:,0]-1,0] + coords[conn[:,1]-1,0] + coords[conn[:,2]-1,0] + coords[conn[:,3]-1,0])
-            clat = 0.25 * (coords[conn[:,0]-1,1] + coords[conn[:,1]-1,1] + coords[conn[:,2]-1,1] + coords[conn[:,3]-1,1])
-            centerCoords[:] = np.column_stack([clon, clat])
+            centerCoords[:] = np.column_stack(
+                [np.tile(lon_axis, ny), np.repeat(lat_axis, nx)]
+            )
 
             out.title = 'ESMF mesh generated from DATM forcing file'
             out.gridType = 'unstructured mesh'
             out.close()
-            print('Generated ESMF mesh: {}x{} = {} nodes, {} elements'.format(
-                nx, ny, n_nodes, n_elems
+            print('Generated ESMF mesh: {}x{} = {} elements (data points), {} corner nodes'.format(
+                nx, ny, n_elems, n_nodes
             ))
         except Exception as exc:  # noqa: BLE001
             logger.error("ESMF mesh generation failed: %s", exc)

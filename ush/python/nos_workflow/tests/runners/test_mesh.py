@@ -9,7 +9,8 @@ Coverage:
   - Output structure: required dims (nodeCount, elementCount,
     maxNodePElement=4, coordDim=2) and variables (nodeCoords,
     elementConn, numElementConn, elementMask, centerCoords).
-  - Counts: 10x10 forcing -> 100 nodes, 81 quad elements.
+  - Counts: 10x10 forcing -> 100 quad elements (the data points),
+    121 staggered corner nodes.
   - elementMask: ALL ONES (MEMORY.md lesson #18 -- 0 masks all elements
     in CMEPS bilinear regrid).
   - 1-D vs 2-D lon/lat input: both produce equivalent meshes.
@@ -105,8 +106,9 @@ def test_mesh_output_file_exists_and_is_valid_netcdf(tmp_path):
 
 
 def test_mesh_dimensions_match_expected_counts(tmp_path):
-    """10x10 forcing -> 100 nodes, 9x9 = 81 quad elements; canonical
-    ESMF dims maxNodePElement=4 and coordDim=2 are present."""
+    """10x10 forcing -> 100 elements (one per data point) and 11x11 = 121
+    corner nodes; canonical ESMF dims maxNodePElement=4 and coordDim=2
+    are present."""
     forcing = _make_forcing_1d(tmp_path / "forcing.nc", nx=10, ny=10)
     out = tmp_path / "mesh.nc"
 
@@ -115,8 +117,8 @@ def test_mesh_dimensions_match_expected_counts(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert len(ds.dimensions['elementCount']) == 81
+        assert len(ds.dimensions['nodeCount']) == 121
+        assert len(ds.dimensions['elementCount']) == 100
         assert len(ds.dimensions['maxNodePElement']) == 4
         assert len(ds.dimensions['coordDim']) == 2
     finally:
@@ -146,7 +148,7 @@ def test_mesh_nodeCoords_shape_is_nodes_by_2(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert ds.variables['nodeCoords'].shape == (100, 2)
+        assert ds.variables['nodeCoords'].shape == (121, 2)
     finally:
         ds.close()
 
@@ -159,7 +161,7 @@ def test_mesh_elementConn_shape_is_elems_by_4(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert ds.variables['elementConn'].shape == (81, 4)
+        assert ds.variables['elementConn'].shape == (100, 4)
     finally:
         ds.close()
 
@@ -183,7 +185,7 @@ def test_mesh_elementMask_is_all_ones(tmp_path):
         mask = ds.variables['elementMask'][:]
     finally:
         ds.close()
-    assert mask.shape == (81,)
+    assert mask.shape == (100,)
     assert (mask == 1).all(), "elementMask must be all ones (CMEPS regrid)"
 
 
@@ -202,8 +204,8 @@ def test_mesh_accepts_2d_longitude_latitude(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert len(ds.dimensions['elementCount']) == 81
+        assert len(ds.dimensions['nodeCount']) == 121
+        assert len(ds.dimensions['elementCount']) == 100
     finally:
         ds.close()
 
@@ -218,8 +220,8 @@ def test_mesh_falls_back_to_x_y_vars(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert ds.variables['nodeCoords'].shape == (100, 2)
+        assert len(ds.dimensions['nodeCount']) == 121
+        assert ds.variables['nodeCoords'].shape == (121, 2)
     finally:
         ds.close()
 
