@@ -150,25 +150,30 @@ def test_parity_quad_connectivity_order_preserved(tmp_path):
     finally:
         ds.close()
 
-    # First quad covers nodes (0,0), (0,1), (1,1), (1,0) in (j,i) terms,
-    # which in 1-based linear indexing with row-major ravel of shape
-    # (ny, nx) is: 1, 2, nx+2, nx+1.
-    expected_first_quad = np.array([1, 2, NX + 2, NX + 1], dtype=np.int32)
+    # The node grid is the CORNER grid, (ny+1) x (nx+1). The first quad
+    # takes corners (0,0), (0,1), (1,1), (1,0), which in 1-based row-major
+    # indexing over width (nx+1) is: 1, 2, nx+3, nx+2.
+    expected_first_quad = np.array([1, 2, NX + 3, NX + 2], dtype=np.int32)
     assert (conn[0] == expected_first_quad).all(), (
         f"first quad ordering drift: got {conn[0]}, want {expected_first_quad}"
     )
 
 
 def test_parity_counts_match_nx_times_ny(tmp_path):
-    """nodeCount = nx*ny, elementCount = (nx-1)*(ny-1). Sanity guard
-    against ny/nx swap bugs."""
+    """elementCount = nx*ny (one per forcing value), nodeCount =
+    (nx+1)*(ny+1) corners.
+
+    CDEPS reads stream fields at ESMF_MESHLOC_ELEMENT, so there must be
+    exactly one element per data value. This asserted the cell-cornered
+    (nx-1)*(ny-1) until 2026-07-29 -- which is what kept the sheared mesh
+    in the tree after nos-utils #37 fixed the other copy."""
     forcing = _build_synthetic_forcing(tmp_path / "forcing.nc")
     out = tmp_path / "mesh.nc"
     generate_esmf_mesh(forcing, out)
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == NX * NY
-        assert len(ds.dimensions['elementCount']) == (NX - 1) * (NY - 1)
+        assert len(ds.dimensions['elementCount']) == NX * NY
+        assert len(ds.dimensions['nodeCount']) == (NX + 1) * (NY + 1)
     finally:
         ds.close()

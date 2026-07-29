@@ -115,8 +115,9 @@ def test_mesh_dimensions_match_expected_counts(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert len(ds.dimensions['elementCount']) == 81
+        # One element per forcing value; nodes are the surrounding corners.
+        assert len(ds.dimensions['elementCount']) == 100      # 10*10
+        assert len(ds.dimensions['nodeCount']) == 121         # 11*11
         assert len(ds.dimensions['maxNodePElement']) == 4
         assert len(ds.dimensions['coordDim']) == 2
     finally:
@@ -146,7 +147,7 @@ def test_mesh_nodeCoords_shape_is_nodes_by_2(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert ds.variables['nodeCoords'].shape == (100, 2)
+        assert ds.variables['nodeCoords'].shape == (121, 2)
     finally:
         ds.close()
 
@@ -159,7 +160,7 @@ def test_mesh_elementConn_shape_is_elems_by_4(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert ds.variables['elementConn'].shape == (81, 4)
+        assert ds.variables['elementConn'].shape == (100, 4)
     finally:
         ds.close()
 
@@ -183,7 +184,7 @@ def test_mesh_elementMask_is_all_ones(tmp_path):
         mask = ds.variables['elementMask'][:]
     finally:
         ds.close()
-    assert mask.shape == (81,)
+    assert mask.shape == (100,)
     assert (mask == 1).all(), "elementMask must be all ones (CMEPS regrid)"
 
 
@@ -202,8 +203,9 @@ def test_mesh_accepts_2d_longitude_latitude(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert len(ds.dimensions['elementCount']) == 81
+        # One element per forcing value; nodes are the surrounding corners.
+        assert len(ds.dimensions['elementCount']) == 100      # 10*10
+        assert len(ds.dimensions['nodeCount']) == 121         # 11*11
     finally:
         ds.close()
 
@@ -218,8 +220,8 @@ def test_mesh_falls_back_to_x_y_vars(tmp_path):
 
     ds = netCDF4.Dataset(str(out), 'r')
     try:
-        assert len(ds.dimensions['nodeCount']) == 100
-        assert ds.variables['nodeCoords'].shape == (100, 2)
+        assert len(ds.dimensions['nodeCount']) == 121   # (10+1)^2
+        assert ds.variables['nodeCoords'].shape == (121, 2)
     finally:
         ds.close()
 
@@ -298,3 +300,73 @@ def test_mesh_returns_nonzero_on_missing_forcing(tmp_path):
     assert rc != 0
     # And the output file must not exist on failure.
     assert not out.exists()
+
+
+def test_element_k_carries_the_forcing_value_at_flat_index_k(tmp_path):
+    """The invariant that makes CDEPS's flat element read correct.
+
+    CDEPS reads stream fields at ESMF_MESHLOC_ELEMENT and does not check
+    element count against the forcing file. With the old cell-cornered
+    mesh, (nx-1)*(ny-1) < nx*ny, so PIO silently read the first
+    (nx-1)*(ny-1) values in flat order: element (r,c) received file value
+    r*(nx-1)+c instead of r*nx+c -- one cell west per row, shearing with
+    latitude. On the real 1721x1721 SECOFS grid that displaced the wind a
+    median 1431 km; the Chesapeake Bay mouth was driven from the open
+    Atlantic 1427 km east.
+
+    Note this file is a SECOND copy of the generator fixed in nos-utils
+    #37, and stage_files.py calls it AFTER prep -- so prep writing a
+    correct mesh is not sufficient on its own.
+    """
+    nx, ny = 7, 5
+    lons = -98.0 + 0.025 * np.arange(nx)
+    lats = 10.0 + 0.025 * np.arange(ny)
+    forcing = tmp_path / "f.nc"
+    ds = netCDF4.Dataset(str(forcing), 'w')
+    ds.createDimension('x', nx)
+    ds.createDimension('y', ny)
+    lon_v = ds.createVariable('longitude', 'f8', ('y', 'x'))
+    lat_v = ds.createVariable('latitude', 'f8', ('y', 'x'))
+    L, A = np.meshgrid(lons, lats)
+    lon_v[:] = L
+    lat_v[:] = A
+    ds.close()
+
+    out = tmp_path / "m.nc"
+    assert generate_esmf_mesh(forcing, out) == 0
+
+    ds = netCDF4.Dataset(str(out), 'r')
+    try:
+        assert len(ds.dimensions['elementCount']) == nx * ny
+        assert len(ds.dimensions['nodeCount']) == (nx + 1) * (ny + 1)
+        centers = np.asarray(ds.variables['centerCoords'][:])
+        k = np.arange(nx * ny)
+        expected = np.column_stack([lons[k % nx], lats[k // nx]])
+        assert np.allclose(centers, expected), (
+            "element k must carry the forcing value at flat index k; any "
+            "offset here IS the shear"
+        )
+        nodes = np.asarray(ds.variables['nodeCoords'][:])
+        assert np.allclose(nodes[0], [lons[0] - 0.0125, lats[0] - 0.0125])
+    finally:
+        ds.close()
+
+
+def test_curvilinear_forcing_grid_is_refused(tmp_path):
+    """A non-separable grid cannot be a regular lat/lon mesh. Taking row 0
+    anyway would misplace every point, so fail instead."""
+    nx, ny = 6, 4
+    forcing = tmp_path / "curv.nc"
+    ds = netCDF4.Dataset(str(forcing), 'w')
+    ds.createDimension('x', nx)
+    ds.createDimension('y', ny)
+    lon_v = ds.createVariable('longitude', 'f8', ('y', 'x'))
+    lat_v = ds.createVariable('latitude', 'f8', ('y', 'x'))
+    L, A = np.meshgrid(-98.0 + 0.025 * np.arange(nx), 10.0 + 0.025 * np.arange(ny))
+    lon_v[:] = L + 0.01 * A          # rows no longer share a longitude axis
+    lat_v[:] = A
+    ds.close()
+
+    out = tmp_path / "m.nc"
+    rc = generate_esmf_mesh(forcing, out)
+    assert rc != 0, "a curvilinear grid must not silently produce a mesh"
