@@ -109,12 +109,24 @@ LOG_PATTERNS = (
     "pgmout.*",
 )
 
-# Artifacts excluded from the parity comparison entirely. The legacy shell
-# path never wrote these, so including them would break the symmetric
-# filename-set diff (only-in-python) and the golden manifest. The per-stage
-# input-file manifest is provenance metadata, not a forcing/model artifact.
+# Artifacts excluded from the parity comparison entirely. Two reasons a file
+# lands here:
+#   (a) the legacy shell never wrote it, so including it would break the
+#       symmetric filename-set diff (only-in-python) and the golden manifest
+#       -- the per-stage input manifest, provenance metadata not a model
+#       artifact;
+#   (b) it is a dead prep output deliberately dropped from the Python path, so
+#       we no longer require parity on it -- the {phase}.in copies of
+#       param.nml (the model reads param.nml staged from the FIX template,
+#       never these). The legacy shell still emits the .in copies, so they
+#       must be excluded from both sides of the diff. The pdy/cyc anchor
+#       (t??z + 8-digit pdy immediately before .{phase}.in) matches only the
+#       bare {base}.{phase}.in and never the live combine.*/met_ctl.*.{phase}.in
+#       SCHISM control files, which carry an infix keyword in that position.
 PARITY_IGNORE_GLOBS = (
     "*.inputs.*.json",
+    "*.t??z.????????.nowcast.in",
+    "*.t??z.????????.forecast.in",
 )
 
 # Nowcast-stage non-deterministic artifacts.

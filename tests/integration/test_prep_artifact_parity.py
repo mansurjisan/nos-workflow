@@ -577,6 +577,31 @@ def test_inputs_manifest_excluded_from_parity_diff(tmp_path: Path) -> None:
     assert not any(".inputs." in n and n.endswith(".json") for n in names)
 
 
+def test_dead_phase_in_excluded_but_control_files_kept(tmp_path: Path) -> None:
+    """The pruned {base}.{phase}.in (a rename of param.nml, no longer written
+    by the Python path) must be dropped by walk_relative so the legacy shell's
+    copies don't surface as only-in-legacy. The live combine.* / met_ctl.*
+    .{phase}.in SCHISM control files share the .{phase}.in suffix and must NOT
+    be excluded -- the pdy/cyc anchor distinguishes them."""
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    base = "secofs_ufs.t12z.20260226"
+    dead = [f"{base}.nowcast.in", f"{base}.forecast.in"]
+    live = [
+        f"{base}.combine.hotstart.nowcast.in",
+        f"{base}.combine.netcdf.sta.forecast.in",
+        f"{base}.met_ctl.nowcast.in",
+    ]
+    for n in dead + live:
+        (comout / n).write_text("x")
+
+    names = {p.name for p in walk_relative(comout)}
+    for n in dead:
+        assert n not in names, f"dead {n} must be excluded from parity"
+    for n in live:
+        assert n in names, f"live control file {n} must be kept"
+
+
 def test_netcdf_diff_detects_value_perturbation(tmp_path: Path) -> None:
     """An out-of-tolerance NetCDF perturbation must produce a clear msg."""
     netCDF4 = pytest.importorskip("netCDF4")
