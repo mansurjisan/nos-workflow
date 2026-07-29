@@ -267,15 +267,55 @@ def process_field_files(ctl, dims):
 
             ele_var = ncfile.createVariable('ele', 'i4', ('nface', 'nele'))
             h_var = ncfile.createVariable('h', np.float32, ('node',))
+            # Ops names the vertical reference here; xgeoid20b is the model's
+            # own zero for SECOFS, and no datum shift is applied downstream.
+            h_var.long_name = "sea floor depth"
+            h_var.units = "meters"
+            h_var.positive = "down"
+            h_var.standard_name = "sea floor depth below xgeoid20b"
+            h_var.location = "node"
 
             zeta_var = ncfile.createVariable('zeta', np.float32, ('time', 'node'))
+            zeta_var.long_name = "water surface elevation"
+            zeta_var.units = "meters"
+            zeta_var.positive = "up"
+            zeta_var.standard_name = "sea surface height above model zero"
+            zeta_var.location = "node"
+
             uwind_var = ncfile.createVariable('uwind_speed', np.float32, ('time', 'node'))
+            uwind_var.long_name = "eastward wind velocity"
+            uwind_var.units = "meters s-1"
+            uwind_var.location = "node"
+
             vwind_var = ncfile.createVariable('Vwind_speed', np.float32, ('time', 'node'))
+            # Ops sets these on uwind_speed a second time rather than on
+            # Vwind_speed -- a copy-paste slip that leaves the V component
+            # unlabelled. Attached to the right variable here.
+            vwind_var.long_name = "northward wind velocity"
+            vwind_var.units = "meters s-1"
+            vwind_var.location = "node"
 
             temp_var = ncfile.createVariable('temp', np.float32, ('time', 'nv', 'node'))
+            temp_var.long_name = "temperature"
+            temp_var.standard_name = "sea water temperature"
+            temp_var.units = "degrees Celsius"
+            temp_var.location = "node"
+
             salt_var = ncfile.createVariable('salinity', np.float32, ('time', 'nv', 'node'))
+            salt_var.long_name = "salinity"
+            salt_var.standard_name = "sea water salinity"
+            salt_var.units = "psu"
+            salt_var.location = "node"
+
             u_var = ncfile.createVariable('u', np.float32, ('time', 'nv', 'node'))
+            u_var.long_name = "eastward water velocity"
+            u_var.units = "meters s-1"
+            u_var.location = "node"
+
             v_var = ncfile.createVariable('v', np.float32, ('time', 'nv', 'node'))
+            v_var.long_name = "northward water velocity"
+            v_var.units = "meters s-1"
+            v_var.location = "node"
             sigma_var = ncfile.createVariable('sigma', np.float32, ('node', 'nv'))
 
             h_var[:] = h1[:]
@@ -448,14 +488,44 @@ def process_station_files(ctl, dims):
 
     name_station_var = ncfile.createVariable('name_station', 'S1', ('station', 'clen'))
 
+    # Attributes copied from the operational writer
+    # (nosofs.3.9/ush/pysh/schism_fields_station_redo.py). standard_name on
+    # zeta is the load-bearing one: this is the model's own vertical zero
+    # (xGEOID20B for SECOFS), NOT MSL or NAVD88, and ops applies no datum
+    # shift to station output. Without it a consumer has no way to know the
+    # reference -- comparing straight against MSL gauges looks like a 0.1-0.7 m
+    # model error when it is only a change of datum.
     zeta_var = ncfile.createVariable('zeta', np.float32, ('time', 'station'))
+    zeta_var.long_name = "water surface elevation"
+    zeta_var.units = "meters"
+    zeta_var.positive = "up"
+    zeta_var.standard_name = "sea surface height above model zero"
+
     uwind_var = ncfile.createVariable('uwind_speed', np.float32, ('time', 'station'))
+    uwind_var.long_name = "eastward wind velocity"
+    uwind_var.units = "meters s-1"
+
     vwind_var = ncfile.createVariable('vwind_speed', np.float32, ('time', 'station'))
+    vwind_var.long_name = "westward wind velocity"
+    vwind_var.units = "meters s-1"
 
     temp_var = ncfile.createVariable('temp', np.float32, ('time', 'siglay', 'station'))
+    temp_var.long_name = "temperature"
+    temp_var.standard_name = "sea water temperature"
+    temp_var.units = "degrees Celsius"
+
     salt_var = ncfile.createVariable('salinity', np.float32, ('time', 'siglay', 'station'))
+    salt_var.long_name = "salinity"
+    salt_var.standard_name = "sea water salinity"
+    salt_var.units = "psu"
+
     u_var = ncfile.createVariable('u', np.float32, ('time', 'siglay', 'station'))
+    u_var.long_name = "eastward water velocity"
+    u_var.units = "meters s-1"
+
     v_var = ncfile.createVariable('v', np.float32, ('time', 'siglay', 'station'))
+    v_var.long_name = "northward water velocity"
+    v_var.units = "meters s-1"
 
     # Station names
     station_names = [f'station_{PREFIXNOS}_{i+1:05d}' for i in range(nsta)]
