@@ -1,0 +1,513 @@
+# STOFS-3D-AK UFS-Coastal Configuration
+# Storm Surge and Tide Operational Forecast System - 3D Alaska (DATM+SCHISM)
+#
+# Port of the Alaska SCHISM research configuration into nos_workflow as a
+# coupled UFS-Coastal system, modeled on the secofs_ufs / stofs_3d_atl_ufs
+# siblings.
+#
+# Provenance: every mesh/physics value below was read out of the R09a run in
+# the public hindcast archive
+#   s3://noaa-gestofs-pds/_hindcast_archive/AK_Runs/R09a/
+# (F. Cassalho; the uncoupled SCHISM + ERA5 member of the run set behind
+# "Tidal Modulation of Waves Around the Aleutian Islands", Cassalho et al.
+# 2026). R09a is the wave-free member -- icou_elfe_wwm=0 -- which is why it,
+# and not R09b/c or R10*, is the reference for a DATM+SCHISM bring-up.
+#
+# Alaska-specific differences vs the ATL/PAC siblings
+# ---------------------------------------------------
+#   - Domain SPANS THE DATELINE: lon 156.7 -> 203.1 in 0-360 convention.
+#   - NO rivers at all. R09a runs if_source=0, so there is no NWM stage, no
+#     source_sink.in, and NWM is deliberately absent from prep.critical_sources.
+#   - Atmosphere is GFS-ONLY for now. HRRR-Alaska is the target second source
+#     but is not reachable by the current forcing code -- see the long note on
+#     forcing.atmospheric below. This is the main gap between this config and
+#     an operational one.
+#   - Both open-boundary segments are elevation-forced (iettype=5), so the
+#     elev2D neta subset is the full boundary node count; there is no
+#     flow-only segment to exclude (contrast ATL's St-Lawrence).
+#   - dt = 45 s, appreciably shorter than SECOFS (120) or ATL (150). The UFS
+#     coupling interval must track it exactly.
+#
+# Waves (WWM/WW3) are out of scope here. R09b/c couple SCHISM+WWM and R10*
+# add WW3 spectral boundaries; neither is modeled by this config.
+
+_base: schism
+
+system:
+  name: stofs_3d_ak_ufs
+  description: "Storm Surge and Tide Operational Forecast System - 3D Alaska (UFS-Coastal)"
+  region: alaska
+  framework: stofs_ufs
+  version: "0.1.0"          # pre-operational bring-up; no ops lineage yet
+  prefix: stofs_3d_ak_ufs
+
+# Execution mode. Only the coupled UFS path is configured today; a standalone
+# pschism overlay (which is what R09a itself ran) is a deliberate follow-up.
+execution:
+  mode: ufs
+
+# Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
+prep:
+  extras:
+    st_lawrence: false
+    # Authoritative over the is_stofs_like heuristic. ATL-style dynamic SSH
+    # adjust needs a curated coastal CO-OPS station set plus a previous
+    # cycle's staout_1; neither exists for Alaska yet.
+    obc_dynamic_adjust: false
+  # Prep fails if any of these is missing or fails. NWM is intentionally NOT
+  # listed: the Alaska mesh has no river sources (R09a param.nml if_source=0),
+  # so a missing NWM is not a defect here. RTOFS remains critical -- without it
+  # prep would otherwise report SUCCESS having written no ocean boundary.
+  #
+  # DATM and UFS_CONFIG are listed because this is a COUPLED system: both are
+  # produced unconditionally at nws=4 (orchestrator.py:292-294), and without
+  # them prep would exit 0 with no atmospheric forcing and no ufs.configure,
+  # the afterok chain would release the nowcast, and 2513 ranks would launch
+  # against a missing DATM input dir (only a warning at stage_files.py:102).
+  #
+  # NUDGING likewise: forcing.ocean.nudging is enabled and param.nml sets
+  # inu_tr(1:2) = 2, so SCHISM REQUIRES TEM_nu.nc / SAL_nu.nc. A source that
+  # is not declared cannot fail the prep -- the check is over the declared
+  # set, so a failed nudging step would exit 0 and the chained nowcast would
+  # abort on the missing files.
+  critical_sources: [GFS, PARAM_NML, TIDAL, RTOFS, NUDGING, DATM, UFS_CONFIG]
+
+# Grid configuration -- R09a mesh.
+grid:
+  type: unstructured
+  n_nodes: 1343182      # hgrid.gr3:2
+  n_elements: 2670566   # hgrid.gr3:2
+  n_sides: null         # ns_global computed by SCHISM at runtime
+  n_levels: 51          # vgrid.in:2 (ivcor=1, LSC2)
+  files:
+    horizontal: stofs_3d_ak_ufs.hgrid.gr3
+    vertical: stofs_3d_ak_ufs.vgrid.in
+    horizontal_ll: stofs_3d_ak_ufs.hgrid.ll
+    station: stofs_3d_ak_ufs.station.in
+    diffmin: stofs_3d_ak_ufs.diffmin.gr3
+    diffmax: stofs_3d_ak_ufs.diffmax.gr3
+    albedo: stofs_3d_ak_ufs.albedo.gr3
+    rough: stofs_3d_ak_ufs.rough.gr3
+    watertype: stofs_3d_ak_ufs.watertype.gr3
+    windrot: stofs_3d_ak_ufs.windrot_geo2proj.gr3
+  domain:
+    # 0-360 convention; the domain spans the dateline (do NOT convert to
+    # -180..180). Bounds are the R09a hgrid node extent
+    # (156.6854..203.1360, 49.1090..66.3043) padded outward to a round box.
+    lon_min: 156.0
+    lon_max: 204.0
+    lat_min: 48.5
+    lat_max: 67.0
+  igrd_met: 0
+  igrd_obc: 1
+
+forcing:
+  # ATMOSPHERE IS GFS-ONLY TODAY -- deliberately, and this is not the target.
+  #
+  # HRRR-Alaska is the intended second source, but the forcing code cannot
+  # reach it yet, so declaring a blend here would be a configuration that
+  # silently does nothing:
+  #   - hrrr.py:_resolve_path builds only "<COMINhrrr>/hrrr.YYYYMMDD/conus";
+  #     there is no alaska/ branch, so file discovery returns [] and
+  #     hrrr.py:126-129 reports SUCCESS with "using GFS only".
+  #   - nothing reads an hrrr_blend.tiles block; the only "alaska" string in
+  #     nos_utils is a comment (hrrr.py:511).
+  #   - the wind-rotation constants are CONUS Lambert (lov=-97.5, latin=38.5
+  #     in hrrr.py:768 and blender.py:61-62) and are applied twice; HRRR-AK is
+  #     polar stereographic (LoV -135), so the rotation would be wrong anyway.
+  # Enabling HRRR here therefore takes nos-utils work, not a YAML edit. Until
+  # then met_num=1 keeps the declaration honest: the HRRR stage is gated on
+  # met_num (orchestrator.py:225), NOT on hrrr_blend.enabled.
+  #
+  # The blender itself is single-tile (one hrrr_forcing.nc, one Delaunay --
+  # blender.py:151,261), which is fine for Alaska: unlike STOFS-3D-PAC, which
+  # needs CONUS-West + Alaska, Alaska needs exactly one tile. So the blender
+  # is NOT the blocker here; path resolution and wind rotation are.
+  atmospheric:
+    met_num: 1
+    primary: GFS
+    secondary: null
+    forecast_source: GFS
+    forecast_source2: null
+    scale_hflux: 1.0
+    gfs:
+      resolution: "0.25"
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+    hrrr_blend:
+      enabled: false
+
+  # No river forcing. R09a param.nml sets if_source=0 -- the Alaska mesh has
+  # no source/sink elements, so there is nothing for NWM to drive.
+  #
+  # NOTE this key is declarative ONLY: nothing in ForcingConfig.from_yaml reads
+  # forcing.river.enabled, and nothing else stops the NWM step either. Omitting
+  # COMINnwm from the PBS cards does NOT gate it -- jobs/JNOS_PREP re-injects
+  # the default via compath.py, so "nwm" enters paths and the gate at
+  # orchestrator.py:228 is satisfied. NWM therefore runs every prep and fails
+  # with "No river configuration provided" (no sources_json / ctl_file is
+  # declared below). That FAIL line is expected and harmless: NWM is not in
+  # prep.critical_sources, so it cannot fail the stage, and nothing consumes
+  # its output on a mesh with if_source=0.
+  river:
+    enabled: false
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    # Deliberately NO roi_2ds / roi_3dz blocks. Their presence is what selects
+    # the index-subset + Fortran OBC path (rtofs.py:279), whose executables
+    # (stofs_3d_atl_gen_3Dth_from_hycom) exist only for the Atlantic and are
+    # searched for in the shared EXECnos/EXECofs -- so on a shared install an
+    # Alaska run with ROI would find the ATL binary and generate boundaries on
+    # the ATL grid. Omitting them keeps the portable Python path, which
+    # derives its own 3D read window from this mesh at runtime and is
+    # dateline-safe. See rtofs.py:_compute_3d_roi.
+    #
+    # RTOFS staging constraint on WCOSS2: file discovery globs
+    # rtofs_glo_3dz_*_6hrly_hvr_*.nc and de-duplicates on valid time alone
+    # (rtofs.py:784-821), so if more than one regional tile is present for a
+    # cycle the alphabetically-first wins -- "US_east" sorts before "alaska".
+    # Stage exactly ONE 3dz tile per COMINrtofs directory. A regional tile
+    # smaller than 200 MB is also rejected outright (rtofs.py:65); raise
+    # NOS_RTOFS_MIN_SIZE_3D if the Alaska product is smaller than that.
+    obc:
+      # Both open-boundary segments are iettype=5/ifltype=5/itetype=4/isatype=4
+      # (bctides.in: Pacific 1613 nodes, Bering Sea 219). Every boundary node
+      # is elevation-forced, so the *.th.nc node count is the full 1832 and
+      # there is no flow-only segment to subset out.
+      elev_segments: [0, 1]
+      elev_nodes_expected: 1832
+      wl_source: RTOFS
+      ts_source: RTOFS
+      # UNVERIFIED for Alaska. ATL carries 0.04 m (geoid->MSL datum shift);
+      # the correct Alaska value has to be established against tide gauges
+      # before this system is trusted for water level.
+      ssh_offset: null
+    nudging:
+      enabled: true
+      # R09a nudges T and S (inu_tr(1:2)=2) from daily RTOFS fields:
+      # param.nml step_nu_tr=86400 with TEM_nu.nc / SAL_nu.nc.
+      # No scalar timescale key: relaxation strength is the spatial field in
+      # the *_nudge.gr3 files. Leaving it unset inherits the 86400 s default,
+      # which reaches only log lines and netCDF metadata -- same as ATL and
+      # SECOFS. (Setting it to null instead would raise TypeError in
+      # ForcingConfig.from_yaml, config.py:637.)
+      input_step_s: 86400
+      files:
+        sal_nudge: stofs_3d_ak_ufs.SAL_nudge.gr3
+        tem_nudge: stofs_3d_ak_ufs.TEM_nudge.gr3
+    # No altimetry assimilation in the bring-up configuration. R09a has no ADT
+    # step; enabling one is a later decision, not a port of existing behavior.
+    adt:
+      enabled: false
+
+  tidal:
+    enabled: true
+    # R09a's bctides.in is pre-built and its harmonic provenance is not
+    # recorded in the archive, so this declares OUR generator's database.
+    # Validation gate: regenerate for 2019-07-01 12:00 UTC and diff amplitudes
+    # and phases against the archived bctides.in before trusting tides here.
+    database: tpxo9
+    create_forcing: 1
+    tide_fac: true
+    tide_ref_date: "2019-07-01T12:00:00Z"   # bctides.in:1
+    # Earth tidal potential: 8 constituents, cutoff depth 50 m (bctides.in:2).
+    potential_constituents: [M2, S2, N2, K2, K1, O1, P1, Q1]
+    potential_cutoff_depth: 50.0
+    # Boundary forcing frequencies (bctides.in "8 !nbfr") -- identical to the
+    # inherited base set, restated here so the tie to R09a is explicit.
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      bctides_template: stofs_3d_ak_ufs.bctides.in_template
+      harmonic_constants_obc: stofs_3d_ak_ufs.bctides.in_template
+      harmonic_constants_ofs: stofs_3d_ak_ufs.bctides.in_template
+
+# Model physics and runtime. Numerics are R09a's (param_noWWM.nml), with the
+# atmosphere switched from sflux (nws=2) to NUOPC coupling (nws=4).
+model:
+  executable: fv3_coastalS.exe
+  ocean_model: SCHISM
+  physics:
+    dt: 45.0               # param.nml core:dt -- MUST equal coupling_interval
+    extstep_seconds: 45.0
+    ics: 2                 # spherical; slam0/sfea0 nominal only
+    cpp_lon: 130.0         # = slam0
+    cpp_lat: 20.0          # = sfea0
+    slam0: 130.0           # param.nml opt:slam0
+    sfea0: 20.0            # param.nml opt:sfea0
+    nws: 4                 # NUOPC coupling (R09a ran nws=2 sflux)
+    nrampwind: 1
+    drampwind: 0.0         # dramp = drampbc = drampwind = 0 in R09a
+    iwindoff: 0
+    ndtfast: null          # N/A for SCHISM (dtb_max=30 / dtb_min=10)
+    ihorcon: 2
+    ihdif: 0
+    idrag: 2
+    bfric: 0
+    ihhat: 1
+    inunfl: 0
+    min_depth: 0.01        # h0
+    rdrg: 3.0e-03
+    rdrg2: 0.005
+    zob: 0.0005
+    visc2: 0.0
+    visc4: 0.0
+    akt_bak: 5.0e-6
+    akv_bak: 5.0e-5
+    akk_bak: 5.0e-6
+    akp_bak: 5.0e-6
+    dcrit: 0.10
+    dstart: null           # N/A for SCHISM (start_year/month/day/hour)
+    tide_start: 0.0
+    wtiminc: 3600
+  run:
+    # Bring-up target: 6 h nowcast + 48 h forecast, matching SECOFS rather
+    # than the 24 h/96 h STOFS cadence. R09a was a 123-day continuous
+    # hindcast and implies no operational cycle length.
+    hindcast_days: 0.25
+    forecast_days: 2.0
+    nowcast_hours: 6
+    forecast_hours: 48
+    base_date: null        # runtime-derived per cycle
+    time_start: null
+  runtime:
+    ctl_file: stofs_3d_ak_ufs.param.nml
+    met_ctl_file: stofs_3d_ak_ufs.sflux_inputs.txt
+
+# UFS-Coastal coupling.
+ufs_coastal:
+  enabled: true
+  # Explicit bounds rather than a datm_domain preset name: the preset table
+  # lives in the nos-utils submodule and an unknown name there silently falls
+  # back to the model domain. Bounds carry a ~0.5 deg halo past the mesh so
+  # DATM covers every coupled boundary.
+  datm_bounds:
+    lon_min: 156.0
+    lon_max: 204.0
+    lat_min: 48.5
+    lat_max: 67.0
+  coupling_interval: 45      # = model.physics.dt
+  datm_tasks: 120
+  # Pinned to R09a's compute-rank count so its partition.prop is reusable
+  # verbatim under a NO_PARMETIS build (job_file: -n 2409 = 2393 + 16 scribes;
+  # under UFS the scribes go away and OCN takes 2393).
+  schism_tasks: 2393
+  total_tasks: 2513          # = datm_tasks + schism_tasks = resources.nprocs
+  nscribes: 0                # coupled: CMEPS owns output
+  datm_forcing_source: grib2
+  # false to match forcing.atmospheric (GFS-only until HRRR-Alaska is
+  # supported). Declarative only -- no nos_utils code reads this key.
+  blend_hrrr_gfs: false
+  # 0.025 deg is HRRR-native and matches both siblings, so it is kept as the
+  # target. Note that while the atmosphere is GFS-only it oversamples a 0.25
+  # deg source ~10x for no added information -- coarsening it for cheap smoke
+  # runs is reasonable, but it re-sizes nx/ny_global and the DATM mesh.
+  blend_resolution: 0.025
+  blend_buffer_deg: 0.5
+  nhours_fcst: 48
+  dt_atmos: 900              # = 20 * coupling_interval
+  # Fallback dims only -- the orchestrator reads the real shape off
+  # datm_forcing.nc. (204.0-156.0)/0.025 + 1 = 1921; (67.0-48.5)/0.025 + 1 = 741.
+  nx_global: 1921
+  ny_global: 741
+  templates:
+    model_configure: model_configure.template
+    datm_in: datm_in.template
+    datm_streams: datm.streams.template
+    ufs_configure: ufs.configure
+
+output:
+  format: netcdf
+  prefix: stofs_3d_ak_ufs
+  nstation: 22            # station.in:2 (CO-OPS gauges, lon in 0-360)
+  stations:
+    enabled: true
+    interval: 1800        # R09a nspool_sta=40 at dt=45 s
+    file: stofs_3d_ak_ufs.station.in
+  fields:
+    interval: 3600
+    def_interval: 86400
+  quicksave:
+    interval: 3600
+    def_interval: 86400
+  average:
+    interval: 3600
+  float:
+    interval: 3600
+  restart:
+    interval: 21600
+
+# Computational resources. partition.prop must be generated for
+# ufs_coastal.schism_tasks = 2393 compute ranks against the Alaska hgrid and
+# staged as $FIXofs/stofs_3d_ak_ufs.partition.prop; R09a's own partition.prop
+# already targets 2393 and is reusable. Node count is derived by the machine
+# profile: ceil(2513 / 120) = 21 nodes on WCOSS2.
+resources:
+  nprocs: 2513
+  nscribes: 0
+  memory_gb: 500
+  walltime_hours: 2
+
+# Post-processing. Declaring this is not optional: with no post: block the
+# framework default for stofs_ufs is (stations_nc, bias_correct), and both
+# are wrong here --
+#   stations_nc assembles SECOFS' 3D station profiles from staout_5..8, which
+#     needs iout_sta=2. This system writes iout_sta=1 (one value per station
+#     per step), exactly as STOFS-3D-ATL does, and ATL was moved off
+#     stations_nc onto points_cwl for that reason.
+#   bias_correct is the ops SECOFS water-level correction and skips anyway
+#     without BAROTROPIC set.
+# Worse, the default also leaves archive_fields false, which disables BOTH
+# the OLDIO per-rank combine and field staging to $COMOUT. Running coupled
+# with nscribes=0, SCHISM writes per-rank schout_<rank>_<stack>.nc that would
+# then never be combined and never leave $DATA -- and post still reports PASS.
+post:
+  archive_fields: true
+  products:
+    # points_cwl needs the ops metadata pair in $FIXofs; without it the
+    # product skips cleanly rather than failing the stage.
+    - points_cwl
+    - fields_nc
+    # Deliberately narrow for a first bring-up. Nothing here has run against
+    # a real Alaska cycle yet, and a product that overruns the walltime kills
+    # the whole post job rather than just itself. Held for now:
+    #   maxele / slab2d / adcirc -- add once a cycle has been timed.
+    #   geopkg / profiles        -- need fix files and station-list vetting.
+    #   bias_correct             -- SECOFS-specific, and no station set here.
+
+# Workflow stages
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+shell_mappings:
+  framework: stofs_ufs
+  env_prefix: nos
+  variables:
+    # Model identification
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    # Grid files
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+
+    # Grid dimensions
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+
+    # Domain bounds (both the comf MINLON.. and stofs LONMIN.. spellings)
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    LONMIN: grid.domain.lon_min
+    LONMAX: grid.domain.lon_max
+    LATMIN: grid.domain.lat_min
+    LATMAX: grid.domain.lat_max
+    IGRD_MET: grid.igrd_met
+    IGRD_OBC: grid.igrd_obc
+
+    # Atmospheric forcing
+    MET_NUM: forcing.atmospheric.met_num
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
+    SCALE_HFLUX: forcing.atmospheric.scale_hflux
+
+    # Ocean forcing
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+    SSH_OFFSET: forcing.ocean.obc.ssh_offset
+
+    # Tidal
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
+
+    # Runtime control
+    RUNTIME_CTL: model.runtime.ctl_file
+    RUNTIME_MET_CTL: model.runtime.met_ctl_file
+    DELT_MODEL: model.physics.dt
+    EXTSTEP_SECONDS: model.physics.extstep_seconds
+    NWS_VALUE: model.physics.nws
+    MIN_DEPTH: model.physics.min_depth
+    BASE_DATE: model.run.base_date
+    TIME_START: model.run.time_start
+    SLAM0: model.physics.slam0
+    SFEA0: model.physics.sfea0
+    TIDE_START: model.physics.tide_start
+
+    # Run length
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+
+    # Output intervals
+    NSTA: output.stations.interval
+    NSTATION: output.nstation
+    NHIS: output.fields.interval
+    NDEFHIS: output.fields.def_interval
+    NQCK: output.quicksave.interval
+    NDEFQCK: output.quicksave.def_interval
+    NAVG: output.average.interval
+    NFLT: output.float.interval
+    NRST: output.restart.interval
+
+    # Resources
+    TOTAL_TASKS: resources.nprocs
+
+    # UFS-Coastal
+    USE_DATM: ufs_coastal.enabled
+    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
+    DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
+    DATM_TASKS: ufs_coastal.datm_tasks
+    SCHISM_TASKS: ufs_coastal.schism_tasks
+    NSCRIBES: ufs_coastal.nscribes
+    BLEND_RESOLUTION: ufs_coastal.blend_resolution
+    BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
+    DT_ATMOS: ufs_coastal.dt_atmos
+    NHOURS_FCST: ufs_coastal.nhours_fcst
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    NX_GLOBAL: ufs_coastal.nx_global
+    NY_GLOBAL: ufs_coastal.ny_global
+
+# Not yet configured for Alaska (deterministic bring-up first).
+ensemble:
+  enabled: false
+
+# No legacy shell lineage: this system is a greenfield port with no
+# operational .sh scripts to fall back to.
+legacy:
+  enabled: false
+  ush_dir: ""
+  fix_dir: ""
+  exec_dir: ""

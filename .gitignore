@@ -44,6 +44,24 @@ fix/secofs_ufs/*.nco
 !fix/secofs_ufs/ufs.configure
 !fix/secofs_ufs/noahmptable.tbl
 
+# STOFS-3D-AK statics. tools/fetch_stofs_3d_ak_fix.sh stages ~2.6 GB here
+# (vgrid.in alone is 1.0 GB), so ignore the payload and keep only the
+# shipped templates. *.prop covers partition.prop / tvd.prop.
+fix/stofs_3d_ak_ufs/*.gr3
+fix/stofs_3d_ak_ufs/*.ll
+fix/stofs_3d_ak_ufs/*.in
+fix/stofs_3d_ak_ufs/*.prop
+fix/stofs_3d_ak_ufs/*.dat
+fix/stofs_3d_ak_ufs/*.json
+fix/stofs_3d_ak_ufs/*.csv
+fix/stofs_3d_ak_ufs/*.txt
+fix/stofs_3d_ak_ufs/r09a_reference/
+!fix/stofs_3d_ak_ufs/*.template
+!fix/stofs_3d_ak_ufs/stofs_3d_ak_ufs.param.nml
+!fix/stofs_3d_ak_ufs/fd_ufs.yaml
+!fix/stofs_3d_ak_ufs/ufs.configure
+!fix/stofs_3d_ak_ufs/noahmptable.tbl
+
 # Shell pgmout artifacts. Both spellings occur and neither covers the other:
 # the J-jobs `export pgmout="OUTPUT.$$"` in bash, where $$ expands to the pid,
 # so a real run leaves OUTPUT.<pid>; the Python default (env.py, stages/post.py)

@@ -1,0 +1,117 @@
+#!/bin/bash
+#PBS  -N stofs_3d_ak_ufs_fc_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /dev/null
+#PBS  -e /dev/null
+#PBS  -l place=vscatter:excl,select=21:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l walltime=05:30:00
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+
+# Working directory
+export OFS=${OFS:-stofs_3d_ak_ufs}
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+# Per-job log files (PBS jobid as suffix). PBS -o/-e are pointed at
+# /dev/null above; this redirect is what populates forecast logs.
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/stofs_3d_ak_ufs_forecast_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== stofs_3d_ak_ufs_forecast_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+cd ${WORKDIR}
+
+# ----------------------------------------------------------------
+# Module setup: UFS-Coastal hpc-stack libraries
+# ----------------------------------------------------------------
+# The UFS executable (fv3_coastalS.exe) requires hpc-stack libraries
+# (hdf5-D/1.14.0, netcdf-D/4.9.2, esmf-D/8.8.0) that differ from
+# standard WCOSS2 system modules (hdf5/1.10.6, netcdf/4.7.4).
+module purge
+module reset
+
+# Clear version env vars that would override modules.fv3.lua defaults
+# (run.ver sets e.g. PrgEnv_intel_ver=8.3.3 but UFS was compiled with 8.1.0)
+unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
+
+# Load UFS-Coastal hpc-stack modules
+module use ${PACKAGEROOT}/nos-workflow/modulefiles
+module load modules.fv3
+module load cray-pals
+
+# Infrastructure modules for J-job scripting
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=${OFS:-stofs_3d_ak_ufs}
+export cyc=${CYC:-00}
+export PDY=${PDY:-$(date +%Y%m%d)}
+export job=stofs_3d_ak_ufs_fc_00_$envir
+export platform=ptmp
+export framework=stofs_ufs
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+# nosofs_ver removed: tree is unversioned (was v3.7.0)
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMPATH=/lfs/h1/ops/prod/com/nos
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+export COMIN=/lfs/h1/ops/prod/com
+
+# Input data paths (production WCOSS2).
+# Alaska/Bering/Aleutians needs GFS (global) + HRRR (Alaska tile) + RTOFS.
+# No COMINnwm: the Alaska mesh carries no river sources (if_source=0).
+export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
+export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
+export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+
+# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-2512 (2393 SCHISM ranks).
+# nscribes=0 -- coupled, CMEPS/the mediator handles output, so every OCN rank
+# is a compute rank. 21 nodes x 120 mpiprocs = 2520 slots (>= 2513 tasks);
+# ppn=120 + ompthreads=1 = STOFS operational parity.
+export TOTAL_TASKS=${TOTAL_TASKS:-2513}
+# This system runs a NO_PARMETIS SCHISM build, which cannot start without a
+# partition.prop generated for 2393 compute ranks (staged from $FIXofs as
+# stofs_3d_ak_ufs.partition.prop by tools/fetch_stofs_3d_ak_fix.sh).
+#
+# There is no staging-time guard for this on develop: stage_partition_props
+# copies the file if it is there and is SILENT when it is not, and no
+# NOS_REQUIRE_PARTITION_PROP handler exists. Exporting one here would only
+# have looked like protection. Until that guard lands, CONFIRM THE FILE IS
+# STAGED before submitting -- otherwise the failure is 2513 ranks across 21
+# exclusive nodes aborting at init.
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration for stofs_3d_ak_ufs
+export HOMEnos=${PACKAGEROOT}/nos-workflow
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Submit with dependency on nowcast:
+#   NCST_JOB=$(qsub pbs/stofs_3d_ak_ufs/jnos_nowcast_00.pbs)
+#   qsub -W depend=afterok:${NCST_JOB} pbs/stofs_3d_ak_ufs/jnos_forecast_00.pbs
+
+${HOMEnos}/jobs/JNOS_FORECAST
+exit $?
