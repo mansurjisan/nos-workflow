@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from nos_workflow.post.base import ProductContext
 from nos_workflow.post.naming import stations_mllw_name
 from nos_workflow.post.products import stations_mllw
 from nos_workflow.post.registry import get_product
@@ -248,7 +249,73 @@ def test_naming_is_a_sibling_of_the_station_product():
     )
 
 
-def test_missing_source_file_is_a_skip_not_a_failure(tmp_path, files):
+def test_a_repeated_product_runs_once():
+    """A duplicated YAML entry must not re-split and re-publish everything."""
+    assert _ordered_products(
+        ["maxele", "fields_nc", "slab2d", "fields_nc"]
+    ) == ["fields_nc", "maxele", "slab2d"]
+
+
+def test_worker_args_skips_without_the_fix_table(tmp_path, files):
+    ctx = _ctx(tmp_path, files, with_table=False)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_worker_args_skips_when_the_station_file_was_not_produced(tmp_path, files):
+    ctx = _ctx(tmp_path, files)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_worker_args_points_at_the_station_product_output(tmp_path, files):
+    from nos_workflow.post.naming import stations_nc_name
+
+    ctx = _ctx(tmp_path, files)
+    source = ctx.comout / stations_nc_name("secofs_ufs", "12", "20260728", "forecast")
+    source.write_text("")
+    args = get_product("stations_mllw")().worker_args(
+        ctx, "forecast", tmp_path, tmp_path
+    )
+    assert args is not None
+    paired = dict(zip(args[::2], args[1::2]))
+    assert paired["--stations-nc"] == str(source)
+    assert paired["--phase"] == "forecast"
+    assert Path(paired["--factors"]).name == "secofs_ufs.mllw_datum.csv"
+    assert paired["--station-in"] == str(ctx.sta_in)
+
+
+def _ctx(tmp_path: Path, files, with_table: bool = True):
+    """A ProductContext with $FIXofs and $COMOUT laid out as on WCOSS2."""
+    from unittest.mock import Mock
+
+    sta, _, table = files
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir(exist_ok=True)
+    if with_table:
+        (fixofs / "secofs_ufs.mllw_datum.csv").write_text(table.read_text())
+    comout = tmp_path / "com"
+    comout.mkdir(exist_ok=True)
+    return ProductContext(
+        descriptor=Mock(framework="stofs_ufs"),
+        shell_env={},
+        homenos=tmp_path,
+        fixofs=fixofs,
+        comout=comout,
+        data=tmp_path / "data",
+        pdy="20260728",
+        cyc="12",
+        cycle="2026072812",
+        run_name="secofs_ufs",
+        prefix_nos="secofs_ufs",
+        nc_hour="00",
+        sta_in=sta,
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+
+
+def test_missing_source_file_gives_the_documented_exit_code(tmp_path, files):
     _, _, table = files
     rc = stations_mllw.main([
         "--stations-nc", str(tmp_path / "absent.nc"),
@@ -312,6 +379,186 @@ def test_writes_shifted_water_level_for_the_mapped_stations(tmp_path, files):
         np.testing.assert_allclose(
             ds.variables["lon"][:], [-81.8081, -82.629439, -76.083333]
         )
+
+
+def _source(path, zeta, n_station=6, fill=None, lonlat=None, dims=None):
+    """Minimal stand-in for a stations_nc output."""
+    import numpy as np
+    from netCDF4 import Dataset
+
+    with Dataset(path, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", n_station)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-07-28 12:00:00"
+        t[:] = np.arange(len(zeta)) * 360.0
+        kw = {"fill_value": fill} if fill is not None else {}
+        z = ds.createVariable("zeta", "f4", dims or ("time", "station"), **kw)
+        z[:] = zeta
+        if lonlat is not None:
+            lon, lat = lonlat
+            ds.createVariable("lon", "f8", ("station",))[:] = lon
+            ds.createVariable("lat", "f8", ("station",))[:] = lat
+
+
+def _run(tmp_path, files, source, comout=None):
+    sta, _, table = files
+    out = comout or (tmp_path / "com")
+    out.mkdir(exist_ok=True)
+    return out, stations_mllw.main([
+        "--stations-nc", str(source), "--comout", str(out),
+        "--prefix", "test", "--cyc", "12", "--pdy", "20260728",
+        "--phase", "forecast", "--factors", str(table),
+        "--station-in", str(sta),
+    ])
+
+
+@needs_netcdf4
+def test_absent_source_values_stay_absent_instead_of_becoming_water_levels(
+    tmp_path, files
+):
+    """A masked source value must not be published as fill+factor.
+
+    netCDF4 returns a masked array and np.asarray on it hands back the raw
+    fill bytes, so adding the factor would yield something like -99998.6 --
+    indistinguishable from a real water level to any consumer.
+    """
+    import numpy as np
+    from netCDF4 import Dataset
+
+    src = tmp_path / "masked.nc"
+    zeta = np.ma.masked_array(
+        [[0.10, 0.20, 0.30, 0.40, 0.0, 0.0],
+         [0.15, 0.25, 0.35, 0.45, 0.0, 0.0]],
+        mask=[[False] * 6, [True] + [False] * 5],
+    )
+    _source(src, zeta, fill=-99999.0)
+
+    comout, rc = _run(tmp_path, files, src)
+    assert rc == 0
+    out = comout / stations_mllw_name("test", "12", "20260728", "forecast")
+    with Dataset(out) as ds:
+        got = ds.variables["zeta_mllw"][:]
+        assert np.ma.is_masked(got)
+        assert got.mask[1, 0]
+        assert not got.mask[0, 0]
+        np.testing.assert_allclose(got[0, 0], 0.10 + 0.400, atol=1e-6)
+        # nothing anywhere near a fill value leaked through as a number
+        assert np.abs(got.compressed()).max() < 10.0
+
+
+@needs_netcdf4
+def test_an_entirely_unwritten_zeta_is_refused(tmp_path, files):
+    """The combine step leaves zeta at the type default fill when staout_1 is
+    missing; publishing 9.97e36 for every station must not report success."""
+    import numpy as np
+    from netCDF4 import Dataset
+
+    src = tmp_path / "unwritten.nc"
+    with Dataset(src, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", 6)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-07-28 12:00:00"
+        t[:] = [0.0]
+        ds.createVariable("zeta", "f4", ("time", "station"))  # never assigned
+    _, rc = _run(tmp_path, files, src)
+    assert rc == 5
+
+
+@needs_netcdf4
+def test_source_coordinates_disagreeing_with_station_in_is_fatal(tmp_path, files):
+    """If the station dimension is not in station.in row order, every factor
+    would land on the wrong gauge -- and the labels alone cannot detect it."""
+    import numpy as np
+
+    src = tmp_path / "shuffled.nc"
+    lon = [-81.8081, -82.629439, -80.9, -76.083333, -82.555, -82.522]
+    lat = [24.5508, 27.759567, 32.0, 37.033333, 27.7884, 27.786]
+    # rotate the coordinates: same values, wrong rows
+    _source(src, [[0.0] * 6], lonlat=(lon[1:] + lon[:1], lat[1:] + lat[:1]))
+    _, rc = _run(tmp_path, files, src)
+    assert rc == 5
+
+
+@needs_netcdf4
+def test_matching_source_coordinates_pass_the_check(tmp_path, files):
+    src = tmp_path / "aligned.nc"
+    lon = [-81.8081, -82.629439, -80.9, -76.083333, -82.555, -82.522]
+    lat = [24.5508, 27.759567, 32.0, 37.033333, 27.7884, 27.786]
+    _source(src, [[0.1] * 6], lonlat=(lon, lat))
+    _, rc = _run(tmp_path, files, src)
+    assert rc == 0
+
+
+@needs_netcdf4
+def test_a_three_dimensional_zeta_is_rejected_not_broadcast(tmp_path, files):
+    """With a level axis the per-station shift could broadcast along it."""
+    import numpy as np
+    from netCDF4 import Dataset
+
+    src = tmp_path / "zeta3d.nc"
+    with Dataset(src, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", 6)
+        ds.createDimension("lev", 3)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-07-28 12:00:00"
+        t[:] = [0.0]
+        ds.createVariable("zeta", "f4", ("time", "station", "lev"))[:] = np.zeros(
+            (1, 6, 3)
+        )
+    _, rc = _run(tmp_path, files, src)
+    assert rc == 5
+
+
+def test_a_table_row_with_no_label_is_refused(tmp_path):
+    """An empty label would make the alignment check vacuously true."""
+    table = tmp_path / "blank.csv"
+    table.write_text(
+        "station_row,gauge_id,coops_code,station_label,mllw_factor\n"
+        "1,8724580,keyw,,0.400\n"
+    )
+    with pytest.raises(ValueError, match="station_label is empty"):
+        stations_mllw._read_factors(table)
+
+
+def test_generator_refuses_a_station_with_no_name_comment(tmp_path):
+    sta = tmp_path / "station.in"
+    sta.write_text("1 1 1 !flags\n1\n1 -81.808100 24.550800 0.000000 !\n")
+    ctl = tmp_path / "wl.ctl"
+    ctl.write_text(
+        "ST='Key_West(8724580)' 'keyw' 24.550800 -81.808100 0.400  1 1 1  1 1 0  1 1 0  1\n"
+    )
+    assert build_mllw_table.main(
+        ["--ctl", str(ctl), "--station-in", str(sta),
+         "--out", str(tmp_path / "t.csv")]
+    ) == 1
+
+
+def test_generator_tolerates_trailing_text_after_the_flags(tmp_path):
+    """The flags are not consumed, so a trailing note must not abort the tool."""
+    ctl = tmp_path / "wl.ctl"
+    ctl.write_text(
+        "ST='Key_West(8724580)' 'keyw' 24.550800 -81.808100 0.400"
+        "  1 1 1  1 1 0  1 1 0  1  ; ops note\n"
+    )
+    entries = build_mllw_table.read_ctl(ctl)
+    assert [e["code"] for e in entries] == ["keyw"]
+    assert entries[0]["factor"] == 0.400
+
+
+def test_truncated_station_in_reports_rather_than_tracebacks(tmp_path, files):
+    _, _, table = files
+    short = tmp_path / "short.in"
+    short.write_text("1 1 1 1 !flags only\n")
+    rc = stations_mllw.main([
+        "--stations-nc", str(tmp_path), "--comout", str(tmp_path),
+        "--prefix", "test", "--cyc", "12", "--pdy", "20260728",
+        "--phase", "forecast", "--factors", str(table),
+        "--station-in", str(short),
+    ])
+    assert rc in (2, 5)
 
 
 @needs_netcdf4

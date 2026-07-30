@@ -84,7 +84,7 @@ def read_ctl(path: Path) -> List[dict]:
         m = _ST_RE.match(line.strip())
         if not m:
             continue
-        label, code, lat, lon, factor, rest = m.groups()
+        label, code, lat, lon, factor, _flags = m.groups()
         gid = _ID_RE.search(label)
         out.append(
             dict(
@@ -94,7 +94,6 @@ def read_ctl(path: Path) -> List[dict]:
                 lat=float(lat),
                 lon=float(lon),
                 factor=float(factor),
-                flags=[int(x) for x in rest.split()],
                 gid=gid.group(1) if gid else None,
                 name=_norm(label),
             )
@@ -148,6 +147,11 @@ def reconcile(
     target the same row; :func:`pick_per_row` applies the tie-break.
     """
     wl = [s for s in stations if s["depth"] == 0.0]
+    if not wl:
+        raise ValueError(
+            "no depth==0 rows in the station list, so there is nothing a "
+            "water level datum could apply to"
+        )
     mapped, unmatched, conflicts = [], [], []
     for entry in ctl:
         evidence: Dict[str, dict] = {}
@@ -295,6 +299,17 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"  {problem}")
         if problems:
             return 1
+
+    # The runtime guard verifies each row against this label, and an empty one
+    # would make that comparison vacuously true for any station.
+    blank = [c["station_row"] for c in chosen if not c["station_label"]]
+    if blank:
+        print(
+            f"\nERROR: station.in row(s) {blank} have no name comment, so the "
+            "emitted table could not be checked against the station list at "
+            "runtime. Name them in station.in and rerun."
+        )
+        return 1
 
     factors = sorted(c["mllw_factor"] for c in chosen)
     print(

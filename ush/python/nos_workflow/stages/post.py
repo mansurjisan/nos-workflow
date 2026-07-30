@@ -241,7 +241,14 @@ def _ordered_products(names: List[str]) -> List[str]:
     Only reorders when both sides are present; otherwise the caller's
     order is preserved exactly.
     """
-    ordered = list(names)
+    # A product repeated in the YAML would otherwise be run twice -- and for
+    # a producer, hoisting only moves its first occurrence, leaving the
+    # duplicate to re-split and re-publish everything downstream.
+    ordered: List[str] = []
+    for name in names:
+        if name not in ordered:
+            ordered.append(name)
+
     for producer, consumers, why in _DEPENDENCIES:
         if producer not in ordered:
             continue
@@ -254,7 +261,7 @@ def _ordered_products(names: List[str]) -> List[str]:
         ordered.remove(producer)
         ordered.insert(first, producer)
         logger.info(
-            "post: running %s before " + why, producer, ", ".join(selected)
+            "post: running %s first; %s", producer, why % ", ".join(selected)
         )
     return ordered
 

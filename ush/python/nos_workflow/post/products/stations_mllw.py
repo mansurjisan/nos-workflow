@@ -27,8 +27,12 @@ file, because the ops station metadata is keyed inconsistently and its x/y
 can arrive transposed (see ``points_cwl._warn_transposed_coords``);
 ``station.in`` is unambiguous.
 
-Exit codes: 2 source station file absent (the phase has no station output --
-skip), 5 unusable factor table or a station list that no longer matches it.
+Exit codes: 2 source station file absent, 5 unusable factor table, a station
+list that no longer matches it, or a source whose coordinates or dimensions
+contradict it. Note the phase-has-no-station-output skip is delivered by
+``StationsMllwProduct.worker_args`` returning None *before* the worker runs;
+rc 2 only covers the file vanishing in between, and the framework reports any
+non-zero rc as a product failure.
 """
 from __future__ import annotations
 
@@ -64,8 +68,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         stations = _read_station_in(Path(args.station_in))
         _check_alignment(factors, stations)
-    except (OSError, ValueError) as exc:
-        print(f"stations_mllw: {exc}")
+    except (OSError, IndexError, ValueError) as exc:
+        print(f"stations_mllw: {args.station_in}: {exc}")
         return 5
 
     out_path = Path(args.comout) / stations_mllw_name(
@@ -128,6 +132,15 @@ def _read_factors(path: Path) -> List[dict]:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ValueError(f"bad row {rec!r}: {exc}") from None
+    # An empty label would make the alignment check below compare "" to ""
+    # and pass for whatever station happens to occupy that row, which is the
+    # one failure the check exists to prevent.
+    blank = [r["station_row"] for r in out if not r["station_label"]]
+    if blank:
+        raise ValueError(
+            f"station_label is empty for row(s) {blank}; the alignment check "
+            "cannot verify those and would silently accept any station"
+        )
     rows = [r["station_row"] for r in out]
     if len(set(rows)) != len(rows):
         dupes = sorted({r for r in rows if rows.count(r) > 1})
@@ -212,10 +225,14 @@ def _write(
 
     with Dataset(source, "r") as src:
         zeta = src.variables["zeta"]
-        if zeta.dimensions[:2] != ("time", "station"):
+        # Exactly 2-D, not just a (time, station) prefix: a third axis would
+        # broadcast the per-station shift along it whenever its length
+        # happened to equal the station count, applying a different factor
+        # per level before failing anywhere obvious.
+        if zeta.dimensions != ("time", "station"):
             raise ValueError(
                 f"unexpected zeta dimensions {zeta.dimensions}, "
-                "expected (time, station, ...)"
+                "expected exactly (time, station)"
             )
         n_time = zeta.shape[0]
         n_station_src = zeta.shape[1]
@@ -225,8 +242,20 @@ def _write(
                 f"station.in declares {len(stations)}"
             )
         idx = [r["station_row"] - 1 for r in factors]
+        _check_source_coords(src, idx, factors, stations, source.name)
         shift = np.asarray([r["mllw_factor"] for r in factors], dtype="f8")
-        values = np.asarray(zeta[:, idx], dtype="f8") + shift[None, :]
+        values, n_absent = _shifted(zeta, idx, shift)
+        if n_absent == values.size:
+            raise ValueError(
+                "no usable water level in source zeta -- every value is "
+                "absent or fill. The combine step warns and leaves zeta "
+                "unwritten when staout_1 is missing; that is the likely cause"
+            )
+        if n_absent:
+            print(
+                f"stations_mllw: WARNING: {n_absent} of {values.size} source "
+                "values absent or fill; written as _FillValue, not shifted"
+            )
 
         src_time = src.variables["time"]
         time_units = getattr(src_time, "units", "")
@@ -312,6 +341,89 @@ def _write(
                 "in the station product."
             )
     return n_time
+
+
+def _shifted(zeta, idx, shift):
+    """``zeta[:, idx] + shift``, keeping absent values absent.
+
+    netCDF4 hands back a masked array, and ``np.asarray`` on it silently
+    returns the raw fill bytes -- so adding the factor to a gap yields a
+    number like -99998.6 that no consumer can tell from a water level. Three
+    kinds of absence are folded into one mask: the array's own (from
+    ``_FillValue``/``missing_value``), non-finite values, and the netCDF
+    type default fill that an unassigned variable carries, which is not
+    always masked because no attribute advertises it.
+
+    Returns the masked result and the number of absent elements, so the
+    caller can refuse a source that is entirely fill.
+    """
+    import numpy as np
+
+    raw = np.ma.asarray(zeta[:, idx], dtype="f8")
+    data = np.ma.getdata(raw)
+    absent = (
+        np.ma.getmaskarray(raw)
+        | ~np.isfinite(data)
+        | (np.abs(data) > 1e20)
+    )
+    return np.ma.masked_array(data + shift[None, :], mask=absent), int(absent.sum())
+
+
+def _check_source_coords(src, idx, factors, stations, source_name: str) -> None:
+    """Confirm the source's own coordinates agree with station.in row order.
+
+    The netCDF station dimension is written by a different parser than the
+    one keying the factor table -- one numbers by physical file line, the
+    other by accepted-row counter -- and the two are only *assumed* to
+    agree. They both carry coordinates, so the assumption is checkable, and
+    on the real pair it holds exactly (max difference 0.0 over 430 rows).
+    Without this, a station.in line the two parsers disagree about shifts
+    the mapping and every factor lands on the wrong gauge.
+
+    Skipped, with a note, when the source carries no usable coordinates.
+    """
+    import numpy as np
+
+    for lon_name, lat_name in (("lon", "lat"), ("x", "y")):
+        if lon_name in src.variables and lat_name in src.variables:
+            break
+    else:
+        print(
+            f"stations_mllw: {source_name} carries no lon/lat; station "
+            "alignment checked against station.in labels only"
+        )
+        return
+
+    try:
+        src_lon = np.asarray(src.variables[lon_name][:], dtype="f8")[idx]
+        src_lat = np.asarray(src.variables[lat_name][:], dtype="f8")[idx]
+    except (IndexError, ValueError) as exc:
+        raise ValueError(
+            f"{source_name}: cannot read {lon_name}/{lat_name} for the "
+            f"mapped stations: {exc}"
+        ) from None
+
+    by_row = {s["row"]: s for s in stations}
+    want_lon = np.asarray(
+        [by_row[r["station_row"]]["lon"] for r in factors], dtype="f8"
+    )
+    want_lat = np.asarray(
+        [by_row[r["station_row"]]["lat"] for r in factors], dtype="f8"
+    )
+    off = np.maximum(np.abs(src_lon - want_lon), np.abs(src_lat - want_lat))
+    bad = np.nonzero(off > 1e-3)[0]
+    if bad.size:
+        worst = ", ".join(
+            f"{factors[i]['coops_code']} (row {factors[i]['station_row']}) "
+            f"off by {off[i]:.4f} deg"
+            for i in bad[:5]
+        )
+        raise ValueError(
+            f"{source_name}: station coordinates disagree with station.in for "
+            f"{bad.size} of {len(idx)} mapped stations -- the station "
+            f"dimension is not in station.in row order, so every factor would "
+            f"be applied to the wrong gauge: {worst}"
+        )
 
 
 def _write_strings(
