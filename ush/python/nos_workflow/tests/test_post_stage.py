@@ -612,3 +612,27 @@ def test_worker_output_still_lands_in_pgmout(tmp_path, fake_env):
             post_stage.run(_secofs_ufs_desc(), fake_env)
 
     assert "worker: pgmout line" in pgmout.read_text()
+
+
+def test_station_writer_labels_the_vertical_datum():
+    """zeta must carry standard_name = "sea surface height above model zero".
+
+    SECOFS' model zero is xGEOID20B, and neither ops nor this workflow
+    applies a datum shift to station output -- ops' own writer says so in
+    the attribute. Without it, a consumer comparing straight against MSL
+    tide gauges sees what looks like a 0.1-0.7 m model error and is in
+    fact only a change of reference. Verified against real CO-OPS data:
+    the offset is static in time (3-5 cm drift over 40 h) and moves with
+    the requested datum, and ops shows it identically.
+    """
+    src = (
+        Path(__file__).resolve().parents[3] / "schism_combine_outputs.py"
+    ).read_text()
+    # Station writer.
+    assert 'zeta_var.standard_name = "sea surface height above model zero"' in src
+    assert 'zeta_var.positive = "up"' in src
+    for var, unit in (("uwind_var", "meters s-1"), ("vwind_var", "meters s-1"),
+                      ("temp_var", "degrees Celsius"), ("salt_var", "psu")):
+        assert f'{var}.units = "{unit}"' in src, var
+    # Field writer names the datum on depth, as ops does.
+    assert 'h_var.standard_name = "sea floor depth below xgeoid20b"' in src
