@@ -59,6 +59,18 @@ def _norm(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.split("(")[0].lower())
 
 
+def _clean_label(comment: str) -> str:
+    """Station name from a station.in comment, without its annotations.
+
+    Hand annotations arrive three ways -- ``: NOAA elev gauges`` after the
+    first station of a block, ``!! machuan revised`` after a second bang, and
+    ``## machuan changed`` -- and none of them are part of the name. The
+    ``#`` forms matter beyond tidiness: this label is written into a CSV
+    whose own comment character is ``#``.
+    """
+    return comment.split("!")[0].split("#")[0].split(":")[0].strip()
+
+
 def _km(alat: float, alon: float, blat: float, blon: float) -> float:
     dy = (alat - blat) * 111.32
     dx = (alon - blon) * 111.32 * cos(radians((alat + blat) / 2.0))
@@ -102,7 +114,7 @@ def read_station_in(path: Path) -> List[dict]:
         parts = head.split()
         if len(parts) < 4:
             continue
-        label = comment.split("!")[0].strip().rstrip(":").split(":")[0].strip()
+        label = _clean_label(comment)
         gid = _ID_RE.search(label)
         rows.append(
             dict(
@@ -164,7 +176,10 @@ def reconcile(
             mapped.append(
                 dict(
                     station_row=station["row"],
-                    gauge_id=entry["gid"] or "",
+                    # A few ctl labels carry no id (``ST='Windmill'``) even
+                    # though station.in names the gauge; prefer the ctl but
+                    # fall back rather than publish a blank.
+                    gauge_id=entry["gid"] or station["gid"] or "",
                     coops_code=entry["code"],
                     station_label=station["label"],
                     mllw_factor=entry["factor"],

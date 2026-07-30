@@ -151,7 +151,7 @@ def _read_station_in(path: Path) -> List[dict]:
         parts = head.split()
         if len(parts) < 4:
             continue
-        label = comment.split("!")[0].strip().rstrip(":").split(":")[0].strip()
+        label = comment.split("!")[0].split("#")[0].split(":")[0].strip()
         rows.append(
             dict(
                 row=len(rows) + 1,

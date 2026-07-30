@@ -30,10 +30,10 @@ station_row,gauge_id,coops_code,station_label,mllw_factor
 23,8720030,fern,Fernandina_Beach(8720030),1.282
 24,8679598,kinb,Kings_Bay(8679598),1.373
 25,8670870,forp,Fort_Pulaski(8670870),1.442
-26,8665530,char,Charleston(8665530) # machuan changed,1.196
-27,8661070,sprp,Springmaid_Pier(8661070)  # machuan changed #2,1.136
+26,8665530,char,Charleston(8665530),1.196
+27,8661070,sprp,Springmaid_Pier(8661070),1.136
 28,8658120,wilm,Wilmington(8658120),0.892
-29,8658163,wrib,Wrightsville_Beach(8658163) # machuan changed,1.003
+29,8658163,wrib,Wrightsville_Beach(8658163),1.003
 30,8656483,beau,Beaufort(8656483),0.877
 31,8654467,hatt,USCG_Station_Hatteras(8654467),0.431
 32,8652587,oimr,Oregon_Inlet_Marina(8652587),0.555
@@ -43,7 +43,7 @@ station_row,gauge_id,coops_code,station_label,mllw_factor
 36,8638610,sept,Sewells_Point(8638610),1.15
 37,8632200,kipt,Kiptopeke(8632200),1.15
 38,8637689,york,Yorktown(8637689),1.05
-39,,wmpt,Windmill Point(8636580),0.95
+39,8636580,wmpt,Windmill Point(8636580),0.95
 40,8631044,wach,Wachapreague(8631044),1.25
 41,8635750,lewi,Lewisetta(8635750),1.05
 42,8571421,bish,Bishops_Head(8571421),1.05
@@ -51,7 +51,7 @@ station_row,gauge_id,coops_code,station_label,mllw_factor
 44,8577330,solo,Solomons_Island(8577330),1.05
 45,8594900,wash,Washington(8594900),1.05
 46,8571892,camb,Cambridge(8571892),1.05
-47,8575512,anna,Annapolis(8575512) ## machuan change,1.05
+47,8575512,anna,Annapolis(8575512),1.05
 48,8573364,tolc,Tolchester_Beach(8573364),1.05
 49,8574680,balt,Baltimore(8574680),1.05
 50,8573927,chec,Chesapeake_City(8573927),1.05

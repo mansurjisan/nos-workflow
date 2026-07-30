@@ -100,6 +100,45 @@ def test_station_with_no_ctl_entry_is_reported_and_omitted(files):
     assert 3 not in {r["station_row"] for r in rows}
 
 
+def test_gauge_id_falls_back_to_the_station_list(tmp_path):
+    """A ctl label may omit the id (``ST='Windmill'``) where station.in has it."""
+    sta = tmp_path / "station.in"
+    sta.write_text(
+        "1 1 1 !flags\n1\n1 -76.083333 37.033333 0.0 !Windmill Point(8636580)\n"
+    )
+    ctl = tmp_path / "wl.ctl"
+    ctl.write_text(
+        "ST='Windmill'  'wmpt'  37.033333 -76.083333  0.950  1 1 1  1 1 0  1 1 0  1\n"
+    )
+    out = tmp_path / "t.csv"
+    assert build_mllw_table.main(
+        ["--ctl", str(ctl), "--station-in", str(sta), "--out", str(out)]
+    ) == 0
+    assert stations_mllw._read_factors(out)[0]["gauge_id"] == "8636580"
+
+
+def test_hand_annotations_are_stripped_from_the_emitted_label(tmp_path):
+    """'#' must not reach the CSV: it is that file's own comment character."""
+    sta = tmp_path / "station.in"
+    sta.write_text(
+        "1 1 1 !flags\n2\n"
+        "1 -79.9 32.78 0.0 !Charleston(8665530) # machuan changed\n"
+        "2 -80.9 32.0 0.0 !Beaufort(8656483)  !! machuan revised\n"
+    )
+    ctl = tmp_path / "wl.ctl"
+    ctl.write_text(
+        "ST='Charleston(8665530)' 'char' 32.780 -79.900 1.196  1 1 1  1 1 0  1 1 0  1\n"
+        "ST='Beaufort(8656483)'   'beau' 32.000 -80.900 0.877  1 1 1  1 1 0  1 1 0  1\n"
+    )
+    out = tmp_path / "t.csv"
+    assert build_mllw_table.main(
+        ["--ctl", str(ctl), "--station-in", str(sta), "--out", str(out)]
+    ) == 0
+    labels = [r["station_label"] for r in stations_mllw._read_factors(out)]
+    assert labels == ["Charleston(8665530)", "Beaufort(8656483)"]
+    assert "#" not in out.read_text().split("station_row,")[1]
+
+
 def test_generator_rejects_a_declared_count_that_does_not_match(tmp_path):
     bad = tmp_path / "station.in"
     bad.write_text("1 1 1 !flags\n9\n1 -80.0 30.0 0.0 !One(1111111)\n")
