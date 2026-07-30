@@ -64,7 +64,13 @@ prep:
   # them prep would exit 0 with no atmospheric forcing and no ufs.configure,
   # the afterok chain would release the nowcast, and 2513 ranks would launch
   # against a missing DATM input dir (only a warning at stage_files.py:102).
-  critical_sources: [GFS, PARAM_NML, TIDAL, RTOFS, DATM, UFS_CONFIG]
+  #
+  # NUDGING likewise: forcing.ocean.nudging is enabled and param.nml sets
+  # inu_tr(1:2) = 2, so SCHISM REQUIRES TEM_nu.nc / SAL_nu.nc. A source that
+  # is not declared cannot fail the prep -- the check is over the declared
+  # set, so a failed nudging step would exit 0 and the chained nowcast would
+  # abort on the missing files.
+  critical_sources: [GFS, PARAM_NML, TIDAL, RTOFS, NUDGING, DATM, UFS_CONFIG]
 
 # Grid configuration -- R09a mesh.
 grid:
@@ -142,10 +148,14 @@ forcing:
   # no source/sink elements, so there is nothing for NWM to drive.
   #
   # NOTE this key is declarative ONLY: nothing in ForcingConfig.from_yaml reads
-  # forcing.river.enabled. What actually keeps NWM from running is that the
-  # PBS cards do not export COMINnwm, so "nwm" never enters paths and the gate
-  # at orchestrator.py:228 stays false. Adding COMINnwm to a card would run NWM
-  # against a mesh with zero source elements, and this flag would not stop it.
+  # forcing.river.enabled, and nothing else stops the NWM step either. Omitting
+  # COMINnwm from the PBS cards does NOT gate it -- jobs/JNOS_PREP re-injects
+  # the default via compath.py, so "nwm" enters paths and the gate at
+  # orchestrator.py:228 is satisfied. NWM therefore runs every prep and fails
+  # with "No river configuration provided" (no sources_json / ctl_file is
+  # declared below). That FAIL line is expected and harmless: NWM is not in
+  # prep.critical_sources, so it cannot fail the stage, and nothing consumes
+  # its output on a mesh with if_source=0.
   river:
     enabled: false
 
@@ -354,6 +364,34 @@ resources:
   memory_gb: 500
   walltime_hours: 2
 
+# Post-processing. Declaring this is not optional: with no post: block the
+# framework default for stofs_ufs is (stations_nc, bias_correct), and both
+# are wrong here --
+#   stations_nc assembles SECOFS' 3D station profiles from staout_5..8, which
+#     needs iout_sta=2. This system writes iout_sta=1 (one value per station
+#     per step), exactly as STOFS-3D-ATL does, and ATL was moved off
+#     stations_nc onto points_cwl for that reason.
+#   bias_correct is the ops SECOFS water-level correction and skips anyway
+#     without BAROTROPIC set.
+# Worse, the default also leaves archive_fields false, which disables BOTH
+# the OLDIO per-rank combine and field staging to $COMOUT. Running coupled
+# with nscribes=0, SCHISM writes per-rank schout_<rank>_<stack>.nc that would
+# then never be combined and never leave $DATA -- and post still reports PASS.
+post:
+  archive_fields: true
+  products:
+    # points_cwl needs the ops metadata pair in $FIXofs; without it the
+    # product skips cleanly rather than failing the stage.
+    - points_cwl
+    - fields_nc
+    # Deliberately narrow for a first bring-up. Nothing here has run against
+    # a real Alaska cycle yet, and a product that overruns the walltime kills
+    # the whole post job rather than just itself. Held for now:
+    #   maxele / slab2d / adcirc -- add once a cycle has been timed.
+    #   geopkg / profiles        -- need fix files and station-list vetting.
+    #   bias_correct             -- SECOFS-specific, and no station set here.
+
+# Workflow stages
 stages:
   - prep
   - nowcast

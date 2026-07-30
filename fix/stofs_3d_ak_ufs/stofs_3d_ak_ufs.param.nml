@@ -480,7 +480,10 @@
 ! If isconsv=1, need to compile with precip/evap module turned on.
 !-----------------------------------------------------------------------
   ihconsv = 1 !heat exchange option
-  isconsv = 1 !evaporation/precipitation model; requires a PREC_EVAP-enabled build
+!  isconsv = 1 !evaporation/precipitation model. Commented out to match both
+!             coupled namelists (secofs_ufs, stofs_3d_atl_ufs); it needs a
+!             PREC_EVAP-enabled build and aborts at init otherwise. Only the
+!             STANDALONE ATL namelist, a different binary, runs it live.
 
 ! Min total water depth for applying heat/salt exchange (i.e. off if the local water depth <hmin_airsea_ex)
   i_hmin_airsea_ex = 2
@@ -533,7 +536,10 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 86400. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
+  step_nu_tr = 10800. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2).
+                     !Must equal the cadence nudging.py actually writes
+                     !(target_dt = 10800.0); 86400 walks the record pointer
+                     !8x too slowly and nudges toward stale RTOFS fields.
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients

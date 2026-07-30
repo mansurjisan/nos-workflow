@@ -88,9 +88,15 @@ export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 # ppn=120 + ompthreads=1 = STOFS operational parity.
 export TOTAL_TASKS=${TOTAL_TASKS:-2513}
 # This system runs a NO_PARMETIS SCHISM build, which cannot start without a
-# partition.prop generated for 2393 compute ranks. Make a missing file fail at
-# staging instead of at a 2513-rank launch.
-export NOS_REQUIRE_PARTITION_PROP=YES
+# partition.prop generated for 2393 compute ranks (staged from $FIXofs as
+# stofs_3d_ak_ufs.partition.prop by tools/fetch_stofs_3d_ak_fix.sh).
+#
+# There is no staging-time guard for this on develop: stage_partition_props
+# copies the file if it is there and is SILENT when it is not, and no
+# NOS_REQUIRE_PARTITION_PROP handler exists. Exporting one here would only
+# have looked like protection. Until that guard lands, CONFIRM THE FILE IS
+# STAGED before submitting -- otherwise the failure is 2513 ranks across 21
+# exclusive nodes aborting at init.
 
 ################################################
 # CALL executable job script here
