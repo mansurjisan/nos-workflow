@@ -262,6 +262,11 @@ post:
   archive_fields: true   # run stages normalize + stage global field stacks
   products:
     - stations_nc
+    # MLLW water level for the 58 gauges CO-OPS publishes a datum factor
+    # for, read from secofs_ufs.mllw_datum.csv in $FIXofs. Kept separate
+    # from stations_nc so that file stays schema-identical to the ops
+    # product; runs after it and re-reads what it wrote.
+    - stations_mllw
     - fields_nc
     - bias_correct
     # Enabled after a full coupled cycle (20260728 00z) published every one
