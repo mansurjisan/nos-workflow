@@ -125,7 +125,8 @@ def test_load_all_descriptors_registers_known_ofses():
     # Wipe registry so we know the names we see came from the loader.
     registry._REGISTRY.clear()
     load_all_descriptors()
-    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs", "stofs_2d_glo",
+    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs",
+                 "stofs_3d_ak_ufs", "stofs_2d_glo",
                  "cbofs", "dbofs", "ngofs2"):
         assert lookup(name).name == name
 
@@ -146,3 +147,20 @@ def test_stofs_3d_atl_ufs_resolves_via_registry():
     assert desc.framework == "stofs_ufs"
     # SCHISM-based runner — same module as secofs_ufs.
     assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+
+
+def test_stofs_3d_ak_ufs_resolves_via_registry():
+    """STOFS-3D-AK-UFS registers with the stofs_ufs framework label.
+
+    Alaska is the coupled DATM+SCHISM member of the STOFS family, so the
+    same discriminator as the ATL sibling applies: the framework must be
+    ``stofs_ufs`` so dispatch branches onto the SCHISM UFS-Coastal stack,
+    and the runner module is shared with secofs_ufs / stofs_3d_atl_ufs.
+    """
+    registry._REGISTRY.clear()
+    load_all_descriptors()
+    desc = lookup("stofs_3d_ak_ufs")
+    assert desc.name == "stofs_3d_ak_ufs"
+    assert desc.framework == "stofs_ufs"
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+    assert desc.yaml_path == Path("parm/systems/stofs_3d_ak_ufs.yaml")
