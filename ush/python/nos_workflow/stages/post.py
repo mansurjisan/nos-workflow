@@ -209,35 +209,61 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 _SPLIT_CONSUMERS = ("maxele", "slab2d", "geopkg", "adcirc", "profiles")
 
 
+#: ``(producer, consumers, why)`` -- the producer is hoisted ahead of any
+#: selected consumer. Declaring the dependency here is cheaper than
+#: teaching each consumer to detect and recover from "inputs exist but are
+#: not built yet", and much cheaper than having them skip silently, which
+#: would turn a missed prerequisite into no output and no complaint.
+_DEPENDENCIES = (
+    (
+        "fields_nc",
+        _SPLIT_CONSUMERS,
+        "it splits the combined stacks that %s read",
+    ),
+    (
+        "stations_nc",
+        ("stations_mllw",),
+        "it writes the station file that %s shifts onto MLLW",
+    ),
+)
+
+
 def _ordered_products(names: List[str]) -> List[str]:
-    """Run ``fields_nc`` ahead of the products that consume its output.
+    """Hoist each producer in :data:`_DEPENDENCIES` ahead of its consumers.
 
     On the coupled path the run stage stages combined ``schout_*.nc`` and
     ``fields_nc`` is what splits them into the per-variable stacks every
-    other field product reads. That is a real dependency, and leaving it
-    to the order someone happened to write in the YAML makes the whole
-    suite's success depend on a list's spelling. Declaring it here is
-    cheaper than teaching five products to detect and recover from
-    "inputs exist but are not split yet" -- and much cheaper than the
-    alternative of having them skip silently, which would turn a missed
-    split into no output and no complaint.
+    other field product reads; ``stations_mllw`` likewise re-reads what
+    ``stations_nc`` publishes. Both are real dependencies, and leaving them
+    to the order someone happened to write in the YAML makes the suite's
+    success depend on a list's spelling.
 
     Only reorders when both sides are present; otherwise the caller's
     order is preserved exactly.
     """
-    if "fields_nc" not in names:
-        return names
-    if not any(n in _SPLIT_CONSUMERS for n in names):
-        return names
-    if names.index("fields_nc") == 0:
-        return names
-    reordered = ["fields_nc"] + [n for n in names if n != "fields_nc"]
-    logger.info(
-        "post: running fields_nc first; it splits the combined stacks that "
-        "%s read",
-        ", ".join(n for n in names if n in _SPLIT_CONSUMERS),
-    )
-    return reordered
+    # A product repeated in the YAML would otherwise be run twice -- and for
+    # a producer, hoisting only moves its first occurrence, leaving the
+    # duplicate to re-split and re-publish everything downstream.
+    ordered: List[str] = []
+    for name in names:
+        if name not in ordered:
+            ordered.append(name)
+
+    for producer, consumers, why in _DEPENDENCIES:
+        if producer not in ordered:
+            continue
+        selected = [n for n in ordered if n in consumers]
+        if not selected:
+            continue
+        first = min(ordered.index(n) for n in selected)
+        if ordered.index(producer) < first:
+            continue
+        ordered.remove(producer)
+        ordered.insert(first, producer)
+        logger.info(
+            "post: running %s first; %s", producer, why % ", ".join(selected)
+        )
+    return ordered
 
 
 def _execute_product(product: PostProduct, ctx: ProductContext) -> ProductResult:
@@ -1168,6 +1194,43 @@ class PointsCwlProduct(NosUtilsProduct):
                 ctx.fixofs, var_defs.name,
             )
         return args
+
+
+@register
+class StationsMllwProduct(NosUtilsProduct):
+    """MLLW-referenced station water level, from the ``stations_nc`` output.
+
+    Compute is local rather than in nos-utils; ``NosUtilsProduct`` is used
+    only for its phase iteration and failure isolation.
+
+    Needs the per-system datum table in $FIXofs and the station file
+    ``stations_nc`` publishes for the same phase. A system with no table
+    (only SECOFS has one; the factors are CO-OPS' and cover its gauges)
+    skips cleanly, as does a phase whose station file was not produced.
+    """
+
+    name = "stations_mllw"
+    worker = "nos_workflow.post.products.stations_mllw"
+
+    def worker_args(self, ctx, phase, staging, work):
+        table = fix_file(ctx, "mllw_datum.csv")
+        if table is None:
+            return None
+        source = ctx.comout / stations_nc_name(
+            ctx.prefix_nos, ctx.cyc, ctx.pdy, phase
+        )
+        if not source.is_file():
+            return None
+        return [
+            "--stations-nc", str(source),
+            "--comout", str(ctx.comout),
+            "--prefix", ctx.prefix_nos,
+            "--cyc", ctx.cyc,
+            "--pdy", ctx.pdy,
+            "--phase", phase,
+            "--factors", str(table),
+            "--station-in", str(ctx.sta_in),
+        ]
 
 
 @register

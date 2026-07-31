@@ -29,6 +29,15 @@ def stations_nc_name(prefix: str, cyc: str, pdy: str, phase: str) -> str:
     return f"{product_stem(prefix, cyc, pdy)}.stations.{phase}.nc"
 
 
+def stations_mllw_name(prefix: str, cyc: str, pdy: str, phase: str) -> str:
+    """MLLW-referenced station water level: ``{stem}.stations.mllw.{phase}.nc``.
+
+    A sibling of ``stations_nc`` rather than a variable inside it, so that
+    file stays schema-identical to the ops product.
+    """
+    return f"{product_stem(prefix, cyc, pdy)}.stations.mllw.{phase}.nc"
+
+
 def points_cwl_name(prefix: str, cyc: str, pdy: str, phase: str) -> str:
     """Ops-style station timeseries: ``{stem}.points.cwl.{phase}.nc``.
 
@@ -149,5 +158,6 @@ __all__ = [
     "points_cwl_name",
     "product_stem",
     "station_profile_name",
+    "stations_mllw_name",
     "stations_nc_name",
 ]
