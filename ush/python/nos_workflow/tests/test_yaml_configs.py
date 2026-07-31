@@ -18,7 +18,9 @@ import yaml
 
 # Make ``nos_workflow`` importable regardless of CWD.
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "nos-utils"))
 
+from nos_utils.config import ForcingConfig  # noqa: E402
 from nos_workflow.utils.yaml_to_env import (  # noqa: E402
     load_yaml_with_inheritance,
 )
@@ -177,6 +179,21 @@ class TestSystemConfigs:
         det = data.get("resources", {})
         select_str = det.get("select")
         assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
+
+    def test_stofs_3d_ak_ufs_rtofs_region(
+        self,
+        system_configs: Dict[str, Path],
+    ) -> None:
+        """Alaska must never fall back to another regional RTOFS 3-D tile."""
+        if "stofs_3d_ak_ufs" not in system_configs:
+            pytest.skip("stofs_3d_ak_ufs.yaml not found")
+
+        path = system_configs["stofs_3d_ak_ufs"]
+        with open(path) as f:
+            data = yaml.safe_load(f)
+
+        assert data["forcing"]["ocean"]["rtofs_3d_region"] == "alaska"
+        assert ForcingConfig.from_yaml(path).rtofs_3d_region == "alaska"
 
     def test_stofs_3d_atl_config(self, system_configs: Dict[str, Path]) -> None:
         if "stofs_3d_atl" not in system_configs:

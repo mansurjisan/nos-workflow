@@ -162,6 +162,10 @@ forcing:
   ocean:
     enabled: true
     primary: rtofs
+    # WCOSS2 stages several regional 3dz tiles side by side. Pin Alaska so
+    # discovery cannot de-duplicate by valid time onto the US_east tile.
+    # The nos-utils region guard also makes a missing Alaska tile fatal.
+    rtofs_3d_region: alaska
     # Deliberately NO roi_2ds / roi_3dz blocks. Their presence is what selects
     # the index-subset + Fortran OBC path (rtofs.py:279), whose executables
     # (stofs_3d_atl_gen_3Dth_from_hycom) exist only for the Atlantic and are
@@ -170,14 +174,6 @@ forcing:
     # the ATL grid. Omitting them keeps the portable Python path, which
     # derives its own 3D read window from this mesh at runtime and is
     # dateline-safe. See rtofs.py:_compute_3d_roi.
-    #
-    # RTOFS staging constraint on WCOSS2: file discovery globs
-    # rtofs_glo_3dz_*_6hrly_hvr_*.nc and de-duplicates on valid time alone
-    # (rtofs.py:784-821), so if more than one regional tile is present for a
-    # cycle the alphabetically-first wins -- "US_east" sorts before "alaska".
-    # Stage exactly ONE 3dz tile per COMINrtofs directory. A regional tile
-    # smaller than 200 MB is also rejected outright (rtofs.py:65); raise
-    # NOS_RTOFS_MIN_SIZE_3D if the Alaska product is smaller than that.
     obc:
       # Both open-boundary segments are iettype=5/ifltype=5/itetype=4/isatype=4
       # (bctides.in: Pacific 1613 nodes, Bering Sea 219). Every boundary node
