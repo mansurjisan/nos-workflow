@@ -162,18 +162,29 @@ def write_hotstart(out: Path, np_global: int, ne_global: int, ns_global: int,
 
 
 _EXPECTED_DIMS = {
+    "time": ("one",),
+    "iths": ("one",),
+    "ifile": ("one",),
+    "nsteps_from_cold": ("one",),
+    "idry_e": ("elem",),
+    "idry_s": ("side",),
+    "idry": ("node",),
+    "eta2": ("node",),
+    "cumsum_eta": ("node",),
     "we": ("elem", "nVert"),
     "su2": ("side", "nVert"),
     "sv2": ("side", "nVert"),
     "tr_el": ("elem", "nVert", "ntracers"),
     "tr_nd": ("node", "nVert", "ntracers"),
     "tr_nd0": ("node", "nVert", "ntracers"),
+    "q2": ("node", "nVert"),
+    "xl": ("node", "nVert"),
+    "dfv": ("node", "nVert"),
+    "dfh": ("node", "nVert"),
+    "dfq1": ("node", "nVert"),
+    "dfq2": ("node", "nVert"),
 }
-_REQUIRED = (
-    "time", "iths", "ifile", "nsteps_from_cold", "idry_e", "idry_s", "idry",
-    "eta2", "cumsum_eta", "we", "tr_el", "su2", "sv2", "tr_nd", "tr_nd0",
-    "q2", "xl", "dfv", "dfh", "dfq1", "dfq2",
-)
+_REQUIRED = tuple(_EXPECTED_DIMS)
 
 
 def verify(path: Path, np_global: int, ne_global: int, ns_global: int,
