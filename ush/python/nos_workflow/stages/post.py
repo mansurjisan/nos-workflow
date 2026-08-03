@@ -1142,6 +1142,29 @@ class AdcircProduct(NosUtilsProduct):
         return args
 
 
+def _elev_metadata_claims_a_datum(var_defs_path: Path) -> bool:
+    """True when the staout-nc JSON's first (elevation) entry names a
+    vertical datum (NAVD88/MSL) in its long_name/standard_name.
+
+    The ops ATL fix set shifts zeta to NAVD88 and labels it as such; the
+    "publishing unshifted, expect a bias" warning below only makes sense
+    for a fix set that makes that claim. A system whose metadata is
+    honest about carrying the raw model datum (e.g. Alaska, which has no
+    xgeoid .nco yet) must not trigger it.
+    """
+    try:
+        with open(var_defs_path) as f:
+            var_defs = json.load(f)
+        first = next(iter(var_defs.values()))
+    except (OSError, ValueError, StopIteration):
+        return False
+    text = " ".join(
+        str(first.get(key, ""))
+        for key in ("long_name", "stardard_name", "standard_name")
+    ).lower()
+    return "navd" in text or "msl" in text
+
+
 @register
 class PointsCwlProduct(NosUtilsProduct):
     """Ops-style station timeseries from the staged staout files.
@@ -1184,7 +1207,7 @@ class PointsCwlProduct(NosUtilsProduct):
                 break
         if nco is not None:
             args += ["--datum-offsets", str(nco)]
-        else:
+        elif _elev_metadata_claims_a_datum(var_defs):
             # Publishing raw xGEOID values under a NAVD88/MSL label would be
             # a silent ~0.3 m bias, so say so loudly rather than shipping it.
             logger.warning(
@@ -1192,6 +1215,12 @@ class PointsCwlProduct(NosUtilsProduct):
                 "publishing UNSHIFTED elevations even though %s labels them "
                 "with a datum. Stage the .nco or expect a ~0.3 m bias.",
                 ctx.fixofs, var_defs.name,
+            )
+        else:
+            logger.info(
+                "points_cwl: no datum .nco staged; elevations are "
+                "published unshifted, matching the metadata's "
+                "model-datum labeling.",
             )
         return args
 

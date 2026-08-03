@@ -20,7 +20,10 @@ from nos_workflow.post.base import ProductContext
 from nos_workflow.post.naming import points_cwl_name
 from nos_workflow.post.registry import get_product
 from nos_workflow.post.products import points_cwl
+from nos_workflow.post.worker_base import fix_file
 from nos_workflow.stages import post as post_stage
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _prefer_in_tree_nos_utils() -> None:
@@ -421,7 +424,7 @@ def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
     assert args[args.index("--base-date") + 1] == "2026-07-22 06:00:00"
 
 
-def test_product_skips_a_phase_without_staout(tmp_path):
+def test_product_skips_a_phase_without_staout(tmp_path, caplog):
     fixofs = tmp_path / "fix"
     _write_fix_pair(fixofs)
     ctx = _ctx(tmp_path, fixofs)
@@ -432,12 +435,19 @@ def test_product_skips_a_phase_without_staout(tmp_path):
     with patch.object(
         post_stage, "_run_subprocess_appending", _fake_worker(calls)
     ):
-        result = post_stage.PointsCwlProduct().produce(ctx)
+        with caplog.at_level("WARNING"):
+            result = post_stage.PointsCwlProduct().produce(ctx)
 
     assert result.status == "ok"
     assert [c[c.index("--phase") + 1] for c in calls] == ["nowcast"]
     # No datum file staged -> the flag is omitted entirely.
     assert "--datum-offsets" not in calls[0]
+    # The ATL fixture's elev entry claims NAVD88 (see VAR_DEFS above); with
+    # no .nco to apply that shift, the ops-parity WARNING must still fire --
+    # this is the case _elev_metadata_claims_a_datum() exists to preserve.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("labels them" in r.message for r in warnings)
+    assert any("bias" in r.message.lower() for r in warnings)
 
 
 def test_product_skipped_when_fix_metadata_absent(tmp_path):
@@ -525,3 +535,262 @@ def test_coordinate_check_never_raises_on_a_bad_file(tmp_path, capsys):
     missing = tmp_path / "nope.nc"
     points_cwl._warn_transposed_coords(missing, "fix.csv")
     assert "coordinate check skipped" in capsys.readouterr().out
+
+
+# ---------------------------------------------------------------------------
+# STOFS-3D-AK: the fix pair shipped in the repo (fix/stofs_3d_ak_ufs/)
+# ---------------------------------------------------------------------------
+
+AK_FIXOFS = REPO_ROOT / "fix" / "stofs_3d_ak_ufs"
+AK_JSON = AK_FIXOFS / "stofs_3d_ak_staout_nc.json"
+AK_CSV = AK_FIXOFS / "stofs_3d_ak_staout_nc.csv"
+AK_NSTATION = 22
+# Full row order, straight from R09a's station.in (22 stations, row order
+# 1..22, mirrored verbatim into stofs_3d_ak_staout_nc.csv): 9 CO-OPS water
+# level gauges, 7 NDBC buoys (one -- NDBC 46265 Nome -- split across two
+# rows, surface and a -1 m current-meter sample), then 5 synthetic
+# "modulation" points with no real-world gauge. Pinning every row (not
+# just the ends) so a mid-list transposition of two stations is caught --
+# a two-tuple check of rows[0]/rows[-1] alone lets any permutation of the
+# 20 rows in between through silently.
+AK_STATIONS_IN_ORDER = (
+    ("CO-OPS 9459450 AK Sand Point", 199.496, 55.332),
+    ("CO-OPS 9459881 AK King Cove", 197.6741, 55.060),
+    ("CO-OPS 9461380 AK Adak Island", 183.382, 51.861),
+    ("CO-OPS 9461710 AK Atka", 185.827, 52.222),
+    ("CO-OPS 9462450 AK Nikolski", 191.129, 52.941),
+    ("CO-OPS 9462620 AK Unalaska", 193.460, 53.879),
+    ("CO-OPS 9464212 AK Village Cove, St Paul Island", 189.715, 57.125),
+    ("CO-OPS 9468333 AK Unalakleet", 199.197, 63.871),
+    ("CO-OPS 9468756 AK Nome, Norton Sound", 194.535, 64.495),
+    ("NDBC 46035 AK Central Bering Sea", 182.532, 57.034),
+    ("NDBC 46070 AK Southwest Bering Sea", 175.261, 55.050),
+    ("NDBC 46071 AK Western Aleutians", 179.764, 51.040),
+    ("NDBC 46072 AK Central Aleutians", 187.855, 51.645),
+    ("NDBC 46073 AK Southeast Bering Sea", 187.988, 55.008),
+    ("NDBC 46075 AK Shumagin Islands", 199.206, 53.969),
+    ("NDBC 46265 AK Nome (surface, 0m)", 194.521, 64.474),
+    ("NDBC 46265 AK Nome (current meter, z=-1 m)", 194.521, 64.474),
+    ("SYNTHETIC AK modulation1 (no gauge)", 187.112, 51.988),
+    ("SYNTHETIC AK modulation2 (no gauge)", 187.231, 52.207),
+    ("SYNTHETIC AK modulation3 (no gauge)", 193.916, 54.020),
+    ("SYNTHETIC AK modulation4 (no gauge)", 190.298, 52.686),
+    ("SYNTHETIC AK modulation5 (no gauge)", 184.621, 51.986),
+)
+AK_FIRST_STATION = AK_STATIONS_IN_ORDER[0]
+AK_LAST_STATION = AK_STATIONS_IN_ORDER[-1]
+
+
+def _ak_ctx(tmp_path: Path) -> ProductContext:
+    comout = tmp_path / "comout"
+    comout.mkdir(exist_ok=True)
+    data = tmp_path / "data"
+    data.mkdir(exist_ok=True)
+    return ProductContext(
+        descriptor=None,
+        shell_env={},
+        homenos=REPO_ROOT,
+        fixofs=AK_FIXOFS,
+        comout=comout,
+        data=data,
+        pdy="20260803",
+        cyc="00",
+        cycle="t00z",
+        run_name="stofs_3d_ak_ufs",
+        prefix_nos="stofs_3d_ak_ufs",
+        nc_hour="00",
+        sta_in=AK_FIXOFS / "stofs_3d_ak_ufs.station.in",
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+
+
+def test_ak_fix_pair_is_shipped_in_the_repo():
+    """Both files exist in-tree, unlike the S3-fetched grid/mesh fix set."""
+    assert AK_JSON.is_file()
+    assert AK_CSV.is_file()
+
+
+def test_ak_var_defs_json_is_valid_and_elev_defines_the_axis():
+    var_defs = json.loads(AK_JSON.read_text())
+
+    assert isinstance(var_defs, dict) and var_defs
+    # First entry is elevation, exactly as the ATL ops file and the writer
+    # both require (write_station_timeseries uses entry 0 for the axis).
+    first_key, first_spec = next(iter(var_defs.items()))
+    assert first_key == "elev"
+    assert first_spec["staout_fname"] == "staout_1"
+
+    # station.in flag order for stofs_3d_ak_ufs is "elev air pressure windx
+    # windy T S u v w" -- identical to ATL's -- so temp/salt/u/v map to the
+    # same staout indices ATL uses (5/6/7/8), skipping pressure/wind/w.
+    by_name = {spec["name"]: spec["staout_fname"] for spec in var_defs.values()}
+    assert by_name == {
+        "zeta": "staout_1",
+        "u": "staout_7",
+        "v": "staout_8",
+        "salinity": "staout_6",
+        "temperature": "staout_5",
+    }
+    for spec in var_defs.values():
+        assert {"name", "long_name", "units", "staout_fname"} <= spec.keys()
+        assert "stardard_name" in spec or "standard_name" in spec
+
+    # No datum-offset fix file ships for Alaska (yaml's obc.ssh_offset is
+    # null, unverified) -- the metadata must not claim a shifted datum.
+    assert "navd" not in var_defs["elev"]["long_name"].lower()
+    assert "msl" not in var_defs["elev"]["long_name"].lower()
+
+    # temp/salt/u/v are sampled at whatever z station.in gives each row --
+    # 21 of 22 stations are at the surface, but row 17 (NDBC 46265 Nome,
+    # a current meter) sits at z=-1 m. There is no vertical coordinate in
+    # this product, so the metadata must use depth-neutral CF names, not
+    # the sea_surface_* naming that would misdescribe that one row.
+    assert var_defs["temp"]["stardard_name"] == "sea_water_temperature"
+    assert var_defs["salt"]["stardard_name"] == "sea_water_salinity"
+    assert var_defs["uvel"]["stardard_name"] == "eastward_sea_water_velocity"
+    assert var_defs["vvel"]["stardard_name"] == "northward_sea_water_velocity"
+    for key in ("temp", "salt", "uvel", "vvel"):
+        assert "surface" not in var_defs[key]["long_name"].lower()
+
+
+@needs_writer
+def test_ak_station_csv_has_22_rows_in_station_in_order():
+    from nos_utils.post.stations import load_station_csv
+
+    rows = load_station_csv(AK_CSV)
+
+    assert len(rows) == AK_NSTATION
+    # Every row, not just the ends: catches a mid-list swap that a
+    # first/last-only check would miss.
+    assert rows == list(AK_STATIONS_IN_ORDER)
+    # 0-360 convention throughout (this domain spans the dateline; do not
+    # expect -180..180 the way the ATL pair uses).
+    for _name, lon, lat in rows:
+        assert 150.0 <= lon <= 210.0
+        assert 45.0 <= lat <= 70.0
+
+
+def test_ak_fix_file_gate_resolves_both_files_under_the_ops_name(tmp_path):
+    """The points_cwl gate (post.py PointsCwlProduct.worker_args) tries the
+    ops-prefixed name first ('stofs_3d_ak', prefix_nos.split('_ufs')[0]) --
+    the candidate our shipped files are named for."""
+    ctx = _ak_ctx(tmp_path)
+    ops = ctx.prefix_nos.split("_ufs")[0]
+    assert ops == "stofs_3d_ak"
+
+    var_defs = fix_file(ctx, "staout_nc.json", f"{ops}_staout_nc.json")
+    meta = fix_file(ctx, "staout_nc.csv", f"{ops}_staout_nc.csv")
+
+    assert var_defs == AK_JSON
+    assert meta == AK_CSV
+
+
+def _ak_write_staout(staging: Path, idx: int, times=(0.0, 360.0, 720.0)) -> None:
+    def value(station: int, t: float) -> float:
+        return 1000.0 * idx + 10.0 * station + t / 360.0
+
+    lines = [
+        " ".join([f"{t:.1f}"] + [f"{value(s, t):.6f}" for s in range(AK_NSTATION)])
+        for t in times
+    ]
+    (staging / f"staout_{idx}").write_text("\n".join(lines) + "\n")
+
+
+@needs_writer
+def test_ak_product_publishes_22_stations_with_the_shipped_fix_pair(tmp_path):
+    """End-to-end worker run against the real, in-repo AK fix pair (not a
+    synthetic fixture): 22 fabricated staout columns in, one nowcast
+    points.cwl.nc out, with the station dimension and canonical name the
+    orchestrator expects for stofs_3d_ak_ufs."""
+    import netCDF4
+    import numpy as np
+    pytest.importorskip("scipy")
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    for idx in (1, 5, 6, 7, 8):
+        _ak_write_staout(staging, idx)
+
+    comout = tmp_path / "comout"
+    comout.mkdir()
+    result_json = tmp_path / "result.json"
+    rc = points_cwl.main([
+        "--staging", str(staging),
+        "--comout", str(comout),
+        "--prefix", "stofs_3d_ak_ufs",
+        "--cyc", "00",
+        "--pdy", "20260803",
+        "--phase", "nowcast",
+        "--base-date", "2026-08-03 00:00",
+        "--var-defs", str(AK_JSON),
+        "--station-meta", str(AK_CSV),
+        "--result-json", str(result_json),
+    ])
+    assert rc == 0
+
+    out = comout / "stofs_3d_ak_ufs.t00z.20260803.points.cwl.nowcast.nc"
+    assert json.loads(result_json.read_text())["created"] == [str(out)]
+    assert out.is_file()
+
+    with netCDF4.Dataset(out) as ds:
+        assert ds.dimensions["station"].size == AK_NSTATION
+        assert sorted(
+            v for v in ds.variables
+            if v not in ("time", "station_name", "x", "y")
+        ) == ["salinity", "temperature", "u", "v", "zeta"]
+        names = [
+            b"".join(row).decode().rstrip("\x00")
+            for row in np.asarray(ds["station_name"][:])
+        ]
+        assert names[0] == AK_FIRST_STATION[0]
+        assert names[-1] == AK_LAST_STATION[0]
+        # Correct keying (no ATL-style header/data swap): x is longitude.
+        assert float(np.asarray(ds["x"][:])[0]) == pytest.approx(199.496)
+        assert float(np.asarray(ds["y"][:])[0]) == pytest.approx(55.332)
+
+
+def test_ak_product_wiring_omits_datum_offsets_and_logs_info_not_warning(
+    tmp_path, caplog
+):
+    """No stofs_3d_ak(_ufs)_sta_cwl_xgeoid_to_{msl,navd}.nco ships yet, so
+    the product must still run (gate satisfied by the json/csv pair alone)
+    but must not pass --datum-offsets.
+
+    AK's staout-nc JSON deliberately does not claim a datum (elev's
+    long_name/standard_name carry no NAVD/MSL -- see
+    test_ak_var_defs_json_is_valid_and_elev_defines_the_axis), so the
+    ops-parity "expect a ~0.3 m bias" WARNING would be false for this
+    system; it must log a plain INFO instead, twice (once per phase)."""
+    ctx = _ak_ctx(tmp_path)
+    for suffix in ("restart_outputs", "forecast_outputs"):
+        staging = ctx.comout / f"stofs_3d_ak_ufs.t00z.{suffix}"
+        staging.mkdir(parents=True, exist_ok=True)
+        for idx in (1, 5, 6, 7, 8):
+            _ak_write_staout(staging, idx)
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        with caplog.at_level("INFO"):
+            result = post_stage.PointsCwlProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert len(calls) == 2
+    for args in calls:
+        assert args[args.index("--var-defs") + 1] == str(AK_JSON)
+        assert args[args.index("--station-meta") + 1] == str(AK_CSV)
+        assert "--datum-offsets" not in args
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == []
+    infos = [r for r in caplog.records if r.levelname == "INFO"]
+    assert len(infos) == 2
+    for record in infos:
+        message = record.message.lower()
+        assert "no datum .nco staged" in message
+        assert "unshifted" in message
+        # Must not carry the ATL-only alarming language.
+        assert "bias" not in message
+        assert "labels them" not in message
