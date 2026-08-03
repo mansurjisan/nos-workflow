@@ -5,9 +5,9 @@ tInterpAlgo01:             linear
 readMode01:                single
 dtlimit01:                 1.5
 stream_offset01:           0
-yearFirst01:               @[YYYY]
-yearLast01:                @[YYYY]
-yearAlign01:               @[YYYY]
+yearFirst01:               @[YYYY_FIRST]
+yearLast01:                @[YYYY_LAST]
+yearAlign01:               @[YYYY_FIRST]
 stream_vectors01:          null
 stream_mesh_file01:        "@[DATM_INPUT_DIR]/@[DATM_MESH_FILE]"
 stream_lev_dimname01:      null
