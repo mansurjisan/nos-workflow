@@ -4,8 +4,8 @@
 # Chain STOFS-3D-AK UFS-coupled (DATM+SCHISM) prep -> nowcast -> forecast ->
 # post within nos_workflow using PBS afterok dependencies.
 #
-# Usage:    ./launch_stofs_3d_ak_ufs.sh <PDY:YYYYMMDD> [CYC:HH (default 00)]
-# Example:  ./launch_stofs_3d_ak_ufs.sh 20260728 00
+# Usage:    ./launch_stofs_3d_ak_ufs.sh <PDY:YYYYMMDD> [CYC:HH (default 12)]
+# Example:  ./launch_stofs_3d_ak_ufs.sh 20260728 12
 #
 # Override $PKG / $NOS_ARCHIVE_MANIFEST via env if needed.
 #
@@ -15,11 +15,11 @@
 set -eu
 
 if [ "$#" -lt 1 ]; then
-  echo "Usage: $0 <PDY:YYYYMMDD> [CYC:HH (default 00)]" >&2
+  echo "Usage: $0 <PDY:YYYYMMDD> [CYC:HH (default 12)]" >&2
   exit 2
 fi
 PDY="$1"
-cyc="${2:-00}"
+cyc="${2:-12}"
 PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
 PBSDIR="${PKG}/pbs/stofs_3d_ak_ufs"
 VARS="PDY=${PDY},CYC=${cyc},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"

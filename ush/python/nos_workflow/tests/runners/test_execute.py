@@ -253,11 +253,12 @@ def test_archive_restart_picks_latest_when_multiple_steps(tmp_path):
 
 
 def test_archive_restart_picks_numerically_highest_step(tmp_path):
-    """Regression: step numbers must be compared numerically, not
-    lexicographically. AK's daily 12z cadence (nhot_write=1920) writes
-    hotstarts at steps 480/960/1440/1920 -- as strings "960" sorts after
-    "1920", so a lexical pick would silently archive the 12h state instead
-    of the final one."""
+    """Defensive: step numbers must be compared numerically, not
+    lexicographically. The combine stage normally leaves exactly one
+    combined hotstart at the leg's final step, but a re-run in the same
+    $DATA can leave stale earlier-step artifacts alongside it -- and as
+    strings "960" sorts after "1920", so a lexical pick would silently
+    archive a stale intermediate state instead of the final one."""
     ctx = _make_ctx(tmp_path, rst_out_nowcast="x.rst.nowcast.nc")
     outputs = ctx.data / "outputs"
     outputs.mkdir()
