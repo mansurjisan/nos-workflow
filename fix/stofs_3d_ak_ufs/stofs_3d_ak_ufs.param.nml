@@ -681,10 +681,11 @@
 ! Option for hotstart outputs
 !-----------------------------------------------------------------------
   nhot = 1 !1: output *_hotstart every 'hotout_write' steps
-  ! 480 steps x dt 45s = 6h = the yaml's nowcast_hours. A larger value (e.g.
-  ! 1920 = 24h) is never reached by a 6h nowcast, so no hotstart is written
-  ! and the forecast has nothing to restart from.
-  nhot_write = 480 !must be a multiple of ihfskip if nhot=1
+  ! 1920 steps x dt 45s = 24h = the yaml's nowcast_hours: nowcast is 1920
+  ! steps = 4 stacks (ihfskip=480), with exactly one hotstart write at
+  ! step 1920. Forecast is 48h = 3840 steps = 8 stacks, with hotstart
+  ! writes at 1920 and 3840.
+  nhot_write = 1920 !must be a multiple of ihfskip if nhot=1
 
 !-----------------------------------------------------------------------
 ! Station output option. If iout_sta/=0, need output skip (nspool_sta) and

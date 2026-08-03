@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 
@@ -15,6 +16,13 @@ logger = logging.getLogger(__name__)
 
 
 _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
+_HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
+
+
+def _hotstart_step(path: Path) -> int:
+    """Parse the step number out of a hotstart_it=<N>.nc name; -1 if it doesn't match."""
+    match = _HOTSTART_IT_RE.search(path.name)
+    return int(match.group(1)) if match else -1
 
 
 def run_python(ctx: SchismRunContext, phase: str) -> int:
@@ -155,14 +163,16 @@ def _archive_restart(ctx: SchismRunContext, phase: str) -> int:
             "execute: $DATA/outputs missing; rst archive skipped"
         )
         return 0
-    candidates = sorted(outputs_dir.glob("hotstart_it=*.nc"))
+    candidates = list(outputs_dir.glob("hotstart_it=*.nc"))
     if not candidates:
         logger.info(
             "execute: no hotstart_it=*.nc in %s; rst archive skipped",
             outputs_dir,
         )
         return 0
-    rst_src = candidates[-1]
+    # Step numbers sort lexicographically, not numerically ("1920" < "960"),
+    # so pick the file with the largest parsed step rather than the last name.
+    rst_src = max(candidates, key=_hotstart_step)
     rst_dst = ctx.comout / rst_dst_name
     rst_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(rst_src, rst_dst)

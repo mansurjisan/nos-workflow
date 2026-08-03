@@ -273,12 +273,18 @@ model:
     tide_start: 0.0
     wtiminc: 3600
   run:
-    # Bring-up target: 6 h nowcast + 48 h forecast, matching SECOFS rather
-    # than the 24 h/96 h STOFS cadence. R09a was a 123-day continuous
-    # hindcast and implies no operational cycle length.
-    hindcast_days: 0.25
+    # Daily 12z cycling: 24 h nowcast + 48 h forecast, matching the
+    # STOFS-3D-ATL operational pattern rather than SECOFS's 6 h/48 h.
+    # hindcast_days drives LEN_NOWCAST/time_hotstart (yaml_to_env.py
+    # compute_derived_values); it must stay in lockstep with
+    # nowcast_hours/24 or the exported run length silently reverts to
+    # the old cadence. time_hotstart = cycle - hindcast_days then lands
+    # on the previous day's 12z, so the warm-start chain is gap-free.
+    # R09a was a 123-day continuous hindcast and implies no operational
+    # cycle length.
+    hindcast_days: 1.0
     forecast_days: 2.0
-    nowcast_hours: 6
+    nowcast_hours: 24
     forecast_hours: 48
     base_date: null        # runtime-derived per cycle
     time_start: null

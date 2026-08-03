@@ -239,8 +239,8 @@ def test_archive_restart_copies_forecast_to_rst_out_forecast(tmp_path):
 
 
 def test_archive_restart_picks_latest_when_multiple_steps(tmp_path):
-    """If there are multiple ``hotstart_it=*.nc`` files, pick the
-    one sort()ed last -- matches the canonical operator expectation
+    """If there are multiple ``hotstart_it=*.nc`` files, pick the one with
+    the highest step number -- matches the canonical operator expectation
     (single combine output per run, but defensive against re-runs)."""
     ctx = _make_ctx(tmp_path, rst_out_nowcast="x.rst.nowcast.nc")
     outputs = ctx.data / "outputs"
@@ -249,9 +249,25 @@ def test_archive_restart_picks_latest_when_multiple_steps(tmp_path):
     (outputs / "hotstart_it=180.nc").write_text("newer")
 
     execute._archive_restart(ctx, "nowcast")
-    # ``sorted()`` is lexical here, but with all numeric suffixes of the
-    # same width the sort order matches numeric order.
     assert (ctx.comout / "x.rst.nowcast.nc").read_text() == "newer"
+
+
+def test_archive_restart_picks_numerically_highest_step(tmp_path):
+    """Regression: step numbers must be compared numerically, not
+    lexicographically. AK's daily 12z cadence (nhot_write=1920) writes
+    hotstarts at steps 480/960/1440/1920 -- as strings "960" sorts after
+    "1920", so a lexical pick would silently archive the 12h state instead
+    of the final one."""
+    ctx = _make_ctx(tmp_path, rst_out_nowcast="x.rst.nowcast.nc")
+    outputs = ctx.data / "outputs"
+    outputs.mkdir()
+    (outputs / "hotstart_it=480.nc").write_text("stack1")
+    (outputs / "hotstart_it=960.nc").write_text("stack2")
+    (outputs / "hotstart_it=1440.nc").write_text("stack3")
+    (outputs / "hotstart_it=1920.nc").write_text("final")
+
+    execute._archive_restart(ctx, "nowcast")
+    assert (ctx.comout / "x.rst.nowcast.nc").read_text() == "final"
 
 
 def test_archive_restart_no_source_is_nonfatal(tmp_path, caplog):
