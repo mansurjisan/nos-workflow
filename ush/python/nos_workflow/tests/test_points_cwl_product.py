@@ -424,7 +424,7 @@ def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
     assert args[args.index("--base-date") + 1] == "2026-07-22 06:00:00"
 
 
-def test_product_skips_a_phase_without_staout(tmp_path):
+def test_product_skips_a_phase_without_staout(tmp_path, caplog):
     fixofs = tmp_path / "fix"
     _write_fix_pair(fixofs)
     ctx = _ctx(tmp_path, fixofs)
@@ -435,12 +435,19 @@ def test_product_skips_a_phase_without_staout(tmp_path):
     with patch.object(
         post_stage, "_run_subprocess_appending", _fake_worker(calls)
     ):
-        result = post_stage.PointsCwlProduct().produce(ctx)
+        with caplog.at_level("WARNING"):
+            result = post_stage.PointsCwlProduct().produce(ctx)
 
     assert result.status == "ok"
     assert [c[c.index("--phase") + 1] for c in calls] == ["nowcast"]
     # No datum file staged -> the flag is omitted entirely.
     assert "--datum-offsets" not in calls[0]
+    # The ATL fixture's elev entry claims NAVD88 (see VAR_DEFS above); with
+    # no .nco to apply that shift, the ops-parity WARNING must still fire --
+    # this is the case _elev_metadata_claims_a_datum() exists to preserve.
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert any("labels them" in r.message for r in warnings)
+    assert any("bias" in r.message.lower() for r in warnings)
 
 
 def test_product_skipped_when_fix_metadata_absent(tmp_path):
@@ -538,11 +545,40 @@ AK_FIXOFS = REPO_ROOT / "fix" / "stofs_3d_ak_ufs"
 AK_JSON = AK_FIXOFS / "stofs_3d_ak_staout_nc.json"
 AK_CSV = AK_FIXOFS / "stofs_3d_ak_staout_nc.csv"
 AK_NSTATION = 22
-# First/last row, straight from fix/stofs_3d_ak_ufs.station.in (22 stations,
-# row order 1..22): row 1 is the first CO-OPS gauge, row 22 the last of the
-# five synthetic "modulation" points with no real-world gauge.
-AK_FIRST_STATION = ("CO-OPS 9459450 AK Sand Point", 199.496, 55.332)
-AK_LAST_STATION = ("SYNTHETIC AK modulation5 (no gauge)", 184.621, 51.986)
+# Full row order, straight from R09a's station.in (22 stations, row order
+# 1..22, mirrored verbatim into stofs_3d_ak_staout_nc.csv): 9 CO-OPS water
+# level gauges, 7 NDBC buoys (one -- NDBC 46265 Nome -- split across two
+# rows, surface and a -1 m current-meter sample), then 5 synthetic
+# "modulation" points with no real-world gauge. Pinning every row (not
+# just the ends) so a mid-list transposition of two stations is caught --
+# a two-tuple check of rows[0]/rows[-1] alone lets any permutation of the
+# 20 rows in between through silently.
+AK_STATIONS_IN_ORDER = (
+    ("CO-OPS 9459450 AK Sand Point", 199.496, 55.332),
+    ("CO-OPS 9459881 AK King Cove", 197.6741, 55.060),
+    ("CO-OPS 9461380 AK Adak Island", 183.382, 51.861),
+    ("CO-OPS 9461710 AK Atka", 185.827, 52.222),
+    ("CO-OPS 9462450 AK Nikolski", 191.129, 52.941),
+    ("CO-OPS 9462620 AK Unalaska", 193.460, 53.879),
+    ("CO-OPS 9464212 AK Village Cove, St Paul Island", 189.715, 57.125),
+    ("CO-OPS 9468333 AK Unalakleet", 199.197, 63.871),
+    ("CO-OPS 9468756 AK Nome, Norton Sound", 194.535, 64.495),
+    ("NDBC 46035 AK Central Bering Sea", 182.532, 57.034),
+    ("NDBC 46070 AK Southwest Bering Sea", 175.261, 55.050),
+    ("NDBC 46071 AK Western Aleutians", 179.764, 51.040),
+    ("NDBC 46072 AK Central Aleutians", 187.855, 51.645),
+    ("NDBC 46073 AK Southeast Bering Sea", 187.988, 55.008),
+    ("NDBC 46075 AK Shumagin Islands", 199.206, 53.969),
+    ("NDBC 46265 AK Nome (surface, 0m)", 194.521, 64.474),
+    ("NDBC 46265 AK Nome (current meter, z=-1 m)", 194.521, 64.474),
+    ("SYNTHETIC AK modulation1 (no gauge)", 187.112, 51.988),
+    ("SYNTHETIC AK modulation2 (no gauge)", 187.231, 52.207),
+    ("SYNTHETIC AK modulation3 (no gauge)", 193.916, 54.020),
+    ("SYNTHETIC AK modulation4 (no gauge)", 190.298, 52.686),
+    ("SYNTHETIC AK modulation5 (no gauge)", 184.621, 51.986),
+)
+AK_FIRST_STATION = AK_STATIONS_IN_ORDER[0]
+AK_LAST_STATION = AK_STATIONS_IN_ORDER[-1]
 
 
 def _ak_ctx(tmp_path: Path) -> ProductContext:
@@ -605,6 +641,18 @@ def test_ak_var_defs_json_is_valid_and_elev_defines_the_axis():
     assert "navd" not in var_defs["elev"]["long_name"].lower()
     assert "msl" not in var_defs["elev"]["long_name"].lower()
 
+    # temp/salt/u/v are sampled at whatever z station.in gives each row --
+    # 21 of 22 stations are at the surface, but row 17 (NDBC 46265 Nome,
+    # a current meter) sits at z=-1 m. There is no vertical coordinate in
+    # this product, so the metadata must use depth-neutral CF names, not
+    # the sea_surface_* naming that would misdescribe that one row.
+    assert var_defs["temp"]["stardard_name"] == "sea_water_temperature"
+    assert var_defs["salt"]["stardard_name"] == "sea_water_salinity"
+    assert var_defs["uvel"]["stardard_name"] == "eastward_sea_water_velocity"
+    assert var_defs["vvel"]["stardard_name"] == "northward_sea_water_velocity"
+    for key in ("temp", "salt", "uvel", "vvel"):
+        assert "surface" not in var_defs[key]["long_name"].lower()
+
 
 @needs_writer
 def test_ak_station_csv_has_22_rows_in_station_in_order():
@@ -613,8 +661,9 @@ def test_ak_station_csv_has_22_rows_in_station_in_order():
     rows = load_station_csv(AK_CSV)
 
     assert len(rows) == AK_NSTATION
-    assert rows[0] == AK_FIRST_STATION
-    assert rows[-1] == AK_LAST_STATION
+    # Every row, not just the ends: catches a mid-list swap that a
+    # first/last-only check would miss.
+    assert rows == list(AK_STATIONS_IN_ORDER)
     # 0-360 convention throughout (this domain spans the dateline; do not
     # expect -180..180 the way the ATL pair uses).
     for _name, lon, lat in rows:
@@ -701,10 +750,18 @@ def test_ak_product_publishes_22_stations_with_the_shipped_fix_pair(tmp_path):
         assert float(np.asarray(ds["y"][:])[0]) == pytest.approx(55.332)
 
 
-def test_ak_product_wiring_omits_datum_offsets_and_warns(tmp_path, caplog):
+def test_ak_product_wiring_omits_datum_offsets_and_logs_info_not_warning(
+    tmp_path, caplog
+):
     """No stofs_3d_ak(_ufs)_sta_cwl_xgeoid_to_{msl,navd}.nco ships yet, so
     the product must still run (gate satisfied by the json/csv pair alone)
-    but must not pass --datum-offsets, and must log why."""
+    but must not pass --datum-offsets.
+
+    AK's staout-nc JSON deliberately does not claim a datum (elev's
+    long_name/standard_name carry no NAVD/MSL -- see
+    test_ak_var_defs_json_is_valid_and_elev_defines_the_axis), so the
+    ops-parity "expect a ~0.3 m bias" WARNING would be false for this
+    system; it must log a plain INFO instead, twice (once per phase)."""
     ctx = _ak_ctx(tmp_path)
     for suffix in ("restart_outputs", "forecast_outputs"):
         staging = ctx.comout / f"stofs_3d_ak_ufs.t00z.{suffix}"
@@ -716,7 +773,7 @@ def test_ak_product_wiring_omits_datum_offsets_and_warns(tmp_path, caplog):
     with patch.object(
         post_stage, "_run_subprocess_appending", _fake_worker(calls)
     ):
-        with caplog.at_level("WARNING"):
+        with caplog.at_level("INFO"):
             result = post_stage.PointsCwlProduct().produce(ctx)
 
     assert result.status == "ok"
@@ -725,4 +782,15 @@ def test_ak_product_wiring_omits_datum_offsets_and_warns(tmp_path, caplog):
         assert args[args.index("--var-defs") + 1] == str(AK_JSON)
         assert args[args.index("--station-meta") + 1] == str(AK_CSV)
         assert "--datum-offsets" not in args
-    assert any("xgeoid" in r.message.lower() for r in caplog.records)
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == []
+    infos = [r for r in caplog.records if r.levelname == "INFO"]
+    assert len(infos) == 2
+    for record in infos:
+        message = record.message.lower()
+        assert "no datum .nco staged" in message
+        assert "unshifted" in message
+        # Must not carry the ATL-only alarming language.
+        assert "bias" not in message
+        assert "labels them" not in message

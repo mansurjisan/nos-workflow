@@ -8,29 +8,29 @@
     },
     "uvel": {
         "name": "u",
-        "long_name": "u component of surface velocity",
-        "stardard_name": "eastward_surface_velocity",
+        "long_name": "eastward water velocity at station sampling depth",
+        "stardard_name": "eastward_sea_water_velocity",
         "units": "meters s-1",
         "staout_fname": "staout_7"
     },
     "vvel": {
         "name": "v",
-        "long_name": "v component of surface velocity",
-        "stardard_name": "northward_surface_velocity",
+        "long_name": "northward water velocity at station sampling depth",
+        "stardard_name": "northward_sea_water_velocity",
         "units": "meters s-1",
         "staout_fname": "staout_8"
     },
     "salt": {
         "name": "salinity",
-        "long_name": "salinity at water surface",
-        "stardard_name": "sea_surface_salinity",
+        "long_name": "salinity at station sampling depth",
+        "stardard_name": "sea_water_salinity",
         "units": "psu",
         "staout_fname": "staout_6"
     },
     "temp": {
         "name": "temperature",
-        "long_name": "temperature at water surface",
-        "stardard_name": "sea_surface_temperature",
+        "long_name": "water temperature at station sampling depth",
+        "stardard_name": "sea_water_temperature",
         "units": "degree_C",
         "staout_fname": "staout_5"
     }

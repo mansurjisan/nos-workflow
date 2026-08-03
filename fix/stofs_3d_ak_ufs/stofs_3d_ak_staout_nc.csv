@@ -15,7 +15,7 @@
 13;NDBC 46073 AK Southeast Bering Sea;187.988;55.008
 14;NDBC 46075 AK Shumagin Islands;199.206;53.969
 15;NDBC 46265 AK Nome (surface, 0m);194.521;64.474
-16;NDBC 46265 AK Nome (current, -1m);194.521;64.474
+16;NDBC 46265 AK Nome (current meter, z=-1 m);194.521;64.474
 17;SYNTHETIC AK modulation1 (no gauge);187.112;51.988
 18;SYNTHETIC AK modulation2 (no gauge);187.231;52.207
 19;SYNTHETIC AK modulation3 (no gauge);193.916;54.020
