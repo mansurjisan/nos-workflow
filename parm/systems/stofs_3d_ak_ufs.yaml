@@ -382,8 +382,17 @@ resources:
 post:
   archive_fields: true
   products:
-    # points_cwl needs the ops metadata pair in $FIXofs; without it the
-    # product skips cleanly rather than failing the stage.
+    # points_cwl reads the staout-nc metadata pair from $FIXofs:
+    # stofs_3d_ak_staout_nc.json (5 variables: elev/temp/salt/u/v, staout
+    # indices 1/5/6/7/8 -- matches this system's station.in flag order
+    # "elev air pressure windx windy T S u v w", same as ATL's) and
+    # stofs_3d_ak_staout_nc.csv (22 stations, station.in row order: 9
+    # CO-OPS water-level gauges, 7 NDBC buoys incl. one duplicated at two
+    # z-levels, 5 synthetic "modulation" points with no real-world gauge).
+    # No datum-offset .nco is staged -- forcing.ocean.obc.ssh_offset above
+    # is null (unverified for Alaska) -- so elev publishes unshifted and
+    # the worker logs that every cycle; the JSON's long_name says so too
+    # rather than mislabeling it NAVD88 the way the ATL pair does.
     - points_cwl
     - fields_nc
     # Deliberately narrow for a first bring-up. Nothing here has run against

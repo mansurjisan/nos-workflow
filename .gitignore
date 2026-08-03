@@ -64,6 +64,8 @@ fix/stofs_3d_ak_ufs/r09a_reference/
 !fix/stofs_3d_ak_ufs/fd_ufs.yaml
 !fix/stofs_3d_ak_ufs/ufs.configure
 !fix/stofs_3d_ak_ufs/noahmptable.tbl
+!fix/stofs_3d_ak_ufs/stofs_3d_ak_staout_nc.json
+!fix/stofs_3d_ak_ufs/stofs_3d_ak_staout_nc.csv
 
 # Shell pgmout artifacts. Both spellings occur and neither covers the other:
 # the J-jobs `export pgmout="OUTPUT.$$"` in bash, where $$ expands to the pid,

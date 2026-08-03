@@ -1,0 +1,37 @@
+{
+    "elev": {
+        "name": "zeta",
+        "long_name": "water surface elevation, unshifted model datum (no ops vertical-datum offset established for stofs_3d_ak yet; see obc.ssh_offset in parm/systems/stofs_3d_ak_ufs.yaml)",
+        "stardard_name": "sea_surface_height",
+        "units": "m",
+        "staout_fname": "staout_1"
+    },
+    "uvel": {
+        "name": "u",
+        "long_name": "u component of surface velocity",
+        "stardard_name": "eastward_surface_velocity",
+        "units": "meters s-1",
+        "staout_fname": "staout_7"
+    },
+    "vvel": {
+        "name": "v",
+        "long_name": "v component of surface velocity",
+        "stardard_name": "northward_surface_velocity",
+        "units": "meters s-1",
+        "staout_fname": "staout_8"
+    },
+    "salt": {
+        "name": "salinity",
+        "long_name": "salinity at water surface",
+        "stardard_name": "sea_surface_salinity",
+        "units": "psu",
+        "staout_fname": "staout_6"
+    },
+    "temp": {
+        "name": "temperature",
+        "long_name": "temperature at water surface",
+        "stardard_name": "sea_surface_temperature",
+        "units": "degree_C",
+        "staout_fname": "staout_5"
+    }
+}
