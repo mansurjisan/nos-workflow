@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, List, Optional
 from .._log import emit_stage_summary, stage_logger
 from ..errors import StageFailedError
 from ..post.base import PostProduct, ProductContext, ProductResult
-from ..post.naming import stations_nc_name
+from ..post.naming import points_cwl_name, stations_nc_name
 from ..post.registry import (
     get_product,
     register,
@@ -222,6 +222,11 @@ _DEPENDENCIES = (
     ),
     (
         "stations_nc",
+        ("stations_mllw",),
+        "it writes the station file that %s shifts onto MLLW",
+    ),
+    (
+        "points_cwl",
         ("stations_mllw",),
         "it writes the station file that %s shifts onto MLLW",
     ),
@@ -1227,15 +1232,21 @@ class PointsCwlProduct(NosUtilsProduct):
 
 @register
 class StationsMllwProduct(NosUtilsProduct):
-    """MLLW-referenced station water level, from the ``stations_nc`` output.
+    """MLLW-referenced station water level, from the station product output.
 
     Compute is local rather than in nos-utils; ``NosUtilsProduct`` is used
     only for its phase iteration and failure isolation.
 
-    Needs the per-system datum table in $FIXofs and the station file
-    ``stations_nc`` publishes for the same phase. A system with no table
-    (only SECOFS has one; the factors are CO-OPS' and cover its gauges)
-    skips cleanly, as does a phase whose station file was not produced.
+    Needs the per-system datum table in $FIXofs and a station timeseries
+    file for the same phase. Two products write one, and which a system
+    runs depends on its ``iout_sta`` setting: ``stations_nc`` (SECOFS) or
+    ``points_cwl`` (stofs_3d_ak_ufs, stofs_3d_atl_ufs). Both write
+    ``zeta(time, station)`` plus per-station coordinates -- see
+    ``nos_utils.post.stations.write_station_timeseries`` -- so either is an
+    equally valid source; this tries ``stations_nc`` first since that is
+    what SECOFS, the only system with a table so far, produces. A system
+    with no table skips cleanly, as does a phase whose station file (of
+    either kind) was not produced.
     """
 
     name = "stations_mllw"
@@ -1248,6 +1259,10 @@ class StationsMllwProduct(NosUtilsProduct):
         source = ctx.comout / stations_nc_name(
             ctx.prefix_nos, ctx.cyc, ctx.pdy, phase
         )
+        if not source.is_file():
+            source = ctx.comout / points_cwl_name(
+                ctx.prefix_nos, ctx.cyc, ctx.pdy, phase
+            )
         if not source.is_file():
             return None
         return [

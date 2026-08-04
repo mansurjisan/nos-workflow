@@ -13,11 +13,18 @@ from pathlib import Path
 import pytest
 
 from nos_workflow.post.base import ProductContext
-from nos_workflow.post.naming import stations_mllw_name
+from nos_workflow.post.naming import (
+    points_cwl_name,
+    stations_mllw_name,
+    stations_nc_name,
+)
 from nos_workflow.post.products import stations_mllw
 from nos_workflow.post.registry import get_product
+from nos_workflow.post.worker_base import fix_file
 from nos_workflow.stages.post import _ordered_products
 from nos_workflow.tools import build_mllw_table
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _have(name: str) -> bool:
@@ -582,3 +589,250 @@ def test_station_count_mismatch_between_source_and_list_fails(tmp_path, files):
         "--station-in", str(sta),
     ])
     assert rc == 5
+
+
+# --------------------------------------------------------------------------
+# STOFS-3D-AK: coastalmodeling-vdatum-derived table (no CO-OPS ctl for
+# Alaska, so this table does not come from build_mllw_table.py -- see
+# tools/gen_ak_datum_offsets.py). AK also runs points_cwl rather than
+# stations_nc (iout_sta=1, not 2), which is the other thing this section
+# covers: the product must find its station file there too.
+# --------------------------------------------------------------------------
+
+AK_FIXOFS = REPO_ROOT / "fix" / "stofs_3d_ak_ufs"
+AK_TABLE = AK_FIXOFS / "stofs_3d_ak_ufs.mllw_datum.csv"
+
+# Compact stand-in for the real (unshipped, WCOSS2-only) station.in: the 9
+# CO-OPS gauges in AK_TABLE's row order -- same labels and coordinates as
+# fix/stofs_3d_ak_ufs/stofs_3d_ak_staout_nc.csv -- plus two uncovered rows
+# (an NDBC buoy, a synthetic modulation point) to exercise "absent, not
+# defaulted to 0" for stations with no tidal datum.
+AK_STATION_IN = """\
+1 1 1 1 1 1 1 1 0 !flags
+11
+1 199.496 55.332 0.0 !CO-OPS 9459450 AK Sand Point
+2 197.6741 55.060 0.0 !CO-OPS 9459881 AK King Cove
+3 183.382 51.861 0.0 !CO-OPS 9461380 AK Adak Island
+4 185.827 52.222 0.0 !CO-OPS 9461710 AK Atka
+5 191.129 52.941 0.0 !CO-OPS 9462450 AK Nikolski
+6 193.460 53.879 0.0 !CO-OPS 9462620 AK Unalaska
+7 189.715 57.125 0.0 !CO-OPS 9464212 AK Village Cove, St Paul Island
+8 199.197 63.871 0.0 !CO-OPS 9468333 AK Unalakleet
+9 194.535 64.495 0.0 !CO-OPS 9468756 AK Nome, Norton Sound
+10 182.532 57.034 0.0 !NDBC 46035 AK Central Bering Sea
+11 187.112 51.988 0.0 !SYNTHETIC AK modulation1 (no gauge)
+"""
+
+
+def test_ak_table_is_shipped_in_the_repo():
+    assert AK_TABLE.is_file()
+
+
+def test_ak_table_has_nine_rows_for_the_coops_gauges():
+    rows = stations_mllw._read_factors(AK_TABLE)
+    assert [r["station_row"] for r in rows] == list(range(1, 10))
+
+
+def test_ak_sand_point_and_nome_factors():
+    """Spot-check the two ends of the range: Sand Point (largest factor,
+    0.889) and Nome (smallest, 0.187). Both a sign error and a scale error
+    would show up here -- the two are far enough apart that neither could
+    be mistaken for the other's sign-flip."""
+    rows = {
+        r["gauge_id"]: r["mllw_factor"]
+        for r in stations_mllw._read_factors(AK_TABLE)
+    }
+    assert rows["9459450"] == pytest.approx(0.889, abs=1e-3)
+    assert rows["9468756"] == pytest.approx(0.187, abs=1e-3)
+
+
+def test_ak_uncovered_stations_are_absent_not_zero():
+    """Rows 10-22 (NDBC buoys, synthetic points) have no tidal datum and
+    must simply not appear in the table -- same behavior SECOFS uses for
+    its one uncovered gauge, not a defaulted 0.0 factor."""
+    rows = stations_mllw._read_factors(AK_TABLE)
+    assert len(rows) == 9
+    assert {r["station_row"] for r in rows}.isdisjoint(range(10, 23))
+
+
+def test_ak_table_aligns_with_its_station_in(tmp_path):
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    stations_mllw._check_alignment(factors, stations)  # must not raise
+
+
+def test_sign_flip_is_caught_by_the_spot_check(tmp_path):
+    """Prove the Sand Point spot-check above actually bites: corrupt a
+    copy of the real table with the sign convention inverted and show the
+    identical assertion now fails. If this test itself failed to raise,
+    the spot-check would be vacuous."""
+    text = AK_TABLE.read_text()
+    needle = "1,9459450,,CO-OPS 9459450 AK Sand Point,0.889"
+    assert needle in text
+    flipped = tmp_path / "flipped.mllw_datum.csv"
+    flipped.write_text(text.replace(needle, needle.replace(",0.889", ",-0.889")))
+
+    rows = {
+        r["gauge_id"]: r["mllw_factor"]
+        for r in stations_mllw._read_factors(flipped)
+    }
+    with pytest.raises(AssertionError):
+        assert rows["9459450"] == pytest.approx(0.889, abs=1e-3)
+
+
+def _ak_ctx(tmp_path: Path, with_table: bool = True) -> ProductContext:
+    """A ProductContext with $FIXofs/$COMOUT laid out as on WCOSS2, using
+    the compact synthetic station.in above (not the real, unshipped one)."""
+    from unittest.mock import Mock
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir(exist_ok=True)
+    if with_table:
+        (fixofs / "stofs_3d_ak_ufs.mllw_datum.csv").write_text(AK_TABLE.read_text())
+    comout = tmp_path / "com"
+    comout.mkdir(exist_ok=True)
+    return ProductContext(
+        descriptor=Mock(framework="stofs_ufs"),
+        shell_env={},
+        homenos=tmp_path,
+        fixofs=fixofs,
+        comout=comout,
+        data=tmp_path / "data",
+        pdy="20260803",
+        cyc="12",
+        cycle="2026080312",
+        run_name="stofs_3d_ak_ufs",
+        prefix_nos="stofs_3d_ak_ufs",
+        nc_hour="00",
+        sta_in=sta,
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+
+
+def test_ak_gate_resolves_the_prefixed_fix_file(tmp_path):
+    """fix_file must resolve stofs_3d_ak_ufs.mllw_datum.csv the same way
+    it resolves secofs_ufs.mllw_datum.csv -- the ``{prefix}.{name}``
+    candidate -- and the same way it resolves the staout fix pair."""
+    ctx = _ak_ctx(tmp_path)
+    resolved = fix_file(ctx, "mllw_datum.csv")
+    assert resolved is not None
+    assert resolved.name == "stofs_3d_ak_ufs.mllw_datum.csv"
+
+
+def test_ak_worker_args_skip_without_a_table(tmp_path):
+    ctx = _ak_ctx(tmp_path, with_table=False)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_ak_worker_args_skip_when_no_station_file_is_produced(tmp_path):
+    ctx = _ak_ctx(tmp_path)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_ak_worker_args_fall_back_to_points_cwl(tmp_path):
+    """AK runs points_cwl, not stations_nc (iout_sta=1) -- stations_mllw
+    must find its station file there when stations_nc's is absent."""
+    ctx = _ak_ctx(tmp_path)
+    source = ctx.comout / points_cwl_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    source.write_text("")
+    args = get_product("stations_mllw")().worker_args(
+        ctx, "forecast", tmp_path, tmp_path
+    )
+    assert args is not None
+    paired = dict(zip(args[::2], args[1::2]))
+    assert paired["--stations-nc"] == str(source)
+    assert paired["--phase"] == "forecast"
+    assert Path(paired["--factors"]).name == "stofs_3d_ak_ufs.mllw_datum.csv"
+    assert paired["--station-in"] == str(ctx.sta_in)
+
+
+def test_ak_worker_args_prefer_stations_nc_when_both_exist(tmp_path):
+    """stations_nc is tried first (what SECOFS, the only other table
+    owner, produces); points_cwl is only a fallback."""
+    ctx = _ak_ctx(tmp_path)
+    nc_source = ctx.comout / stations_nc_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    nc_source.write_text("")
+    cwl_source = ctx.comout / points_cwl_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    cwl_source.write_text("")
+    args = get_product("stations_mllw")().worker_args(
+        ctx, "forecast", tmp_path, tmp_path
+    )
+    paired = dict(zip(args[::2], args[1::2]))
+    assert paired["--stations-nc"] == str(nc_source)
+
+
+def test_points_cwl_runs_before_stations_mllw():
+    assert _ordered_products(["stations_mllw", "points_cwl"]) == [
+        "points_cwl", "stations_mllw"
+    ]
+
+
+@needs_netcdf4
+def test_ak_end_to_end_worker_run_against_a_points_cwl_style_source(tmp_path):
+    """A minimal stand-in for points_cwl's output (zeta(time, station)
+    plus x/y, exactly nos_utils.post.stations.write_station_timeseries's
+    schema) shifted by the real, checked-in AK table."""
+    import numpy as np
+    from netCDF4 import Dataset
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+
+    n_station = 11
+    lons = [199.496, 197.6741, 183.382, 185.827, 191.129, 193.460,
+            189.715, 199.197, 194.535, 182.532, 187.112]
+    lats = [55.332, 55.060, 51.861, 52.222, 52.941, 53.879,
+            57.125, 63.871, 64.495, 57.034, 51.988]
+    zeta = np.zeros((2, n_station))
+    zeta[:, 0] = [0.10, 0.12]  # row 1: Sand Point
+    zeta[:, 8] = [0.05, 0.06]  # row 9: Nome
+
+    source = tmp_path / "points_cwl_source.nc"
+    with Dataset(source, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", n_station)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-08-03 12:00:00"
+        t[:] = [0.0, 360.0]
+        ds.createVariable("zeta", "f4", ("time", "station"))[:] = zeta
+        ds.createVariable("x", "f8", ("station",))[:] = lons
+        ds.createVariable("y", "f8", ("station",))[:] = lats
+
+    comout = tmp_path / "com"
+    comout.mkdir()
+    rc = stations_mllw.main([
+        "--stations-nc", str(source), "--comout", str(comout),
+        "--prefix", "stofs_3d_ak_ufs", "--cyc", "12", "--pdy", "20260803",
+        "--phase", "forecast", "--factors", str(AK_TABLE),
+        "--station-in", str(sta),
+    ])
+    assert rc == 0
+
+    out = comout / stations_mllw_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    with Dataset(out) as ds:
+        assert ds.dimensions["station"].size == 9
+        rows = list(ds.variables["station_row"][:])
+        i_sand_point, i_nome = rows.index(1), rows.index(9)
+        np.testing.assert_allclose(
+            ds.variables["zeta_mllw"][:, i_sand_point],
+            [0.10 + 0.889, 0.12 + 0.889], atol=1e-3,
+        )
+        np.testing.assert_allclose(
+            ds.variables["zeta_mllw"][:, i_nome],
+            [0.05 + 0.187, 0.06 + 0.187], atol=1e-3,
+        )
