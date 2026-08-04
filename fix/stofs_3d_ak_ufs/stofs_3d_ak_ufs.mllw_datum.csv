@@ -5,6 +5,8 @@
 #
 # source: coastalmodeling-vdatum vertical-datum transformation surfaces (nwldatum_4.7.0, ITRF2020), not a CO-OPS control file
 #
+# datum_note: model zero = xGEOID20B is a working assumption pending confirmation; factors from nwldatum 4.7.0 ITRF2020 surfaces (~9 cm transform uncertainty; CO-OPS tidal epoch 1983-2001)
+#
 # station_row is the 1-based row order of station.in, which is the
 # station dimension order SCHISM writes. Column 1 of station.in is a
 # per-group counter and is NOT a station key.
@@ -37,13 +39,13 @@
 #   python3 tools/gen_ak_datum_offsets.py \
 #       --station-csv fix/stofs_3d_ak_ufs/stofs_3d_ak_staout_nc.csv \
 #       --out fix/stofs_3d_ak_ufs/stofs_3d_ak_ufs.mllw_datum.csv
-station_row,gauge_id,coops_code,station_label,mllw_factor
-1,9459450,,CO-OPS 9459450 AK Sand Point,0.889
-2,9459881,,CO-OPS 9459881 AK King Cove,0.782
-3,9461380,,CO-OPS 9461380 AK Adak Island,0.531
-4,9461710,,CO-OPS 9461710 AK Atka,0.503
-5,9462450,,CO-OPS 9462450 AK Nikolski,0.492
-6,9462620,,CO-OPS 9462620 AK Unalaska,0.418
-7,9464212,,"CO-OPS 9464212 AK Village Cove, St Paul Island",0.409
-8,9468333,,CO-OPS 9468333 AK Unalakleet,0.255
-9,9468756,,"CO-OPS 9468756 AK Nome, Norton Sound",0.187
+station_row,gauge_id,coops_code,station_label,mllw_factor,lon,lat
+1,9459450,,CO-OPS 9459450 AK Sand Point,0.889,-160.504,55.332
+2,9459881,,CO-OPS 9459881 AK King Cove,0.782,-162.3259,55.06
+3,9461380,,CO-OPS 9461380 AK Adak Island,0.531,-176.618,51.861
+4,9461710,,CO-OPS 9461710 AK Atka,0.503,-174.173,52.222
+5,9462450,,CO-OPS 9462450 AK Nikolski,0.492,-168.871,52.941
+6,9462620,,CO-OPS 9462620 AK Unalaska,0.418,-166.54,53.879
+7,9464212,,"CO-OPS 9464212 AK Village Cove, St Paul Island",0.409,-170.285,57.125
+8,9468333,,CO-OPS 9468333 AK Unalakleet,0.255,-160.803,63.871
+9,9468756,,"CO-OPS 9468756 AK Nome, Norton Sound",0.187,-165.465,64.495

@@ -602,25 +602,37 @@ def test_station_count_mismatch_between_source_and_list_fails(tmp_path, files):
 AK_FIXOFS = REPO_ROOT / "fix" / "stofs_3d_ak_ufs"
 AK_TABLE = AK_FIXOFS / "stofs_3d_ak_ufs.mllw_datum.csv"
 
-# Compact stand-in for the real (unshipped, WCOSS2-only) station.in: the 9
-# CO-OPS gauges in AK_TABLE's row order -- same labels and coordinates as
-# fix/stofs_3d_ak_ufs/stofs_3d_ak_staout_nc.csv -- plus two uncovered rows
-# (an NDBC buoy, a synthetic modulation point) to exercise "absent, not
-# defaulted to 0" for stations with no tidal datum.
+# Verbatim from the real R09a station.in staged as stofs_3d_ak_ufs's fix
+# file (fetched via tools/fetch_stofs_3d_ak_fix.sh) -- the flags line and
+# the first 11 station rows (9 CO-OPS gauges + 2 uncovered NDBC buoys, to
+# also exercise "absent, not defaulted to 0" for stations with no tidal
+# datum), byte-for-byte. Only the station-count line is *not* verbatim:
+# the real file declares 22 (it has 22 rows total; rows 12-22 are omitted
+# here as uninteresting for these tests), so it is written as 11 to match
+# what is actually kept, per _read_station_in's declared-count check.
+#
+# Row comments read e.g. "[WL,T],9459450,CO-OPS,Sand Point" -- nothing
+# like AK_TABLE's "CO-OPS 9459450 AK Sand Point" -- because this file was
+# staged independently of the fix table rather than reconciled against it
+# the way SECOFS's ctl file is. That mismatch is exactly what production
+# hit (round 3: every one of the 9 rows failed _check_alignment's old
+# exact-label comparison, rc=5, no MLLW file produced) and what the
+# gauge-id + coordinate fallback in stations_mllw._check_alignment exists
+# to tolerate.
 AK_STATION_IN = """\
-1 1 1 1 1 1 1 1 0 !flags
-11
-1 199.496 55.332 0.0 !CO-OPS 9459450 AK Sand Point
-2 197.6741 55.060 0.0 !CO-OPS 9459881 AK King Cove
-3 183.382 51.861 0.0 !CO-OPS 9461380 AK Adak Island
-4 185.827 52.222 0.0 !CO-OPS 9461710 AK Atka
-5 191.129 52.941 0.0 !CO-OPS 9462450 AK Nikolski
-6 193.460 53.879 0.0 !CO-OPS 9462620 AK Unalaska
-7 189.715 57.125 0.0 !CO-OPS 9464212 AK Village Cove, St Paul Island
-8 199.197 63.871 0.0 !CO-OPS 9468333 AK Unalakleet
-9 194.535 64.495 0.0 !CO-OPS 9468756 AK Nome, Norton Sound
-10 182.532 57.034 0.0 !NDBC 46035 AK Central Bering Sea
-11 187.112 51.988 0.0 !SYNTHETIC AK modulation1 (no gauge)
+1 1 1 1 1 1 1 1 1 !on (1)|off(0) flags for elev,air pressure,windx,windy,T,S,u,v,w,rest of tracers (expanded into subclasses of each module)
+11 !# of stations
+1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point
+2 197.6741 55.060 0.0 ![WL,T],9459881,CO-OPS,King Cove
+3 183.382 51.861 0.0 ![WL,T],9461380,CO-OPS,Adak Island
+4 185.827 52.222 0.0 ![WL,T],9461710,CO-OPS,Atka
+5 191.129 52.941 0.0 ![WL],9462450,CO-OPS,Nikolski
+6 193.460 53.879 0.0 ![WL,T],9462620,CO-OPS,Unalaska
+7 189.715 57.125 0.0 ![WL,T],9464212,CO-OPS,Village Cove
+8 199.197 63.871 0.0 ![WL,T],9468333,CO-OPS,Unalakleet
+9 194.535 64.495 0.0 ![WL,T],9468756,CO-OPS,Nome
+10 182.532 57.034 0.0 ![T],46035,NDBC,Central Bering Sea
+11 175.261 55.050 0.0 ![T],46070,NDBC,Southwest Bering Sea
 """
 
 
@@ -656,11 +668,69 @@ def test_ak_uncovered_stations_are_absent_not_zero():
 
 
 def test_ak_table_aligns_with_its_station_in(tmp_path):
+    """The P1 bite proof: AK_STATION_IN is now the real R09a wording
+    ("[WL,T],9459450,CO-OPS,Sand Point"), which shares no tokens with
+    AK_TABLE's "CO-OPS 9459450 AK Sand Point" once normalized, so this
+    only passes via _check_alignment's gauge-id + coordinate fallback --
+    exact-label equality fails on every one of the 9 rows here, which is
+    exactly the round-3 production failure (rc=5, no MLLW file)."""
     sta = tmp_path / "ak_station.in"
     sta.write_text(AK_STATION_IN)
     factors = stations_mllw._read_factors(AK_TABLE)
     stations = stations_mllw._read_station_in(sta)
+    for rec in factors:
+        station = {s["row"]: s for s in stations}[rec["station_row"]]
+        assert stations_mllw._norm(station["label"]) != stations_mllw._norm(
+            rec["station_label"]
+        ), "fixture no longer exercises the fallback path this test is for"
     stations_mllw._check_alignment(factors, stations)  # must not raise
+
+
+def test_ak_alignment_rejects_a_genuine_reorder(tmp_path):
+    """The fallback path must still be a real check, not a rubber stamp:
+    swap station.in rows 1 and 2 (Sand Point and King Cove) -- row 1's
+    factor (gauge 9459450) no longer finds its id in station.in row 1's
+    comment (now King Cove's, 9459881), and row 1's coordinates now
+    describe King Cove, not Sand Point. Both signals should fire."""
+    lines = AK_STATION_IN.splitlines()
+    lines[2], lines[3] = lines[3], lines[2]  # the two station.in row lines
+    reordered = "\n".join(lines) + "\n"
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(reordered)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    with pytest.raises(ValueError, match="no longer matches station.in"):
+        stations_mllw._check_alignment(factors, stations)
+
+
+def test_ak_alignment_rejects_a_coordinate_mismatch_even_with_a_gauge_id_match(
+    tmp_path,
+):
+    """Gauge id alone must not be enough: corrupt row 1's coordinates in
+    an otherwise-correct real-format station.in and confirm the
+    coordinate half of the fallback still catches it."""
+    corrupted = AK_STATION_IN.replace(
+        "1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point",
+        "1 210.000 40.000 0.0 ![WL,T],9459450,CO-OPS,Sand Point",
+    )
+    assert corrupted != AK_STATION_IN
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(corrupted)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    with pytest.raises(ValueError, match="coordinates differ"):
+        stations_mllw._check_alignment(factors, stations)
+
+
+def test_ak_alignment_wrap_handles_the_dateline(tmp_path):
+    """station.in's 0-360 longitude and the table's signed longitude must
+    compare equal for the same point even when that point straddles the
+    antimeridian -- Adak Island (183.382 deg 0-360 == -176.618 deg
+    signed) is exactly such a point in this domain."""
+    assert stations_mllw._lon_delta(183.382, -176.618) == pytest.approx(0.0, abs=1e-6)
+    assert stations_mllw._lon_delta(-179.99, 179.99) == pytest.approx(0.02, abs=1e-6)
 
 
 def test_sign_flip_is_caught_by_the_spot_check(tmp_path):
@@ -885,6 +955,11 @@ def test_secofs_attributes_stay_the_hardcoded_coops_wording_exactly(
             "published factor appear here; the rest remain on model zero "
             "in the station product."
         )
+        # P2: SECOFS's table has no "# datum_note:" line, so these two
+        # attributes must be exactly what this product has always
+        # published -- unconditional and with no caveat suffix.
+        assert ds.model_vertical_datum == "xGEOID20B"
+        assert "datum_note" not in ds.ncattrs()
 
 
 @needs_netcdf4
@@ -936,3 +1011,25 @@ def test_ak_published_attributes_cite_coastalmodeling_vdatum_not_coops(
             "published factor appear here; the rest remain on model zero "
             "in the station product."
         )
+
+        # P2: the AK table's header carries "# datum_note: ...", so the
+        # unconfirmed premise gets a caveat instead of being published as
+        # settled fact.
+        assert ds.model_vertical_datum == "xGEOID20B (provisional)"
+        assert "working assumption pending confirmation" in ds.datum_note
+        assert "xgeoid20b" in ds.datum_note.lower()
+
+
+def test_secofs_table_has_no_datum_note():
+    """Companion to test_secofs_table_carries_no_source_line: SECOFS's
+    real table must not carry a "# datum_note:" line either, so the
+    provisional-datum wording never reaches its published output."""
+    secofs_table = REPO_ROOT / "fix" / "secofs_ufs" / "secofs_ufs.mllw_datum.csv"
+    assert stations_mllw._read_datum_note(secofs_table) is None
+
+
+def test_ak_table_carries_the_datum_note():
+    note = stations_mllw._read_datum_note(AK_TABLE)
+    assert note is not None
+    assert "xgeoid20b" in note.lower()
+    assert "working assumption pending confirmation" in note

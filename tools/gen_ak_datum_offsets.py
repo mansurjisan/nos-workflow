@@ -8,9 +8,22 @@ directly from the NOAA vertical-datum transformation surfaces via the
 ``coastalmodeling-vdatum`` package (``pip install coastalmodeling-vdatum``),
 at the model station coordinates rather than the CO-OPS gauge coordinates
 (the two are up to ~860 m apart at Unalakleet; the model needs the shift at
-the point it actually samples). The emitted table has the exact schema of
-``fix/secofs_ufs/secofs_ufs.mllw_datum.csv`` and is read by the same
-``stations_mllw`` post product.
+the point it actually samples). The emitted table is read by the same
+``stations_mllw`` post product and carries SECOFS's five columns
+(``fix/secofs_ufs/secofs_ufs.mllw_datum.csv``) plus two Alaska-only ones,
+``lon``/``lat`` (signed, the coastalmodeling-vdatum convention).
+
+SECOFS's ctl file and its station.in both derive their station labels from
+the same source, so they always match verbatim and ``stations_mllw`` can
+align the two on that alone. Alaska's station.in was staged independently
+(fetched directly from the R09a run, never passed through a ctl-reconciling
+step) and its comments read e.g. ``[WL,T],9459450,CO-OPS,Sand Point``, not
+this tool's ``CO-OPS 9459450 AK Sand Point`` -- so an exact-label match
+never holds here. ``stations_mllw._check_alignment`` falls back, for rows
+where it does not, to confirming the gauge id against the station.in
+comment text plus these two coordinate columns against station.in's own;
+that fallback is why lon/lat are written here even though SECOFS's table
+has no need for them.
 
     zeta_mllw = zeta + mllw_factor,  where zeta is on xGEOID20B ("model zero")
 
@@ -18,8 +31,8 @@ mllw_factor is computed as ``vdatum.convert("xgeoid20b", "mllw", lat, lon,
 0.0)[2]`` -- the height, in the MLLW system, of the point that sits at 0 in
 the xGEOID20B system, which is exactly xGEOID20B's height above MLLW at that
 location (verified against an independently 3-way-validated reference table
-to < 1 mm). "lmsl" is also queried, printed for cross-reference only; the
-checked-in schema has five columns and no more, matching SECOFS exactly.
+to < 1 mm). "lmsl" is also queried, printed for cross-reference only; it is
+not one of the columns written to the table.
 
 Two premises this result rests on, both worth re-checking before trusting it
 operationally:
@@ -103,6 +116,8 @@ _HEADER = """\
 #
 # source: coastalmodeling-vdatum vertical-datum transformation surfaces (nwldatum_4.7.0, ITRF2020), not a CO-OPS control file
 #
+# datum_note: model zero = xGEOID20B is a working assumption pending confirmation; factors from nwldatum 4.7.0 ITRF2020 surfaces (~9 cm transform uncertainty; CO-OPS tidal epoch 1983-2001)
+#
 # station_row is the 1-based row order of station.in, which is the
 # station dimension order SCHISM writes. Column 1 of station.in is a
 # per-group counter and is NOT a station key.
@@ -137,7 +152,15 @@ _HEADER = """\
 #       --out fix/stofs_3d_ak_ufs/stofs_3d_ak_ufs.mllw_datum.csv
 """
 
-_FIELDS = ["station_row", "gauge_id", "coops_code", "station_label", "mllw_factor"]
+#: SECOFS's five columns plus lon/lat -- signed, coastalmodeling-vdatum's
+#: own convention (see ``to_signed_lon``) -- which ``stations_mllw``'s
+#: alignment check uses to confirm a gauge id it found in station.in's
+#: comment actually sits at the row it claims to (see the module
+#: docstring). SECOFS's table has no need for them and stays 5 columns.
+_FIELDS = [
+    "station_row", "gauge_id", "coops_code", "station_label", "mllw_factor",
+    "lon", "lat",
+]
 
 
 class Station(NamedTuple):
@@ -251,6 +274,8 @@ def build_rows(stations: List[Station], online: bool) -> List[dict]:
                 coops_code="",  # no Alaska ctl/short-code table exists yet
                 station_label=s.label,
                 mllw_factor=factor,
+                lon=round(lon, 4),  # signed; station.in itself is 0-360
+                lat=round(s.lat, 4),
             )
         )
     return rows
@@ -260,7 +285,12 @@ def write_table(rows: List[dict], out_path: Path) -> None:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", newline="") as fh:
         fh.write(_HEADER)
-        writer = csv.DictWriter(fh, fieldnames=_FIELDS, extrasaction="ignore")
+        # excel's default lineterminator is "\r\n"; the header above is
+        # plain "\n", and a per-writer mix trips `git diff --check` and
+        # leaves the file "ASCII text, with CRLF, LF line terminators".
+        writer = csv.DictWriter(
+            fh, fieldnames=_FIELDS, extrasaction="ignore", lineterminator="\n"
+        )
         writer.writeheader()
         for rec in rows:
             writer.writerow(rec)

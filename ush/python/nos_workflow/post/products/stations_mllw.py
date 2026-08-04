@@ -72,6 +72,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         factors = _read_factors(Path(args.factors))
         provenance = _read_provenance(Path(args.factors))
+        datum_note = _read_datum_note(Path(args.factors))
     except (OSError, ValueError) as exc:
         print(f"stations_mllw: unusable factor table {args.factors}: {exc}")
         return 5
@@ -93,7 +94,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         with atomic_publish(out_path) as tmp:
-            n_time = _write(source, tmp, factors, stations, provenance)
+            n_time = _write(
+                source, tmp, factors, stations, provenance, datum_note
+            )
     except (OSError, KeyError, ValueError) as exc:
         print(f"stations_mllw: {source.name}: {exc}")
         return 5
@@ -127,7 +130,12 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
 
 
 def _read_factors(path: Path) -> List[dict]:
-    """Rows of the fix table, in station order. Comment lines are skipped."""
+    """Rows of the fix table, in station order. Comment lines are skipped.
+
+    ``lon``/``lat`` are optional (SECOFS's table does not carry them; the
+    AK generator does, since its labels need the coordinate fallback in
+    ``_check_alignment`` below) and come back as ``None`` when absent.
+    """
     lines = [
         ln for ln in path.read_text().splitlines()
         if ln.strip() and not ln.lstrip().startswith("#")
@@ -135,6 +143,8 @@ def _read_factors(path: Path) -> List[dict]:
     out = []
     for rec in csv.DictReader(lines):
         try:
+            lon_raw = rec.get("lon")
+            lat_raw = rec.get("lat")
             out.append(
                 dict(
                     station_row=int(rec["station_row"]),
@@ -142,6 +152,8 @@ def _read_factors(path: Path) -> List[dict]:
                     coops_code=(rec.get("coops_code") or "").strip(),
                     station_label=(rec.get("station_label") or "").strip(),
                     mllw_factor=float(rec["mllw_factor"]),
+                    lon=float(lon_raw) if lon_raw not in (None, "") else None,
+                    lat=float(lat_raw) if lat_raw not in (None, "") else None,
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -162,6 +174,25 @@ def _read_factors(path: Path) -> List[dict]:
     return sorted(out, key=lambda r: r["station_row"])
 
 
+def _read_header_field(path: Path, key: str) -> Optional[str]:
+    """The optional ``# <key>: <text>`` header line, if the factor table
+    carries one; ``None`` otherwise. Only scans the comment header --
+    stops at the first non-comment, non-blank line, since data rows never
+    start with '#'.
+    """
+    prefix = f"{key.lower()}:"
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            if stripped:
+                break
+            continue
+        body = stripped.lstrip("#").strip()
+        if body.lower().startswith(prefix):
+            return body.split(":", 1)[1].strip()
+    return None
+
+
 def _read_provenance(path: Path) -> Optional[str]:
     """The optional ``# source: <text>`` header line, if the factor table
     carries one.
@@ -173,16 +204,22 @@ def _read_provenance(path: Path) -> Optional[str]:
     from coastalmodeling-vdatum, not a CO-OPS control file, and saying
     otherwise in a published netCDF attribute would be false provenance.
     """
-    for line in path.read_text().splitlines():
-        stripped = line.strip()
-        if not stripped.startswith("#"):
-            if stripped:
-                break  # header ended; data rows never start with '#'
-            continue
-        body = stripped.lstrip("#").strip()
-        if body.lower().startswith("source:"):
-            return body.split(":", 1)[1].strip()
-    return None
+    return _read_header_field(path, "source")
+
+
+def _read_datum_note(path: Path) -> Optional[str]:
+    """The optional ``# datum_note: <text>`` header line, if the factor
+    table carries one.
+
+    SECOFS's table does not carry this line, so callers get ``None`` and
+    published attributes are unaffected. Alaska's generated table does
+    (added by ``tools/gen_ak_datum_offsets.py``), because its premise --
+    that model zero is xGEOID20B -- is a working assumption pending
+    confirmation, not an established fact (see that module's docstring);
+    publishing ``model_vertical_datum`` without that caveat would overstate
+    it as settled.
+    """
+    return _read_header_field(path, "datum_note")
 
 
 def _factor_comment(source: Optional[str]) -> str:
@@ -234,13 +271,79 @@ def _read_station_in(path: Path) -> List[dict]:
     return rows
 
 
+#: 0.01 deg (~1.1 km at these latitudes) is generous rounding slack for two
+#: values that describe the same model station node -- one written by
+#: gen_ak_datum_offsets.py (signed longitude) and one read back here from
+#: station.in (0-360; this domain straddles the dateline) -- while staying
+#: far tighter than the tens-to-hundreds of km spacing between distinct AK
+#: gauges, so an actual station.in reorder still trips it.
+_ALIGNMENT_COORD_TOL_DEG = 0.01
+
+_GAUGE_ID_RE = re.compile(r"\b(\d{7})\b")
+
+
+def _wrapped_lon(lon: float) -> float:
+    """Normalize to -180..180.
+
+    Puts a 0-360 value (station.in's convention here, since this domain
+    crosses the dateline) and a signed value (the factor table's, see
+    ``gen_ak_datum_offsets.to_signed_lon``) that describe the same point
+    on the same footing before they are compared.
+    """
+    return ((lon + 180.0) % 360.0) - 180.0
+
+
+def _lon_delta(a: float, b: float) -> float:
+    """Circular distance in degrees, so e.g. -179.99 and 179.99 read as
+    0.02 deg apart rather than 359.98 -- this domain has stations on both
+    sides of the antimeridian."""
+    d = abs(_wrapped_lon(a) - _wrapped_lon(b))
+    return min(d, 360.0 - d)
+
+
+def _extract_gauge_id(rec: dict) -> str:
+    """The CO-OPS gauge id for a factor row.
+
+    Prefers the table's own ``gauge_id`` column; falls back to pulling it
+    from ``station_label`` (the AK generator always embeds it there, e.g.
+    "CO-OPS 9459450 AK Sand Point"). Requires exactly 7 digits -- CO-OPS's
+    own station-id length -- so a stray number elsewhere in the label
+    cannot be mistaken for it.
+    """
+    gid = (rec.get("gauge_id") or "").strip()
+    if re.fullmatch(r"\d{7}", gid):
+        return gid
+    m = _GAUGE_ID_RE.search(rec.get("station_label") or "")
+    return m.group(1) if m else ""
+
+
 def _check_alignment(factors: List[dict], stations: List[dict]) -> None:
     """Fail loudly when the station list no longer matches the factor table.
 
     A station inserted or reordered in station.in shifts every row after it,
     which would apply each factor to the wrong gauge and publish a water
     level that looks entirely plausible. There is no way to detect that from
-    the values, so it is checked here against the label the table recorded.
+    the values, so it is checked here against what the table recorded.
+
+    Exact label equality (ignoring case and hand annotations) is tried
+    first and, when it holds, is trusted on its own -- this is SECOFS's
+    path: its ctl file and its station.in both derive their labels from
+    the same source and always agree verbatim, so this is the only path
+    its real table ever takes.
+
+    Alaska's labels never take that path: the generator writes "CO-OPS
+    9459450 AK Sand Point" while the real station.in's own comment reads
+    "[WL,T],9459450,CO-OPS,Sand Point" -- same station, unrelated wording,
+    because Alaska's station.in was staged independently of this table
+    rather than reconciled against it the way SECOFS's ctl file is (see
+    ``tools/gen_ak_datum_offsets.py``). For that case the check falls back
+    to two independent signals that must BOTH hold: the CO-OPS gauge id
+    appears in the station.in comment text, and the model-node coordinates
+    the table and station.in each carry for that row agree within
+    ``_ALIGNMENT_COORD_TOL_DEG``. Either alone would be spoofable by a
+    reorder that happens to preserve it (a reordered id could still land
+    near its old coordinates, or vice versa); both together only hold when
+    the row is genuinely the same station.
     """
     by_row = {s["row"]: s for s in stations}
     problems = []
@@ -251,10 +354,37 @@ def _check_alignment(factors: List[dict], stations: List[dict]) -> None:
                 f"row {rec['station_row']} ({rec['coops_code']}) is past the "
                 f"end of the {len(stations)}-station list"
             )
-        elif _norm(station["label"]) != _norm(rec["station_label"]):
+            continue
+        if _norm(station["label"]) == _norm(rec["station_label"]):
+            continue
+
+        gid = _extract_gauge_id(rec)
+        if not gid or gid not in station["label"]:
             problems.append(
                 f"row {rec['station_row']}: table says {rec['station_label']!r}, "
                 f"station.in says {station['label']!r}"
+            )
+            continue
+
+        rec_lon, rec_lat = rec.get("lon"), rec.get("lat")
+        if rec_lon is None or rec_lat is None:
+            problems.append(
+                f"row {rec['station_row']}: labels disagree "
+                f"({rec['station_label']!r} vs {station['label']!r}) and the "
+                f"factor table carries no coordinates to confirm gauge id "
+                f"{gid} against -- regenerate the table with a version of "
+                "gen_ak_datum_offsets.py that writes lon/lat"
+            )
+            continue
+
+        dlon = _lon_delta(station["lon"], rec_lon)
+        dlat = abs(station["lat"] - rec_lat)
+        if dlon > _ALIGNMENT_COORD_TOL_DEG or dlat > _ALIGNMENT_COORD_TOL_DEG:
+            problems.append(
+                f"row {rec['station_row']}: gauge id {gid} matches but "
+                f"coordinates differ by ({dlon:.4f}, {dlat:.4f}) deg -- table "
+                f"({rec_lon}, {rec_lat}) vs station.in "
+                f"({station['lon']}, {station['lat']})"
             )
     if problems:
         raise ValueError(
@@ -274,6 +404,7 @@ def _write(
     factors: List[dict],
     stations: List[dict],
     provenance: Optional[str] = None,
+    datum_note: Optional[str] = None,
 ) -> int:
     import numpy as np
     from netCDF4 import Dataset
@@ -391,7 +522,16 @@ def _write(
             ds.title = "MLLW-referenced station water level"
             ds.source_file = source.name
             ds.datum = "MLLW"
-            ds.model_vertical_datum = "xGEOID20B"
+            if datum_note:
+                # The premise this shift rests on (model zero == xGEOID20B)
+                # is an unconfirmed working assumption, not an established
+                # fact -- see gen_ak_datum_offsets.py's docstring. Saying so
+                # only where the factor table itself says so keeps SECOFS's
+                # published attributes (no datum_note line) byte-identical.
+                ds.model_vertical_datum = "xGEOID20B (provisional)"
+                ds.datum_note = datum_note
+            else:
+                ds.model_vertical_datum = "xGEOID20B"
             ds.comment = _global_comment(provenance)
     return n_time
 
