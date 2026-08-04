@@ -13,11 +13,18 @@ from pathlib import Path
 import pytest
 
 from nos_workflow.post.base import ProductContext
-from nos_workflow.post.naming import stations_mllw_name
+from nos_workflow.post.naming import (
+    points_cwl_name,
+    stations_mllw_name,
+    stations_nc_name,
+)
 from nos_workflow.post.products import stations_mllw
 from nos_workflow.post.registry import get_product
+from nos_workflow.post.worker_base import fix_file
 from nos_workflow.stages.post import _ordered_products
 from nos_workflow.tools import build_mllw_table
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def _have(name: str) -> bool:
@@ -582,3 +589,447 @@ def test_station_count_mismatch_between_source_and_list_fails(tmp_path, files):
         "--station-in", str(sta),
     ])
     assert rc == 5
+
+
+# --------------------------------------------------------------------------
+# STOFS-3D-AK: coastalmodeling-vdatum-derived table (no CO-OPS ctl for
+# Alaska, so this table does not come from build_mllw_table.py -- see
+# tools/gen_ak_datum_offsets.py). AK also runs points_cwl rather than
+# stations_nc (iout_sta=1, not 2), which is the other thing this section
+# covers: the product must find its station file there too.
+# --------------------------------------------------------------------------
+
+AK_FIXOFS = REPO_ROOT / "fix" / "stofs_3d_ak_ufs"
+AK_TABLE = AK_FIXOFS / "stofs_3d_ak_ufs.mllw_datum.csv"
+
+# Verbatim from the real R09a station.in staged as stofs_3d_ak_ufs's fix
+# file (fetched via tools/fetch_stofs_3d_ak_fix.sh) -- the flags line and
+# the first 11 station rows (9 CO-OPS gauges + 2 uncovered NDBC buoys, to
+# also exercise "absent, not defaulted to 0" for stations with no tidal
+# datum), byte-for-byte. Only the station-count line is *not* verbatim:
+# the real file declares 22 (it has 22 rows total; rows 12-22 are omitted
+# here as uninteresting for these tests), so it is written as 11 to match
+# what is actually kept, per _read_station_in's declared-count check.
+#
+# Row comments read e.g. "[WL,T],9459450,CO-OPS,Sand Point" -- nothing
+# like AK_TABLE's "CO-OPS 9459450 AK Sand Point" -- because this file was
+# staged independently of the fix table rather than reconciled against it
+# the way SECOFS's ctl file is. That mismatch is exactly what production
+# hit (round 3: every one of the 9 rows failed _check_alignment's old
+# exact-label comparison, rc=5, no MLLW file produced) and what the
+# gauge-id + coordinate fallback in stations_mllw._check_alignment exists
+# to tolerate.
+AK_STATION_IN = """\
+1 1 1 1 1 1 1 1 1 !on (1)|off(0) flags for elev,air pressure,windx,windy,T,S,u,v,w,rest of tracers (expanded into subclasses of each module)
+11 !# of stations
+1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point
+2 197.6741 55.060 0.0 ![WL,T],9459881,CO-OPS,King Cove
+3 183.382 51.861 0.0 ![WL,T],9461380,CO-OPS,Adak Island
+4 185.827 52.222 0.0 ![WL,T],9461710,CO-OPS,Atka
+5 191.129 52.941 0.0 ![WL],9462450,CO-OPS,Nikolski
+6 193.460 53.879 0.0 ![WL,T],9462620,CO-OPS,Unalaska
+7 189.715 57.125 0.0 ![WL,T],9464212,CO-OPS,Village Cove
+8 199.197 63.871 0.0 ![WL,T],9468333,CO-OPS,Unalakleet
+9 194.535 64.495 0.0 ![WL,T],9468756,CO-OPS,Nome
+10 182.532 57.034 0.0 ![T],46035,NDBC,Central Bering Sea
+11 175.261 55.050 0.0 ![T],46070,NDBC,Southwest Bering Sea
+"""
+
+
+def test_ak_table_is_shipped_in_the_repo():
+    assert AK_TABLE.is_file()
+
+
+def test_ak_table_has_nine_rows_for_the_coops_gauges():
+    rows = stations_mllw._read_factors(AK_TABLE)
+    assert [r["station_row"] for r in rows] == list(range(1, 10))
+
+
+def test_ak_sand_point_and_nome_factors():
+    """Spot-check the two ends of the range: Sand Point (largest factor,
+    0.889) and Nome (smallest, 0.187). Both a sign error and a scale error
+    would show up here -- the two are far enough apart that neither could
+    be mistaken for the other's sign-flip."""
+    rows = {
+        r["gauge_id"]: r["mllw_factor"]
+        for r in stations_mllw._read_factors(AK_TABLE)
+    }
+    assert rows["9459450"] == pytest.approx(0.889, abs=1e-3)
+    assert rows["9468756"] == pytest.approx(0.187, abs=1e-3)
+
+
+def test_ak_uncovered_stations_are_absent_not_zero():
+    """Rows 10-22 (NDBC buoys, synthetic points) have no tidal datum and
+    must simply not appear in the table -- same behavior SECOFS uses for
+    its one uncovered gauge, not a defaulted 0.0 factor."""
+    rows = stations_mllw._read_factors(AK_TABLE)
+    assert len(rows) == 9
+    assert {r["station_row"] for r in rows}.isdisjoint(range(10, 23))
+
+
+def test_ak_table_aligns_with_its_station_in(tmp_path):
+    """The P1 bite proof: AK_STATION_IN is now the real R09a wording
+    ("[WL,T],9459450,CO-OPS,Sand Point"), which shares no tokens with
+    AK_TABLE's "CO-OPS 9459450 AK Sand Point" once normalized, so this
+    only passes via _check_alignment's gauge-id + coordinate fallback --
+    exact-label equality fails on every one of the 9 rows here, which is
+    exactly the round-3 production failure (rc=5, no MLLW file)."""
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    for rec in factors:
+        station = {s["row"]: s for s in stations}[rec["station_row"]]
+        assert stations_mllw._norm(station["label"]) != stations_mllw._norm(
+            rec["station_label"]
+        ), "fixture no longer exercises the fallback path this test is for"
+    stations_mllw._check_alignment(factors, stations)  # must not raise
+
+
+def test_ak_alignment_rejects_a_genuine_reorder(tmp_path):
+    """The fallback path must still be a real check, not a rubber stamp:
+    swap station.in rows 1 and 2 (Sand Point and King Cove) -- row 1's
+    factor (gauge 9459450) no longer finds its id in station.in row 1's
+    comment (now King Cove's, 9459881), and row 1's coordinates now
+    describe King Cove, not Sand Point. Both signals should fire."""
+    lines = AK_STATION_IN.splitlines()
+    lines[2], lines[3] = lines[3], lines[2]  # the two station.in row lines
+    reordered = "\n".join(lines) + "\n"
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(reordered)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    with pytest.raises(ValueError, match="no longer matches station.in"):
+        stations_mllw._check_alignment(factors, stations)
+
+
+def test_ak_alignment_rejects_a_coordinate_mismatch_even_with_a_gauge_id_match(
+    tmp_path,
+):
+    """Gauge id alone must not be enough: corrupt row 1's coordinates in
+    an otherwise-correct real-format station.in and confirm the
+    coordinate half of the fallback still catches it."""
+    corrupted = AK_STATION_IN.replace(
+        "1 199.496 55.332 0.0 ![WL,T],9459450,CO-OPS,Sand Point",
+        "1 210.000 40.000 0.0 ![WL,T],9459450,CO-OPS,Sand Point",
+    )
+    assert corrupted != AK_STATION_IN
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(corrupted)
+    factors = stations_mllw._read_factors(AK_TABLE)
+    stations = stations_mllw._read_station_in(sta)
+    with pytest.raises(ValueError, match="coordinates differ"):
+        stations_mllw._check_alignment(factors, stations)
+
+
+def test_ak_alignment_wrap_handles_the_dateline(tmp_path):
+    """station.in's 0-360 longitude and the table's signed longitude must
+    compare equal for the same point even when that point straddles the
+    antimeridian -- Adak Island (183.382 deg 0-360 == -176.618 deg
+    signed) is exactly such a point in this domain."""
+    assert stations_mllw._lon_delta(183.382, -176.618) == pytest.approx(0.0, abs=1e-6)
+    assert stations_mllw._lon_delta(-179.99, 179.99) == pytest.approx(0.02, abs=1e-6)
+
+
+def test_sign_flip_is_caught_by_the_spot_check(tmp_path):
+    """Prove the Sand Point spot-check above actually bites: corrupt a
+    copy of the real table with the sign convention inverted and show the
+    identical assertion now fails. If this test itself failed to raise,
+    the spot-check would be vacuous."""
+    text = AK_TABLE.read_text()
+    needle = "1,9459450,,CO-OPS 9459450 AK Sand Point,0.889"
+    assert needle in text
+    flipped = tmp_path / "flipped.mllw_datum.csv"
+    flipped.write_text(text.replace(needle, needle.replace(",0.889", ",-0.889")))
+
+    rows = {
+        r["gauge_id"]: r["mllw_factor"]
+        for r in stations_mllw._read_factors(flipped)
+    }
+    with pytest.raises(AssertionError):
+        assert rows["9459450"] == pytest.approx(0.889, abs=1e-3)
+
+
+def _ak_ctx(tmp_path: Path, with_table: bool = True) -> ProductContext:
+    """A ProductContext with $FIXofs/$COMOUT laid out as on WCOSS2, using
+    the compact synthetic station.in above (not the real, unshipped one)."""
+    from unittest.mock import Mock
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir(exist_ok=True)
+    if with_table:
+        (fixofs / "stofs_3d_ak_ufs.mllw_datum.csv").write_text(AK_TABLE.read_text())
+    comout = tmp_path / "com"
+    comout.mkdir(exist_ok=True)
+    return ProductContext(
+        descriptor=Mock(framework="stofs_ufs"),
+        shell_env={},
+        homenos=tmp_path,
+        fixofs=fixofs,
+        comout=comout,
+        data=tmp_path / "data",
+        pdy="20260803",
+        cyc="12",
+        cycle="2026080312",
+        run_name="stofs_3d_ak_ufs",
+        prefix_nos="stofs_3d_ak_ufs",
+        nc_hour="00",
+        sta_in=sta,
+        combine_script=tmp_path / "combine.py",
+        pgmout=str(tmp_path / "pgmout"),
+    )
+
+
+def test_ak_gate_resolves_the_prefixed_fix_file(tmp_path):
+    """fix_file must resolve stofs_3d_ak_ufs.mllw_datum.csv the same way
+    it resolves secofs_ufs.mllw_datum.csv -- the ``{prefix}.{name}``
+    candidate -- and the same way it resolves the staout fix pair."""
+    ctx = _ak_ctx(tmp_path)
+    resolved = fix_file(ctx, "mllw_datum.csv")
+    assert resolved is not None
+    assert resolved.name == "stofs_3d_ak_ufs.mllw_datum.csv"
+
+
+def test_ak_worker_args_skip_without_a_table(tmp_path):
+    ctx = _ak_ctx(tmp_path, with_table=False)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_ak_worker_args_skip_when_no_station_file_is_produced(tmp_path):
+    ctx = _ak_ctx(tmp_path)
+    product = get_product("stations_mllw")()
+    assert product.worker_args(ctx, "forecast", tmp_path, tmp_path) is None
+
+
+def test_ak_worker_args_fall_back_to_points_cwl(tmp_path):
+    """AK runs points_cwl, not stations_nc (iout_sta=1) -- stations_mllw
+    must find its station file there when stations_nc's is absent."""
+    ctx = _ak_ctx(tmp_path)
+    source = ctx.comout / points_cwl_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    source.write_text("")
+    args = get_product("stations_mllw")().worker_args(
+        ctx, "forecast", tmp_path, tmp_path
+    )
+    assert args is not None
+    paired = dict(zip(args[::2], args[1::2]))
+    assert paired["--stations-nc"] == str(source)
+    assert paired["--phase"] == "forecast"
+    assert Path(paired["--factors"]).name == "stofs_3d_ak_ufs.mllw_datum.csv"
+    assert paired["--station-in"] == str(ctx.sta_in)
+
+
+def test_ak_worker_args_prefer_stations_nc_when_both_exist(tmp_path):
+    """stations_nc is tried first (what SECOFS, the only other table
+    owner, produces); points_cwl is only a fallback."""
+    ctx = _ak_ctx(tmp_path)
+    nc_source = ctx.comout / stations_nc_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    nc_source.write_text("")
+    cwl_source = ctx.comout / points_cwl_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    cwl_source.write_text("")
+    args = get_product("stations_mllw")().worker_args(
+        ctx, "forecast", tmp_path, tmp_path
+    )
+    paired = dict(zip(args[::2], args[1::2]))
+    assert paired["--stations-nc"] == str(nc_source)
+
+
+def test_points_cwl_runs_before_stations_mllw():
+    assert _ordered_products(["stations_mllw", "points_cwl"]) == [
+        "points_cwl", "stations_mllw"
+    ]
+
+
+@needs_netcdf4
+def test_ak_end_to_end_worker_run_against_a_points_cwl_style_source(tmp_path):
+    """A minimal stand-in for points_cwl's output (zeta(time, station)
+    plus x/y, exactly nos_utils.post.stations.write_station_timeseries's
+    schema) shifted by the real, checked-in AK table."""
+    import numpy as np
+    from netCDF4 import Dataset
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+
+    n_station = 11
+    lons = [199.496, 197.6741, 183.382, 185.827, 191.129, 193.460,
+            189.715, 199.197, 194.535, 182.532, 187.112]
+    lats = [55.332, 55.060, 51.861, 52.222, 52.941, 53.879,
+            57.125, 63.871, 64.495, 57.034, 51.988]
+    zeta = np.zeros((2, n_station))
+    zeta[:, 0] = [0.10, 0.12]  # row 1: Sand Point
+    zeta[:, 8] = [0.05, 0.06]  # row 9: Nome
+
+    source = tmp_path / "points_cwl_source.nc"
+    with Dataset(source, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", n_station)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-08-03 12:00:00"
+        t[:] = [0.0, 360.0]
+        ds.createVariable("zeta", "f4", ("time", "station"))[:] = zeta
+        ds.createVariable("x", "f8", ("station",))[:] = lons
+        ds.createVariable("y", "f8", ("station",))[:] = lats
+
+    comout = tmp_path / "com"
+    comout.mkdir()
+    rc = stations_mllw.main([
+        "--stations-nc", str(source), "--comout", str(comout),
+        "--prefix", "stofs_3d_ak_ufs", "--cyc", "12", "--pdy", "20260803",
+        "--phase", "forecast", "--factors", str(AK_TABLE),
+        "--station-in", str(sta),
+    ])
+    assert rc == 0
+
+    out = comout / stations_mllw_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    with Dataset(out) as ds:
+        assert ds.dimensions["station"].size == 9
+        rows = list(ds.variables["station_row"][:])
+        i_sand_point, i_nome = rows.index(1), rows.index(9)
+        np.testing.assert_allclose(
+            ds.variables["zeta_mllw"][:, i_sand_point],
+            [0.10 + 0.889, 0.12 + 0.889], atol=1e-3,
+        )
+        np.testing.assert_allclose(
+            ds.variables["zeta_mllw"][:, i_nome],
+            [0.05 + 0.187, 0.06 + 0.187], atol=1e-3,
+        )
+
+
+# --------------------------------------------------------------------------
+# published provenance attributes (SECOFS fallback vs AK's real source)
+# --------------------------------------------------------------------------
+
+def test_secofs_table_carries_no_source_line():
+    """SECOFS's real, checked-in table predates the "# source:" convention
+    and must stay that way -- its presence is exactly what routes the
+    writer to the fallback (hardcoded CO-OPS) wording."""
+    secofs_table = REPO_ROOT / "fix" / "secofs_ufs" / "secofs_ufs.mllw_datum.csv"
+    assert stations_mllw._read_provenance(secofs_table) is None
+
+
+def test_ak_table_carries_accurate_non_coops_provenance():
+    source = stations_mllw._read_provenance(AK_TABLE)
+    assert source is not None
+    assert "coastalmodeling-vdatum" in source
+    assert "CO-OPS" not in source or "not a CO-OPS" in source
+
+
+@needs_netcdf4
+def test_secofs_attributes_stay_the_hardcoded_coops_wording_exactly(
+    tmp_path, files
+):
+    """The fallback path (no "# source:" line, SECOFS's real situation)
+    must reproduce the exact strings this product has always published --
+    changing them would be a silent behavior change for an operational
+    output SECOFS already ships."""
+    sta, _, table = files
+    src = tmp_path / "src.nc"
+    _source(src, [[0.10, 0.20, 0.30, 0.40, 0.0, 0.0]], lonlat=None)
+    comout, rc = _run(tmp_path, files, src)
+    assert rc == 0
+
+    from netCDF4 import Dataset
+
+    out = comout / stations_mllw_name("test", "12", "20260728", "forecast")
+    with Dataset(out) as ds:
+        assert (
+            ds.variables["mllw_factor"].comment
+            == "MLLW minus xGEOID20B, from the CO-OPS datum table"
+        )
+        assert ds.comment == (
+            "Water level from the station product, shifted onto MLLW with "
+            "the CO-OPS per-station datum factors. Only stations with a "
+            "published factor appear here; the rest remain on model zero "
+            "in the station product."
+        )
+        # P2: SECOFS's table has no "# datum_note:" line, so these two
+        # attributes must be exactly what this product has always
+        # published -- unconditional and with no caveat suffix.
+        assert ds.model_vertical_datum == "xGEOID20B"
+        assert "datum_note" not in ds.ncattrs()
+
+
+@needs_netcdf4
+def test_ak_published_attributes_cite_coastalmodeling_vdatum_not_coops(
+    tmp_path,
+):
+    """Alaska's factors come from coastalmodeling-vdatum, not a CO-OPS
+    control file, so the published attributes must say so -- and must
+    differ from what SECOFS's real table (no "# source:" line) publishes."""
+    from netCDF4 import Dataset
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    src = tmp_path / "src.nc"
+    with Dataset(src, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", 11)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-08-03 12:00:00"
+        t[:] = [0.0]
+        ds.createVariable("zeta", "f4", ("time", "station"))[:] = [[0.0] * 11]
+
+    comout = tmp_path / "com"
+    comout.mkdir()
+    rc = stations_mllw.main([
+        "--stations-nc", str(src), "--comout", str(comout),
+        "--prefix", "stofs_3d_ak_ufs", "--cyc", "12", "--pdy", "20260803",
+        "--phase", "forecast", "--factors", str(AK_TABLE),
+        "--station-in", str(sta),
+    ])
+    assert rc == 0
+
+    out = comout / stations_mllw_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    with Dataset(out) as ds:
+        factor_comment = ds.variables["mllw_factor"].comment
+        assert "coastalmodeling-vdatum" in factor_comment
+        assert "CO-OPS datum table" not in factor_comment
+        assert factor_comment != (
+            "MLLW minus xGEOID20B, from the CO-OPS datum table"
+        )
+
+        assert "coastalmodeling-vdatum" in ds.comment
+        assert "CO-OPS per-station datum factors" not in ds.comment
+        assert ds.comment != (
+            "Water level from the station product, shifted onto MLLW with "
+            "the CO-OPS per-station datum factors. Only stations with a "
+            "published factor appear here; the rest remain on model zero "
+            "in the station product."
+        )
+
+        # P2: the AK table's header carries "# datum_note: ...", so the
+        # unconfirmed premise gets a caveat instead of being published as
+        # settled fact.
+        assert ds.model_vertical_datum == "xGEOID20B (provisional)"
+        assert "working assumption pending confirmation" in ds.datum_note
+        assert "xgeoid20b" in ds.datum_note.lower()
+
+
+def test_secofs_table_has_no_datum_note():
+    """Companion to test_secofs_table_carries_no_source_line: SECOFS's
+    real table must not carry a "# datum_note:" line either, so the
+    provisional-datum wording never reaches its published output."""
+    secofs_table = REPO_ROOT / "fix" / "secofs_ufs" / "secofs_ufs.mllw_datum.csv"
+    assert stations_mllw._read_datum_note(secofs_table) is None
+
+
+def test_ak_table_carries_the_datum_note():
+    note = stations_mllw._read_datum_note(AK_TABLE)
+    assert note is not None
+    assert "xgeoid20b" in note.lower()
+    assert "working assumption pending confirmation" in note

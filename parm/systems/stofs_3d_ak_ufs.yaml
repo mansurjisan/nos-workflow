@@ -394,6 +394,14 @@ post:
     # the worker logs that every cycle; the JSON's long_name says so too
     # rather than mislabeling it NAVD88 the way the ATL pair does.
     - points_cwl
+    # MLLW water level for the 9 CO-OPS gauges (station.in rows 1-9;
+    # points_cwl's other 13 rows are NDBC buoys and synthetic points with
+    # no tidal datum), read from stofs_3d_ak_ufs.mllw_datum.csv in
+    # $FIXofs. Factors come from coastalmodeling-vdatum surfaces, not a
+    # CO-OPS control file (see tools/gen_ak_datum_offsets.py) -- Alaska
+    # has no equivalent ctl. Runs after points_cwl and re-reads what it
+    # wrote, same as SECOFS's stations_mllw re-reads stations_nc.
+    - stations_mllw
     - fields_nc
     # Deliberately narrow for a first bring-up. Nothing here has run against
     # a real Alaska cycle yet, and a product that overruns the walltime kills
