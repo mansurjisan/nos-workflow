@@ -14,6 +14,14 @@
 # as 00z.
 set -eu
 
+# cron runs with a bare environment: the PBS bin dir is not on PATH (so a
+# bareword `qsub` fails with "command not found"), and USER/LOGNAME/HOME may be
+# unset (which would trip `set -u`). Harden both, matching launch_secofs_ufs.sh.
+export PATH=/opt/pbs/default/bin:/opt/pbs/bin:/usr/bin:/bin:${PATH:-}
+LOGNAME=${LOGNAME:-${USER:-$(id -un)}}
+export LOGNAME USER=${USER:-$LOGNAME}
+export HOME=${HOME:-/u/${LOGNAME}}
+
 if [ "$#" -lt 1 ]; then
   echo "Usage: $0 <PDY:YYYYMMDD> [CYC:HH (default 12)]" >&2
   exit 2
