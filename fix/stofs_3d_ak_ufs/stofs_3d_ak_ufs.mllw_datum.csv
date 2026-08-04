@@ -3,6 +3,8 @@
 # coastalmodeling-vdatum (nwldatum_4.7.0 ITRF2020 LMSL/MLLW surfaces,
 # differenced against xGEOID20B at each station); do not hand-edit.
 #
+# source: coastalmodeling-vdatum vertical-datum transformation surfaces (nwldatum_4.7.0, ITRF2020), not a CO-OPS control file
+#
 # station_row is the 1-based row order of station.in, which is the
 # station dimension order SCHISM writes. Column 1 of station.in is a
 # per-group counter and is NOT a station key.
@@ -11,7 +13,9 @@
 # confirmation from Felicio Cassalho -- stofs_3d_ak_ufs ships no
 # xgeoid->datum .nco yet (obc.ssh_offset in
 # parm/systems/stofs_3d_ak_ufs.yaml is null, "UNVERIFIED for Alaska").
-# If wrong, every factor below shifts by one constant, not a sign flip.
+# If wrong, the fix is not a constant shift applied to every factor below
+# -- the datum difference varies spatially, so the factors would need to
+# be regenerated against whichever reference surface model zero actually is.
 #
 # Epoch caveat: these surfaces are referenced to epoch 2020.0
 # (ITRF2020); CO-OPS's own MLLW is defined over the National Tidal

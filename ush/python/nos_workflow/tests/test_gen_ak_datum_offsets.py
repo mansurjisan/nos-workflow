@@ -73,9 +73,46 @@ def test_read_station_csv_gets_the_nine_coops_rows_in_order():
     assert stations[-1].label == "CO-OPS 9468756 AK Nome, Norton Sound"
 
 
-def test_read_station_csv_rejects_too_few_rows():
-    with pytest.raises(ValueError, match="need 30"):
-        gen.read_station_csv(AK_STAOUT_CSV, 30)
+def test_read_station_csv_rejects_too_few_rows(tmp_path):
+    """A synthetic, all-valid-CO-OPS-pattern file with fewer rows than
+    requested -- kept separate from the real AK file so this exercises
+    only the row-count guard, not the row-pattern guard added alongside
+    it (the real file's rows past 9 are NDBC/synthetic and would now trip
+    that check first for any --n-stations > 9)."""
+    short = tmp_path / "short_staout.csv"
+    short.write_text(
+        ";station_info;lon;lat\n"
+        "0;CO-OPS 9459450 AK Sand Point;199.496;55.332\n"
+        "1;CO-OPS 9459881 AK King Cove;197.6741;55.060\n"
+        "2;CO-OPS 9461380 AK Adak Island;183.382;51.861\n"
+    )
+    with pytest.raises(ValueError, match="need 5"):
+        gen.read_station_csv(short, 5)
+
+
+def test_read_station_csv_rejects_a_non_coops_row_in_the_leading_block(tmp_path):
+    """A row moved into the first N (e.g. an NDBC buoy after a re-sort of
+    the staout metadata) must abort loudly, naming the offending row --
+    silently accepting it would compute a bogus MLLW factor for a buoy
+    that has no tidal datum at all."""
+    lines = AK_STAOUT_CSV.read_text().splitlines(keepends=True)
+    header, rows = lines[0], lines[1:]
+    assert rows[8].startswith("8;CO-OPS 9468756")  # row 9, 0-based index 8
+    doctored = [header] + rows[:8] + [rows[9]] + [rows[8]] + rows[10:]
+    assert doctored[9].startswith("9;NDBC 46035")
+
+    bad_csv = tmp_path / "doctored_staout.csv"
+    bad_csv.write_text("".join(doctored))
+
+    with pytest.raises(ValueError, match=r"row 9.*not a CO-OPS tidal gauge"):
+        gen.read_station_csv(bad_csv, gen.N_COOPS_STATIONS)
+
+
+def test_read_station_csv_accepts_the_real_ak_leading_block():
+    """The real file's first 9 rows must still pass the new row check --
+    proves the pattern isn't so strict it rejects genuine CO-OPS rows."""
+    stations = gen.read_station_csv(AK_STAOUT_CSV, gen.N_COOPS_STATIONS)
+    assert len(stations) == 9
 
 
 def test_ak_table_matches_the_generator_helper_row_order():
@@ -93,11 +130,28 @@ def test_ak_table_matches_the_generator_helper_row_order():
 @needs_vdatum
 def test_generator_reproduces_the_checked_in_table_to_the_millimeter(tmp_path):
     """Regenerate into a scratch file and compare to the checked-in one --
-    proves the two do not drift apart, not just that the tool runs."""
+    proves the two do not drift apart, not just that the tool runs.
+
+    Only the actual network/data-availability failure is skipped, not any
+    exception whatsoever: coastalmodeling-vdatum's ``convert`` builds a
+    pyproj pipeline whose grids are fetched over HTTPS (or resolved from a
+    local cache), and when that grid is unreachable -- no network, or no
+    cached geotiff for --offline -- pyproj raises ``pyproj.exceptions.
+    ProjError`` (confirmed by inspection of vdatum.py's ``build_pipe``,
+    which hands the grid URL straight to ``pyproj.Transformer.from_pipeline``
+    with no try/except of its own, and by reproducing the failure directly:
+    pointing PROJ_DATA at an empty directory with networking off raises
+    exactly this type, wrapping PROJ's "File not found or invalid" error).
+    A bug in this tool's own code -- a bad station-csv parse (ValueError),
+    a typo'd attribute (AttributeError/TypeError), or a wrong premise this
+    test's own assertions would catch (AssertionError) -- must fail loudly
+    instead of being swallowed as "no network"."""
+    import pyproj.exceptions
+
     out = tmp_path / "regen.mllw_datum.csv"
     try:
         rc = gen.main(["--out", str(out)])
-    except Exception as exc:  # noqa: BLE001 -- network/proj errors, not ours
+    except pyproj.exceptions.ProjError as exc:
         pytest.skip(f"vdatum surfaces unavailable: {exc}")
     if rc != 0:
         pytest.skip("generator did not succeed (likely no network)")

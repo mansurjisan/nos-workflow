@@ -48,6 +48,19 @@ from ..naming import stations_mllw_name
 
 _MISSING = -99999.0
 
+# Published verbatim when the factor table's header carries no "# source:"
+# line -- true today only for SECOFS's CO-OPS-derived table. Kept as the
+# unconditional default (rather than a templated string) so SECOFS's
+# published attributes cannot drift by editing the template for another
+# system; see _factor_comment/_global_comment below.
+_DEFAULT_FACTOR_COMMENT = "MLLW minus xGEOID20B, from the CO-OPS datum table"
+_DEFAULT_GLOBAL_COMMENT = (
+    "Water level from the station product, shifted onto MLLW with "
+    "the CO-OPS per-station datum factors. Only stations with a "
+    "published factor appear here; the rest remain on model zero "
+    "in the station product."
+)
+
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = _parse_args(argv)
@@ -58,6 +71,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         factors = _read_factors(Path(args.factors))
+        provenance = _read_provenance(Path(args.factors))
     except (OSError, ValueError) as exc:
         print(f"stations_mllw: unusable factor table {args.factors}: {exc}")
         return 5
@@ -79,7 +93,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         with atomic_publish(out_path) as tmp:
-            n_time = _write(source, tmp, factors, stations)
+            n_time = _write(source, tmp, factors, stations, provenance)
     except (OSError, KeyError, ValueError) as exc:
         print(f"stations_mllw: {source.name}: {exc}")
         return 5
@@ -146,6 +160,46 @@ def _read_factors(path: Path) -> List[dict]:
         dupes = sorted({r for r in rows if rows.count(r) > 1})
         raise ValueError(f"station_row repeated: {dupes}")
     return sorted(out, key=lambda r: r["station_row"])
+
+
+def _read_provenance(path: Path) -> Optional[str]:
+    """The optional ``# source: <text>`` header line, if the factor table
+    carries one.
+
+    SECOFS's CO-OPS-derived table does not carry this line, so callers get
+    ``None`` and fall back to the hardcoded CO-OPS wording those published
+    attributes have always had. Alaska's generated table does carry it
+    (added by ``tools/gen_ak_datum_offsets.py``), since its factors come
+    from coastalmodeling-vdatum, not a CO-OPS control file, and saying
+    otherwise in a published netCDF attribute would be false provenance.
+    """
+    for line in path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("#"):
+            if stripped:
+                break  # header ended; data rows never start with '#'
+            continue
+        body = stripped.lstrip("#").strip()
+        if body.lower().startswith("source:"):
+            return body.split(":", 1)[1].strip()
+    return None
+
+
+def _factor_comment(source: Optional[str]) -> str:
+    if source:
+        return f"MLLW minus xGEOID20B, from {source}"
+    return _DEFAULT_FACTOR_COMMENT
+
+
+def _global_comment(source: Optional[str]) -> str:
+    if source:
+        return (
+            "Water level from the station product, shifted onto MLLW "
+            f"with per-station datum factors from {source}. Only "
+            "stations with a published factor appear here; the rest "
+            "remain on model zero in the station product."
+        )
+    return _DEFAULT_GLOBAL_COMMENT
 
 
 def _read_station_in(path: Path) -> List[dict]:
@@ -215,7 +269,11 @@ def _norm(text: str) -> str:
 
 
 def _write(
-    source: Path, out: Path, factors: List[dict], stations: List[dict]
+    source: Path,
+    out: Path,
+    factors: List[dict],
+    stations: List[dict],
+    provenance: Optional[str] = None,
 ) -> int:
     import numpy as np
     from netCDF4 import Dataset
@@ -291,7 +349,7 @@ def _write(
             f = ds.createVariable("mllw_factor", "f8", ("station",))
             f.long_name = "datum factor added to model water level"
             f.units = "meters"
-            f.comment = "MLLW minus xGEOID20B, from the CO-OPS datum table"
+            f.comment = _factor_comment(provenance)
             f[:] = shift
 
             row = ds.createVariable("station_row", "i4", ("station",))
@@ -334,12 +392,7 @@ def _write(
             ds.source_file = source.name
             ds.datum = "MLLW"
             ds.model_vertical_datum = "xGEOID20B"
-            ds.comment = (
-                "Water level from the station product, shifted onto MLLW with "
-                "the CO-OPS per-station datum factors. Only stations with a "
-                "published factor appear here; the rest remain on model zero "
-                "in the station product."
-            )
+            ds.comment = _global_comment(provenance)
     return n_time
 
 

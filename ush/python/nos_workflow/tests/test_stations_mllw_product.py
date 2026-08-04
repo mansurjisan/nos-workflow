@@ -836,3 +836,103 @@ def test_ak_end_to_end_worker_run_against_a_points_cwl_style_source(tmp_path):
             ds.variables["zeta_mllw"][:, i_nome],
             [0.05 + 0.187, 0.06 + 0.187], atol=1e-3,
         )
+
+
+# --------------------------------------------------------------------------
+# published provenance attributes (SECOFS fallback vs AK's real source)
+# --------------------------------------------------------------------------
+
+def test_secofs_table_carries_no_source_line():
+    """SECOFS's real, checked-in table predates the "# source:" convention
+    and must stay that way -- its presence is exactly what routes the
+    writer to the fallback (hardcoded CO-OPS) wording."""
+    secofs_table = REPO_ROOT / "fix" / "secofs_ufs" / "secofs_ufs.mllw_datum.csv"
+    assert stations_mllw._read_provenance(secofs_table) is None
+
+
+def test_ak_table_carries_accurate_non_coops_provenance():
+    source = stations_mllw._read_provenance(AK_TABLE)
+    assert source is not None
+    assert "coastalmodeling-vdatum" in source
+    assert "CO-OPS" not in source or "not a CO-OPS" in source
+
+
+@needs_netcdf4
+def test_secofs_attributes_stay_the_hardcoded_coops_wording_exactly(
+    tmp_path, files
+):
+    """The fallback path (no "# source:" line, SECOFS's real situation)
+    must reproduce the exact strings this product has always published --
+    changing them would be a silent behavior change for an operational
+    output SECOFS already ships."""
+    sta, _, table = files
+    src = tmp_path / "src.nc"
+    _source(src, [[0.10, 0.20, 0.30, 0.40, 0.0, 0.0]], lonlat=None)
+    comout, rc = _run(tmp_path, files, src)
+    assert rc == 0
+
+    from netCDF4 import Dataset
+
+    out = comout / stations_mllw_name("test", "12", "20260728", "forecast")
+    with Dataset(out) as ds:
+        assert (
+            ds.variables["mllw_factor"].comment
+            == "MLLW minus xGEOID20B, from the CO-OPS datum table"
+        )
+        assert ds.comment == (
+            "Water level from the station product, shifted onto MLLW with "
+            "the CO-OPS per-station datum factors. Only stations with a "
+            "published factor appear here; the rest remain on model zero "
+            "in the station product."
+        )
+
+
+@needs_netcdf4
+def test_ak_published_attributes_cite_coastalmodeling_vdatum_not_coops(
+    tmp_path,
+):
+    """Alaska's factors come from coastalmodeling-vdatum, not a CO-OPS
+    control file, so the published attributes must say so -- and must
+    differ from what SECOFS's real table (no "# source:" line) publishes."""
+    from netCDF4 import Dataset
+
+    sta = tmp_path / "ak_station.in"
+    sta.write_text(AK_STATION_IN)
+    src = tmp_path / "src.nc"
+    with Dataset(src, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("station", 11)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-08-03 12:00:00"
+        t[:] = [0.0]
+        ds.createVariable("zeta", "f4", ("time", "station"))[:] = [[0.0] * 11]
+
+    comout = tmp_path / "com"
+    comout.mkdir()
+    rc = stations_mllw.main([
+        "--stations-nc", str(src), "--comout", str(comout),
+        "--prefix", "stofs_3d_ak_ufs", "--cyc", "12", "--pdy", "20260803",
+        "--phase", "forecast", "--factors", str(AK_TABLE),
+        "--station-in", str(sta),
+    ])
+    assert rc == 0
+
+    out = comout / stations_mllw_name(
+        "stofs_3d_ak_ufs", "12", "20260803", "forecast"
+    )
+    with Dataset(out) as ds:
+        factor_comment = ds.variables["mllw_factor"].comment
+        assert "coastalmodeling-vdatum" in factor_comment
+        assert "CO-OPS datum table" not in factor_comment
+        assert factor_comment != (
+            "MLLW minus xGEOID20B, from the CO-OPS datum table"
+        )
+
+        assert "coastalmodeling-vdatum" in ds.comment
+        assert "CO-OPS per-station datum factors" not in ds.comment
+        assert ds.comment != (
+            "Water level from the station product, shifted onto MLLW with "
+            "the CO-OPS per-station datum factors. Only stations with a "
+            "published factor appear here; the rest remain on model zero "
+            "in the station product."
+        )
