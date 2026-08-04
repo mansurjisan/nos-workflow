@@ -564,7 +564,8 @@ def convert_schout_to_split():
 
     SCHISM combined output (schout_*.nc) contains all variables in one file.
     This extracts them into the split format that process_field_files() expects:
-      - out2d_{i}.nc:           elevation, windSpeedX/Y, depth, coordinates
+      - out2d_{i}.nc:           elevation, windSpeedX/Y, precipitationRate
+                                 (when present), depth, coordinates
       - temperature_{i}.nc:    temperature
       - salinity_{i}.nc:       salinity
       - horizontalVelX_{i}.nc: horizontalVelX
@@ -575,6 +576,7 @@ def convert_schout_to_split():
         'elev': ('elevation', 'out2d'),
         'windSpeedX': ('windSpeedX', 'out2d'),
         'windSpeedY': ('windSpeedY', 'out2d'),
+        'precipitation': ('precipitationRate', 'out2d'),
     }
     VAR_3D = {
         'temp': ('temperature', 'temperature'),
@@ -696,6 +698,23 @@ def convert_schout_to_split():
                 wv = ds_out.createVariable(wvar, 'f4',
                                             ('time', 'nSCHISM_hgrid_node'))
                 wv[:] = ds.variables[wvar][:]
+
+        # Precipitation rate (optional): OLDIO combine_output11 names this
+        # 'precipitation' [kg/m/m/s], written only when iof_hydro(12)=1
+        # (stofs_3d_ak_ufs). ATL/SECOFS run with the flag off and simply
+        # carry no such variable in schout -- staying optional here means
+        # the split silently produces an out2d without it, not an error.
+        # A scribed-IO run of the same system names the equivalent field
+        # 'precipitationRate' (schism_init.F90 out_name table, case 12
+        # under iof_hydro), so this is the split-file name that keeps the
+        # OLDIO and scribed-IO out2d products consistent.
+        if 'precipitation' in ds.variables:
+            pv = ds_out.createVariable('precipitationRate', 'f4',
+                                        ('time', 'nSCHISM_hgrid_node'))
+            pv[:] = ds.variables['precipitation'][:]
+            pv.units = 'kg m-2 s-1'
+            pv.long_name = 'precipitation rate'
+            pv.standard_name = 'precipitation_flux'
 
         # Coordinates and depth (from first schout only, or from schout if present)
         for coord in ['SCHISM_hgrid_node_x', 'SCHISM_hgrid_node_y']:

@@ -15,6 +15,7 @@ import os
 import sys
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 # The repo's nos-utils submodule carries nos_utils.post; prefer it over
@@ -30,7 +31,7 @@ _REPO_USH = Path(__file__).resolve().parents[3]
 _COMBINE = _REPO_USH / "schism_combine_outputs.py"
 
 
-def _write_oldio_schout(path: Path) -> None:
+def _write_oldio_schout(path: Path, with_precip: bool = False) -> None:
     """A stack shaped like combine_output11 output.
 
     Note the deliberate details: the OLDIO bottom-index spelling, a
@@ -38,6 +39,11 @@ def _write_oldio_schout(path: Path) -> None:
     TIME instead of the vector component), and 3D vars as
     (time, node, layers) -- the Fortran declares (nv, node, time), which
     is that order once netCDF reverses it.
+
+    ``with_precip`` adds 'precipitation' [kg/m/m/s], the OLDIO name
+    combine_output11 writes only when iof_hydro(12)=1 (stofs_3d_ak_ufs);
+    ATL/SECOFS run with the flag off, so most fixtures leave it out to
+    cover that the split must not require it.
     """
     with netCDF4.Dataset(path, "w") as ds:
         ds.createDimension("time", None)
@@ -50,6 +56,10 @@ def _write_oldio_schout(path: Path) -> None:
         tv.units = "seconds since 2026-07-22 06:00:00"
         tv[:] = [3600.0, 7200.0]
         ds.createVariable("elev", "f4", ("time", "nSCHISM_hgrid_node"))[:] = 0.5
+        if with_precip:
+            pv = ds.createVariable(
+                "precipitation", "f4", ("time", "nSCHISM_hgrid_node"))
+            pv[:] = 2.5e-5
         fn = ds.createVariable(
             "SCHISM_hgrid_face_nodes", "i4",
             ("nSCHISM_hgrid_face", "nMaxSCHISM_hgrid_face_nodes"),
@@ -127,3 +137,38 @@ def test_slab2d_publishes_from_a_coupled_stack(tmp_path):
     with netCDF4.Dataset(published[0]) as ds:
         # Inherited from the stack, not the --base-date argument.
         assert ds["time"].units == "seconds since 2026-07-22 06:00:00"
+
+
+def test_split_publishes_precipitation_when_present(tmp_path):
+    """stofs_3d_ak_ufs (iof_hydro(12)=1): schout's 'precipitation' must
+    land in out2d as 'precipitationRate' -- the name a scribed-IO run of
+    the same system would produce (schism_init.F90 out_name table, case
+    12 under iof_hydro) -- with mass-flux units and CF attrs, not get
+    dropped as an unmapped variable."""
+    _write_oldio_schout(tmp_path / "schout_1.nc", with_precip=True)
+    _split(tmp_path)
+
+    with netCDF4.Dataset(tmp_path / "out2d_1.nc") as ds:
+        assert "precipitationRate" in ds.variables
+        pv = ds["precipitationRate"]
+        assert np.allclose(pv[:], 2.5e-5)
+        assert pv.units == "kg m-2 s-1"
+        assert pv.standard_name == "precipitation_flux"
+        # Unrelated 2D variables are unaffected by the addition.
+        assert np.allclose(ds["elevation"][:], 0.5)
+
+
+def test_split_omits_precipitation_when_absent(tmp_path):
+    """ATL/SECOFS (iof_hydro(12)=0): schout has no 'precipitation' at
+    all. The split must skip it silently -- no KeyError, no empty/NaN
+    placeholder variable -- and every other out2d variable still comes
+    through untouched."""
+    _write_oldio_schout(tmp_path / "schout_1.nc", with_precip=False)
+    _split(tmp_path)
+
+    with netCDF4.Dataset(tmp_path / "out2d_1.nc") as ds:
+        assert "precipitationRate" not in ds.variables
+        assert "precipitation" not in ds.variables
+        assert np.allclose(ds["elevation"][:], 0.5)
+        assert "SCHISM_hgrid_face_nodes" in ds.variables
+        assert "bottom_index_node" in ds.variables
