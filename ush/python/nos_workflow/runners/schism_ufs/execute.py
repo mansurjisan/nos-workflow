@@ -21,6 +21,10 @@ _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.c
 # from $WAV_MESH rather than hardcoded here.
 _REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
 _HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
+_PETLIST_BOUNDS_RE = re.compile(
+    r"^(MED|ATM|OCN|WAV)_petlist_bounds:\s*(\d+)\s+(\d+)\s*$", re.MULTILINE,
+)
+_RUNSEQ_INTERVAL_RE = re.compile(r"(?m)^@(\d+)\s*$")
 
 
 def _hotstart_step(path: Path) -> int:
@@ -35,6 +39,10 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     Returns 0 on success, non-zero only if mpiexec or config validation fails.
     """
     rc = _validate_configs(ctx, phase)
+    if rc != 0:
+        return rc
+
+    rc = _validate_wave_ufs_configure(ctx, phase)
     if rc != 0:
         return rc
 
@@ -101,6 +109,144 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
     logger.info(
         "execute: validated %d UFS configs in %s",
         len(required), ctx.data,
+    )
+    return 0
+
+
+def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
+    """Sanity-check the staged 4-component ufs.configure before MPI launch.
+
+    Wave systems only -- rc=0 immediately otherwise.
+
+    The 4-component (DATM+SCHISM+WW3) PET-bounds/runSeq-interval patch
+    requires a nos-utils pin that actually implements it
+    (``ufs_wav_tasks``/``ufs_coupling_interval``, nos-utils
+    feature/ufs-config-4component). A STALE pin silently falls back to
+    the old 3-component patcher: it widens OCN across the WAV PETs it
+    doesn't know about (an OCN/WAV overlap) and reverts the runSeq
+    interval to ``@<model_dt>``, dropping the coarser wave coupling
+    window -- exit code 0, at most one INFO line, and the model then runs
+    3600 ranks on a corrupted PET layout. This check catches that class
+    of bug here, before the MPI launch, rather than at a WW3/CDEPS abort
+    deep into the coupled init.
+
+    Checks, against the file nos-utils actually staged to $DATA (NOT the
+    fix-file template -- a stale pin can still leave 4 lines present, just
+    wrongly bounded):
+      - all four ``*_petlist_bounds`` lines are present;
+      - ATM/OCN/WAV are contiguous, non-overlapping, and together cover
+        ``0..total_tasks-1`` (MED is NOT part of this partition by
+        design -- it spans the FULL PET range as the mediator, see
+        ``fix/secofs_ufs_ww3/ufs.configure`` -- so MED's span is checked
+        separately below rather than folded into the non-overlap check);
+      - MED's span is exactly ``0..total_tasks-1``;
+      - the runSeq ``@<interval>`` line matches ``$COUPLING_INTERVAL``
+        (``ufs_coastal.coupling_interval`` from the YAML).
+    """
+    del phase
+    if not _is_wave_enabled():
+        return 0
+
+    target = ctx.data / "ufs.configure"
+    if not target.is_file() or target.stat().st_size == 0:
+        logger.error(
+            "execute: %s missing or empty; cannot validate the wave PET "
+            "layout", target,
+        )
+        return 1
+    content = target.read_text()
+
+    bounds = {
+        comp: (int(lo), int(hi))
+        for comp, lo, hi in _PETLIST_BOUNDS_RE.findall(content)
+    }
+    missing = [c for c in ("MED", "ATM", "OCN", "WAV") if c not in bounds]
+    if missing:
+        logger.error(
+            "execute: staged ufs.configure is missing *_petlist_bounds "
+            "for %s (found: %s). A wave system requires all four "
+            "components. Likely cause: the ush/python/nos-utils pin "
+            "predates ufs_wav_tasks support and silently applied the "
+            "3-component patcher -- check the submodule pin.",
+            missing, sorted(bounds),
+        )
+        return 1
+
+    total_env = os.environ.get("TOTAL_TASKS") or os.environ.get("NPROCS")
+    try:
+        total_tasks = int(total_env)
+    except (TypeError, ValueError):
+        logger.error(
+            "execute: TOTAL_TASKS/NPROCS not set or non-numeric (%r); "
+            "cannot validate the wave PET layout", total_env,
+        )
+        return 1
+
+    expected_lo = 0
+    for comp in ("ATM", "OCN", "WAV"):
+        lo, hi = bounds[comp]
+        if lo != expected_lo or hi < lo:
+            logger.error(
+                "execute: wave PET layout is not contiguous/non-overlapping "
+                "-- %s_petlist_bounds is %d %d, expected to start at %d. "
+                "Likely cause: a stale ush/python/nos-utils pin (the "
+                "3-component PET patcher widened OCN across WAV's "
+                "untouched PETs). Full bounds: %s",
+                comp, lo, hi, expected_lo, bounds,
+            )
+            return 1
+        expected_lo = hi + 1
+
+    if expected_lo != total_tasks:
+        logger.error(
+            "execute: wave PET layout covers 0..%d but total_tasks=%d "
+            "(ATM+OCN+WAV must cover 0..total_tasks-1 exactly). Likely "
+            "cause: a stale ush/python/nos-utils pin, or a "
+            "datm/schism/wav/total_tasks mismatch in the YAML. Full "
+            "bounds: %s",
+            expected_lo - 1, total_tasks, bounds,
+        )
+        return 1
+
+    med_lo, med_hi = bounds["MED"]
+    if (med_lo, med_hi) != (0, total_tasks - 1):
+        logger.error(
+            "execute: MED_petlist_bounds is %d %d, expected 0 %d (the "
+            "mediator spans the full PET range in a wave-coupled "
+            "layout). Likely cause: a stale ush/python/nos-utils pin "
+            "applied the 3-component patch (MED confined to the DATM "
+            "PETs) -- check the submodule pin.",
+            med_lo, med_hi, total_tasks - 1,
+        )
+        return 1
+
+    interval_matches = _RUNSEQ_INTERVAL_RE.findall(content)
+    configured_interval_env = os.environ.get("COUPLING_INTERVAL")
+    if configured_interval_env:
+        try:
+            expected_interval = int(configured_interval_env)
+        except ValueError:
+            expected_interval = None
+        if expected_interval and (
+            len(interval_matches) != 1
+            or int(interval_matches[0]) != expected_interval
+        ):
+            logger.error(
+                "execute: runSeq coupling interval in ufs.configure is "
+                "%s, expected @%d ($COUPLING_INTERVAL / "
+                "ufs_coastal.coupling_interval). Likely cause: a stale "
+                "ush/python/nos-utils pin reverted the interval to "
+                "@<model_dt> (the 3-component patcher doesn't know about "
+                "ufs_coupling_interval) -- check the submodule pin.",
+                interval_matches, expected_interval,
+            )
+            return 1
+
+    logger.info(
+        "execute: validated 4-component wave PET layout (ATM=%s OCN=%s "
+        "WAV=%s MED=%s), runSeq interval=@%s",
+        bounds["ATM"], bounds["OCN"], bounds["WAV"], bounds["MED"],
+        interval_matches[0] if interval_matches else "?",
     )
     return 0
 

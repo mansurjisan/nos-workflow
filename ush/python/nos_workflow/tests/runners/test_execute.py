@@ -166,6 +166,159 @@ def test_validate_configs_non_wave_system_unaffected_by_wave_configs(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _validate_wave_ufs_configure
+# ---------------------------------------------------------------------------
+
+
+_WAVE_UFS_CONFIGURE_VALID = """\
+MED_petlist_bounds:             0 3599
+ATM_petlist_bounds:             0 119
+OCN_petlist_bounds:             120 2913
+WAV_petlist_bounds:             2914 3599
+
+runSeq::
+@360
+  ATM
+  OCN
+  WAV
+@
+::
+"""
+
+# The exact corruption the review describes: a stale nos-utils pin falls
+# back to the 3-component PET patcher, which widens OCN across the
+# untouched WAV PETs (an overlap) and reverts the runSeq interval to
+# @<model_dt> (120) instead of the configured @360.
+_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION = """\
+MED_petlist_bounds:             0 119
+ATM_petlist_bounds:             0 119
+OCN_petlist_bounds:             120 3599
+WAV_petlist_bounds:             2914 3599
+
+runSeq::
+@120
+  ATM
+  OCN
+  WAV
+@
+::
+"""
+
+
+def test_validate_wave_ufs_configure_non_wave_is_noop(tmp_path, monkeypatch):
+    """Non-wave systems: rc=0 immediately -- no ufs.configure needed."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_passes_on_valid_layout(tmp_path, monkeypatch):
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_VALID)
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_rejects_stale_pin_corruption(
+    tmp_path, monkeypatch, caplog,
+):
+    """The stale-pin corruption (OCN/WAV overlap) must be rejected before
+    mpiexec, not discovered via a CDEPS/WW3 abort 3600 ranks in."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any(
+        "not contiguous" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_validate_wave_ufs_configure_rejects_missing_wav_line(
+    tmp_path, monkeypatch, caplog,
+):
+    """A fix file predating the wave component (only 3 *_petlist_bounds
+    lines survived staging) must be rejected outright."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    ctx = _make_ctx(tmp_path)
+    three_component = _WAVE_UFS_CONFIGURE_VALID.replace(
+        "WAV_petlist_bounds:             2914 3599\n", "",
+    )
+    (ctx.data / "ufs.configure").write_text(three_component)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any("missing" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_validate_wave_ufs_configure_rejects_wrong_interval(
+    tmp_path, monkeypatch, caplog,
+):
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    wrong_interval = _WAVE_UFS_CONFIGURE_VALID.replace("@360", "@120")
+    (ctx.data / "ufs.configure").write_text(wrong_interval)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any(
+        "coupling interval" in r.getMessage().lower() for r in caplog.records
+    )
+
+
+def test_validate_wave_ufs_configure_rejects_med_not_full_span(
+    tmp_path, monkeypatch, caplog,
+):
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    ctx = _make_ctx(tmp_path)
+    bad_med = _WAVE_UFS_CONFIGURE_VALID.replace(
+        "MED_petlist_bounds:             0 3599",
+        "MED_petlist_bounds:             0 119",
+    )
+    (ctx.data / "ufs.configure").write_text(bad_med)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any("MED_petlist_bounds" in r.getMessage() for r in caplog.records)
+
+
+def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
+    """End-to-end: run_python must refuse to launch mpiexec when the
+    staged ufs.configure has the stale-pin corruption."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # _maybe_regenerate_mesh
 # ---------------------------------------------------------------------------
 
