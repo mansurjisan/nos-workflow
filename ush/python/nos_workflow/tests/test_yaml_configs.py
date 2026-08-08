@@ -451,5 +451,30 @@ class TestDomainBounds:
                     )
 
 
+class TestWaveFixFiles:
+    """``fix/secofs_ufs_ww3/`` static content that isn't per-cycle patched."""
+
+    def test_ww3_shel_point_output_disabled(self) -> None:
+        """``date%point%stride`` must be '0' (point output OFF): no
+        SECOFS wave-station list exists yet, and WW3 opens
+        ``type%point%file`` unconditionally whenever the stride is
+        non-zero -- a non-existent ``ww3_points.list`` then hard-aborts
+        WW3 (EXTCDE 1104) after the allocation is already up. The
+        ``type%point%file`` line itself may stay (harmless -- never
+        opened while the stride is 0), but the stride is the load-bearing
+        value and must not silently flip back to non-zero.
+        """
+        repo_root = Path(__file__).resolve().parents[4]
+        ww3_shel = repo_root / "fix" / "secofs_ufs_ww3" / "ww3_shel.nml"
+        if not ww3_shel.is_file():
+            pytest.skip("fix/secofs_ufs_ww3/ww3_shel.nml not found")
+
+        text = ww3_shel.read_text()
+        assert "date%point%stride   = '0'" in text
+        # Nothing patches the point stride at run time -- confirm it isn't
+        # a @[...]-style placeholder either.
+        assert "@[" not in text.split("date%point%stride")[1].split("\n")[0]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
