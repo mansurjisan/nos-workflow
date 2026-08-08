@@ -110,6 +110,61 @@ def test_validate_configs_fails_on_empty_config(tmp_path):
     assert rc == 1
 
 
+def test_validate_configs_wave_requires_ww3_files(tmp_path, monkeypatch, caplog):
+    """WAV_TASKS>0: ww3_shel.nml + mod_def.ww3 are ALSO required -- a
+    non-wave system never hits this branch (see the next test)."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    caplog.set_level(
+        logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute",
+    )
+
+    rc = execute._validate_configs(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "ww3_shel.nml" in msg
+    assert "mod_def.ww3" in msg
+
+
+def test_validate_configs_wave_requires_wav_mesh_when_set(tmp_path, monkeypatch):
+    """WAV_MESH names a required file too, dynamically."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # mesh still missing
+
+    (ctx.data / "secofs_ufs.mesh_wav.nc").write_bytes(b"mesh\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
+def test_validate_configs_wave_pass_with_all_files_present(tmp_path, monkeypatch):
+    """All 4 base + 2 wave configs present -> rc=0."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.delenv("WAV_MESH", raising=False)
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    assert execute._validate_configs(ctx, "nowcast") == 0
+
+
+def test_validate_configs_non_wave_system_unaffected_by_wave_configs(tmp_path):
+    """WAV_TASKS unset: ww3_shel.nml/mod_def.ww3 are NOT required, even if
+    absent -- the primary safety property for non-wave systems."""
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    assert execute._validate_configs(ctx, "nowcast") == 0
+
+
 # ---------------------------------------------------------------------------
 # _maybe_regenerate_mesh
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional
 
 from . import _dateutils
 from .context import SchismRunContext
+from .stage_files import _is_wave_enabled
 
 if TYPE_CHECKING:
     from ...env import NCOEnv
@@ -352,6 +353,22 @@ def compute_paths(
         rst_file_for_ctx = os.environ.get("RST_FILE") or None
         ini_file_for_ctx = None
 
+    # WW3 + CMEPS mediator restarts (wave-coupled systems only). Named on
+    # the CMEPS case_name convention (ufs.cpld.<comp>.r.<stamp>.nc), not
+    # PREFIXNOS -- see _dateutils.cmeps_restart_stamp. Left None for every
+    # non-wave system so to_shell_env() never exports these vars there.
+    wav_rst_out_nowcast = wav_rst_out_forecast = None
+    med_rst_out_nowcast = med_rst_out_forecast = None
+    if _is_wave_enabled():
+        if time_nowcastend:
+            stamp = _dateutils.cmeps_restart_stamp(time_nowcastend)
+            wav_rst_out_nowcast = f"ufs.cpld.ww3.r.{stamp}.nc"
+            med_rst_out_nowcast = f"ufs.cpld.cpl.r.{stamp}.nc"
+        if time_forecastend:
+            stamp = _dateutils.cmeps_restart_stamp(time_forecastend)
+            wav_rst_out_forecast = f"ufs.cpld.ww3.r.{stamp}.nc"
+            med_rst_out_forecast = f"ufs.cpld.cpl.r.{stamp}.nc"
+
     return SchismRunContext(
         comout=env.comout,
         data=env.data,
@@ -373,6 +390,10 @@ def compute_paths(
         rst_out_forecast=filenames["RST_OUT_FORECAST"],
         ini_file=ini_file_for_ctx,
         rst_file=rst_file_for_ctx,
+        wav_rst_out_nowcast=wav_rst_out_nowcast,
+        wav_rst_out_forecast=wav_rst_out_forecast,
+        med_rst_out_nowcast=med_rst_out_nowcast,
+        med_rst_out_forecast=med_rst_out_forecast,
         base_date=base_date,
         time_hotstart=time_hotstart,
         time_nowcastend=time_nowcastend,

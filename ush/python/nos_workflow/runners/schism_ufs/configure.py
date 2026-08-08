@@ -6,15 +6,20 @@ import os
 from pathlib import Path
 from typing import Tuple
 
-from . import patches
+from . import _dateutils, patches
 from .context import SchismRunContext
-from .stage_files import _is_ufs
+from .stage_files import _is_ufs, _is_wave_enabled
 
 logger = logging.getLogger(__name__)
 
 
 _DEFAULT_LEN_NOWCAST_HOURS = 6
 _DEFAULT_LEN_FORECAST_HOURS = 48
+
+# ww3_shel.nml's DATE%RESTART stride (seconds) for the forecast leg: no
+# further hot-start consumer inside this cycle, so a stride far beyond
+# FHMAX means no extra restart write occurs during the leg.
+_WAVE_FORECAST_RESTART_SENTINEL_SEC = 999999
 
 
 def _resolve_phase_anchors(
@@ -250,9 +255,20 @@ def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
 
     nhours, sim_start = _resolve_phase_anchors(ctx, phase)
     sim_yyyy, _sim_mm, _sim_dd, _sim_hh = _split_yyyymmddhh(sim_start)
-    # UFS-Coastal NUOPC always uses startup-mode init (we always reset
-    # the clock via ihot=1, so warm-restart mode would mis-anchor).
-    start_type = "startup"
+    # UFS-Coastal NUOPC always resets the clock via ihot=1 at the start of
+    # nowcast, so 'startup' is correct there for every system -- and for
+    # every phase of every non-wave system (SCHISM/DATM/MED have nothing
+    # to carry across the nowcast/forecast boundary; each leg is its own
+    # NUOPC run). A wave system's forecast leg is different: SCHISM still
+    # hotstarts (ihot=1) and the NUOPC clock still resets, but WW3 and the
+    # CMEPS mediator cycle via their own CMEPS restarts
+    # (ufs.cpld.{ww3,cpl}.r.*.nc + rpointer.cpl) written at the end of
+    # THIS cycle's nowcast leg -- forecast must 'continue' from that state
+    # rather than cold-start the wave spectrum and mediator fields.
+    if _is_wave_enabled() and phase == "forecast":
+        start_type = "continue"
+    else:
+        start_type = "startup"
 
     n = patches.patch_ufs_configure(
         target,
@@ -270,11 +286,63 @@ def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
     return n
 
 
+def patch_ww3_shel(ctx: SchismRunContext, phase: str) -> int:
+    """Patch $DATA/ww3_shel.nml with phase-appropriate start/stop and restart cadence.
+
+    Wave systems only -- a no-op (rc=0) when ww3_shel.nml wasn't staged
+    (non-wave systems never have one; stage_wave_configs is itself gated
+    on the same wave-enabled predicate this reuses ``_resolve_phase_anchors``
+    from).
+
+    - domain%start / date%{field,point,restart}%start = this leg's start.
+    - domain%stop / date%{field,point}%stop = this leg's end.
+    - date%restart%stride: nowcast writes exactly one restart at leg end
+      (mirrors SCHISM's own hotstart handoff -- the forecast leg reads it
+      back via start_type=continue, see patch_ufs_configure); forecast has
+      no further hot-start consumer inside this cycle, so its stride is a
+      sentinel far beyond FHMAX to suppress any extra restart write.
+    """
+    target = ctx.data / "ww3_shel.nml"
+    if not target.is_file() or target.stat().st_size == 0:
+        logger.info(
+            "patch_ww3_shel: %s missing or empty; skipping", target,
+        )
+        return 0
+
+    nhours, sim_start = _resolve_phase_anchors(ctx, phase)
+    stop = _dateutils.ndate(nhours, sim_start)
+
+    y0, m0, d0, h0 = _split_yyyymmddhh(sim_start)
+    y1, m1, d1, h1 = _split_yyyymmddhh(stop)
+    cycle_start = f"{y0}{m0}{d0} {h0}0000"
+    cycle_stop = f"{y1}{m1}{d1} {h1}0000"
+
+    if phase == "nowcast":
+        restart_stride = nhours * 3600
+    else:
+        restart_stride = _WAVE_FORECAST_RESTART_SENTINEL_SEC
+
+    n = patches.substitute_placeholders(
+        target,
+        {
+            "@[WW3_CYCLE_START]": cycle_start,
+            "@[WW3_CYCLE_STOP]": cycle_stop,
+            "@[WW3_RESTART_STRIDE_SEC]": str(restart_stride),
+        },
+    )
+    logger.info(
+        "  Patched ww3_shel.nml: start=%s, stop=%s, restart_stride=%ss",
+        cycle_start, cycle_stop, restart_stride,
+    )
+    return n
+
+
 __all__ = [
     "patch_param_nml",
     "patch_datm_in",
     "patch_model_configure",
     "patch_ufs_configure",
+    "patch_ww3_shel",
     "_resolve_phase_anchors",
     "_split_yyyymmddhh",
     "_read_datm_forcing_dims",

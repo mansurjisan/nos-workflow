@@ -21,6 +21,22 @@ def _is_ufs() -> bool:
     return os.environ.get("USE_DATM", "true").strip().lower() != "false"
 
 
+def _is_wave_enabled() -> bool:
+    """True when this system couples WW3 (``ufs_coastal.wav_tasks`` > 0).
+
+    ``WAV_TASKS`` is exported from ``ufs_coastal.wav_tasks`` via
+    ``shell_mappings`` only on wave-coupled system YAMLs (e.g.
+    secofs_ufs_ww3); it is unset (or 0) on every other system, so this is
+    False everywhere except an actual wave-coupled run. All wave-specific
+    staging/patching/validation in this package is gated on this single
+    predicate so non-wave systems stay byte-identical.
+    """
+    try:
+        return int(os.environ.get("WAV_TASKS", "0") or "0") > 0
+    except (TypeError, ValueError):
+        return False
+
+
 _UFS_CONFIG_FILES: tuple = (
     "model_configure",
     "datm_in",
@@ -452,6 +468,79 @@ def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:
     return 1
 
 
+def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
+    """Stage WW3 runtime inputs for a wave-coupled system.
+
+    No-op unless the system couples WW3 (:func:`_is_wave_enabled`) -- this
+    keeps every non-wave system's staging behavior byte-identical.
+
+    Stages, all from $FIXofs (falling back to $COMOUT for the two files
+    that need per-cycle templating):
+      - mod_def.ww3    -- the pre-processed WW3 grid, staged to the bare
+                           name WW3 reads from the run directory.
+      - the WAV ESMF mesh (``$WAV_MESH``) -- name preserved verbatim; it
+                           must match the ``mesh_wav`` attribute CMEPS
+                           reads out of ufs.configure.
+      - ww3_shel.nml   -- the WW3 shell control namelist; staged as-is
+                           (with @[VAR] placeholders) and patched in place
+                           by configure.patch_ww3_shel.
+      - the PDLIB solver namelist (``$WAV_PDLIB_NML``), if configured --
+                           staged defensively in case ww3_shel/ww3_multi
+                           re-reads it directly at run time (not just
+                           during offline ww3_grid mesh preprocessing).
+
+    Also stages the per-cycle boundary file nest.ww3 from $COMOUT only
+    (there is no FIXofs fallback for a per-cycle artifact) when present.
+
+    Returns the number of files staged.
+    """
+    del phase
+
+    if not _is_wave_enabled():
+        return 0
+
+    staged = 0
+    prefix = ctx.prefixnos or ""
+
+    if prefix and ctx.fixofs is not None:
+        src = ctx.fixofs / f"{prefix}.mod_def.ww3"
+        if _copy_if_exists(src, ctx.data / "mod_def.ww3", label="mod_def.ww3"):
+            staged += 1
+
+    wav_mesh = os.environ.get("WAV_MESH") or (
+        f"{prefix}.mesh_wav.nc" if prefix else ""
+    )
+    if wav_mesh and ctx.fixofs is not None:
+        src = ctx.fixofs / wav_mesh
+        if _copy_if_exists(src, ctx.data / wav_mesh, label=wav_mesh):
+            staged += 1
+
+    run_cycle_prefix = f"{ctx.run}.{ctx.cycle}"
+    wave_configs = ["ww3_shel.nml"]
+    wav_pdlib_nml = os.environ.get("WAV_PDLIB_NML") or ""
+    if wav_pdlib_nml:
+        wave_configs.append(wav_pdlib_nml)
+
+    for name in wave_configs:
+        dst = ctx.data / name
+        copied = False
+        if ctx.fixofs is not None:
+            src_fix = ctx.fixofs / name
+            if _copy_if_exists(src_fix, dst, label=name):
+                staged += 1
+                copied = True
+        if not copied:
+            src_com = ctx.comout / f"{run_cycle_prefix}.{name}"
+            if _copy_if_exists(src_com, dst, label=name):
+                staged += 1
+
+    nest_src = ctx.comout / f"{run_cycle_prefix}.nest.ww3"
+    if _copy_if_exists(nest_src, ctx.data / "nest.ww3", label="nest.ww3"):
+        staged += 1
+
+    return staged
+
+
 def copy_hgrid_to_outputs(ctx: SchismRunContext, phase: str) -> int:
     """Copy $DATA/hgrid.gr3 to $DATA/outputs/hgrid.gr3.
 
@@ -596,6 +685,18 @@ def collect_staged_inputs(
     collector.add("tidal", "TIDAL", _present_in_data(ctx, _TIDAL_DEST))
     collector.add("static", "FIX", _present_in_data(ctx, _FIX_DEST))
 
+    if _is_wave_enabled():
+        wav_mesh = os.environ.get("WAV_MESH") or (
+            f"{ctx.prefixnos}.mesh_wav.nc" if ctx.prefixnos else ""
+        )
+        wav_pdlib_nml = os.environ.get("WAV_PDLIB_NML") or ""
+        wave_dest = ["mod_def.ww3", "ww3_shel.nml", "nest.ww3"]
+        if wav_mesh:
+            wave_dest.append(wav_mesh)
+        if wav_pdlib_nml:
+            wave_dest.append(wav_pdlib_nml)
+        collector.add("wave", "WW3", _present_in_data(ctx, wave_dest))
+
     if ufs:
         collector.add(
             "static", "UFS_CONFIG", _present_in_data(ctx, _UFS_CONFIG_DEST),
@@ -636,6 +737,8 @@ def run_python(ctx: SchismRunContext, phase: str):
     else:
         _stage_standalone_param_nml(ctx)
 
+    stage_wave_configs(ctx, phase)
+
     stage_executable(ctx, phase)
 
     # SCHISM's NUOPC cap inquires for the literal "param.nml" at
@@ -664,6 +767,8 @@ def run_python(ctx: SchismRunContext, phase: str):
     configure.patch_param_nml(ctx, phase)
     if ufs:
         configure.patch_datm_in(ctx, phase)
+    if _is_wave_enabled():
+        configure.patch_ww3_shel(ctx, phase)
 
     stage_schism_bare_names(ctx, phase)
 
@@ -723,7 +828,9 @@ def run_python(ctx: SchismRunContext, phase: str):
 
 __all__ = [
     "_is_ufs",
+    "_is_wave_enabled",
     "stage_ufs_configs",
+    "stage_wave_configs",
     "stage_executable",
     "stage_schism_bare_names",
     "stage_hotstart",

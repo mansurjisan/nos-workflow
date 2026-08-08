@@ -264,6 +264,69 @@ def test_compute_paths_bctides_split_uses_same_filename(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Wave restart filenames (wave-coupled systems only; gated on WAV_TASKS)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_wave_restart_filenames_none_without_wav_tasks(
+    tmp_path, monkeypatch,
+):
+    """Non-wave systems (WAV_TASKS unset): all four wave restart fields
+    stay None -- they never surface in to_shell_env() either."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.wav_rst_out_nowcast is None
+    assert ctx.wav_rst_out_forecast is None
+    assert ctx.med_rst_out_nowcast is None
+    assert ctx.med_rst_out_forecast is None
+    out = ctx.to_shell_env()
+    for key in ("WAV_RST_OUT_NOWCAST", "WAV_RST_OUT_FORECAST",
+                "MED_RST_OUT_NOWCAST", "MED_RST_OUT_FORECAST"):
+        assert key not in out
+
+
+def test_compute_paths_wave_restart_filenames_cmeps_stamp(tmp_path, monkeypatch):
+    """WAV_TASKS>0: wav/med restart names follow the CMEPS case_name
+    convention (ufs.cpld.<comp>.r.<YYYY-MM-DD-SSSSS>.nc), keyed on
+    time_nowcastend / time_forecastend -- NOT on PREFIXNOS or the
+    ${prefix}.${cycle}.${pdy1} pattern every other filename field uses.
+    """
+    monkeypatch.setenv("WAV_TASKS", "686")
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("LEN_NOWCAST", "6")
+    monkeypatch.setenv("LEN_FORECAST", "48")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    # time_nowcastend = 2026051200 -> 2026-05-12-00000
+    assert ctx.wav_rst_out_nowcast == "ufs.cpld.ww3.r.2026-05-12-00000.nc"
+    assert ctx.med_rst_out_nowcast == "ufs.cpld.cpl.r.2026-05-12-00000.nc"
+    # time_forecastend = 2026051400 -> 2026-05-14-00000
+    assert ctx.wav_rst_out_forecast == "ufs.cpld.ww3.r.2026-05-14-00000.nc"
+    assert ctx.med_rst_out_forecast == "ufs.cpld.cpl.r.2026-05-14-00000.nc"
+
+
+def test_compute_paths_wave_restart_filenames_reach_shell_env(tmp_path, monkeypatch):
+    """The four wave restart fields round-trip through to_shell_env()."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+    out = ctx.to_shell_env()
+
+    assert out["WAV_RST_OUT_NOWCAST"] == ctx.wav_rst_out_nowcast
+    assert out["MED_RST_OUT_NOWCAST"] == ctx.med_rst_out_nowcast
+    assert out["WAV_RST_OUT_FORECAST"] == ctx.wav_rst_out_forecast
+    assert out["MED_RST_OUT_FORECAST"] == ctx.med_rst_out_forecast
+
+
+# ---------------------------------------------------------------------------
 # Fix-file staging
 # ---------------------------------------------------------------------------
 

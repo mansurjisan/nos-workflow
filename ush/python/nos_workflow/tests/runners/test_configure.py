@@ -25,6 +25,7 @@ from nos_workflow.runners.schism_ufs.configure import (
     patch_model_configure,
     patch_param_nml,
     patch_ufs_configure,
+    patch_ww3_shel,
 )
 from nos_workflow.runners.schism_ufs.context import SchismRunContext
 
@@ -113,6 +114,21 @@ ATM_attributes::
   orb_iyear = 2020
   orb_iyear_align = 2020
 ::
+"""
+
+
+_WW3_SHEL_TEMPLATE = """\
+&domain_nml
+  domain%start = '@[WW3_CYCLE_START]'
+  domain%stop  = '@[WW3_CYCLE_STOP]'
+/
+&output_date_nml
+  date%field%start    = '@[WW3_CYCLE_START]'
+  date%field%stop     = '@[WW3_CYCLE_STOP]'
+  date%restart%start  = '@[WW3_CYCLE_START]'
+  date%restart%stride = '@[WW3_RESTART_STRIDE_SEC]'
+  date%restart%stop   = '@[WW3_CYCLE_STOP]'
+/
 """
 
 
@@ -492,3 +508,103 @@ def test_patch_ufs_configure_orb_iyear_align_matches_orb_iyear(tmp_path):
     text = (ctx.data / "ufs.configure").read_text()
     assert "orb_iyear = 2030" in text
     assert "orb_iyear_align = 2030" in text
+
+
+# ---------------------------------------------------------------------------
+# patch_ufs_configure -- phase-aware start_type (wave systems only)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_ufs_configure_non_wave_always_startup(tmp_path, monkeypatch):
+    """Non-wave systems (WAV_TASKS unset): start_type is 'startup' for
+    BOTH phases -- the exact pre-existing behavior, unchanged."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    for phase in ("nowcast", "forecast"):
+        ctx = _make_ctx(tmp_path, phase=phase)
+        target = ctx.data / "ufs.configure"
+        target.write_text(_UFS_CONFIGURE_TEMPLATE)
+        patch_ufs_configure(ctx, phase)
+        assert "start_type = startup" in target.read_text(), f"phase={phase}"
+
+
+def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
+    """Wave system, nowcast leg: still 'startup' (SCHISM/DATM/MED all
+    cold-init the NUOPC clock at the start of every nowcast)."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    target = ctx.data / "ufs.configure"
+    target.write_text(_UFS_CONFIGURE_TEMPLATE)
+
+    patch_ufs_configure(ctx, "nowcast")
+
+    assert "start_type = startup" in target.read_text()
+
+
+def test_patch_ufs_configure_wave_forecast_continues(tmp_path, monkeypatch):
+    """Wave system, forecast leg: 'continue' -- WW3 + the CMEPS mediator
+    pick up the CMEPS restart written at the end of this cycle's nowcast
+    leg, instead of cold-starting the wave spectrum/mediator fields."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_ctx(tmp_path, phase="forecast")
+    target = ctx.data / "ufs.configure"
+    target.write_text(_UFS_CONFIGURE_TEMPLATE)
+
+    patch_ufs_configure(ctx, "forecast")
+
+    assert "start_type = continue" in target.read_text()
+
+
+# ---------------------------------------------------------------------------
+# patch_ww3_shel (wave systems only)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_ww3_shel_nowcast_start_stop_and_restart_stride(tmp_path):
+    """nowcast: start=time_hotstart, stop=time_hotstart+LEN_NOWCAST,
+    restart stride = LEN_NOWCAST*3600 (one restart, at leg end)."""
+    ctx = _make_ctx(tmp_path, time_hotstart="2026051200",
+                     len_nowcast="6")
+    target = ctx.data / "ww3_shel.nml"
+    target.write_text(_WW3_SHEL_TEMPLATE)
+
+    n = patch_ww3_shel(ctx, "nowcast")
+
+    text = target.read_text()
+    assert "@[WW3_CYCLE_START]" not in text
+    assert "@[WW3_CYCLE_STOP]" not in text
+    assert "@[WW3_RESTART_STRIDE_SEC]" not in text
+    assert "domain%start = '20260512 000000'" in text
+    assert "domain%stop  = '20260512 060000'" in text
+    assert "date%restart%stride = '21600'" in text
+    assert n > 0
+
+
+def test_patch_ww3_shel_forecast_uses_sentinel_restart_stride(tmp_path):
+    """forecast: stop=time_nowcastend+LEN_FORECAST, restart stride is the
+    far-beyond-FHMAX sentinel (no further hot-start consumer this cycle)."""
+    ctx = _make_ctx(tmp_path, time_nowcastend="2026051206",
+                     len_forecast="48")
+    target = ctx.data / "ww3_shel.nml"
+    target.write_text(_WW3_SHEL_TEMPLATE)
+
+    patch_ww3_shel(ctx, "forecast")
+
+    text = target.read_text()
+    assert "domain%start = '20260512 060000'" in text
+    assert "domain%stop  = '20260514 060000'" in text
+    assert "date%restart%stride = '999999'" in text
+
+
+def test_patch_ww3_shel_missing_file_returns_zero(tmp_path):
+    """No ww3_shel.nml (non-wave system, or not yet staged) -> rc 0."""
+    ctx = _make_ctx(tmp_path)
+    n = patch_ww3_shel(ctx, "nowcast")
+    assert n == 0
+
+
+def test_patch_ww3_shel_empty_file_returns_zero(tmp_path):
+    """Empty ww3_shel.nml -> rc 0, no patches applied."""
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ww3_shel.nml").write_text("")
+    n = patch_ww3_shel(ctx, "nowcast")
+    assert n == 0

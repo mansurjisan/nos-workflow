@@ -10,12 +10,16 @@ from pathlib import Path
 from ...bash_compat import run_shell_function
 from . import combine_hotstart, mesh, normalize_fields
 from .context import SchismRunContext
-from .stage_files import _is_ufs
+from .stage_files import _is_ufs, _is_wave_enabled
 
 logger = logging.getLogger(__name__)
 
 
 _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
+# Wave systems only (see _is_wave_enabled) -- appended onto _REQUIRED_CONFIGS.
+# The WAV ESMF mesh name is dynamic (ufs_coastal.wav_mesh), so it's added
+# from $WAV_MESH rather than hardcoded here.
+_REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
 _HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
 
 
@@ -77,8 +81,14 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
     del phase
     if not _is_ufs():
         return 0
+    required = _REQUIRED_CONFIGS
+    if _is_wave_enabled():
+        required = required + _REQUIRED_WAVE_CONFIGS
+        wav_mesh = os.environ.get("WAV_MESH")
+        if wav_mesh:
+            required = required + (wav_mesh,)
     missing = []
-    for name in _REQUIRED_CONFIGS:
+    for name in required:
         f = ctx.data / name
         if not f.is_file() or f.stat().st_size == 0:
             missing.append(name)
@@ -90,7 +100,7 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
         return 1
     logger.info(
         "execute: validated %d UFS configs in %s",
-        len(_REQUIRED_CONFIGS), ctx.data,
+        len(required), ctx.data,
     )
     return 0
 
