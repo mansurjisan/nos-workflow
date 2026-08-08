@@ -734,6 +734,46 @@ class TestExecutionMode:
             assert _val(ufs_out, shared) == _val(standalone_out, shared), shared
 
 
+class TestWaveShellMappings:
+    """secofs_ufs_ww3's additive shell_mappings (WAV_TASKS/WAV_MESH/
+    WAV_PDLIB_NML) reach the shell export -- the generic dot-path
+    ``variable_mappings`` loop needs no wave-specific code, but this
+    pins that the YAML wiring itself is correct end to end."""
+
+    _SECOFS_WW3_YAML = (
+        Path(__file__).parent.parent.parent.parent.parent
+        / "parm" / "systems" / "secofs_ufs_ww3.yaml"
+    )
+
+    def test_wave_vars_exported(self) -> None:
+        if not self._SECOFS_WW3_YAML.exists():
+            pytest.skip("secofs_ufs_ww3.yaml not found")
+        output = export_for_shell(self._SECOFS_WW3_YAML, framework="comf")
+        assert "export WAV_TASKS=686" in output
+        assert "export WAV_MESH=secofs_ufs.mesh_wav.nc" in output
+        assert "export WAV_PDLIB_NML=secofs_ufs_ww3.namelists_pdlib.nml" in output
+        assert "export TOTAL_TASKS=3600" in output
+        assert "export NPROCS=3600" in output
+        assert "export PREFIXNOS=secofs_ufs" in output
+        assert "export RUNTIME_CTL=secofs_ufs_ww3.param.nml" in output
+        assert "export PPN=120" in output
+
+    def test_non_wave_secofs_ufs_has_no_wave_vars(self) -> None:
+        """The base secofs_ufs.yaml must NOT pick up WAV_TASKS/WAV_MESH --
+        proves the wave shell_mappings are additive-only in the child
+        yaml, not leaked back into the parent."""
+        secofs_ufs_yaml = (
+            Path(__file__).parent.parent.parent.parent.parent
+            / "parm" / "systems" / "secofs_ufs.yaml"
+        )
+        if not secofs_ufs_yaml.exists():
+            pytest.skip("secofs_ufs.yaml not found")
+        output = export_for_shell(secofs_ufs_yaml, framework="comf")
+        assert "WAV_TASKS" not in output
+        assert "WAV_MESH" not in output
+        assert "WAV_PDLIB_NML" not in output
+
+
 # ---------------------------------------------------------------------------
 # Self-test entry point
 # ---------------------------------------------------------------------------

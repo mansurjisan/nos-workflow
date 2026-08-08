@@ -1,0 +1,84 @@
+# SECOFS UFS-Coastal Configuration -- DATM+SCHISM+WW3 (4-component)
+# Southeast Coastal Ocean Forecast System with wave coupling.
+#
+# Inherits secofs_ufs.yaml wholesale (mesh, forcing, prep, tidal, physics)
+# and only overrides what the wave component adds. system.prefix is
+# intentionally NOT overridden -- it stays "secofs_ufs" so this variant
+# reuses the exact same SCHISM-side fix filenames (hgrid.gr3, bctides.in,
+# nudging, river, tidal) as secofs_ufs; only $FIXofs itself differs
+# (fix/secofs_ufs_ww3/, keyed off system.name), and WCOSS2 deployment is
+# expected to populate it with the same secofs_ufs.* mesh/forcing statics
+# alongside the wave-only files this repo tracks in git (see fix dir
+# README-equivalent note in the wave-specific files themselves).
+#
+# Cycling design (hybrid): SCHISM continues to cycle via its own hotstart
+# (ihot=1, unchanged from secofs_ufs). WW3 and the CMEPS mediator instead
+# cycle via CMEPS netCDF restarts (ufs.cpld.{ww3,cpl}.r.*.nc) + rpointer.cpl,
+# written at the end of each cycle's nowcast leg and read back by that same
+# cycle's forecast leg (start_type=continue -- see
+# runners/schism_ufs/configure.py patch_ufs_configure).
+
+_base: secofs_ufs
+
+system:
+  name: secofs_ufs_ww3
+  description: "Southeast Coastal Ocean Forecast System (UFS-Coastal, DATM+SCHISM+WW3)"
+
+# UFS-Coastal coupling configuration -- 4-component overrides only.
+# datm_tasks/schism_tasks/datm_domain/blend_*/templates/etc. are unchanged,
+# inherited from secofs_ufs.
+ufs_coastal:
+  # WAV PETs 2914-3599 (686 PETs) -- AK-validated 4-component split
+  # (datm=120 + schism=2794 + wav=686 = total=3600, 30 nodes @ 120 ppn
+  # exactly, 0 idle slots). See nos-utils UFSConfigProcessor._patch_pet_bounds
+  # for the PET-bounds patch this drives and the datm+schism+wav==total
+  # cross-check it enforces at prep time.
+  wav_tasks: 686
+  total_tasks: 3600
+  # NUOPC runSeq coupling interval (seconds). Must be an integer multiple
+  # of model.physics.dt (120s here -- 360 = 3 SCHISM steps); enforced by
+  # nos-utils UFSConfigProcessor._patch_runseq_interval.
+  coupling_interval: 360
+  wav_model: ww3
+  # Must match the WAV_attributes::mesh_wav line in fix/secofs_ufs_ww3/ufs.configure.
+  wav_mesh: secofs_ufs.mesh_wav.nc
+  # Companion "GRID%NML" auxiliary namelist ww3_grid.nml points at (solver
+  # flags for the implicit-PDLIB run). Staged defensively at runtime in
+  # case ww3_shel/ww3_multi re-reads it directly; see stage_wave_configs.
+  wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
+
+# UFS-Coastal coupled executable, wave-enabled build.
+model:
+  executable: fv3_coastalSW.exe
+  runtime:
+    # Wave variant carries its own param.nml: adds RADFLAG='LON' and
+    # flips fwvor_breaking 1->0 (USE_WW3 coupling block) relative to
+    # secofs_ufs.param.nml. See fix/secofs_ufs_ww3/secofs_ufs_ww3.param.nml.
+    ctl_file: secofs_ufs_ww3.param.nml
+
+# Computational resources (DATM + SCHISM + WW3).
+resources:
+  nprocs: 3600
+  nscribes: 0
+  select: "select=30:ncpus=128:mpiprocs=120:ompthreads=1"
+  # UNVERIFIED: naive linear scale from secofs_ufs's 1500 GB @ 2914 tasks
+  # gives ~1853 GB, but WW3's implicit-PDLIB solver keeps a full 2D
+  # spectrum (32 freq x 36 dir bins) resident per wave-mesh node -- a
+  # different memory profile than SCHISM's transport arrays. Treat this
+  # as a starting point pending a WCOSS2 profiling pass, not a sized value.
+  memory_gb: 1900
+  walltime_hours: 2
+
+# Ensemble disabled for the initial wave-coupled cut: the GEFS ensemble
+# resources block (select=, nprocs) is sized for secofs_ufs's 3-component
+# 2914-task layout and would under-allocate the 3600-task wave layout.
+ensemble:
+  enabled: false
+
+# Env var mappings -- additive only (dict-merged onto secofs_ufs's
+# shell_mappings.variables; every existing mapping is inherited unchanged).
+shell_mappings:
+  variables:
+    WAV_TASKS: ufs_coastal.wav_tasks
+    WAV_MESH: ufs_coastal.wav_mesh
+    WAV_PDLIB_NML: ufs_coastal.wav_pdlib_namelist

@@ -125,7 +125,7 @@ def test_load_all_descriptors_registers_known_ofses():
     # Wipe registry so we know the names we see came from the loader.
     registry._REGISTRY.clear()
     load_all_descriptors()
-    for name in ("secofs_ufs", "stofs_3d_atl", "stofs_3d_atl_ufs",
+    for name in ("secofs_ufs", "secofs_ufs_ww3", "stofs_3d_atl", "stofs_3d_atl_ufs",
                  "stofs_3d_ak_ufs", "stofs_2d_glo",
                  "cbofs", "dbofs", "ngofs2"):
         assert lookup(name).name == name
@@ -164,3 +164,16 @@ def test_stofs_3d_ak_ufs_resolves_via_registry():
     assert desc.framework == "stofs_ufs"
     assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
     assert desc.yaml_path == Path("parm/systems/stofs_3d_ak_ufs.yaml")
+
+
+def test_secofs_ufs_ww3_resolves_via_registry():
+    """SECOFS-UFS-WW3 (DATM+SCHISM+WW3) shares secofs_ufs's framework and
+    runner module -- the wave-specific behavior is entirely internal to
+    the runner (gated on the WAV_TASKS env var), not a dispatch label."""
+    registry._REGISTRY.clear()
+    load_all_descriptors()
+    desc = lookup("secofs_ufs_ww3")
+    assert desc.name == "secofs_ufs_ww3"
+    assert desc.framework == "comf"
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+    assert desc.yaml_path == Path("parm/systems/secofs_ufs_ww3.yaml")

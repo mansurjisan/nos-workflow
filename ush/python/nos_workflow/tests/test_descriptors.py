@@ -30,6 +30,19 @@ def test_secofs_ufs_descriptor_shape():
     assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
 
 
+def test_secofs_ufs_ww3_descriptor_shape():
+    """SECOFS-UFS-WW3 (DATM+SCHISM+WW3) mirrors secofs_ufs's descriptor
+    shape exactly -- same framework ("comf") and runner_module, since the
+    wave-specific behavior lives inside the shared runner (gated on the
+    WAV_TASKS env var), not on a separate dispatch label."""
+    desc = lookup("secofs_ufs_ww3")
+    assert desc.framework == "comf"
+    assert desc.canonical_stages == ("prep", "nowcast", "forecast", "post")
+    assert desc.stage_aliases == {}
+    assert desc.yaml_path == Path("parm/systems/secofs_ufs_ww3.yaml")
+    assert desc.runner_module == "nos_workflow.runners.ufs_coastal"
+
+
 def test_stofs_3d_atl_ufs_descriptor_shape():
     """STOFS-3D-ATL on UFS-Coastal mirrors the secofs_ufs descriptor shape.
 

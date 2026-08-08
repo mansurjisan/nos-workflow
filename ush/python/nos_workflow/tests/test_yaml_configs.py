@@ -180,6 +180,55 @@ class TestSystemConfigs:
         select_str = det.get("select")
         assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
 
+    def test_secofs_ufs_ww3_config(self, system_configs: Dict[str, Path]) -> None:
+        """SECOFS-UFS-WW3 -- DATM+SCHISM+WW3 4-component coupled variant.
+
+        Pins the AK-validated 4-component task split (nos-utils
+        UFSConfigProcessor._patch_pet_bounds cross-checks this exact
+        invariant at prep time: datm + schism + wav must equal total, or
+        the PET-bounds patch is rejected and ufs.configure is left
+        unpatched). Also pins that system.prefix stays "secofs_ufs"
+        (unchanged from the base) so this variant reuses the exact same
+        SCHISM-side fix filenames (hgrid, bctides, nudging, river, tidal)
+        as secofs_ufs -- only $FIXofs itself and the wave/coupling keys
+        differ.
+        """
+        if "secofs_ufs_ww3" not in system_configs:
+            pytest.skip("secofs_ufs_ww3.yaml not found")
+
+        path = system_configs["secofs_ufs_ww3"]
+        merged = load_yaml_with_inheritance(path, base_dir=path.parent.parent)
+
+        assert merged["system"]["name"] == "secofs_ufs_ww3"
+        assert merged["system"]["framework"] == "comf"
+        assert merged["system"]["prefix"] == "secofs_ufs"
+
+        ufs = merged["ufs_coastal"]
+        assert ufs["datm_tasks"] == 120
+        assert ufs["schism_tasks"] == 2794
+        assert ufs["wav_tasks"] == 686
+        assert ufs["total_tasks"] == 3600
+        # The wave variant's invariant: datm + schism + wav == total.
+        assert ufs["datm_tasks"] + ufs["schism_tasks"] + ufs["wav_tasks"] == ufs["total_tasks"]
+        # Coupling interval must be an integer multiple of model.physics.dt
+        # (nos-utils UFSConfigProcessor._patch_runseq_interval enforces this
+        # at prep time; SCHISM can only land on whole-extstep boundaries).
+        assert ufs["coupling_interval"] % merged["model"]["physics"]["dt"] == 0
+        assert ufs["wav_model"] == "ww3"
+        # mesh_wav must match ufs.configure's WAV_attributes::mesh_wav line
+        # (fix/secofs_ufs_ww3/ufs.configure) -- this is the only place the
+        # two are cross-checked in-repo.
+        assert ufs["wav_mesh"] == "secofs_ufs.mesh_wav.nc"
+
+        assert merged["model"]["executable"] == "fv3_coastalSW.exe"
+        assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"
+
+        det = merged["resources"]
+        assert det["nprocs"] == ufs["total_tasks"]
+        assert det["select"] == "select=30:ncpus=128:mpiprocs=120:ompthreads=1"
+
+        assert merged["ensemble"]["enabled"] is False
+
     def test_stofs_3d_ak_ufs_rtofs_region(
         self,
         system_configs: Dict[str, Path],
