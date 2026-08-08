@@ -1,0 +1,55 @@
+! ---------------------------------------------------------------------- !
+! WAVEWATCH III - ww3_shel.nml (WW3 shell / coupled-run control namelist)
+!
+! Placeholders (@[VAR]) are patched per-cycle by
+! runners/schism_ufs/configure.py:patch_ww3_shel, mirroring the @[VAR]
+! convention already used by model_configure.template / datm_in.template.
+! ---------------------------------------------------------------------- !
+
+&domain_nml
+  domain%start = '@[WW3_CYCLE_START]'
+  domain%stop  = '@[WW3_CYCLE_STOP]'
+/
+
+! Coupled mode: winds, currents, and water levels all come from the MED
+! mediator, not external WW3 input files. No ice in the SECOFS domain.
+&input_nml
+  input%forcing%winds        = 'C'
+  input%forcing%currents     = 'C'
+  input%forcing%water_levels = 'C'
+  input%forcing%ice_conc     = 'F'
+  input%forcing%ice_param1   = 'F'
+  input%forcing%ice_param5   = 'F'
+/
+
+&output_type_nml
+  type%field%list  = 'WND WLV CUR HS FP DP PHS PTP PDIR DIR T01'
+  type%point%file  = 'ww3_points.list'
+/
+
+! date%restart%stride: nowcast writes exactly one restart at leg end
+! (matches SCHISM's own hotstart handoff); forecast has no further
+! hot-start consumer inside the cycle, so its stride is set far beyond
+! FHMAX to suppress extra restart writes. Both values are patched per
+! phase by patch_ww3_shel -- see that function's docstring.
+&output_date_nml
+  date%field%start    = '@[WW3_CYCLE_START]'
+  date%field%stride   = '3600'
+  date%field%stop     = '@[WW3_CYCLE_STOP]'
+  date%point%start    = '@[WW3_CYCLE_START]'
+  date%point%stride   = '3600'
+  date%point%stop     = '@[WW3_CYCLE_STOP]'
+  date%restart%start  = '@[WW3_CYCLE_START]'
+  date%restart%stride = '@[WW3_RESTART_STRIDE_SEC]'
+  date%restart%stop   = '@[WW3_CYCLE_STOP]'
+/
+
+&homog_count_nml
+/
+
+&homog_input_nml
+/
+
+! ---------------------------------------------------------------------- !
+! WAVEWATCH III - end of namelist                                        !
+! ---------------------------------------------------------------------- !

@@ -1,0 +1,85 @@
+! ---------------------------------------------------------------------- !
+! WAVEWATCH III - ww3_grid.nml (grid pre-processor namelist, unstructured
+! UNST mesh). Offline input to the ww3_grid preprocessor, which compiles
+! this + the .msh mesh file into mod_def.ww3 (the binary $FIXofs/
+! $PREFIXNOS.mod_def.ww3 the run stages at run time -- see
+! runners/schism_ufs/stage_files.py:stage_wave_configs). Not read at run
+! time itself.
+!
+! GRID%NML points at the companion implicit-PDLIB solver-flag namelist
+! (secofs_ufs_ww3.namelists_pdlib.nml, same directory).
+! ---------------------------------------------------------------------- !
+
+! -------------------------------------------------------------------- !
+! SPECTRUM_NML: 36 directions x 32 frequencies, FREQ1=0.0373 Hz, XFR=1.1
+! (WW3's default geometric frequency progression factor). Not derived
+! from any prior SECOFS wave-spectrum resolution -- a reasoned starting
+! point for a regional shelf+nearshore domain, pending CFL/resolution
+! validation against the real coarsened wave mesh.
+! -------------------------------------------------------------------- !
+&SPECTRUM_NML
+  SPECTRUM%XFR       = 1.1
+  SPECTRUM%FREQ1     = 0.0373
+  SPECTRUM%NK        = 32
+  SPECTRUM%NTH       = 36
+/
+
+&RUN_NML
+  RUN%FLCX         = T
+  RUN%FLCY         = T
+  RUN%FLCTH        = T
+  RUN%FLCK         = T
+  RUN%FLSOU        = T
+/
+
+! -------------------------------------------------------------------- !
+! TIMESTEPS_NML: DTMAX=DTXY=360s matches the ufs.configure runSeq
+! coupling interval (@360) 1:1. DTKTH=180 / DTMIN=15 are a starting point
+! for the implicit-PDLIB solver (see the companion namelist), pending CFL
+! validation against the real coarsened mesh's minimum edge length.
+! -------------------------------------------------------------------- !
+&TIMESTEPS_NML
+  TIMESTEPS%DTMAX        = 360.
+  TIMESTEPS%DTXY         = 360.
+  TIMESTEPS%DTKTH        = 180.
+  TIMESTEPS%DTMIN        = 15.
+/
+
+! GRID%DMIN=0.30 is WW3's own minimum-permitted-water-depth convention,
+! distinct from SCHISM's much shallower wetting/drying floor
+! (model.physics.min_depth=0.01 in secofs_ufs.yaml).
+&GRID_NML
+  GRID%NAME         = 'SECOFS_UFS_WAV'
+  GRID%NML          = './secofs_ufs_ww3.namelists_pdlib.nml'
+  GRID%TYPE         = 'UNST'
+  GRID%COORD        = 'SPHE'
+  GRID%CLOS         = 'NONE'
+  GRID%ZLIM         = 4.0
+  GRID%DMIN         = 0.30
+/
+
+! UNST%FILENAME is a placeholder -- the coarsened SECOFS wave mesh (.msh,
+! gmsh format) is produced by a separate mesh-coarsening pass and does not
+! exist yet. SF/IDLA/FORMAT are the standard WW3 unstructured-mesh read
+! layout (SF=-1: depths stored as-is; IDLA=4 / FORMAT='(20f10.2)').
+&UNST_NML
+  UNST%SF          = -1.
+  UNST%FILENAME    = 'secofs_ufs_ww3.msh'
+  UNST%IDLA        = 4
+  UNST%FORMAT      = '(20f10.2)'
+/
+
+! Per-point open-boundary flagging (UGOBCAUTO=F in the companion namelist
+! means boundary points must be listed explicitly here rather than
+! auto-detected). Placeholder until the coarsened mesh's boundary node IDs
+! are known.
+&INBND_COUNT_NML
+  INBND_COUNT%N_POINT = 0
+/
+
+&INBND_POINT_NML
+/
+
+! ---------------------------------------------------------------------- !
+! WAVEWATCH III - end of namelist                                      !
+! ---------------------------------------------------------------------- !

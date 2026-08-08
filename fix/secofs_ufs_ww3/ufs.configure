@@ -1,0 +1,140 @@
+#############################################
+####  NEMS Run-Time Configuration File  #####
+####  DATM + SCHISM + WW3 (4-component)  #####
+#############################################
+
+# ESMF #
+logKindFlag:            ESMF_LOGKIND_MULTI
+globalResourceControl:  true
+
+# EARTH #
+EARTH_component_list: ATM OCN WAV MED
+EARTH_attributes::
+  Verbosity = 0
+::
+
+# MED #
+# PET span = 0 3599, the FULL union of ATM+OCN+WAV -- deliberately wider
+# than the 3-component secofs_ufs file (MED there is co-located with ATM
+# only, 0 119). Matches the validated Alaska DATM+SCHISM+WW3 reference.
+MED_model:                      cmeps
+MED_petlist_bounds:             0 3599
+MED_omp_num_threads:            1
+MED_attributes::
+  ATM_model = datm
+  OCN_model = schism
+  WAV_model = ww3
+  history_n = 9999
+  history_option = nhours
+  history_ymd = -999
+  coupling_mode = coastal
+  pio_typename = PNETCDF
+  pio_stride = 8
+::
+
+# ATM #
+ATM_model:                      datm
+ATM_petlist_bounds:             0 119
+ATM_omp_num_threads:            1
+ATM_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+::
+
+# OCN #
+OCN_model:                      schism
+OCN_petlist_bounds:             120 2913
+OCN_omp_num_threads:            1
+OCN_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+  meshloc = element
+  CouplingConfig = none
+::
+
+# WAV #
+# PETs 2914-3599 (686 PETs, coarsened wave mesh) -- see nos-utils
+# UFSConfigProcessor._patch_pet_bounds for the datm+schism+wav==total
+# cross-check applied at prep time. mesh_wav must match
+# ufs_coastal.wav_mesh in parm/systems/secofs_ufs_ww3.yaml.
+WAV_model:                      ww3
+WAV_petlist_bounds:             2914 3599
+WAV_omp_num_threads:            1
+WAV_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  mesh_wav = secofs_ufs.mesh_wav.nc
+  multigrid = false
+  user_histname = 'false'
+  use_historync = 'true'
+  use_restartnc = 'true'
+  restart_from_binary = 'false'
+  pio_typename = 'pnetcdf'
+  pio_numiotasks = 4
+  pio_stride = -99
+  pio_rearranger = 'box'
+  pio_root = -99
+::
+
+# Run Sequence #
+# @360 = 3x SCHISM's 120s dt (nos_utils enforces the coupling interval is
+# an integer multiple of model.physics.dt); matches WW3's own UNST_NML
+# TIMESTEPS%DTXY=360 1:1 so one coupling exchange spans one WW3 spatial
+# propagation step.
+runSeq::
+@360
+  MED med_phases_prep_atm
+  MED med_phases_prep_ocn_accum
+  MED med_phases_prep_ocn_avg
+  MED med_phases_prep_wav_accum
+  MED med_phases_prep_wav_avg
+  MED -> ATM :remapMethod=redist
+  MED -> OCN :remapMethod=redist
+  MED -> WAV :remapMethod=redist
+  ATM
+  OCN
+  WAV
+  ATM -> MED :remapMethod=redist
+  OCN -> MED :remapMethod=redist
+  WAV -> MED :remapMethod=redist
+  MED med_phases_post_atm
+  MED med_phases_post_ocn
+  MED med_phases_post_wav
+  MED med_phases_restart_write
+@
+::
+
+# start_type is patched per-phase at run time (nowcast=startup,
+# forecast=continue for this wave-coupled system -- see
+# runners/schism_ufs/configure.py:patch_ufs_configure). restart_n=6/nhours
+# (not AK's 12h) so the mediator restart lands exactly at the
+# nowcast/forecast handoff every cycle, matching SCHISM's own 6h hotstart
+# cadence (output.restart.interval=21600 in secofs_ufs.yaml) instead of
+# drifting in and out of phase with a 12h stride against a 6h leg.
+ALLCOMP_attributes::
+  ScalarFieldCount = 3
+  ScalarFieldIdxGridNX = 1
+  ScalarFieldIdxGridNY = 2
+  ScalarFieldIdxNextSwCday = 3
+  ScalarFieldName = cpl_scalars
+  start_type = startup
+  restart_dir = RESTART/
+  case_name = ufs.cpld
+  restart_n = 6
+  restart_option = nhours
+  restart_ymd = -999
+  orb_eccen = 1.e36
+  orb_iyear = 2026
+  orb_iyear_align = 2026
+  orb_mode = fixed_year
+  orb_mvelp = 1.e36
+  orb_obliq = 1.e36
+  stop_n = 48
+  stop_option = nhours
+  stop_ymd = -999
+::

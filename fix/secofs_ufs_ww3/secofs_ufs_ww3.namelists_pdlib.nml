@@ -1,0 +1,41 @@
+! ---------------------------------------------------------------------- !
+! Companion "GRID%NML" auxiliary namelist for ww3_grid.nml (implicit-PDLIB
+! solver flags). Referenced by ww3_grid.nml's GRID%NML pointer -- WW3's
+! legacy-style (non-slash-terminated single-line) namelist for solver/
+! physics flags, a DIFFERENT namelist from ww3_grid.nml's own UNST_NML
+! mesh-file block despite the shared "UNST" name.
+!
+! UGOBCAUTO=F: boundary nodes are NOT auto-detected from the mesh; they
+! must be supplied via the INBND_POINT_NML block in ww3_grid.nml.
+!
+! JGS_* (Jacobi/Gauss-Seidel implicit solver control) and IMP* flags are
+! generic WW3 implicit-PDLIB solver defaults, not SECOFS-tuned -- a
+! reasonable starting point pending convergence testing on the actual
+! SECOFS wave mesh.
+! ---------------------------------------------------------------------- !
+
+&UNST UGOBCAUTO = F,
+UGOBCDEPTH= -10.,
+EXPFSN = F,
+EXPFSPSI = F,
+EXPFSFCT = F,
+IMPFSN = F,
+EXPTOTAL = F,
+IMPTOTAL = T,
+IMPREFRACTION = T,
+IMPFREQSHIFT = T,
+IMPSOURCE = T,
+SETUP_APPLY_WLV = F,
+SOLVERTHR_SETUP=1E-14,
+CRIT_DEP_SETUP=0.1,
+JGS_USE_JACOBI = T,
+JGS_BLOCK_GAUSS_SEIDEL = T,
+JGS_TERMINATE_MAXITER = T,
+JGS_MAXITER = 1000,
+JGS_TERMINATE_NORM = F,
+JGS_TERMINATE_DIFFERENCE = T,
+JGS_DIFF_THR = 1.E-8,
+JGS_PMIN = 3.0,
+JGS_LIMITER = F,
+JGS_NORM_THR = 1.E-20 /
+END OF NAMELISTS
