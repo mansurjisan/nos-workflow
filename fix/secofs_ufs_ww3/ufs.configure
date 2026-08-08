@@ -109,13 +109,14 @@ runSeq::
 @
 ::
 
-# start_type is patched per-phase at run time (nowcast=startup,
-# forecast=continue for this wave-coupled system -- see
-# runners/schism_ufs/configure.py:patch_ufs_configure). restart_n=6/nhours
-# (not AK's 12h) so the mediator restart lands exactly at the
-# nowcast/forecast handoff every cycle, matching SCHISM's own 6h hotstart
-# cadence (output.restart.interval=21600 in secofs_ufs.yaml) instead of
-# drifting in and out of phase with a 12h stride against a 6h leg.
+# start_type AND restart_n are both patched per-phase at run time (see
+# runners/schism_ufs/configure.py:patch_ufs_configure): start_type is
+# nowcast=startup, forecast=continue; restart_n is set to that leg's own
+# length in hours (6 for nowcast, 48 for forecast) so restart_option=nhours
+# writes exactly one mediator/WW3 restart, at the end of the leg -- landing
+# on the nowcast/forecast handoff every cycle instead of (with a fixed 6h
+# stride) writing 8 multi-GB restarts across a 48h forecast. The values
+# below are the as-checked-in template defaults, overwritten every run.
 ALLCOMP_attributes::
   ScalarFieldCount = 3
   ScalarFieldIdxGridNX = 1

@@ -512,6 +512,114 @@ def test_archive_restart_skips_when_rst_out_is_none(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# _archive_wave_restarts
+# ---------------------------------------------------------------------------
+
+
+def _make_wave_restart_ctx(tmp_path: Path, *, phase: str = "nowcast") -> SchismRunContext:
+    comout = tmp_path / "comout"
+    data = tmp_path / "data"
+    comout.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        data=data,
+        phase=phase,
+        run="nos.secofs_ufs",
+        cycle="t00z",
+        time_nowcastend="2026051206",
+        time_forecastend="2026051400",
+        wav_rst_out_nowcast="ufs.cpld.ww3.r.2026-05-12-21600.nc",
+        med_rst_out_nowcast="ufs.cpld.cpl.r.2026-05-12-21600.nc",
+        wav_rst_out_forecast="ufs.cpld.ww3.r.2026-05-14-00000.nc",
+        med_rst_out_forecast="ufs.cpld.cpl.r.2026-05-14-00000.nc",
+    )
+
+
+def test_archive_wave_restarts_non_wave_is_noop(tmp_path, monkeypatch):
+    """WAV_TASKS unset -> rc=0, nothing archived (primary safety property)."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_wave_restart_ctx(tmp_path)
+    assert execute._archive_wave_restarts(ctx, "nowcast") == 0
+    assert list(ctx.comout.iterdir()) == []
+
+
+def test_archive_wave_restarts_copies_all_three_from_nowcast(tmp_path, monkeypatch):
+    """All three artifacts, verbatim basenames, under
+    $COMOUT/{run}.{cycle}.wave_restart/."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (ctx.data / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    (ctx.data / "rpointer.cpl.2026-05-12-21600").write_text(
+        f"RESTART/{ctx.med_rst_out_nowcast}\n",
+    )
+
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert (target / ctx.med_rst_out_nowcast).read_bytes() == b"mediator"
+    assert (target / ctx.wav_rst_out_nowcast).read_bytes() == b"ww3"
+    assert (
+        target / "rpointer.cpl.2026-05-12-21600"
+    ).read_text() == f"RESTART/{ctx.med_rst_out_nowcast}\n"
+
+
+def test_archive_wave_restarts_copies_forecast_leg_too(tmp_path, monkeypatch):
+    """Forecast leg's own restart is archived too (symmetry with
+    _archive_restart), giving wav_rst_out_forecast/med_rst_out_forecast a
+    real consumer even though nothing currently stages it back in."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_forecast).write_bytes(b"mediator-fcst")
+    (ctx.data / ctx.wav_rst_out_forecast).write_bytes(b"ww3-fcst")
+    (ctx.data / "rpointer.cpl.2026-05-14-00000").write_text(
+        f"RESTART/{ctx.med_rst_out_forecast}\n",
+    )
+
+    rc = execute._archive_wave_restarts(ctx, "forecast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert (target / ctx.med_rst_out_forecast).read_bytes() == b"mediator-fcst"
+    assert (target / ctx.wav_rst_out_forecast).read_bytes() == b"ww3-fcst"
+
+
+def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypatch, caplog):
+    """A missing artifact archives what it can and warns -- non-fatal,
+    matching _archive_restart's convention (the model already ran; only
+    a future leg's warm restart is at risk)."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    # Only the mediator restart is present; WW3 restart + pointer missing.
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert (target / ctx.med_rst_out_nowcast).is_file()
+    assert not (target / ctx.wav_rst_out_nowcast).exists()
+    assert any("WW3 restart" in r.getMessage() for r in caplog.records)
+
+
+def test_archive_wave_restarts_unknown_phase_is_nonfatal(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="bogus")
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+
+    rc = execute._archive_wave_restarts(ctx, "bogus")
+
+    assert rc == 0
+    assert any("unknown phase" in r.getMessage().lower() for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
 # run_python full orchestration
 # ---------------------------------------------------------------------------
 

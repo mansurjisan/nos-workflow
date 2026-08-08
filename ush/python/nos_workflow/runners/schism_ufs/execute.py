@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 from ...bash_compat import run_shell_function
-from . import combine_hotstart, mesh, normalize_fields
+from . import _dateutils, combine_hotstart, mesh, normalize_fields
 from .context import SchismRunContext
 from .stage_files import _is_ufs, _is_wave_enabled
 
@@ -76,6 +76,13 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     if archive_rc != 0:
         logger.warning(
             "execute: rst archive returned rc=%d (non-fatal)", archive_rc,
+        )
+
+    wave_archive_rc = _archive_wave_restarts(ctx, phase)
+    if wave_archive_rc != 0:
+        logger.warning(
+            "execute: wave restart archive returned rc=%d (non-fatal)",
+            wave_archive_rc,
         )
 
     return 0
@@ -333,6 +340,96 @@ def _archive_restart(ctx: SchismRunContext, phase: str) -> int:
     rst_dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(rst_src, rst_dst)
     logger.info("execute: archived %s -> %s", rst_src, rst_dst)
+    return 0
+
+
+def _wave_restart_comout_dir(ctx: SchismRunContext) -> Path:
+    """$COMOUT subdirectory the wave restart handoff is archived under.
+
+    Shared naming between the archive side (here) and the restore side
+    (stage_files.stage_wave_restarts) -- both must agree on this path.
+    """
+    return ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+
+
+def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
+    """Copy the WW3 + CMEPS mediator restart artifacts to $COMOUT.
+
+    Wave systems only (rc=0 immediately otherwise). Mirrors
+    ``_archive_restart``'s role for SCHISM's own hotstart, but for the
+    three CMEPS-named artifacts the model writes into $DATA once this
+    leg's MPI run completes:
+      - $DATA/RESTART/ufs.cpld.cpl.r.<stamp>.nc  (mediator restart;
+        ufs.configure's restart_dir = RESTART/)
+      - $DATA/rpointer.cpl.<stamp>                (pointer file, run-dir
+        root)
+      - $DATA/ufs.cpld.ww3.r.<stamp>.nc            (WW3 restart, run-dir
+        root -- w3initmd's read path has no directory prefix)
+
+    Archived verbatim (same basenames) so
+    ``stage_files.stage_wave_restarts`` can restore them unchanged into
+    the NEXT leg's (different) $DATA. Runs for both phases, matching
+    ``_archive_restart``'s symmetry -- only the nowcast-leg artifacts are
+    actually staged back in this cycle (the forecast leg is the last leg
+    of a cycle today), but archiving both keeps this function's behavior
+    independent of that downstream fact and gives ``wav_rst_out_forecast``
+    / ``med_rst_out_forecast`` the same real consumer as their nowcast
+    counterparts.
+
+    Non-fatal: the model already ran successfully by this point, so a
+    missing/failed artifact here only costs a future leg's warm restart,
+    not this one.
+    """
+    if not _is_wave_enabled():
+        return 0
+
+    if phase == "nowcast":
+        wav_name = ctx.wav_rst_out_nowcast
+        med_name = ctx.med_rst_out_nowcast
+        stamp_date = ctx.time_nowcastend
+    elif phase == "forecast":
+        wav_name = ctx.wav_rst_out_forecast
+        med_name = ctx.med_rst_out_forecast
+        stamp_date = ctx.time_forecastend
+    else:
+        logger.warning(
+            "execute: unknown phase=%r, skipping wave restart archive", phase,
+        )
+        return 0
+
+    if not wav_name or not med_name or not stamp_date:
+        logger.info(
+            "execute: wave restart filenames not resolved in ctx for "
+            "phase=%s; skipping wave restart archive", phase,
+        )
+        return 0
+
+    pointer_name = f"rpointer.cpl.{_dateutils.cmeps_restart_stamp(stamp_date)}"
+    target = _wave_restart_comout_dir(ctx)
+
+    copied = 0
+    for label, src, dst_name in (
+        ("mediator restart", ctx.data / "RESTART" / med_name, med_name),
+        ("WW3 restart", ctx.data / wav_name, wav_name),
+        ("pointer file", ctx.data / pointer_name, pointer_name),
+    ):
+        if src.is_file() and src.stat().st_size > 0:
+            target.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, target / dst_name)
+            copied += 1
+        else:
+            logger.warning(
+                "execute: wave restart archive: %s not found at %s "
+                "(phase=%s); a future leg's wave restart handoff may "
+                "have to cold-start.",
+                label, src, phase,
+            )
+
+    if copied:
+        logger.info(
+            "execute: archived %d/3 wave restart artifact(s) to %s",
+            copied, target,
+        )
     return 0
 
 

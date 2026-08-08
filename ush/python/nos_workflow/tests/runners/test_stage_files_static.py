@@ -23,6 +23,7 @@ from typing import Optional
 
 import pytest
 
+from nos_workflow.runners.schism_ufs import _dateutils
 from nos_workflow.runners.schism_ufs.context import SchismRunContext
 from nos_workflow.runners.schism_ufs.forcing import (
     _NWM_PAYLOAD_NAMES,
@@ -49,6 +50,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     stage_sflux_inputs_txt,
     stage_ufs_configs,
     stage_wave_configs,
+    stage_wave_restarts,
 )
 
 
@@ -1034,6 +1036,114 @@ def test_stage_wave_configs_nest_ww3_absent_is_silent(tmp_path, monkeypatch):
     stage_wave_configs(ctx, "nowcast")
 
     assert not (ctx.data / "nest.ww3").exists()
+
+
+# ---------------------------------------------------------------------------
+# stage_wave_restarts (nowcast -> forecast wave restart handoff)
+# ---------------------------------------------------------------------------
+
+
+def _make_wave_restart_ctx(
+    tmp_path: Path, *, phase: str = "forecast",
+) -> SchismRunContext:
+    comout = tmp_path / "comout"
+    data = tmp_path / "data"
+    comout.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        data=data,
+        phase=phase,
+        run="nos.secofs_ufs",
+        cycle="t00z",
+        time_nowcastend="2026051206",
+        wav_rst_out_nowcast="ufs.cpld.ww3.r.2026-05-12-21600.nc",
+        med_rst_out_nowcast="ufs.cpld.cpl.r.2026-05-12-21600.nc",
+    )
+
+
+def _seed_wave_restart_archive(ctx: SchismRunContext) -> Path:
+    """Populate the archived $COMOUT wave_restart dir with all three
+    artifacts, matching what execute._archive_wave_restarts writes."""
+    archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (archive_dir / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    pointer_name = f"rpointer.cpl.{_dateutils.cmeps_restart_stamp(ctx.time_nowcastend)}"
+    (archive_dir / pointer_name).write_text(f"RESTART/{ctx.med_rst_out_nowcast}\n")
+    return archive_dir
+
+
+def test_stage_wave_restarts_noop_without_wav_tasks(tmp_path, monkeypatch):
+    """WAV_TASKS unset -> False, nothing staged (primary safety property)."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_wave_restart_ctx(tmp_path)
+    _seed_wave_restart_archive(ctx)
+
+    assert stage_wave_restarts(ctx, "forecast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+def test_stage_wave_restarts_noop_on_nowcast_phase(tmp_path, monkeypatch):
+    """Nowcast never stages a wave restart in -- only forecast continues
+    from the nowcast leg's own output."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    _seed_wave_restart_archive(ctx)
+
+    assert stage_wave_restarts(ctx, "nowcast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+def test_stage_wave_restarts_restores_all_three_artifacts(tmp_path, monkeypatch):
+    """All three artifacts land at their exact run-dir paths, with the
+    pointer file's content preserved byte-for-byte."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    _seed_wave_restart_archive(ctx)
+
+    result = stage_wave_restarts(ctx, "forecast")
+
+    assert result is True
+    assert (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).read_bytes() == b"mediator"
+    assert (ctx.data / ctx.wav_rst_out_nowcast).read_bytes() == b"ww3"
+    pointer = ctx.data / "rpointer.cpl.2026-05-12-21600"
+    assert pointer.read_text() == f"RESTART/{ctx.med_rst_out_nowcast}\n"
+
+
+def test_stage_wave_restarts_cold_start_when_nothing_archived(
+    tmp_path, monkeypatch, caplog,
+):
+    """Nothing archived at all (first-ever wave-coupled cycle) -> False,
+    loud WARNING, no exception -- the caller (patch_ufs_configure) falls
+    back to start_type=startup."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "forecast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("cold start" in r.getMessage() for r in caplog.records)
+
+
+def test_stage_wave_restarts_partial_archive_raises(tmp_path, monkeypatch):
+    """Only SOME of the three artifacts archived (e.g. a failed/partial
+    nowcast-leg archive) is NOT a legitimate cold start -- must fail
+    loudly rather than silently guessing and letting the model abort at
+    full allocation."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    # Only the mediator restart present; pointer + WW3 restart missing.
+    (archive_dir / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+
+    with pytest.raises(FileNotFoundError, match="partial archive"):
+        stage_wave_restarts(ctx, "forecast")
 
 
 # ---------------------------------------------------------------------------

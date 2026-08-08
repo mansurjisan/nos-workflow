@@ -7,6 +7,7 @@ import shutil
 from pathlib import Path
 from typing import Iterable, Optional
 
+from . import _dateutils
 from .context import SchismRunContext
 
 logger = logging.getLogger(__name__)
@@ -541,6 +542,106 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
     return staged
 
 
+def stage_wave_restarts(ctx: SchismRunContext, phase: str) -> bool:
+    """Restore the WW3 + CMEPS mediator restart handoff into the forecast $DATA.
+
+    Forecast-phase-only wave systems only -- False (no-op) otherwise. SCHISM
+    cycles nowcast->forecast via its own hotstart (ihot=1), but WW3 and the
+    CMEPS mediator have no such mechanism under UFS-Coastal NUOPC -- they
+    cycle via CMEPS netCDF restarts written by the NOWCAST leg (in a
+    DIFFERENT $DATA -- see execute._archive_wave_restarts) and must be
+    staged back here before ``configure.patch_ufs_configure`` decides
+    start_type for this leg.
+
+    Three artifacts, restored verbatim (filenames and the pointer file's
+    content untouched -- CDEPS/WW3 locate them by these exact names/paths):
+      - $DATA/RESTART/ufs.cpld.cpl.r.<stamp>.nc  (mediator restart;
+        ufs.configure's restart_dir = RESTART/)
+      - $DATA/rpointer.cpl.<stamp>                (pointer file, run-dir
+        root; its CONTENT is the RESTART/-relative mediator path -- copied
+        byte-for-byte, never reconstructed, so that content is guaranteed
+        correct)
+      - $DATA/ufs.cpld.ww3.r.<stamp>.nc            (WW3 restart, run-dir
+        root -- w3initmd's read path has no directory prefix)
+
+    Cold-start policy: if NONE of the three artifacts exist in the
+    archived $COMOUT location, this is treated as the system's first-ever
+    wave-coupled cycle (nothing to restore yet) -- returns False, and
+    ``configure.patch_ufs_configure`` falls back to start_type=startup
+    with a loud warning. If only SOME are found, that is NOT a legitimate
+    cold start (this cycle's own nowcast leg ran and, being wave-enabled,
+    should have produced all three together) -- raises
+    FileNotFoundError rather than silently guessing, matching
+    :func:`stage_hotstart`'s convention for SCHISM's own restart.
+
+    Returns True if all three artifacts were staged, False on the
+    cold-start fallback (nothing archived).
+    """
+    if not _is_wave_enabled() or phase != "forecast":
+        return False
+
+    if not ctx.med_rst_out_nowcast or not ctx.wav_rst_out_nowcast or not ctx.time_nowcastend:
+        logger.warning(
+            "stage_wave_restarts: wave restart filenames not resolved in "
+            "ctx (time_nowcastend missing?); treating as cold start",
+        )
+        return False
+
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_nowcastend)
+    pointer_name = f"rpointer.cpl.{stamp}"
+
+    # Must match execute._wave_restart_comout_dir -- the archive side.
+    archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+    med_src = archive_dir / ctx.med_rst_out_nowcast
+    wav_src = archive_dir / ctx.wav_rst_out_nowcast
+    pointer_src = archive_dir / pointer_name
+
+    found = {
+        "mediator restart": med_src.is_file() and med_src.stat().st_size > 0,
+        "pointer file": pointer_src.is_file() and pointer_src.stat().st_size > 0,
+        "WW3 restart": wav_src.is_file() and wav_src.stat().st_size > 0,
+    }
+
+    if not any(found.values()):
+        logger.warning(
+            "stage_wave_restarts: no archived wave restart at %s; "
+            "treating this as the first wave-coupled cycle for this "
+            "system (cold start -- WW3 and the CMEPS mediator will "
+            "start up fresh for this forecast leg). If this is NOT the "
+            "first cycle, the prior nowcast leg failed to archive its "
+            "wave restart -- check that leg's "
+            "execute._archive_wave_restarts logs.",
+            archive_dir,
+        )
+        return False
+
+    if not all(found.values()):
+        missing = [label for label, ok in found.items() if not ok]
+        present = [label for label, ok in found.items() if ok]
+        raise FileNotFoundError(
+            f"stage_wave_restarts: forecast requires the wave restart "
+            f"handoff but only found {present} in {archive_dir} -- "
+            f"missing {missing}. This is a partial archive, not a "
+            f"legitimate cold start (this cycle's nowcast leg ran and, "
+            f"being wave-enabled, should have produced all three "
+            f"together); refusing to guess rather than launch a "
+            f"multi-thousand-rank job that aborts at init. Fix: inspect "
+            f"the nowcast leg's execute._archive_wave_restarts logs."
+        )
+
+    restart_dir = ctx.data / "RESTART"
+    restart_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(med_src, restart_dir / ctx.med_rst_out_nowcast)
+    shutil.copy2(wav_src, ctx.data / ctx.wav_rst_out_nowcast)
+    shutil.copy2(pointer_src, ctx.data / pointer_name)
+    logger.info(
+        "  Staged wave restart handoff: %s, %s, %s (from %s)",
+        ctx.med_rst_out_nowcast, ctx.wav_rst_out_nowcast, pointer_name,
+        archive_dir,
+    )
+    return True
+
+
 def copy_hgrid_to_outputs(ctx: SchismRunContext, phase: str) -> int:
     """Copy $DATA/hgrid.gr3 to $DATA/outputs/hgrid.gr3.
 
@@ -738,6 +839,9 @@ def run_python(ctx: SchismRunContext, phase: str):
         _stage_standalone_param_nml(ctx)
 
     stage_wave_configs(ctx, phase)
+    # Must run BEFORE patch_ufs_configure below: it decides start_type by
+    # checking what this staged into $DATA.
+    stage_wave_restarts(ctx, phase)
 
     stage_executable(ctx, phase)
 
@@ -831,6 +935,7 @@ __all__ = [
     "_is_wave_enabled",
     "stage_ufs_configs",
     "stage_wave_configs",
+    "stage_wave_restarts",
     "stage_executable",
     "stage_schism_bare_names",
     "stage_hotstart",

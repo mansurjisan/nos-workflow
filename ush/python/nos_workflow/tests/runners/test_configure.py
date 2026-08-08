@@ -13,6 +13,7 @@ reflect the expected anchor values.
 """
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -53,6 +54,8 @@ def _make_ctx(
     len_forecast: Optional[str] = "48",
     pdy: Optional[str] = "20260512",
     cyc: Optional[str] = "00",
+    wav_rst_out_nowcast: Optional[str] = None,
+    med_rst_out_nowcast: Optional[str] = None,
 ) -> SchismRunContext:
     """Build a SchismRunContext with sensible time anchors."""
     comout = tmp_path / "comout"
@@ -71,6 +74,8 @@ def _make_ctx(
         len_forecast=len_forecast,
         pdy=pdy,
         cyc=cyc,
+        wav_rst_out_nowcast=wav_rst_out_nowcast,
+        med_rst_out_nowcast=med_rst_out_nowcast,
     )
 
 
@@ -540,18 +545,105 @@ def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
     assert "start_type = startup" in target.read_text()
 
 
-def test_patch_ufs_configure_wave_forecast_continues(tmp_path, monkeypatch):
-    """Wave system, forecast leg: 'continue' -- WW3 + the CMEPS mediator
-    pick up the CMEPS restart written at the end of this cycle's nowcast
-    leg, instead of cold-starting the wave spectrum/mediator fields."""
+def test_patch_ufs_configure_wave_forecast_continues_when_restart_staged(
+    tmp_path, monkeypatch,
+):
+    """Wave system, forecast leg, with the wave restart handoff already
+    staged in $DATA (stage_wave_restarts ran and found something to
+    restore): 'continue' -- WW3 + the CMEPS mediator pick up the CMEPS
+    restart written at the end of this cycle's nowcast leg, instead of
+    cold-starting the wave spectrum/mediator fields."""
+    from nos_workflow.runners.schism_ufs._dateutils import cmeps_restart_stamp
+
+    monkeypatch.setenv("WAV_TASKS", "686")
+    stamp = cmeps_restart_stamp("2026051206")  # ctx's default time_nowcastend
+    wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
+    med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
+    ctx = _make_ctx(
+        tmp_path, phase="forecast",
+        wav_rst_out_nowcast=wav_name, med_rst_out_nowcast=med_name,
+    )
+    target = ctx.data / "ufs.configure"
+    target.write_text(_UFS_CONFIGURE_TEMPLATE)
+
+    (ctx.data / "RESTART").mkdir(parents=True, exist_ok=True)
+    (ctx.data / "RESTART" / med_name).write_bytes(b"mediator restart")
+    (ctx.data / wav_name).write_bytes(b"ww3 restart")
+    (ctx.data / f"rpointer.cpl.{stamp}").write_text(f"RESTART/{med_name}\n")
+
+    patch_ufs_configure(ctx, "forecast")
+
+    assert "start_type = continue" in target.read_text()
+
+
+def test_patch_ufs_configure_wave_forecast_falls_back_to_startup_cold_start(
+    tmp_path, monkeypatch, caplog,
+):
+    """Wave system, forecast leg, with NO wave restart staged in $DATA
+    (the system's first-ever wave-coupled cycle, or stage_wave_restarts
+    hit its cold-start branch): falls back to 'startup' with a loud
+    warning rather than pointing CDEPS/WW3 at restart files that were
+    never staged."""
     monkeypatch.setenv("WAV_TASKS", "686")
     ctx = _make_ctx(tmp_path, phase="forecast")
     target = ctx.data / "ufs.configure"
     target.write_text(_UFS_CONFIGURE_TEMPLATE)
 
+    caplog.set_level(
+        logging.WARNING, logger="nos_workflow.runners.schism_ufs.configure",
+    )
     patch_ufs_configure(ctx, "forecast")
 
-    assert "start_type = continue" in target.read_text()
+    assert "start_type = startup" in target.read_text()
+    assert any(
+        "no wave restart staged" in r.message for r in caplog.records
+    )
+
+
+# ---------------------------------------------------------------------------
+# patch_ufs_configure -- phase-aware restart_n (wave systems only)
+# ---------------------------------------------------------------------------
+
+
+def test_patch_ufs_configure_wave_restart_n_matches_leg_length(tmp_path, monkeypatch):
+    """restart_n = this leg's own nhours, for BOTH phases -- restart_option
+    (nhours, hardcoded in the fix file) then writes exactly one mediator/
+    WW3 restart at the end of the leg, instead of every fixed N hours
+    regardless of leg length (8 restarts across a 48h forecast at the old
+    hardcoded restart_n=6)."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    template = _UFS_CONFIGURE_TEMPLATE.replace(
+        "::\n", "  restart_n = 6\n::\n", 1,
+    )
+
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    target = ctx.data / "ufs.configure"
+    target.write_text(template)
+    patch_ufs_configure(ctx, "nowcast")
+    assert "restart_n = 6" in target.read_text()
+
+    ctx = _make_ctx(tmp_path, phase="forecast")
+    target.write_text(template)
+    patch_ufs_configure(ctx, "forecast")
+    assert "restart_n = 48" in target.read_text()
+
+
+def test_patch_ufs_configure_non_wave_restart_n_untouched(tmp_path, monkeypatch):
+    """Non-wave systems: restart_n is NOT in the patch dict at all -- the
+    fix file's own value (typically 9999, effectively "never mid-leg")
+    passes through unpatched. Primary safety property: this class of
+    system must stay byte-identical."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    template = _UFS_CONFIGURE_TEMPLATE.replace(
+        "::\n", "  restart_n = 9999\n::\n", 1,
+    )
+    ctx = _make_ctx(tmp_path, phase="forecast")
+    target = ctx.data / "ufs.configure"
+    target.write_text(template)
+
+    patch_ufs_configure(ctx, "forecast")
+
+    assert "restart_n = 9999" in target.read_text()
 
 
 # ---------------------------------------------------------------------------
