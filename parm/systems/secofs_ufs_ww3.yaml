@@ -6,10 +6,10 @@
 # intentionally NOT overridden -- it stays "secofs_ufs" so this variant
 # reuses the exact same SCHISM-side fix filenames (hgrid.gr3, bctides.in,
 # nudging, river, tidal) as secofs_ufs; only $FIXofs itself differs
-# (fix/secofs_ufs_ww3/, keyed off system.name), and WCOSS2 deployment is
-# expected to populate it with the same secofs_ufs.* mesh/forcing statics
-# alongside the wave-only files this repo tracks in git (see fix dir
-# README-equivalent note in the wave-specific files themselves).
+# (fix/secofs_ufs_ww3/, keyed off system.name). WCOSS2 deployment must
+# populate that directory with the same secofs_ufs.* mesh/forcing statics
+# (copied or symlinked from fix/secofs_ufs/) alongside the wave-only files
+# this repo tracks in git.
 #
 # Cycling design (hybrid): SCHISM continues to cycle via its own hotstart
 # (ihot=1, unchanged from secofs_ufs). WW3 and the CMEPS mediator instead
