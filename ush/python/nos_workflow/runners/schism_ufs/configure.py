@@ -335,8 +335,9 @@ def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
 
     n = patches.patch_ufs_configure(target, replacements)
     logger.info(
-        "  Patched ufs.configure: stop_n=%d, start_type=%s, orb_iyear=%s",
-        nhours, start_type, sim_yyyy,
+        "  Patched ufs.configure: stop_n=%d, start_type=%s, orb_iyear=%s, "
+        "restart_n=%s",
+        nhours, start_type, sim_yyyy, replacements.get("restart_n", "n/a"),
     )
     return n
 
