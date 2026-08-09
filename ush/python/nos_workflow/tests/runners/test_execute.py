@@ -222,6 +222,23 @@ def test_validate_wave_ufs_configure_passes_on_valid_layout(tmp_path, monkeypatc
     assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
 
 
+def test_validate_wave_ufs_configure_passes_on_indented_layout(tmp_path, monkeypatch):
+    """The nos-utils patcher preserves leading whitespace on each
+    *_petlist_bounds line (it replaces "^(\\s*<COMP>_petlist_bounds:\\s*)");
+    an indented but otherwise valid layout must not be rejected."""
+    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    indented = "\n".join(
+        f"  {line}" if "_petlist_bounds:" in line else line
+        for line in _WAVE_UFS_CONFIGURE_VALID.splitlines()
+    ) + "\n"
+    (ctx.data / "ufs.configure").write_text(indented)
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
 def test_validate_wave_ufs_configure_rejects_stale_pin_corruption(
     tmp_path, monkeypatch, caplog,
 ):

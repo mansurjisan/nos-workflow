@@ -22,7 +22,10 @@ _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.c
 _REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
 _HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
 _PETLIST_BOUNDS_RE = re.compile(
-    r"^(MED|ATM|OCN|WAV)_petlist_bounds:\s*(\d+)\s+(\d+)\s*$", re.MULTILINE,
+    # Leading whitespace allowed -- matches the nos-utils patcher, which
+    # replaces "^(\s*<COMP>_petlist_bounds:\s*).*$" and so preserves any
+    # indentation already in the fix file.
+    r"^[ \t]*(MED|ATM|OCN|WAV)_petlist_bounds:\s*(\d+)\s+(\d+)\s*$", re.MULTILINE,
 )
 _RUNSEQ_INTERVAL_RE = re.compile(r"(?m)^@(\d+)\s*$")
 
