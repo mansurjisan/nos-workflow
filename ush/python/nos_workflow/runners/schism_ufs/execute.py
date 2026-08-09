@@ -368,13 +368,11 @@ def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
 
     Archived verbatim (same basenames) so
     ``stage_files.stage_wave_restarts`` can restore them unchanged into
-    the NEXT leg's (different) $DATA. Runs for both phases, matching
-    ``_archive_restart``'s symmetry -- only the nowcast-leg artifacts are
-    actually staged back in this cycle (the forecast leg is the last leg
-    of a cycle today), but archiving both keeps this function's behavior
-    independent of that downstream fact and gives ``wav_rst_out_forecast``
-    / ``med_rst_out_forecast`` the same real consumer as their nowcast
-    counterparts.
+    the NEXT leg's (different) $DATA. Nowcast-leg only: the forecast leg
+    is the last leg of a cycle today, so its own restart pair has no
+    consumer, and writing it out every cycle is a multi-GB $COMOUT cost
+    nothing prunes. Re-enable the forecast-leg archive if a next-cycle
+    consumer ever exists (chaining forecast-leg wave state forward).
 
     Non-fatal: the model already ran successfully by this point, so a
     missing/failed artifact here only costs a future leg's warm restart,
@@ -388,9 +386,11 @@ def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
         med_name = ctx.med_rst_out_nowcast
         stamp_date = ctx.time_nowcastend
     elif phase == "forecast":
-        wav_name = ctx.wav_rst_out_forecast
-        med_name = ctx.med_rst_out_forecast
-        stamp_date = ctx.time_forecastend
+        logger.info(
+            "execute: forecast-leg wave restart has no consumer today; "
+            "skipping archive (see _archive_wave_restarts docstring)",
+        )
+        return 0
     else:
         logger.warning(
             "execute: unknown phase=%r, skipping wave restart archive", phase,

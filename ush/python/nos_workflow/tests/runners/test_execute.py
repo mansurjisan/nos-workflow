@@ -567,10 +567,10 @@ def test_archive_wave_restarts_copies_all_three_from_nowcast(tmp_path, monkeypat
     ).read_text() == f"RESTART/{ctx.med_rst_out_nowcast}\n"
 
 
-def test_archive_wave_restarts_copies_forecast_leg_too(tmp_path, monkeypatch):
-    """Forecast leg's own restart is archived too (symmetry with
-    _archive_restart), giving wav_rst_out_forecast/med_rst_out_forecast a
-    real consumer even though nothing currently stages it back in."""
+def test_archive_wave_restarts_forecast_leg_is_noop(tmp_path, monkeypatch):
+    """Forecast leg's own restart pair has no consumer today (nothing
+    stages it back in), so it must NOT be archived -- rc=0 and nothing
+    written to $COMOUT."""
     monkeypatch.setenv("WAV_TASKS", "686")
     ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
     (ctx.data / "RESTART").mkdir()
@@ -583,9 +583,7 @@ def test_archive_wave_restarts_copies_forecast_leg_too(tmp_path, monkeypatch):
     rc = execute._archive_wave_restarts(ctx, "forecast")
 
     assert rc == 0
-    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
-    assert (target / ctx.med_rst_out_forecast).read_bytes() == b"mediator-fcst"
-    assert (target / ctx.wav_rst_out_forecast).read_bytes() == b"ww3-fcst"
+    assert list(ctx.comout.iterdir()) == []
 
 
 def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypatch, caplog):
