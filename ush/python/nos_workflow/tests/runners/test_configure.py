@@ -535,7 +535,7 @@ def test_patch_ufs_configure_non_wave_always_startup(tmp_path, monkeypatch):
 def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
     """Wave system, nowcast leg: still 'startup' (SCHISM/DATM/MED all
     cold-init the NUOPC clock at the start of every nowcast)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path, phase="nowcast")
     target = ctx.data / "ufs.configure"
     target.write_text(_UFS_CONFIGURE_TEMPLATE)
@@ -555,7 +555,7 @@ def test_patch_ufs_configure_wave_forecast_continues_when_restart_staged(
     cold-starting the wave spectrum/mediator fields."""
     from nos_workflow.runners.schism_ufs._dateutils import cmeps_restart_stamp
 
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     stamp = cmeps_restart_stamp("2026051206")  # ctx's default time_nowcastend
     wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
     med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
@@ -584,7 +584,7 @@ def test_patch_ufs_configure_wave_forecast_falls_back_to_startup_cold_start(
     hit its cold-start branch): falls back to 'startup' with a loud
     warning rather than pointing CDEPS/WW3 at restart files that were
     never staged."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path, phase="forecast")
     target = ctx.data / "ufs.configure"
     target.write_text(_UFS_CONFIGURE_TEMPLATE)
@@ -611,7 +611,7 @@ def test_patch_ufs_configure_wave_restart_n_matches_leg_length(tmp_path, monkeyp
     WW3 restart at the end of the leg, instead of every fixed N hours
     regardless of leg length (8 restarts across a 48h forecast at the old
     hardcoded restart_n=6)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     template = _UFS_CONFIGURE_TEMPLATE.replace(
         "::\n", "  restart_n = 6\n::\n", 1,
     )

@@ -295,7 +295,7 @@ def test_compute_paths_wave_restart_filenames_cmeps_stamp(tmp_path, monkeypatch)
     time_nowcastend / time_forecastend -- NOT on PREFIXNOS or the
     ${prefix}.${cycle}.${pdy1} pattern every other filename field uses.
     """
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
     _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
     monkeypatch.setenv("LEN_NOWCAST", "6")
@@ -313,7 +313,7 @@ def test_compute_paths_wave_restart_filenames_cmeps_stamp(tmp_path, monkeypatch)
 
 def test_compute_paths_wave_restart_filenames_reach_shell_env(tmp_path, monkeypatch):
     """The four wave restart fields round-trip through to_shell_env()."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
     _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
 

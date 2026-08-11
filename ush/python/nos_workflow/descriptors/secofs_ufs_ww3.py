@@ -15,7 +15,7 @@ DESC = OFSDescriptor(
     runner_module="nos_workflow.runners.ufs_coastal",
     notes=(
         "SCHISM + CDEPS DATM + WW3 via NUOPC/CMEPS (4-component); "
-        "2794 OCN + 120 ATM/MED + 686 WAV = 3600 ranks. SCHISM cycles via "
+        "2794 OCN + 120 ATM/MED + 4766 WAV = 7680 ranks. SCHISM cycles via "
         "its own hotstart (ihot=1); WW3 and the mediator instead cycle via "
         "CMEPS restarts (ufs.cpld.{ww3,cpl}.r.*.nc + rpointer.cpl)."
     ),

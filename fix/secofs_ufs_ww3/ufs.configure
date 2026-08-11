@@ -14,11 +14,11 @@ EARTH_attributes::
 ::
 
 # MED #
-# PET span = 0 3599, the FULL union of ATM+OCN+WAV -- deliberately wider
+# PET span = 0 7679, the FULL union of ATM+OCN+WAV -- deliberately wider
 # than the 3-component secofs_ufs file (MED there is co-located with ATM
 # only, 0 119). Matches the validated Alaska DATM+SCHISM+WW3 reference.
 MED_model:                      cmeps
-MED_petlist_bounds:             0 3599
+MED_petlist_bounds:             0 7679
 MED_omp_num_threads:            1
 MED_attributes::
   ATM_model = datm
@@ -57,12 +57,12 @@ OCN_attributes::
 ::
 
 # WAV #
-# PETs 2914-3599 (686 PETs, coarsened wave mesh) -- see nos-utils
-# UFSConfigProcessor._patch_pet_bounds for the datm+schism+wav==total
-# cross-check applied at prep time. mesh_wav must match
-# ufs_coastal.wav_mesh in parm/systems/secofs_ufs_ww3.yaml.
+# PETs 2914-7679 (4766 PETs, sized for the shipped E=5 elevation-filtered
+# mesh) -- see nos-utils UFSConfigProcessor._patch_pet_bounds for the
+# datm+schism+wav==total cross-check applied at prep time. mesh_wav must
+# match ufs_coastal.wav_mesh in parm/systems/secofs_ufs_ww3.yaml.
 WAV_model:                      ww3
-WAV_petlist_bounds:             2914 3599
+WAV_petlist_bounds:             2914 7679
 WAV_omp_num_threads:            1
 WAV_attributes::
   Verbosity = 0

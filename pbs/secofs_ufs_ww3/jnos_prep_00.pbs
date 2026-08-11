@@ -102,7 +102,7 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 # Use nos-utils (Python) for the full prep pipeline. config_from_env reads
 # OFS_CONFIG (set above) so the YAML drives nws=4, the ATLANTIC
 # datm_domain, and the 4-component ufs_coastal task layout (datm=120 +
-# schism=2794 + wav=686 = total=3600). nos-utils patches ufs.configure's
+# schism=2794 + wav=4766 = total=7680). nos-utils patches ufs.configure's
 # PET bounds and runSeq coupling interval for the wave layout; it does
 # NOT stage the WW3 runtime files themselves (mod_def.ww3, the WAV mesh,
 # ww3_shel.nml) -- those are staged at run time by

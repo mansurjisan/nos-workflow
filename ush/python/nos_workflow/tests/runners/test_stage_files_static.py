@@ -961,7 +961,7 @@ def test_stage_wave_configs_noop_without_wav_tasks(tmp_path, monkeypatch):
 def test_stage_wave_configs_stages_from_fixofs(tmp_path, monkeypatch):
     """WAV_TASKS>0: mod_def.ww3, the WAV mesh, ww3_shel.nml, and the
     PDLIB namelist all stage from $FIXofs to their run-dir names."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
     monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
     ctx = _make_ctx(tmp_path)
@@ -982,7 +982,7 @@ def test_stage_wave_configs_stages_from_fixofs(tmp_path, monkeypatch):
 def test_stage_wave_configs_ww3_shel_falls_back_to_comout(tmp_path, monkeypatch):
     """ww3_shel.nml absent from $FIXofs falls back to the per-cycle
     $COMOUT/$RUN.$cycle.ww3_shel.nml basename."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path)
     prefix = f"{ctx.run}.{ctx.cycle}"
     (ctx.comout / f"{prefix}.ww3_shel.nml").write_text("comout shel\n")
@@ -996,7 +996,7 @@ def test_stage_wave_configs_ww3_shel_falls_back_to_comout(tmp_path, monkeypatch)
 def test_stage_wave_configs_pdlib_nml_skipped_when_unset(tmp_path, monkeypatch):
     """WAV_PDLIB_NML unset -> only ww3_shel.nml (and whatever else is
     present) is considered; no PDLIB namelist staged, no error."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.delenv("WAV_PDLIB_NML", raising=False)
     monkeypatch.delenv("WAV_MESH", raising=False)
     ctx = _make_ctx(tmp_path)
@@ -1016,7 +1016,7 @@ def test_stage_wave_configs_stages_nest_ww3_from_comout_when_present(
 ):
     """The per-cycle boundary file nest.ww3 stages from $COMOUT only
     (no $FIXofs fallback -- it's a per-cycle artifact, not a static)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path)
     prefix = f"{ctx.run}.{ctx.cycle}"
     (ctx.comout / f"{prefix}.nest.ww3").write_bytes(b"NEST\n")
@@ -1030,7 +1030,7 @@ def test_stage_wave_configs_stages_nest_ww3_from_comout_when_present(
 def test_stage_wave_configs_nest_ww3_absent_is_silent(tmp_path, monkeypatch):
     """No nest.ww3 in $COMOUT -> no error, no file created (SECOFS may not
     need an external nesting boundary at all)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path)
 
     stage_wave_configs(ctx, "nowcast")
@@ -1087,7 +1087,7 @@ def test_stage_wave_restarts_noop_without_wav_tasks(tmp_path, monkeypatch):
 def test_stage_wave_restarts_noop_on_nowcast_phase(tmp_path, monkeypatch):
     """Nowcast never stages a wave restart in -- only forecast continues
     from the nowcast leg's own output."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
     _seed_wave_restart_archive(ctx)
 
@@ -1098,7 +1098,7 @@ def test_stage_wave_restarts_noop_on_nowcast_phase(tmp_path, monkeypatch):
 def test_stage_wave_restarts_restores_all_three_artifacts(tmp_path, monkeypatch):
     """All three artifacts land at their exact run-dir paths, with the
     pointer file's content preserved byte-for-byte."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
     _seed_wave_restart_archive(ctx)
 
@@ -1117,7 +1117,7 @@ def test_stage_wave_restarts_cold_start_when_nothing_archived(
     """Nothing archived at all (first-ever wave-coupled cycle) -> False,
     loud WARNING, no exception -- the caller (patch_ufs_configure) falls
     back to start_type=startup."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
 
     caplog.set_level(
@@ -1135,7 +1135,7 @@ def test_stage_wave_restarts_partial_archive_raises(tmp_path, monkeypatch):
     nowcast-leg archive) is NOT a legitimate cold start -- must fail
     loudly rather than silently guessing and letting the model abort at
     full allocation."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
     archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
     archive_dir.mkdir(parents=True, exist_ok=True)
@@ -1259,7 +1259,7 @@ def test_collect_staged_inputs_wave_category_present_when_enabled(
     tmp_path, monkeypatch,
 ):
     """WAV_TASKS>0: a "wave"/"WW3" group surfaces the staged WW3 files."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
     monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
     ctx = _make_ctx(tmp_path)

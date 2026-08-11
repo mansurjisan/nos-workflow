@@ -113,7 +113,7 @@ def test_validate_configs_fails_on_empty_config(tmp_path):
 def test_validate_configs_wave_requires_ww3_files(tmp_path, monkeypatch, caplog):
     """WAV_TASKS>0: ww3_shel.nml + mod_def.ww3 are ALSO required -- a
     non-wave system never hits this branch (see the next test)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_ctx(tmp_path)
     _seed_configs(ctx.data)
     caplog.set_level(
@@ -130,7 +130,7 @@ def test_validate_configs_wave_requires_ww3_files(tmp_path, monkeypatch, caplog)
 
 def test_validate_configs_wave_requires_wav_mesh_when_set(tmp_path, monkeypatch):
     """WAV_MESH names a required file too, dynamically."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
     ctx = _make_ctx(tmp_path)
     _seed_configs(ctx.data)
@@ -147,7 +147,7 @@ def test_validate_configs_wave_requires_wav_mesh_when_set(tmp_path, monkeypatch)
 
 def test_validate_configs_wave_pass_with_all_files_present(tmp_path, monkeypatch):
     """All 4 base + 2 wave configs present -> rc=0."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.delenv("WAV_MESH", raising=False)
     ctx = _make_ctx(tmp_path)
     _seed_configs(ctx.data)
@@ -171,10 +171,10 @@ def test_validate_configs_non_wave_system_unaffected_by_wave_configs(tmp_path):
 
 
 _WAVE_UFS_CONFIGURE_VALID = """\
-MED_petlist_bounds:             0 3599
+MED_petlist_bounds:             0 7679
 ATM_petlist_bounds:             0 119
 OCN_petlist_bounds:             120 2913
-WAV_petlist_bounds:             2914 3599
+WAV_petlist_bounds:             2914 7679
 
 runSeq::
 @360
@@ -192,8 +192,8 @@ runSeq::
 _WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION = """\
 MED_petlist_bounds:             0 119
 ATM_petlist_bounds:             0 119
-OCN_petlist_bounds:             120 3599
-WAV_petlist_bounds:             2914 3599
+OCN_petlist_bounds:             120 7679
+WAV_petlist_bounds:             2914 7679
 
 runSeq::
 @120
@@ -213,8 +213,8 @@ def test_validate_wave_ufs_configure_non_wave_is_noop(tmp_path, monkeypatch):
 
 
 def test_validate_wave_ufs_configure_passes_on_valid_layout(tmp_path, monkeypatch):
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     monkeypatch.setenv("COUPLING_INTERVAL", "360")
     ctx = _make_ctx(tmp_path)
     (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_VALID)
@@ -226,8 +226,8 @@ def test_validate_wave_ufs_configure_passes_on_indented_layout(tmp_path, monkeyp
     """The nos-utils patcher preserves leading whitespace on each
     *_petlist_bounds line (it replaces "^(\\s*<COMP>_petlist_bounds:\\s*)");
     an indented but otherwise valid layout must not be rejected."""
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     monkeypatch.setenv("COUPLING_INTERVAL", "360")
     ctx = _make_ctx(tmp_path)
     indented = "\n".join(
@@ -243,9 +243,9 @@ def test_validate_wave_ufs_configure_rejects_stale_pin_corruption(
     tmp_path, monkeypatch, caplog,
 ):
     """The stale-pin corruption (OCN/WAV overlap) must be rejected before
-    mpiexec, not discovered via a CDEPS/WW3 abort 3600 ranks in."""
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    mpiexec, not discovered via a CDEPS/WW3 abort 7680 ranks in."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     monkeypatch.setenv("COUPLING_INTERVAL", "360")
     ctx = _make_ctx(tmp_path)
     (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
@@ -264,11 +264,11 @@ def test_validate_wave_ufs_configure_rejects_missing_wav_line(
 ):
     """A fix file predating the wave component (only 3 *_petlist_bounds
     lines survived staging) must be rejected outright."""
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     ctx = _make_ctx(tmp_path)
     three_component = _WAVE_UFS_CONFIGURE_VALID.replace(
-        "WAV_petlist_bounds:             2914 3599\n", "",
+        "WAV_petlist_bounds:             2914 7679\n", "",
     )
     (ctx.data / "ufs.configure").write_text(three_component)
 
@@ -282,8 +282,8 @@ def test_validate_wave_ufs_configure_rejects_missing_wav_line(
 def test_validate_wave_ufs_configure_rejects_wrong_interval(
     tmp_path, monkeypatch, caplog,
 ):
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     monkeypatch.setenv("COUPLING_INTERVAL", "360")
     ctx = _make_ctx(tmp_path)
     wrong_interval = _WAVE_UFS_CONFIGURE_VALID.replace("@360", "@120")
@@ -301,11 +301,11 @@ def test_validate_wave_ufs_configure_rejects_wrong_interval(
 def test_validate_wave_ufs_configure_rejects_med_not_full_span(
     tmp_path, monkeypatch, caplog,
 ):
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     ctx = _make_ctx(tmp_path)
     bad_med = _WAVE_UFS_CONFIGURE_VALID.replace(
-        "MED_petlist_bounds:             0 3599",
+        "MED_petlist_bounds:             0 7679",
         "MED_petlist_bounds:             0 119",
     )
     (ctx.data / "ufs.configure").write_text(bad_med)
@@ -320,8 +320,8 @@ def test_validate_wave_ufs_configure_rejects_med_not_full_span(
 def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
     """End-to-end: run_python must refuse to launch mpiexec when the
     staged ufs.configure has the stale-pin corruption."""
-    monkeypatch.setenv("WAV_TASKS", "686")
-    monkeypatch.setenv("TOTAL_TASKS", "3600")
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
     ctx = _make_ctx(tmp_path)
     monkeypatch.setenv("USHnos", str(ctx.ushnos))
     _seed_configs(ctx.data)
@@ -564,7 +564,7 @@ def test_archive_wave_restarts_non_wave_is_noop(tmp_path, monkeypatch):
 def test_archive_wave_restarts_copies_all_three_from_nowcast(tmp_path, monkeypatch):
     """All three artifacts, verbatim basenames, under
     $COMOUT/{run}.{cycle}.wave_restart/."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
     (ctx.data / "RESTART").mkdir()
     (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
@@ -588,7 +588,7 @@ def test_archive_wave_restarts_forecast_leg_is_noop(tmp_path, monkeypatch):
     """Forecast leg's own restart pair has no consumer today (nothing
     stages it back in), so it must NOT be archived -- rc=0 and nothing
     written to $COMOUT."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
     (ctx.data / "RESTART").mkdir()
     (ctx.data / "RESTART" / ctx.med_rst_out_forecast).write_bytes(b"mediator-fcst")
@@ -607,7 +607,7 @@ def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypat
     """A missing artifact archives what it can and warns -- non-fatal,
     matching _archive_restart's convention (the model already ran; only
     a future leg's warm restart is at risk)."""
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
     # Only the mediator restart is present; WW3 restart + pointer missing.
     (ctx.data / "RESTART").mkdir()
@@ -624,7 +624,7 @@ def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypat
 
 
 def test_archive_wave_restarts_unknown_phase_is_nonfatal(tmp_path, monkeypatch, caplog):
-    monkeypatch.setenv("WAV_TASKS", "686")
+    monkeypatch.setenv("WAV_TASKS", "4766")
     ctx = _make_wave_restart_ctx(tmp_path, phase="bogus")
     caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
 

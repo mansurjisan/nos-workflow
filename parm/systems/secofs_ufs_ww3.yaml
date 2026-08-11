@@ -28,13 +28,22 @@ system:
 # datm_tasks/schism_tasks/datm_domain/blend_*/templates/etc. are unchanged,
 # inherited from secofs_ufs.
 ufs_coastal:
-  # WAV PETs 2914-3599 (686 PETs) -- AK-validated 4-component split
-  # (datm=120 + schism=2794 + wav=686 = total=3600, 30 nodes @ 120 ppn
-  # exactly, 0 idle slots). See nos-utils UFSConfigProcessor._patch_pet_bounds
-  # for the PET-bounds patch this drives and the datm+schism+wav==total
-  # cross-check it enforces at prep time.
-  wav_tasks: 686
-  total_tasks: 3600
+  # WAV PETs 2914-7679 (4766 PETs), sized for the mesh actually being
+  # shipped -- the repaired E=5 elevation-filtered mesh (1,299,007 nodes /
+  # 2,505,554 elements), not the smaller OCSMesh-coarsened mesh the
+  # original 686-PET figure assumed (that mesh was never built). Scaled
+  # from the only validated wave-PET data point, the Alaska
+  # DATM+SCHISM+WW3 config (4900 WAV PETs / 1,343,182 nodes = 274.12
+  # nodes/PET): 1,299,007 / 274.12 ~= 4740 PETs, rounded up to 4766 so
+  # datm+schism+wav lands exactly on a whole node count (datm=120 +
+  # schism=2794 + wav=4766 = total=7680, 64 nodes @ 120 ppn exactly, 0
+  # idle slots). This is a single-data-point extrapolation -- re-tune
+  # after a WCOSS2 profiling pass. See nos-utils
+  # UFSConfigProcessor._patch_pet_bounds for the PET-bounds patch this
+  # drives and the datm+schism+wav==total cross-check it enforces at prep
+  # time.
+  wav_tasks: 4766
+  total_tasks: 7680
   # NUOPC runSeq coupling interval (seconds). Must be an integer multiple
   # of model.physics.dt (120s here -- 360 = 3 SCHISM steps); enforced by
   # nos-utils UFSConfigProcessor._patch_runseq_interval.
@@ -58,20 +67,26 @@ model:
 
 # Computational resources (DATM + SCHISM + WW3).
 resources:
-  nprocs: 3600
+  nprocs: 7680
   nscribes: 0
-  select: "select=30:ncpus=128:mpiprocs=120:ompthreads=1"
+  select: "select=64:ncpus=128:mpiprocs=120:ompthreads=1"
   # UNVERIFIED: naive linear scale from secofs_ufs's 1500 GB @ 2914 tasks
-  # gives ~1853 GB, but WW3's implicit-PDLIB solver keeps a full 2D
-  # spectrum (32 freq x 36 dir bins) resident per wave-mesh node -- a
-  # different memory profile than SCHISM's transport arrays. Treat this
-  # as a starting point pending a WCOSS2 profiling pass, not a sized value.
-  memory_gb: 1900
+  # gives ~3953 GB @ 7680 tasks, but WW3's implicit-PDLIB solver keeps a
+  # full 2D spectrum (32 freq x 36 dir bins) resident per wave-mesh node --
+  # a different memory profile than SCHISM's transport arrays, and the WAV
+  # PET count itself is a single-data-point extrapolation (see wav_tasks
+  # above). Treat this as a starting point pending a WCOSS2 profiling
+  # pass, not a sized value.
+  memory_gb: 4000
+  # walltime_hours unchanged: more WAV PETs only shortens WW3's per-step
+  # cost (better parallelism on the same mesh); it does not add work to
+  # SCHISM/DATM, which set the pace for the leg. Re-check once a real
+  # wave-coupled cycle has run at this PET count.
   walltime_hours: 2
 
 # Ensemble disabled for the initial wave-coupled cut: the GEFS ensemble
 # resources block (select=, nprocs) is sized for secofs_ufs's 3-component
-# 2914-task layout and would under-allocate the 3600-task wave layout.
+# 2914-task layout and would under-allocate the 7680-task wave layout.
 ensemble:
   enabled: false
 
