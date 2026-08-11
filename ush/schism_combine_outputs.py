@@ -403,6 +403,7 @@ def process_station_files(ctl, dims):
     salt_final = None
     u_final = None
     v_final = None
+    zcoord_final = None
 
     for ind in [5, 6, 7, 8]:
         file_name = f"staout_{ind}"
@@ -445,6 +446,13 @@ def process_station_files(ctl, dims):
 
         if ind == 5:
             temp_final = data_final
+            # staout_5 pairs each station's temperature profile with its
+            # z-coordinate profile in the second nsta block (same SCHISM
+            # station-output convention the pre-op writer relies on) -- so
+            # this is the model's own per-station z, already resolved for
+            # the one out-of-domain station the same way temp/salt/u/v are.
+            zcoord_real = data_reshaped[:, nsta:nsta2, :]
+            zcoord_final = np.swapaxes(zcoord_real, 1, 2)
         elif ind == 6:
             salt_final = data_final
         elif ind == 7:
@@ -509,6 +517,12 @@ def process_station_files(ctl, dims):
     vwind_var.long_name = "westward wind velocity"
     vwind_var.units = "meters s-1"
 
+    zcoord_var = ncfile.createVariable('zCoordinates', np.float32, ('time', 'siglay', 'station'))
+    zcoord_var.long_name = "Z geopotential coordinates"
+    zcoord_var.location = "node"
+    zcoord_var.positive = "up"
+    zcoord_var.units = "meter"
+
     temp_var = ncfile.createVariable('temp', np.float32, ('time', 'siglay', 'station'))
     temp_var.long_name = "temperature"
     temp_var.standard_name = "sea water temperature"
@@ -529,8 +543,13 @@ def process_station_files(ctl, dims):
 
     # Station names
     station_names = [f'station_{PREFIXNOS}_{i+1:05d}' for i in range(nsta)]
-    names_char_array = nc.stringtochar(np.array(station_names, dtype=f'S{name_length}'))
-    name_station_var[:] = names_char_array
+    # null-padded char matrix; nc.stringtochar's S-dtype path breaks under
+    # numpy 2 with netCDF4 1.7 (same workaround as nos_utils.post.profiles).
+    name_arr = np.zeros((nsta, name_length), dtype='S1')
+    for i, name in enumerate(station_names):
+        b = name.encode('ascii')[:name_length]
+        name_arr[i, :len(b)] = np.frombuffer(b, dtype='S1')
+    name_station_var[:] = name_arr
 
     # Station coordinates
     lon_var[:] = sta_arr[:, 1].astype(float)
@@ -546,6 +565,8 @@ def process_station_files(ctl, dims):
         vwind_var[:, :] = vwind_values[:, :]
 
     # 3D variables
+    if zcoord_final is not None:
+        zcoord_var[:, :, :] = zcoord_final[:, :, :]
     if temp_final is not None:
         temp_var[:, :, :] = temp_final[:, :, :]
     if salt_final is not None:
