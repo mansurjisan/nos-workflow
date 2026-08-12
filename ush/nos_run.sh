@@ -29,7 +29,8 @@
 #   because `module load` (cray-pals, intel-*, hpc-stack) does not survive a
 #   Python subprocess; callers from Python invoke this helper directly via
 #   bash_compat.run_shell_function.
-#   Required env: UFS_EXEC, NTASKS, PPN, DATA.
+#   Required env: UFS_EXEC, UFS_EXEC_NAME (default fv3_coastalS.exe),
+#   NTASKS, PPN, DATA.
 _schism_run_mpi() {
     local phase=${1:-nowcast}
     cd ${DATA}
@@ -64,16 +65,40 @@ _schism_run_mpi() {
     fi
 
     local UFS_EXEC=${UFS_EXEC:-}
+    local _ufs_default_exec="fv3_coastalS.exe"
+    local _ufs_exec_name=${UFS_EXEC_NAME:-${_ufs_default_exec}}
     if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
         local _cand
         for _cand in \
-            "${DATA}/fv3_coastalS.exe" \
-            "${EXECnos:-}/fv3_coastalS.exe" \
-            "${HOMEnos:-}/exec/fv3_coastalS.exe" \
-            "${EXECnos:-}/ufs_coastal" \
-            "${HOMEnos:-}/exec/ufs_coastal"; do
+            "${DATA}/${_ufs_exec_name}" \
+            "${EXECnos:-}/${_ufs_exec_name}" \
+            "${HOMEnos:-}/exec/${_ufs_exec_name}"; do
             if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
         done
+        if [ -z "${UFS_EXEC}" ]; then
+            if [ "${_ufs_exec_name}" = "${_ufs_default_exec}" ]; then
+                # ufs_coastal is a legacy alternate name for the SAME
+                # default (non-wave) binary -- only tried when the caller
+                # did not ask for a specific executable.
+                for _cand in \
+                    "${EXECnos:-}/ufs_coastal" \
+                    "${HOMEnos:-}/exec/ufs_coastal"; do
+                    if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
+                done
+            else
+                # UFS_EXEC_NAME was explicitly requested (e.g. the
+                # wave-enabled fv3_coastalSW.exe). Launching a different,
+                # present binary instead is exactly how a wave-coupled run
+                # once aborted inside ESMF_Init instead of failing at
+                # staging -- fail loudly here rather than silently
+                # substitute the wrong executable.
+                echo "FATAL: UFS_EXEC_NAME=${_ufs_exec_name} requested but not found (or not executable) in:"
+                echo "  ${DATA}/${_ufs_exec_name}"
+                echo "  ${EXECnos:-<unset>}/${_ufs_exec_name}"
+                echo "  ${HOMEnos:-<unset>}/exec/${_ufs_exec_name}"
+                return 127
+            fi
+        fi
     fi
 
     echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
