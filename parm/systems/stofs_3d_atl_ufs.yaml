@@ -378,165 +378,26 @@ stages:
 
 # Environment variable mappings
 shell_mappings:
-  framework: stofs_ufs
-  env_prefix: nos
+  # Only env vars actually read by downstream shell/python remain here.
+  # Resolver-redundant entries (re-emitted by get_standard_exports) and dead
+  # exports (no consumer) were dropped; data nodes are unaffected. Physics
+  # constants, output intervals, OBC/nudge ROI indices, etc. are read from the
+  # YAML data nodes directly (nos-utils / param.nml templates), not via env.
+  # GRIDFILE_LL, VGRID_CTL, STA_OUT_CTL, HC_FILE_OBC, RUNTIME_CTL, BASE_DATE,
+  # RNDAY_NOWCAST, RNDAY_FORECAST, USE_DATM are inherited from base/schism.yaml
+  # (KEEP in both SCHISM-UFS systems). Only stofs-specific mappings remain here.
   variables:
     # Model identification
-    RUN: system.name
     PREFIXNOS: system.prefix
-    OCEAN_MODEL: model.ocean_model
 
-    # Grid files
-    GRIDFILE: grid.files.horizontal
-    GRIDFILE_LL: grid.files.horizontal_ll
-    VGRID_CTL: grid.files.vertical
-    STA_OUT_CTL: grid.files.station
-
-    # Grid dimensions
-    np_global: grid.n_nodes
-    ne_global: grid.n_elements
-    ns_global: grid.n_sides
-    nvrt: grid.n_levels
-    KBm: grid.n_levels
-    NNODE: grid.n_nodes
-    NELE: grid.n_elements
-
-    # Domain bounds (used by both COMF framework and STOFS legacy scripts)
-    MINLON: grid.domain.lon_min
-    MAXLON: grid.domain.lon_max
-    MINLAT: grid.domain.lat_min
-    MAXLAT: grid.domain.lat_max
-    LONMIN: grid.domain.lon_min
-    LONMAX: grid.domain.lon_max
-    LATMIN: grid.domain.lat_min
-    LATMAX: grid.domain.lat_max
-    IGRD_MET: grid.igrd_met
-    IGRD_OBC: grid.igrd_obc
-
-    # Atmospheric forcing
-    MET_NUM: forcing.atmospheric.met_num
-    DBASE_MET_NOW: forcing.atmospheric.primary
-    DBASE_MET_FOR: forcing.atmospheric.forecast_source
-    DBASE_MET_NOW2: forcing.atmospheric.secondary
-    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
-    SCALE_HFLUX: forcing.atmospheric.scale_hflux
-
-    # HRRR domain bounds (for blending)
-    HRRR_LONMIN: forcing.atmospheric.hrrr_blend.lon_min
-    HRRR_LONMAX: forcing.atmospheric.hrrr_blend.lon_max
-    HRRR_LATMIN: forcing.atmospheric.hrrr_blend.lat_min
-    HRRR_LATMAX: forcing.atmospheric.hrrr_blend.lat_max
-
-    # Ocean forcing
+    # Ocean forcing source read via os.environ downstream
     DBASE_WL_NOW: forcing.ocean.obc.wl_source
-    DBASE_WL_FOR: forcing.ocean.obc.wl_source
-    DBASE_TS_NOW: forcing.ocean.obc.ts_source
-    DBASE_TS_FOR: forcing.ocean.obc.ts_source
-    SSH_OFFSET: forcing.ocean.obc.ssh_offset
-    OBC_MODE: forcing.ocean.obc.obc_mode
 
-    # RTOFS OBC parameters (for legacy STOFS scripts)
-    N_list_target_2D: forcing.ocean.obc.n_list_target_2d
-    N_list_target_3D: forcing.ocean.obc.n_list_target_3d
-    idx_x1_2ds: forcing.ocean.obc.roi_2ds.x1
-    idx_x2_2ds: forcing.ocean.obc.roi_2ds.x2
-    idx_y1_2ds: forcing.ocean.obc.roi_2ds.y1
-    idx_y2_2ds: forcing.ocean.obc.roi_2ds.y2
-    idx_x1_3dz: forcing.ocean.obc.roi_3dz.x1
-    idx_x2_3dz: forcing.ocean.obc.roi_3dz.x2
-    idx_y1_3dz: forcing.ocean.obc.roi_3dz.y1
-    idx_y2_3dz: forcing.ocean.obc.roi_3dz.y2
-
-    # RTOFS nudge parameters
-    idx_x1_3dz_nudge: forcing.ocean.nudging.roi_3dz.x1
-    idx_x2_3dz_nudge: forcing.ocean.nudging.roi_3dz.x2
-    idx_y1_3dz_nudge: forcing.ocean.nudging.roi_3dz.y1
-    idx_y2_3dz_nudge: forcing.ocean.nudging.roi_3dz.y2
-
-    # Tidal
+    # Tidal forcing toggle
     CREATE_TIDEFORCING: forcing.tidal.create_forcing
-    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
-    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
 
-    # River forcing parameters (for legacy STOFS scripts)
-    N_RIVERS: forcing.river.n_rivers
-    N_list_target: forcing.river.n_list_target
-    N_list_min: forcing.river.n_list_min
-
-    # Runtime control
-    RUNTIME_CTL: model.runtime.ctl_file
-    RUNTIME_MET_CTL: model.runtime.met_ctl_file
-    DELT_MODEL: model.physics.dt
-    EXTSTEP_SECONDS: model.physics.extstep_seconds
-    NDTFAST: model.physics.ndtfast
-    NWS_VALUE: model.physics.nws
-    MIN_DEPTH: model.physics.min_depth
-    BASE_DATE: model.run.base_date
-    TIME_START: model.run.time_start
-
-    # Physics parameters
-    CPP_LON_VALUE: model.physics.cpp_lon
-    CPP_LAT_VALUE: model.physics.cpp_lat
-    SLAM0: model.physics.slam0
-    SFEA0: model.physics.sfea0
-    IHORCON_VALUE: model.physics.ihorcon
-    IHDIF_VALUE: model.physics.ihdif
-    IDRAG_VALUE: model.physics.idrag
-    BFRIC_VALUE: model.physics.bfric
-    IHHAT_VALUE: model.physics.ihhat
-    INUNFL_VALUE: model.physics.inunfl
-    NRAMPWIND_VALUE: model.physics.nrampwind
-    DRAMPWIND_VALUE: model.physics.drampwind
-    IWINDOFF_VALUE: model.physics.iwindoff
-    RDRG: model.physics.rdrg
-    RDRG2: model.physics.rdrg2
-    Zob: model.physics.zob
-    VISC2: model.physics.visc2
-    VISC4: model.physics.visc4
-    AKT_BAK: model.physics.akt_bak
-    AKV_BAK: model.physics.akv_bak
-    AKK_BAK: model.physics.akk_bak
-    AKP_BAK: model.physics.akp_bak
-    DCRIT: model.physics.dcrit
-    DSTART: model.physics.dstart
-    TIDE_START: model.physics.tide_start
-
-    # Run length
-    LEN_NOWCAST: _computed.len_nowcast_hours
-    LEN_FORECAST: _computed.len_forecast_hours
-    RNDAY_NOWCAST: _computed.rnday_nowcast
-    RNDAY_FORECAST: _computed.rnday_forecast
+    # Full run-period length (stofs-only; not a comf standard export)
     N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
-
-    # Output intervals
-    NSTA: output.stations.interval
-    NSTATION: output.nstation
-    NHIS: output.fields.interval
-    NDEFHIS: output.fields.def_interval
-    NQCK: output.quicksave.interval
-    NDEFQCK: output.quicksave.def_interval
-    NAVG: output.average.interval
-    NFLT: output.float.interval
-    NRST: output.restart.interval
-
-    # Resources
-    TOTAL_TASKS: resources.nprocs
-
-    # UFS-Coastal specific variables
-    USE_DATM: ufs_coastal.enabled
-    DATM_FORCING_SOURCE: ufs_coastal.datm_forcing_source
-    DATM_BLEND_HRRR_GFS: ufs_coastal.blend_hrrr_gfs
-    DATM_DOMAIN: ufs_coastal.datm_domain
-    DATM_TASKS: ufs_coastal.datm_tasks
-    SCHISM_TASKS: ufs_coastal.schism_tasks
-    NSCRIBES: ufs_coastal.nscribes
-    BLEND_RESOLUTION: ufs_coastal.blend_resolution
-    BLEND_BUFFER_DEG: ufs_coastal.blend_buffer_deg
-    DT_ATMOS: ufs_coastal.dt_atmos
-    NHOURS_FCST: ufs_coastal.nhours_fcst
-    COUPLING_INTERVAL: ufs_coastal.coupling_interval
-    NX_GLOBAL: ufs_coastal.nx_global
-    NY_GLOBAL: ufs_coastal.ny_global
 
 # Ensemble configuration (DATM-based for UFS, atmospheric forcing only)
 # 6-member GEFS atmospheric ensemble (no physics perturbation).

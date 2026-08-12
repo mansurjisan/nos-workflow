@@ -104,3 +104,19 @@ resources:
   nscribes: 4                 # SCHISM I/O processes
   memory_gb: 500
   walltime_hours: 3
+
+# Shared env-var mappings for SCHISM-UFS systems (secofs_ufs, stofs_3d_atl_ufs).
+# Only mappings that are KEEP in BOTH systems with the same yaml path live here;
+# system-specific mappings stay in the system file. Children deep-merge and
+# cannot un-inherit, so these are universally-wanted exports only.
+shell_mappings:
+  variables:
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    RUNTIME_CTL: model.runtime.ctl_file
+    BASE_DATE: model.run.base_date
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+    USE_DATM: ufs_coastal.enabled
