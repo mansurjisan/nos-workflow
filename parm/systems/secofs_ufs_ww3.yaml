@@ -56,6 +56,78 @@ ufs_coastal:
   # case ww3_shel/ww3_multi re-reads it directly; see stage_wave_configs.
   wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
 
+# GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor). Deep-merges
+# onto secofs_ufs's forcing block -- atmospheric/river/tidal/ocean stay
+# inherited unchanged; this is the only new forcing key this variant adds.
+# Builds nest.ww3 per cycle from the operational gfswave IBP tarball, the
+# same pipeline already driving STOFS-3D-AK's wave-coupled variant.
+forcing:
+  waves:
+    enabled: true
+    # A direct census of NOAA-EMC/global-workflow's operational
+    # wave_gfs.buoys point registry (4,297 points total, filtered to
+    # TYPE==IBP) shows continuous WFO-tagged coastal coverage the full
+    # length of the SECOFS open boundary: NC (NW-MHX, NW-ILM) down
+    # through the FL peninsula (JAX, MLB, MIA, KEY, TBW), around the
+    # Gulf coast to LA (PCB, MOB, LIX), plus San Juan PR (SJU) bracketing
+    # the PR/USVI segment -- roughly 400+ IBP points fall inside the
+    # window below, spaced on the order of 0.1-0.5 degrees along the
+    # coast. That is denser than the 214 IBP points the AK bring-up
+    # found inside its own window, on a comparably sized boundary.
+    #
+    # The mesh's own open-boundary extent (extracted from the real
+    # hgrid.gr3; both open segments) is lon -87.09..-64.00,
+    # lat 17.54..37.92. The window below adds a 2-4 degree margin on
+    # every side -- enough to comfortably bracket that dense WFO network
+    # without reaching so far out that it pulls in unrelated open-ocean
+    # point groups. (A few incidental non-coastal points from other WFO
+    # regions do fall inside this box too; harmless -- ww3_bound selects
+    # each boundary node's two nearest input points by raw distance
+    # [ww3_bound.F90 W3BOUNC-equivalent DIST calc], not by list order,
+    # so a farther-off point already staged among the extracted spectra
+    # never wins over a genuinely nearer coastal one.)
+    window:
+      lon_min: -91.0
+      lon_max: -61.0
+      lat_min: 16.0
+      lat_max: 40.0
+    # No extra_points: AK needed 3 general NDBC buoys (46070/46071/46035)
+    # to backfill a real, zero-IBP-coverage gap along its western
+    # Aleutian arc. The same census shows no comparable gap here -- both
+    # SECOFS boundary segments have continuous IBP coverage end to end,
+    # so there is nothing in spec_tar.gz worth naming explicitly.
+    #
+    # points_file must be a wave_gfs.buoys-format point list (the exact
+    # format the census above parsed). The real WCOSS2 location was not
+    # confirmed here -- follow the same precedent stofs_3d_ak_ufs_ww3.yaml
+    # left this at: a bare name, resolved against $FIXofs the same way
+    # grid_file/bctides_template already are, that the operator must
+    # stage before this system's first wave-enabled prep (e.g. a copy of
+    # the gfswave app's own operational wave_gfs.buoys). Until staged,
+    # WaveBoundaryProcessor logs a non-fatal "points_file not found"
+    # warning and produces no nest.ww3 -- see the critical_sources note
+    # below.
+    points_file: secofs_ufs.ww3_bound_points.list
+    # How many additional 6h GFS-Wave cycles to walk back if the newest
+    # cycle's ibp_tar/spec_tar.gz aren't posted yet. Not empirically
+    # tuned (AK's own config left this as an open question too) -- 2
+    # tolerates one missed/late post (12h) without reaching so far back
+    # that the swell field served is stale enough to be meaningless.
+    max_cycle_fallback: 2
+
+# Wave BC is deliberately NOT added to prep.critical_sources (this system
+# doesn't declare that key at all, so it inherits secofs_ufs's legacy
+# heuristic {GFS, PARAM_NML, TIDAL}). A missing/failed nest.ww3 therefore
+# degrades prep rather than failing it: WaveBoundaryProcessor's [FAIL]
+# result still logs loudly in the prep summary (PrepResult.summary()),
+# but does not flip overall success. At run time this matches WW3's own
+# behavior with no nest.ww3 present (verified against the vendored WW3
+# source, w3iobcmd.F90): the boundary-file OPEN failure is caught, FLBPI
+# is set to .FALSE., and the run continues with a logged warning --
+# "BOUNDARY CONDITIONS WILL NOT BE UPDATED" -- rather than aborting, i.e.
+# wind-sea-only, not a crash. This is the intended bring-up posture; make
+# WAVE_BC critical only once the pipeline has proven itself operationally.
+
 # UFS-Coastal coupled executable, wave-enabled build.
 model:
   executable: fv3_coastalSW.exe

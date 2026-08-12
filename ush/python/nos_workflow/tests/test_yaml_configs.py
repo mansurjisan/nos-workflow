@@ -229,6 +229,29 @@ class TestSystemConfigs:
 
         assert merged["ensemble"]["enabled"] is False
 
+        # forcing.waves: GFS-Wave boundary spectra (nos-utils
+        # WaveBoundaryProcessor). Deep-merged onto secofs_ufs's inherited
+        # forcing block -- prove the other forcing sources survive the merge.
+        waves = merged["forcing"]["waves"]
+        assert waves["enabled"] is True
+        window = waves["window"]
+        assert window["lon_min"] < window["lon_max"]
+        assert window["lat_min"] < window["lat_max"]
+        # Window must bracket the mesh's own open-boundary extent (both
+        # segments; see the yaml's own comment for the census this window
+        # is grounded in).
+        assert window["lon_min"] < -87.09 and window["lon_max"] > -64.00
+        assert window["lat_min"] < 17.54 and window["lat_max"] > 37.92
+        assert waves.get("extra_points") in (None, [])
+        assert waves["points_file"] == "secofs_ufs.ww3_bound_points.list"
+        assert waves["max_cycle_fallback"] >= 1
+        # Deliberately not critical: WAVE_BC must stay out of prep.critical_sources
+        # so a late/missing gfswave product degrades prep instead of failing it.
+        assert "prep" not in merged or "critical_sources" not in merged.get("prep", {})
+        # Other inherited forcing sources must survive the deep-merge.
+        assert "atmospheric" in merged["forcing"]
+        assert "river" in merged["forcing"]
+
     def test_stofs_3d_ak_ufs_rtofs_region(
         self,
         system_configs: Dict[str, Path],

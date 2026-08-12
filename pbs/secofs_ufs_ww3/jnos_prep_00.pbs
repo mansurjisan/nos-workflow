@@ -87,6 +87,14 @@ export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
 export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+# GFS-Wave (gfswave) boundary spectra for forcing.waves. WaveBoundaryProcessor
+# appends gfs.<PDY>/<cyc>/wave/station/ under this root, mirroring how the
+# atmospheric GFS processor appends gfs.<PDY>/<cyc>/atmos/ under COMINgfs --
+# gfswave ships inside the same gfs.<SHORTVER> COMROOT package as the
+# atmospheric GFS product, so the root is the same tree. ADAPT-AS-NEEDED:
+# not confirmed against a live WCOSS2 filesystem; verify this still holds
+# for whichever gfs_ver is current before relying on it operationally.
+export COMINgfswave=${COMINgfs}
 
 ################################################
 # CALL executable job script here
