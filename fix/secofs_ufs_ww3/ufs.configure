@@ -52,7 +52,14 @@ OCN_attributes::
   DumpFields = false
   ProfileMemory = false
   OverwriteSlice = true
-  meshloc = element
+  # node, not element: OCN is the SOURCE of the ocn-to-wav bilinear map, and
+  # ESMF only builds an internal dual mesh for a bilinear map's source side.
+  # With meshloc=element it rebuilds a dual of SCHISM's full mesh inside
+  # ESMF_FieldRegridStore and aborts in _change_owners_from_src_to_curr_comm.
+  # The SCHISM cap defaults to node when the attribute is absent and takes a
+  # fully implemented path (SCHISM_MeshCreateNode). Only valid while the build
+  # has USE_NUOPC_RIVER=OFF, which requires element.
+  meshloc = node
   CouplingConfig = none
 ::
 
