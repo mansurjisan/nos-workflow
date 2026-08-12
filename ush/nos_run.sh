@@ -75,7 +75,9 @@ _schism_run_mpi() {
             "${HOMEnos:-}/exec/${_ufs_exec_name}"; do
             if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
         done
-        if [ -z "${UFS_EXEC}" ]; then
+        # Mirror the outer search condition: a preset but non-executable
+        # UFS_EXEC must not suppress the legacy-name fallback.
+        if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
             if [ "${_ufs_exec_name}" = "${_ufs_default_exec}" ]; then
                 # ufs_coastal is a legacy alternate name for the SAME
                 # default (non-wave) binary -- only tried when the caller

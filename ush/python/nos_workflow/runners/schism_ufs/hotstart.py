@@ -186,7 +186,7 @@ def find_hotstart(
 
     base_date = found_anchor
     rst_file = found_path
-    ini_file_root = data / f"{prefix}.{cycle}.{env.pdy}.init.nowcast.nc"
+    ini_file_root = data / f"{env.run}.{cycle}.{env.pdy}.init.nowcast.nc"
 
     nh_nowcast = _dateutils.nhour(time_nowcastend, base_date)
     cold_start = "F"
