@@ -177,11 +177,12 @@ for st in $STAGES; do
     break
   fi
   if [ "$st" = "nowcast" ] && [ "$DRYRUN" != "1" ]; then
-    # Filename basename uses PREFIXNOS (secofs_ufs), NOT system.name
-    # (secofs_ufs_ww3) -- system.prefix is deliberately left unoverridden
-    # so this variant reuses secofs_ufs's SCHISM-side fix filenames; only
-    # the $COMOUT directory (system.name-keyed) differs.
-    rst="${COMOUT:-/lfs/h1/nos/ptmp/${USER}/com/nos/secofs_ufs_ww3.${PDY}}/secofs_ufs.t${cyc}z.${PDY}.rst.nowcast.nc"
+    # rst.nowcast.nc is a per-cycle $COMOUT product (written by
+    # execute._archive_restart / the combine_hotstart7 shell path), keyed
+    # on $RUN (secofs_ufs_ww3) -- NOT system.prefix (secofs_ufs), which
+    # only names the shared SCHISM-side $FIXofs statics this variant
+    # reuses.
+    rst="${COMOUT:-/lfs/h1/nos/ptmp/${USER}/com/nos/secofs_ufs_ww3.${PDY}}/secofs_ufs_ww3.t${cyc}z.${PDY}.rst.nowcast.nc"
     if [ -s "$rst" ]; then log "OK: nowcast restart present ($(du -h "$rst" 2>/dev/null|cut -f1))"
     else log "WARN: STAGE_SUMMARY=PASS but rst not at expected path ($rst) — forecast stage_hotstart will self-verify"; fi
   fi

@@ -261,8 +261,8 @@ def stage_hotstart(ctx: SchismRunContext, phase: str) -> int:
         f"stage_hotstart: phase={phase} requires hotstart.nc but no "
         f"source was found.\n  Searched:\n{searched}\n"
         f"  Fix: stage a NETCDF4_CLASSIC hotstart at "
-        f"$COMOUT/$PREFIXNOS.init.{phase}.nc (or set $INI_FILE to an "
-        f"absolute path)."
+        f"$COMOUT/$RUN.$cycle.$PDY.init.{phase}.nc (or set $INI_FILE to "
+        f"an absolute path)."
     )
 
 

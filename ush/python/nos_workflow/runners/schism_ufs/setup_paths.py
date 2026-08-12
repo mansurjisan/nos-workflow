@@ -100,9 +100,18 @@ def _stage_fix_files(env: "NCOEnv") -> None:
                 )
 
 
-def _compute_filenames(prefix: str, cycle: str, pdy1: str) -> dict:
-    """Build the per-cycle filename dict (forcing, restart, output products)."""
-    base = f"{prefix}.{cycle}.{pdy1}"
+def _compute_filenames(run: str, cycle: str, pdy1: str) -> dict:
+    """Build the per-cycle filename dict (forcing, restart, output products).
+
+    Keyed on ``run`` (``$RUN``), NOT ``$PREFIXNOS``: every entry here is a
+    per-cycle $COMOUT product written/read by this pipeline (prep's
+    archiver names them by $RUN), unlike the PREFIXNOS-keyed $FIXofs
+    statics (grid, param.nml template, ...) staged elsewhere. $RUN and
+    $PREFIXNOS coincide for every system except wave-coupled variants
+    that keep system.prefix pointed at the non-wave SCHISM fix set while
+    $RUN is the wave-coupled system name.
+    """
+    base = f"{run}.{cycle}.{pdy1}"
     return {
         # Phase-specific tars are written by prep with phase-specific sim
         # windows (nowcast=6h, forecast=48h). OBC_FORCING_FILE is the
@@ -270,6 +279,8 @@ def compute_paths(
     pdy = env.pdy
     cyc = env.cyc
     cycle = env.cycle
+    # prefix (PREFIXNOS) keys $FIXofs statics only; per-cycle $COMOUT
+    # product filenames key on $RUN -- see _compute_filenames.
     prefix = os.environ.get("PREFIXNOS") or f"nos.{env.ofs}"
     pdy1 = pdy
 
@@ -281,7 +292,7 @@ def compute_paths(
     except (TypeError, ValueError):
         delt_model_float = 120.0
 
-    filenames = _compute_filenames(prefix, cycle, pdy1)
+    filenames = _compute_filenames(env.run, cycle, pdy1)
 
     rst_file_for_ctx: Optional[str]
     ini_file_for_ctx: Optional[str]
@@ -423,12 +434,12 @@ def compute_paths(
 
 
 def to_shell_filenames(
-    prefix: str,
+    run: str,
     cycle: str,
     pdy1: str,
 ) -> dict:
     """Public wrapper around _compute_filenames for callers and tests."""
-    return _compute_filenames(prefix, cycle, pdy1)
+    return _compute_filenames(run, cycle, pdy1)
 
 
 __all__ = [
