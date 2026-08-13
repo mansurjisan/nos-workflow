@@ -52,14 +52,17 @@ OCN_attributes::
   DumpFields = false
   ProfileMemory = false
   OverwriteSlice = true
-  # node, not element: OCN is the SOURCE of the ocn-to-wav bilinear map, and
-  # ESMF only builds an internal dual mesh for a bilinear map's source side.
-  # With meshloc=element it rebuilds a dual of SCHISM's full mesh inside
-  # ESMF_FieldRegridStore and aborts in _change_owners_from_src_to_curr_comm.
-  # The SCHISM cap defaults to node when the attribute is absent and takes a
-  # fully implemented path (SCHISM_MeshCreateNode). Only valid while the build
-  # has USE_NUOPC_RIVER=OFF, which requires element.
-  meshloc = node
+  # element, NOT node. The node path in SCHISM's cap publishes the AUGMENTED
+  # element set (nea, allocate elementids(nea)/nv(sum(i34(1:nea)))), so ghost
+  # elements are duplicated across PETs with no owners -- the transferred
+  # element distgrid grows past ne_global and the OCN-MED connector's
+  # RedistStore fails with truncated messages. The element path publishes
+  # resident-only elements (ne) and is the exercised one.
+  # Consequence: ESMF would build an internal dual of SCHISM's mesh for the
+  # ocn-to-wav bilinear map (source side only), which aborts at this scale.
+  # That is avoided by supplying precomputed regrid weights instead, not by
+  # switching meshloc.
+  meshloc = element
   CouplingConfig = none
 ::
 
