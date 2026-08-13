@@ -15,8 +15,18 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  input%forcing%currents     = 'C'
-  input%forcing%water_levels = 'C'
+  ! DIAGNOSTIC, TEMPORARY -- revert to 'C' once the question below is answered.
+  ! The first coupled run reached model time and died with SIGSEGV in WW3's ST4
+  ! tail-stress table (w3src4md.F90:948, an unguarded TAUHFT2 index) immediately
+  ! after the first SCHISM water-level update. 41.7% of this wave mesh is dry at
+  ! datum, so a level update flips wet/dry and refreshes the PDLIB solver mask;
+  ! the implicit solve then degraded from 10 to 170 iterations and exited on the
+  ! JGS_PMIN escape with ~35k nodes unconverged, feeding bad action into ST4.
+  ! Setting these to 'F' makes WW3 ignore SCHISM's currents and water levels
+  ! while the full wav->ocn feedback to SCHISM keeps flowing, which isolates
+  ! whether the coupled ocean inputs are the trigger. Winds stay coupled.
+  input%forcing%currents     = 'F'
+  input%forcing%water_levels = 'F'
   input%forcing%ice_conc     = 'F'
   input%forcing%ice_param1   = 'F'
   input%forcing%ice_param5   = 'F'
