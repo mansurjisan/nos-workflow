@@ -83,6 +83,11 @@ WAV_model:                      ww3
 WAV_petlist_bounds:             2914 7679
 WAV_omp_num_threads:            1
 WAV_attributes::
+  # DIAGNOSTIC -- set back to 0 after the currents characterisation run.
+  # dbug_flag = 6 makes the WW3 cap print imported-field min/max per coupling
+  # window (So_h, So_u, So_v) to the WAV PET logs, which is what identifies
+  # whether SCHISM's currents carry dry-element garbage.
+  dbug_flag = 6
   Verbosity = 0
   DumpFields = false
   ProfileMemory = false

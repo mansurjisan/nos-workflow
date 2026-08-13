@@ -15,22 +15,16 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  ! Currents OFF, deliberately. Bisected over three runs:
-  !   both off              -> nowcast + 48 h forecast clean
-  !   water levels on only  -> nowcast clean
-  !   both on               -> SIGSEGV in WW3's ST4 tail-stress table
-  ! so currents are required for the crash. The switch carries CRX1/CRT1, so
-  ! currents enter the dispersion relation by Doppler shift and feed XK, which
-  ! indexes TAUHFT2 at w3src4md.F90:948 without the MAX clamp its sibling
-  ! indices carry. Suspected source is SCHISM's depth-averaged velocity at dry
-  ! elements: 41.7% of this wave mesh is dry at datum.
-  !
-  ! What this configuration keeps: wind forcing, water-level (depth) updating,
-  ! and the full wave-to-ocean feedback including radiation stress. What it
-  ! gives up: wave-current interaction (current-induced refraction and Doppler).
-  ! Revisit once the dry-element velocity is understood or the upstream clamp
-  ! lands; the coupled field itself is already flowing, only its use is off.
-  input%forcing%currents     = 'F'
+  ! DIAGNOSTIC RUN -- currents temporarily back ON to characterise them.
+  ! Expected to SIGSEGV in WW3's ST4 tail-stress table (w3src4md.F90:948);
+  ! that is not the point of this run. The point is the dbug_flag=6 output in
+  ! the WAV PET logs, which prints So_u/So_v min/max per coupling window before
+  ! the crash. If those show huge or non-finite values, SCHISM's depth-averaged
+  ! velocity at dry elements is confirmed as the source (41.7% of this wave
+  ! mesh is dry at datum) and the fix is upstream of WW3.
+  ! REVERT to 'F' after this run -- the settled configuration is currents off,
+  ! water levels on, which completed a clean nowcast.
+  input%forcing%currents     = 'C'
   input%forcing%water_levels = 'C'
   input%forcing%ice_conc     = 'F'
   input%forcing%ice_param1   = 'F'
