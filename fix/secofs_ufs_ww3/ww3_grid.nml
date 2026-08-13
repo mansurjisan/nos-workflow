@@ -150,6 +150,76 @@
 /
 
 ! -------------------------------------------------------------------- !
+! TIMESTEPS_NML: DTMAX=DTXY=120s, DTKTH=60s, DTMIN=15s.
+!
+! Reduced from 360/180 after the first currents-coupled run died with SIGSEGV
+! in ST4's tail-stress table. The implicit PDLIB solve was already marginal
+! without currents (54 of 60 solves exhausting JGS_MAXITER=1000 with 3-4%
+! of nodes unconverged); coupling SCHISM's currents adds the k-shift terms,
+! which are built entirely from the current field and its gradients, and tips
+! those stalled rows into growth. A smaller propagation step restores diagonal
+! dominance and should also clear the chronic iteration stall.
+!
+! The NUOPC coupling interval stays at 360s -- WW3 substeps internally, so this
+! does not change the exchange frequency or the SCHISM dt=120 multiple rule.
+!   ww3_grid_a.nml + namelists_a.nml. This pass additionally verified     !
+!   every namelist key/field name used below directly against            !
+!   WW3/model/nml/ww3_grid.nml (the shipped      !
+!   documentation template) and the reader code in                       !
+!   WW3/model/src/w3gridmd.F90 (SELECT CASE      !
+!   (GTYPE) / CASE(UNGTYPE) block, the INBND_POINT_NML consumer loop      !
+!   around line 4520-4590, and the ZLIM/TMPSTA classification around      !
+!   line 4045-4058) -- not just cross-referenced against other namelist   !
+!   examples. Every SECOFS-scale numeric value not explicitly called out  !
+!   above (spectral resolution, timesteps) is still a DRAFT and remains   !
+!   marked UNVERIFIED at its own namelist block.                          !
+!                                                                          !
+! COMPANION FILE: this file's GRID%NML points at                          !
+!   secofs_ufs_ww3.namelists_pdlib.nml                                    !
+! (unchanged by this pass; see DECISIONS.txt).                            !
+! ---------------------------------------------------------------------- !
+
+! -------------------------------------------------------------------- !
+! SPECTRUM_NML: 36 directions x 32 frequencies, FREQ1=0.0373 Hz,
+! XFR=1.1 (geometric frequency progression factor -- 1.1 is the WW3
+! default and matches both real references above). NK=32/NTH=36 and
+! FREQ1=0.0373 are DRAFT/UNVERIFIED SECOFS decisions (per task
+! instruction), not derived from any SECOFS-specific reference -- no
+! prior SECOFS wave-spectrum resolution exists to check against. Coarser
+! than ww3_ufs1.1's NK=50/NTH=36 (global, deep-water-focused) and finer
+! than ww3_tp2.6's NK=25/NTH=24 (small nearshore test); NK=32 sits
+! between the two, reasonable for a regional shelf+nearshore domain but
+! NOT validated against a resolution/CFL study for the actual SECOFS
+! wave mesh.
+! -------------------------------------------------------------------- !
+&SPECTRUM_NML
+  SPECTRUM%XFR       = 1.1
+  SPECTRUM%FREQ1     = 0.0373
+  SPECTRUM%NK        = 32
+  SPECTRUM%NTH       = 36
+/
+
+! -------------------------------------------------------------------- !
+! RUN_NML: all physics terms on -- matches both real references.
+! RUN%FLCK (wavenumber/depth-refraction shift) was MISSING from the prior
+! draft (defaults to F if omitted) despite this header already claiming
+! "all physics terms on" -- both real UNST references this file cites
+! (ww3_tp2.6/ww3_ufs1.1) explicitly set RUN%FLCK=T. Added here to match
+! the file's own stated intent; verified field name against
+! model/nml/ww3_grid.nml's RUN_NML documentation block (RUN%FLDRY/FLCX/
+! FLCY/FLCTH/FLCK/FLSOU, defaults all F). FLDRY (dry run, I/O only) is
+! correctly left at its default F -- we want an actual physics run, not
+! a dry run -- and was never part of "all propagation/source terms".
+! -------------------------------------------------------------------- !
+&RUN_NML
+  RUN%FLCX         = T
+  RUN%FLCY         = T
+  RUN%FLCTH        = T
+  RUN%FLCK         = T
+  RUN%FLSOU        = T
+/
+
+! -------------------------------------------------------------------- !
 ! TIMESTEPS_NML: DTMAX=DTXY=360s, DTKTH=180s, DTMIN=15s.
 !
 ! DTMAX/DTXY = 360s is chosen to match the ufs.configure runSeq coupling
@@ -174,9 +244,9 @@
 ! validation, not a verified stable configuration.
 ! -------------------------------------------------------------------- !
 &TIMESTEPS_NML
-  TIMESTEPS%DTMAX        = 360.
-  TIMESTEPS%DTXY         = 360.
-  TIMESTEPS%DTKTH        = 180.
+  TIMESTEPS%DTMAX        = 120.
+  TIMESTEPS%DTXY         = 120.
+  TIMESTEPS%DTKTH        = 60.
   TIMESTEPS%DTMIN        = 15.
 /
 
