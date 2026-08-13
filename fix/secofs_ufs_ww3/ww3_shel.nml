@@ -15,26 +15,21 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  ! BISECT STEP 2 of 3 -- currents off, water levels back ON.
+  ! Currents OFF, deliberately. Bisected over three runs:
+  !   both off              -> nowcast + 48 h forecast clean
+  !   water levels on only  -> nowcast clean
+  !   both on               -> SIGSEGV in WW3's ST4 tail-stress table
+  ! so currents are required for the crash. The switch carries CRX1/CRT1, so
+  ! currents enter the dispersion relation by Doppler shift and feed XK, which
+  ! indexes TAUHFT2 at w3src4md.F90:948 without the MAX clamp its sibling
+  ! indices carry. Suspected source is SCHISM's depth-averaged velocity at dry
+  ! elements: 41.7% of this wave mesh is dry at datum.
   !
-  ! Step 1 (both off) ran a full nowcast and 48 h forecast cleanly, proving one
-  ! of these two coupled ocean inputs causes the SIGSEGV seen when both were on:
-  ! WW3's ST4 tail-stress table indexed out of bounds (w3src4md.F90:948, where
-  ! the TAUHFT2 third index is the only one without a MAX clamp), on the step
-  ! immediately after the first SCHISM water-level update.
-  !
-  ! Water levels are the prime suspect: 41.7% of this wave mesh is dry at datum,
-  ! so a level update flips wet/dry and refreshes the PDLIB solver mask, after
-  ! which the implicit solve degraded from 10 to 170 iterations and exited on
-  ! the JGS_PMIN escape with roughly 35k nodes unconverged. Currents do not
-  ! touch that mask. Turning water levels on alone tests exactly that.
-  !
-  ! If this run SEGFAULTS: water levels are confirmed; keep them off and move to
-  ! currents='C'/water_levels='F', which retains wave-current interaction and the
-  ! wave-to-ocean feedback. Mitigations to try after that: DTMAX 360->120 in
-  ! ww3_grid TIMESTEPS_NML with runSeq @120, or the upstream one-line clamp.
-  ! If this run SURVIVES: water levels are fine and currents are the culprit;
-  ! step 3 is currents='C' for full two-way coupling.
+  ! What this configuration keeps: wind forcing, water-level (depth) updating,
+  ! and the full wave-to-ocean feedback including radiation stress. What it
+  ! gives up: wave-current interaction (current-induced refraction and Doppler).
+  ! Revisit once the dry-element velocity is understood or the upstream clamp
+  ! lands; the coupled field itself is already flowing, only its use is off.
   input%forcing%currents     = 'F'
   input%forcing%water_levels = 'C'
   input%forcing%ice_conc     = 'F'
