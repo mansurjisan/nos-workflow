@@ -482,6 +482,12 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
       - the WAV ESMF mesh (``$WAV_MESH``) -- name preserved verbatim; it
                            must match the ``mesh_wav`` attribute CMEPS
                            reads out of ufs.configure.
+      - the ocn->wav regrid weight file (``$WAV_OCN2WAV_WEIGHTS``), if
+                           configured -- name preserved verbatim; it must
+                           match the ``ocn2wav_smapname`` attribute CMEPS
+                           reads out of ufs.configure. Precomputed so ESMF
+                           skips building an internal dual of SCHISM's mesh
+                           for this map at runtime.
       - ww3_shel.nml   -- the WW3 shell control namelist; staged as-is
                            (with @[VAR] placeholders) and patched in place
                            by configure.patch_ww3_shel.
@@ -514,6 +520,16 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
     if wav_mesh and ctx.fixofs is not None:
         src = ctx.fixofs / wav_mesh
         if _copy_if_exists(src, ctx.data / wav_mesh, label=wav_mesh):
+            staged += 1
+
+    ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS") or (
+        f"{prefix}.ocn2wav_weights.nc" if prefix else ""
+    )
+    if ocn2wav_weights and ctx.fixofs is not None:
+        src = ctx.fixofs / ocn2wav_weights
+        if _copy_if_exists(
+            src, ctx.data / ocn2wav_weights, label=ocn2wav_weights,
+        ):
             staged += 1
 
     run_cycle_prefix = f"{ctx.run}.{ctx.cycle}"
@@ -791,11 +807,16 @@ def collect_staged_inputs(
             f"{ctx.prefixnos}.mesh_wav.nc" if ctx.prefixnos else ""
         )
         wav_pdlib_nml = os.environ.get("WAV_PDLIB_NML") or ""
+        ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS") or (
+            f"{ctx.prefixnos}.ocn2wav_weights.nc" if ctx.prefixnos else ""
+        )
         wave_dest = ["mod_def.ww3", "ww3_shel.nml", "nest.ww3"]
         if wav_mesh:
             wave_dest.append(wav_mesh)
         if wav_pdlib_nml:
             wave_dest.append(wav_pdlib_nml)
+        if ocn2wav_weights:
+            wave_dest.append(ocn2wav_weights)
         collector.add("wave", "WW3", _present_in_data(ctx, wave_dest))
 
     if ufs:

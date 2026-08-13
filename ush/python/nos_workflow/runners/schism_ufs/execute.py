@@ -17,8 +17,9 @@ logger = logging.getLogger(__name__)
 
 _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
 # Wave systems only (see _is_wave_enabled) -- appended onto _REQUIRED_CONFIGS.
-# The WAV ESMF mesh name is dynamic (ufs_coastal.wav_mesh), so it's added
-# from $WAV_MESH rather than hardcoded here.
+# The WAV ESMF mesh and ocn->wav regrid weight names are dynamic
+# (ufs_coastal.wav_mesh / ufs_coastal.ocn2wav_weights), so they're added
+# from $WAV_MESH / $WAV_OCN2WAV_WEIGHTS rather than hardcoded here.
 _REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
 _HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
 _PETLIST_BOUNDS_RE = re.compile(
@@ -105,6 +106,15 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
         wav_mesh = os.environ.get("WAV_MESH")
         if wav_mesh:
             required = required + (wav_mesh,)
+        # Required while the ESMF dual-construction workaround is in place:
+        # a silently-missing weight file does not fail staging (ESMF just
+        # falls back to computing the map at runtime), and that fallback
+        # aborts ~300s into a multi-thousand-PET job. Failing here, before
+        # the MPI launch, is cheap; the alternative is losing a full
+        # allocation to rediscover the same missing file.
+        ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS")
+        if ocn2wav_weights:
+            required = required + (ocn2wav_weights,)
     missing = []
     for name in required:
         f = ctx.data / name

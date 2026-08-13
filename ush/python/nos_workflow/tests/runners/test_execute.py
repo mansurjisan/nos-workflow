@@ -145,10 +145,30 @@ def test_validate_configs_wave_requires_wav_mesh_when_set(tmp_path, monkeypatch)
     assert rc == 0
 
 
+def test_validate_configs_wave_requires_ocn2wav_weights_when_set(tmp_path, monkeypatch):
+    """WAV_OCN2WAV_WEIGHTS names a required file too, dynamically -- the
+    precomputed ocn->wav regrid map. Missing weights fail fast here
+    rather than at a CMEPS abort well into the MPI run."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # weights still missing
+
+    (ctx.data / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"weights\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
 def test_validate_configs_wave_pass_with_all_files_present(tmp_path, monkeypatch):
     """All 4 base + 2 wave configs present -> rc=0."""
     monkeypatch.setenv("WAV_TASKS", "4766")
     monkeypatch.delenv("WAV_MESH", raising=False)
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
     ctx = _make_ctx(tmp_path)
     _seed_configs(ctx.data)
     (ctx.data / "ww3_shel.nml").write_text("shel\n")

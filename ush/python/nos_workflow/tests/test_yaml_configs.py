@@ -219,6 +219,10 @@ class TestSystemConfigs:
         # (fix/secofs_ufs_ww3/ufs.configure) -- this is the only place the
         # two are cross-checked in-repo.
         assert ufs["wav_mesh"] == "secofs_ufs.mesh_wav.nc"
+        # ocn2wav_weights must match ufs.configure's
+        # MED_attributes::ocn2wav_smapname line (same file) -- the
+        # precomputed ocn->wav regrid weight file.
+        assert ufs["ocn2wav_weights"] == "secofs_ufs.ocn2wav_weights.nc"
 
         assert merged["model"]["executable"] == "fv3_coastalSW.exe"
         assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"

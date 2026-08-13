@@ -55,6 +55,15 @@ ufs_coastal:
   # flags for the implicit-PDLIB run). Staged defensively at runtime in
   # case ww3_shel/ww3_multi re-reads it directly; see stage_wave_configs.
   wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
+  # Precomputed ocn->wav regrid weight file (ESMF_FieldSMMStore format:
+  # n_s-dimensioned row/col/S). Keeps ESMF from building an internal dual
+  # of SCHISM's mesh for the bilinear map at runtime, which aborts at this
+  # mesh size -- see the ocn2wav_smapname comment in
+  # fix/secofs_ufs_ww3/ufs.configure, which this value must match.
+  # Prefixed in both $FIXofs and $DATA (like wav_mesh, not mod_def.ww3's
+  # bare-name staging) because CMEPS opens this exact attribute string
+  # with a plain nf90_open against the run directory.
+  ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
 
 # GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor). Deep-merges
 # onto secofs_ufs's forcing block -- atmospheric/river/tidal/ocean stay
@@ -169,6 +178,7 @@ shell_mappings:
     WAV_TASKS: ufs_coastal.wav_tasks
     WAV_MESH: ufs_coastal.wav_mesh
     WAV_PDLIB_NML: ufs_coastal.wav_pdlib_namelist
+    WAV_OCN2WAV_WEIGHTS: ufs_coastal.ocn2wav_weights
     # Consumed by execute._validate_wave_ufs_configure's pre-MPI-launch
     # sanity check (the runSeq @<interval> line staged into ufs.configure
     # must match this).

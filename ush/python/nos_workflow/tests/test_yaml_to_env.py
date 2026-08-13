@@ -736,9 +736,10 @@ class TestExecutionMode:
 
 class TestWaveShellMappings:
     """secofs_ufs_ww3's additive shell_mappings (WAV_TASKS/WAV_MESH/
-    WAV_PDLIB_NML) reach the shell export -- the generic dot-path
-    ``variable_mappings`` loop needs no wave-specific code, but this
-    pins that the YAML wiring itself is correct end to end."""
+    WAV_PDLIB_NML/WAV_OCN2WAV_WEIGHTS) reach the shell export -- the
+    generic dot-path ``variable_mappings`` loop needs no wave-specific
+    code, but this pins that the YAML wiring itself is correct end to
+    end."""
 
     _SECOFS_WW3_YAML = (
         Path(__file__).parent.parent.parent.parent.parent
@@ -752,6 +753,7 @@ class TestWaveShellMappings:
         assert "export WAV_TASKS=4766" in output
         assert "export WAV_MESH=secofs_ufs.mesh_wav.nc" in output
         assert "export WAV_PDLIB_NML=secofs_ufs_ww3.namelists_pdlib.nml" in output
+        assert "export WAV_OCN2WAV_WEIGHTS=secofs_ufs.ocn2wav_weights.nc" in output
         assert "export TOTAL_TASKS=7680" in output
         assert "export NPROCS=7680" in output
         assert "export PREFIXNOS=secofs_ufs" in output
@@ -772,6 +774,7 @@ class TestWaveShellMappings:
         assert "WAV_TASKS" not in output
         assert "WAV_MESH" not in output
         assert "WAV_PDLIB_NML" not in output
+        assert "WAV_OCN2WAV_WEIGHTS" not in output
 
 
 # ---------------------------------------------------------------------------
