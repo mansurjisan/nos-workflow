@@ -15,18 +15,28 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  ! DIAGNOSTIC, TEMPORARY -- revert to 'C' once the question below is answered.
-  ! The first coupled run reached model time and died with SIGSEGV in WW3's ST4
-  ! tail-stress table (w3src4md.F90:948, an unguarded TAUHFT2 index) immediately
-  ! after the first SCHISM water-level update. 41.7% of this wave mesh is dry at
-  ! datum, so a level update flips wet/dry and refreshes the PDLIB solver mask;
-  ! the implicit solve then degraded from 10 to 170 iterations and exited on the
-  ! JGS_PMIN escape with ~35k nodes unconverged, feeding bad action into ST4.
-  ! Setting these to 'F' makes WW3 ignore SCHISM's currents and water levels
-  ! while the full wav->ocn feedback to SCHISM keeps flowing, which isolates
-  ! whether the coupled ocean inputs are the trigger. Winds stay coupled.
+  ! BISECT STEP 2 of 3 -- currents off, water levels back ON.
+  !
+  ! Step 1 (both off) ran a full nowcast and 48 h forecast cleanly, proving one
+  ! of these two coupled ocean inputs causes the SIGSEGV seen when both were on:
+  ! WW3's ST4 tail-stress table indexed out of bounds (w3src4md.F90:948, where
+  ! the TAUHFT2 third index is the only one without a MAX clamp), on the step
+  ! immediately after the first SCHISM water-level update.
+  !
+  ! Water levels are the prime suspect: 41.7% of this wave mesh is dry at datum,
+  ! so a level update flips wet/dry and refreshes the PDLIB solver mask, after
+  ! which the implicit solve degraded from 10 to 170 iterations and exited on
+  ! the JGS_PMIN escape with roughly 35k nodes unconverged. Currents do not
+  ! touch that mask. Turning water levels on alone tests exactly that.
+  !
+  ! If this run SEGFAULTS: water levels are confirmed; keep them off and move to
+  ! currents='C'/water_levels='F', which retains wave-current interaction and the
+  ! wave-to-ocean feedback. Mitigations to try after that: DTMAX 360->120 in
+  ! ww3_grid TIMESTEPS_NML with runSeq @120, or the upstream one-line clamp.
+  ! If this run SURVIVES: water levels are fine and currents are the culprit;
+  ! step 3 is currents='C' for full two-way coupling.
   input%forcing%currents     = 'F'
-  input%forcing%water_levels = 'F'
+  input%forcing%water_levels = 'C'
   input%forcing%ice_conc     = 'F'
   input%forcing%ice_param1   = 'F'
   input%forcing%ice_param5   = 'F'
