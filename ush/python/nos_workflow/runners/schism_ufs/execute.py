@@ -29,6 +29,11 @@ _PETLIST_BOUNDS_RE = re.compile(
     r"^[ \t]*(MED|ATM|OCN|WAV)_petlist_bounds:\s*(\d+)\s+(\d+)\s*$", re.MULTILINE,
 )
 _RUNSEQ_INTERVAL_RE = re.compile(r"(?m)^@(\d+)\s*$")
+# Any MED_attributes::*_smapname line (ocn2wav_smapname today; generalized
+# so a future *_smapname doesn't silently bypass this check). CMEPS opens
+# each one directly with a plain nf90_open at mediator init -- see
+# _validate_wave_ufs_configure.
+_SMAPNAME_RE = re.compile(r"^[ \t]*(\w+_smapname)\s*=\s*(\S+)\s*$", re.MULTILINE)
 
 
 def _hotstart_step(path: Path) -> int:
@@ -107,11 +112,16 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
         if wav_mesh:
             required = required + (wav_mesh,)
         # Required while the ESMF dual-construction workaround is in place:
-        # a silently-missing weight file does not fail staging (ESMF just
-        # falls back to computing the map at runtime), and that fallback
-        # aborts ~300s into a multi-thousand-PET job. Failing here, before
-        # the MPI launch, is cheap; the alternative is losing a full
-        # allocation to rediscover the same missing file.
+        # fix/secofs_ufs_ww3/ufs.configure unconditionally sets
+        # ocn2wav_smapname, so CMEPS always takes the ESMF_FieldSMMStore
+        # path and does a plain nf90_open on this file at mediator init --
+        # there is no fallback to computing the map on the fly. A missing
+        # file aborts ~300s into a multi-thousand-PET job. Failing here,
+        # before the MPI launch, is cheap; the alternative is losing a
+        # full allocation to rediscover the same missing file. This is a
+        # fast pre-check keyed off the env var; _validate_wave_ufs_configure
+        # is the authoritative check, keyed off the staged ufs.configure
+        # itself, so it still catches a stale/broken env chain.
         ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS")
         if ocn2wav_weights:
             required = required + (ocn2wav_weights,)
@@ -162,6 +172,18 @@ def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
       - MED's span is exactly ``0..total_tasks-1``;
       - the runSeq ``@<interval>`` line matches ``$COUPLING_INTERVAL``
         (``ufs_coastal.coupling_interval`` from the YAML).
+
+    Also checks every ``MED_attributes::*_smapname`` line (``ocn2wav_smapname``
+    today) against ``$DATA`` directly, independent of any env var. This is
+    the authoritative check for those weight files: staging derives the
+    expected filename from ``$WAV_OCN2WAV_WEIGHTS``, so if that variable is
+    unset (a stale yaml or a broken yaml-to-env eval) staging silently skips
+    the file and _validate_configs's env-driven check silently skips
+    requiring it too, while ufs.configure -- a static template -- still
+    carries the attribute unconditionally. CMEPS then opens the named file
+    with a plain nf90_open at mediator init regardless of how it got (or
+    didn't get) staged; reading the requirement from the same file CMEPS
+    reads closes that gap.
     """
     del phase
     if not _is_wave_enabled():
@@ -175,6 +197,20 @@ def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
         )
         return 1
     content = target.read_text()
+
+    for attr, filename in _SMAPNAME_RE.findall(content):
+        if filename == "unset":
+            continue
+        f = ctx.data / filename
+        if not f.is_file() or f.stat().st_size == 0:
+            logger.error(
+                "execute: staged ufs.configure declares %s = %s, but that "
+                "file is not staged in %s. CMEPS opens this attribute with "
+                "a plain nf90_open at mediator init -- a missing file "
+                "aborts well into the MPI launch.",
+                attr, filename, ctx.data,
+            )
+            return 1
 
     bounds = {
         comp: (int(lo), int(hi))

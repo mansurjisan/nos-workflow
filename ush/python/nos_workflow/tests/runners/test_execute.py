@@ -224,6 +224,17 @@ runSeq::
 ::
 """
 
+# Adds the precomputed ocn->wav regrid weight attribute on top of an
+# otherwise-valid layout, to exercise the config-derived smapname check
+# in isolation. A separate constant (not a mutation of
+# _WAVE_UFS_CONFIGURE_VALID) so the existing PET-layout tests, which don't
+# stage a weights file, are unaffected.
+_WAVE_UFS_CONFIGURE_WITH_SMAPNAME = _WAVE_UFS_CONFIGURE_VALID + (
+    "\nMED_attributes::\n"
+    "  ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc\n"
+    "::\n"
+)
+
 
 def test_validate_wave_ufs_configure_non_wave_is_noop(tmp_path, monkeypatch):
     """Non-wave systems: rc=0 immediately -- no ufs.configure needed."""
@@ -337,6 +348,73 @@ def test_validate_wave_ufs_configure_rejects_med_not_full_span(
     assert any("MED_petlist_bounds" in r.getMessage() for r in caplog.records)
 
 
+def test_validate_wave_ufs_configure_rejects_missing_smapname_weights_env_set(
+    tmp_path, monkeypatch, caplog,
+):
+    """ocn2wav_smapname names a file that isn't staged in $DATA -> rc=1,
+    even with WAV_OCN2WAV_WEIGHTS set to the same name. This is the
+    config-derived check: it must reject the missing file on its own,
+    independent of _validate_configs's env-driven pre-check."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "ocn2wav_smapname" in msg
+    assert "secofs_ufs.ocn2wav_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_rejects_missing_smapname_weights_env_unset(
+    tmp_path, monkeypatch, caplog,
+):
+    """The hole this check closes: WAV_OCN2WAV_WEIGHTS unset (a stale
+    yaml or a broken yaml-to-env eval) means stage_wave_configs silently
+    skips staging the file and _validate_configs's env-driven pre-check
+    silently skips requiring it too -- but fix/secofs_ufs_ww3/ufs.configure
+    is a static template that carries ocn2wav_smapname unconditionally,
+    and CMEPS reads that attribute regardless of the env chain. Reading
+    the requirement from the staged file itself must reject this even
+    with the env var unset."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "ocn2wav_smapname" in msg
+    assert "secofs_ufs.ocn2wav_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_passes_when_smapname_weights_present(
+    tmp_path, monkeypatch,
+):
+    """Happy path: the file ocn2wav_smapname names is staged in $DATA ->
+    the smapname check doesn't block an otherwise-valid layout, whether
+    or not WAV_OCN2WAV_WEIGHTS happens to be set."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+    (ctx.data / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"weights\n")
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
 def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
     """End-to-end: run_python must refuse to launch mpiexec when the
     staged ufs.configure has the stale-pin corruption."""
@@ -346,6 +424,34 @@ def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
     monkeypatch.setenv("USHnos", str(ctx.ushnos))
     _seed_configs(ctx.data)
     (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
+def test_run_python_wave_missing_smapname_weights_blocks_mpi_launch(
+    tmp_path, monkeypatch,
+):
+    """End-to-end, env-unset case: run_python must refuse to launch
+    mpiexec when ufs.configure declares ocn2wav_smapname but the named
+    file was never staged. This is the scenario a broken yaml-to-env
+    eval produces -- staging and _validate_configs's env-driven pre-check
+    both silently skip the file because WAV_OCN2WAV_WEIGHTS is unset;
+    only the config-derived check in _validate_wave_ufs_configure still
+    catches it, before mpiexec rather than at a CMEPS abort deep into a
+    multi-thousand-PET launch."""
+    monkeypatch.setenv("WAV_TASKS", "4766")
+    monkeypatch.setenv("TOTAL_TASKS", "7680")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
     (ctx.data / "ww3_shel.nml").write_text("shel\n")
     (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
 

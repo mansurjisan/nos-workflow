@@ -63,6 +63,10 @@ ufs_coastal:
   # Prefixed in both $FIXofs and $DATA (like wav_mesh, not mod_def.ww3's
   # bare-name staging) because CMEPS opens this exact attribute string
   # with a plain nf90_open against the run directory.
+  # The generated file is NETCDF4/HDF5; that opens fine under
+  # ESMF_FactorRead on WCOSS2's netCDF-4-enabled ESMF build. If a
+  # portability problem with that format ever surfaces, NETCDF3_64BIT is
+  # the maximally conservative container to regenerate it in.
   ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
 
 # GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor). Deep-merges
