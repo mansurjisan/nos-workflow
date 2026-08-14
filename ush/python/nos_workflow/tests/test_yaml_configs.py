@@ -206,8 +206,8 @@ class TestSystemConfigs:
         ufs = merged["ufs_coastal"]
         assert ufs["datm_tasks"] == 120
         assert ufs["schism_tasks"] == 2794
-        assert ufs["wav_tasks"] == 4766
-        assert ufs["total_tasks"] == 7680
+        assert ufs["wav_tasks"] == 2606
+        assert ufs["total_tasks"] == 5520
         # The wave variant's invariant: datm + schism + wav == total.
         assert ufs["datm_tasks"] + ufs["schism_tasks"] + ufs["wav_tasks"] == ufs["total_tasks"]
         # Coupling interval must be an integer multiple of model.physics.dt
@@ -229,7 +229,7 @@ class TestSystemConfigs:
 
         det = merged["resources"]
         assert det["nprocs"] == ufs["total_tasks"]
-        assert det["select"] == "select=64:ncpus=128:mpiprocs=120:ompthreads=1"
+        assert det["select"] == "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
 
         assert merged["ensemble"]["enabled"] is False
 

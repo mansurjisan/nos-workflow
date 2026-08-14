@@ -156,7 +156,7 @@ def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
     doesn't know about (an OCN/WAV overlap) and reverts the runSeq
     interval to ``@<model_dt>``, dropping the coarser wave coupling
     window -- exit code 0, at most one INFO line, and the model then runs
-    7680 ranks on a corrupted PET layout. This check catches that class
+    5520 ranks on a corrupted PET layout. This check catches that class
     of bug here, before the MPI launch, rather than at a WW3/CDEPS abort
     deep into the coupled init.
 

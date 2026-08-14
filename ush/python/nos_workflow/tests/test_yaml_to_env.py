@@ -750,12 +750,12 @@ class TestWaveShellMappings:
         if not self._SECOFS_WW3_YAML.exists():
             pytest.skip("secofs_ufs_ww3.yaml not found")
         output = export_for_shell(self._SECOFS_WW3_YAML, framework="comf")
-        assert "export WAV_TASKS=4766" in output
+        assert "export WAV_TASKS=2606" in output
         assert "export WAV_MESH=secofs_ufs.mesh_wav.nc" in output
         assert "export WAV_PDLIB_NML=secofs_ufs_ww3.namelists_pdlib.nml" in output
         assert "export WAV_OCN2WAV_WEIGHTS=secofs_ufs.ocn2wav_weights.nc" in output
-        assert "export TOTAL_TASKS=7680" in output
-        assert "export NPROCS=7680" in output
+        assert "export TOTAL_TASKS=5520" in output
+        assert "export NPROCS=5520" in output
         assert "export PREFIXNOS=secofs_ufs" in output
         assert "export RUNTIME_CTL=secofs_ufs_ww3.param.nml" in output
         assert "export PPN=120" in output

@@ -14,11 +14,11 @@ EARTH_attributes::
 ::
 
 # MED #
-# PET span = 0 7679, the FULL union of ATM+OCN+WAV -- deliberately wider
+# PET span = 0 5519, the FULL union of ATM+OCN+WAV -- deliberately wider
 # than the 3-component secofs_ufs file (MED there is co-located with ATM
 # only, 0 119). Matches the validated Alaska DATM+SCHISM+WW3 reference.
 MED_model:                      cmeps
-MED_petlist_bounds:             0 7679
+MED_petlist_bounds:             0 5519
 MED_omp_num_threads:            1
 MED_attributes::
   ATM_model = datm
@@ -75,18 +75,21 @@ OCN_attributes::
 ::
 
 # WAV #
-# PETs 2914-7679 (4766 PETs, sized for the shipped E=5 elevation-filtered
+# PETs 2914-5519 (2606 PETs, sized for the shipped e0m water-only wave
 # mesh) -- see nos-utils UFSConfigProcessor._patch_pet_bounds for the
 # datm+schism+wav==total cross-check applied at prep time. mesh_wav must
 # match ufs_coastal.wav_mesh in parm/systems/secofs_ufs_ww3.yaml.
 WAV_model:                      ww3
-WAV_petlist_bounds:             2914 7679
+WAV_petlist_bounds:             2914 5519
 WAV_omp_num_threads:            1
 WAV_attributes::
-  # DIAGNOSTIC -- set back to 0 after the currents characterisation run.
   # dbug_flag = 6 makes the WW3 cap print imported-field min/max per coupling
   # window (So_h, So_u, So_v) to the WAV PET logs, which is what identifies
-  # whether SCHISM's currents carry dry-element garbage.
+  # whether SCHISM's currents carry dry-element garbage. Keep at 6 through
+  # the first e0m fully-coupled validation run: it provided the per-window
+  # field-extrema diagnostics that pinned the current ranges in V12, and if
+  # e0m crashes we want the same evidence; log volume was acceptable at
+  # 4766 WAV PETs, 2606 is less. Set to 0 when promoting to routine cycling.
   dbug_flag = 6
   Verbosity = 0
   DumpFields = false
@@ -106,9 +109,12 @@ WAV_attributes::
 
 # Run Sequence #
 # @360 = 3x SCHISM's 120s dt (nos_utils enforces the coupling interval is
-# an integer multiple of model.physics.dt); matches WW3's own UNST_NML
-# TIMESTEPS%DTXY=360 1:1 so one coupling exchange spans one WW3 spatial
-# propagation step.
+# an integer multiple of model.physics.dt). WW3's own UNST_NML
+# TIMESTEPS%DTXY has been 120s since commit 715e9f8 (halved from 360s to
+# restore diagonal dominance for the currents-coupled implicit solve), so
+# WW3 now substeps 3x internally per 360s coupling window, not 1:1 -- the
+# NUOPC exchange frequency and the SCHISM dt multiple rule are unaffected
+# either way, since WW3 substeps on its own between exchanges.
 runSeq::
 @360
   MED med_phases_prep_atm

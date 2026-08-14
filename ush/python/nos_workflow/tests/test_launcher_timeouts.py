@@ -109,17 +109,17 @@ def test_ww3_launcher_waits_at_least_as_long_as_the_job_may_run(stage):
     )
 
 
-def test_ww3_pbs_scripts_sized_for_7680_ranks():
-    """nowcast/forecast select= lines are resized to 64 nodes @ 120 ppn
-    (7680 ranks = datm 120 + schism 2794 + wav 4766), matching
+def test_ww3_pbs_scripts_sized_for_5520_ranks():
+    """nowcast/forecast select= lines are resized to 46 nodes @ 120 ppn
+    (5520 ranks = datm 120 + schism 2794 + wav 2606), matching
     ufs_coastal.total_tasks in parm/systems/secofs_ufs_ww3.yaml."""
     for stage in ("NOWCAST", "FORECAST"):
         pbs = _WW3_JOBS[stage]
         if not pbs.is_file():
             pytest.skip(f"{pbs.name} not present")
         text = pbs.read_text()
-        assert "select=64:ncpus=128:mpiprocs=120:ompthreads=1" in text
-        assert re.search(r"TOTAL_TASKS:-7680\}", text)
+        assert "select=46:ncpus=128:mpiprocs=120:ompthreads=1" in text
+        assert re.search(r"TOTAL_TASKS:-5520\}", text)
 
 
 def test_ww3_pbs_scripts_point_at_wave_executable():

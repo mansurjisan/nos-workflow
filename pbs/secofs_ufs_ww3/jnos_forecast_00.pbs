@@ -4,7 +4,7 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l place=vscatter:excl,select=64:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l place=vscatter:excl,select=46:ncpus=128:mpiprocs=120:ompthreads=1
 #PBS  -l walltime=06:30:00
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -43,10 +43,10 @@ module load modules.fv3
 module load cray-pals
 
 # MPI fabric settings. Operational IT-STOFS parity (also used by
-# stofs_3d_atl_ufs), plus enlarged OFI receive queues: at 7680 ranks the
-# WW3/PDLIB neighbour exchange exhausted the default RXM queue and MPICH
-# reported "OFI is failing to make progress on posting a receive" from the
-# WAV rank range.
+# stofs_3d_atl_ufs), plus enlarged OFI receive queues: at high WAV rank
+# counts (first seen at 7680 total ranks) the WW3/PDLIB neighbour exchange
+# exhausted the default RXM queue and MPICH reported "OFI is failing to
+# make progress on posting a receive" from the WAV rank range.
 export MPICH_OFI_STARTUP_CONNECT=1
 export MPICH_COLL_SYNC=MPI_Bcast
 export MPICH_REDUCE_NO_SMP=1
@@ -95,10 +95,10 @@ export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
 
-# UFS-Coastal 4-component: MED spans PETs 0-7679 (full ATM+OCN+WAV union),
-# ATM 0-119, OCN 120-2913, WAV 2914-7679.
-# 64 nodes x 120 mpiprocs = 7680 tasks exactly, 0 idle slots.
-export TOTAL_TASKS=${TOTAL_TASKS:-7680}
+# UFS-Coastal 4-component: MED spans PETs 0-5519 (full ATM+OCN+WAV union),
+# ATM 0-119, OCN 120-2913, WAV 2914-5519 (e0m water-only wave mesh).
+# 46 nodes x 120 mpiprocs = 5520 tasks exactly, 0 idle slots.
+export TOTAL_TASKS=${TOTAL_TASKS:-5520}
 
 # Wave-enabled build. parm/systems/secofs_ufs_ww3.yaml's model.executable
 # is NOT auto-propagated to the runner for the UFS (non-standalone) path
@@ -134,7 +134,7 @@ _rc=$?
 # ~2914-rank SCHISM allocations (nos-workflow #98), independent of node
 # placement; a resubmit re-rolls the rank/heap layout and usually clears it.
 # Same guard as secofs_ufs's own forecast card, unchanged for the larger
-# 7680-rank allocation. NOTE: JNOS_* does not reliably propagate the stage
+# 5520-rank allocation. NOTE: JNOS_* does not reliably propagate the stage
 # exit code (it ends on postmsg/date), so ${_rc} can be 0 even on a crash —
 # decide from the log, not rc: retry iff the signature appears in .err OR
 # .out AND the stage did not log status=PASS.
