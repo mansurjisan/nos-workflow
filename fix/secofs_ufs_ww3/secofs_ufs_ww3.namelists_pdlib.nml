@@ -36,6 +36,15 @@
 ! SECOFS-specific, and are a reasonable starting point pending WCOSS2    !
 ! convergence testing on the actual SECOFS wave mesh. UNVERIFIED for     !
 ! SECOFS scale specifically (tp2.6 is a small nearshore test mesh).      !
+!                                                                        !
+! IMPSOURCE=F (V15 currents bisect): source terms are kept OUT of the    !
+! implicit Gauss-Seidel matrix (propagation-only system) and integrate   !
+! through the standard srce_direct path instead, which sub-steps down    !
+! to DTMIN with the per-substep amplitude limiter. The implicit-source   !
+! path took a single unlimited full-DTG source step and its post-solve   !
+! call is where every currents-enabled run (V9-V13) faulted; with        !
+! FSSOURCE=F that call site is never made. Legal but has no upstream     !
+! regtest coverage (IMPTOTAL=T + IMPSOURCE=F).                           !
 ! ---------------------------------------------------------------------- !
 
 &UNST UGOBCAUTO = F,
@@ -48,7 +57,7 @@ EXPTOTAL = F,
 IMPTOTAL = T,
 IMPREFRACTION = T,
 IMPFREQSHIFT = T,
-IMPSOURCE = T,
+IMPSOURCE = F,
 SETUP_APPLY_WLV = F,
 SOLVERTHR_SETUP=1E-14,
 CRIT_DEP_SETUP=0.1,
