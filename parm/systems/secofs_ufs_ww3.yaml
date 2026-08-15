@@ -172,12 +172,15 @@ resources:
   # UNVERIFIED: naive linear scale from secofs_ufs's 1500 GB @ 2914 tasks
   # gives ~3953 GB @ 7680 tasks -- kept as-is pending a WCOSS2 profiling
   # pass at the new (smaller) 5520-task e0m layout; WW3's implicit-PDLIB
-  # solver keeps a full 2D spectrum (32 freq x 36 dir bins) resident per
+  # solver keeps a full 2D spectrum (50 freq x 36 dir bins = NSPEC 1800,
+  # V19's GFS-Wave grid; was 32 freq x 36 dir = NSPEC 1152, x1.5625
+  # smaller, before the ww3_grid.nml SPECTRUM_NML change) resident per
   # wave-mesh node, a different memory profile than SCHISM's transport
   # arrays, and the WAV PET count itself is a single-data-point
   # extrapolation (see wav_tasks above). Treat this as a starting point,
-  # not a sized value. (No consumer in ush/; PBS cards request no mem= --
-  # documentation only.)
+  # not a sized value -- now additionally stale by the V19 NSPEC increase
+  # (memory_gb below was never re-derived from NK either way). (No
+  # consumer in ush/; PBS cards request no mem= -- documentation only.)
   memory_gb: 4000
   # walltime_hours unchanged: more WAV PETs only shortens WW3's per-step
   # cost (better parallelism on the same mesh); it does not add work to

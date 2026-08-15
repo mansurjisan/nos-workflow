@@ -110,22 +110,41 @@
 ! ---------------------------------------------------------------------- !
 
 ! -------------------------------------------------------------------- !
-! SPECTRUM_NML: 36 directions x 32 frequencies, FREQ1=0.0373 Hz,
-! XFR=1.1 (geometric frequency progression factor -- 1.1 is the WW3
-! default and matches both real references above). NK=32/NTH=36 and
-! FREQ1=0.0373 are DRAFT/UNVERIFIED SECOFS decisions (per task
-! instruction), not derived from any SECOFS-specific reference -- no
-! prior SECOFS wave-spectrum resolution exists to check against. Coarser
-! than ww3_ufs1.1's NK=50/NTH=36 (global, deep-water-focused) and finer
-! than ww3_tp2.6's NK=25/NTH=24 (small nearshore test); NK=32 sits
-! between the two, reasonable for a regional shelf+nearshore domain but
-! NOT validated against a resolution/CFL study for the actual SECOFS
-! wave mesh.
+! SPECTRUM_NML: 36 directions x 50 frequencies, FREQ1=0.035 Hz, XFR=1.07.
+!
+! V19: adopts the GFS-Wave station-spectra grid EXACTLY (the same grid
+! the working Alaska DATM+SCHISM+WW3 reference configuration uses),
+! superseding the prior DRAFT/UNVERIFIED NK=32/FREQ1=0.0373/XFR=1.1
+! guess. Reason: the boundary-spectra processor (nos-utils
+! WaveBoundaryProcessor, wired into prep) shells out to WW3's ASCII
+! ww3_bound, which HARD-FAILS -- STOP, not a graceful fallback -- when
+! the input spectra carry more frequencies than the model grid
+! (ww3_bound.F90:497 "IF (NKI.GT.NK) GOTO 808"; the 808 branch's own
+! message says spectral conversion "WILL BE MANAGED SOON BY SPCONV",
+! i.e. unimplemented). GFS-Wave station spectra are 50 freq x 36 dir,
+! FREQ1=0.035, XFR~1.07 -- matching that grid exactly makes ww3_bound a
+! bit-exact NKI==NK match instead of a guaranteed failure, and as a
+! side effect raises f_max from 0.716 Hz (old NK=32/XFR=1.1/
+! FREQ1=0.0373) to 0.964 Hz, fixing the validated calm-regime wind-sea
+! truncation at the old f_max. Cost: NSPEC rises 1152->1800 (x1.5625
+! wave-model CPU/memory; WAV PET retune deferred pending measurement),
+! and every WW3 restart written under the old NK=32 grid is invalidated
+! by this change (acceptable now, before daily cycling starts).
+!
+! CRITICAL: this SPECTRUM_NML group is DUPLICATED in this file (see the
+! second copy further below). W3NMLGRID's READ_SPECTRUM_NML REWINDs the
+! unit before its own search, so only the FIRST occurrence in the file
+! is EVER actually read -- tools/preflight_ww3_grid.py's own duplicate-
+! group check documents exactly this behavior and WARNs on it. The
+! second copy is therefore inert, but BOTH copies were edited
+! identically here: a future change to the file's read order (or a
+! trim of the "unused" first copy) would otherwise silently revert this
+! grid back to the old NK=32 values with no error raised anywhere.
 ! -------------------------------------------------------------------- !
 &SPECTRUM_NML
-  SPECTRUM%XFR       = 1.1
-  SPECTRUM%FREQ1     = 0.0373
-  SPECTRUM%NK        = 32
+  SPECTRUM%XFR       = 1.07
+  SPECTRUM%FREQ1     = 0.035
+  SPECTRUM%NK        = 50
   SPECTRUM%NTH       = 36
 /
 
@@ -180,22 +199,20 @@
 ! ---------------------------------------------------------------------- !
 
 ! -------------------------------------------------------------------- !
-! SPECTRUM_NML: 36 directions x 32 frequencies, FREQ1=0.0373 Hz,
-! XFR=1.1 (geometric frequency progression factor -- 1.1 is the WW3
-! default and matches both real references above). NK=32/NTH=36 and
-! FREQ1=0.0373 are DRAFT/UNVERIFIED SECOFS decisions (per task
-! instruction), not derived from any SECOFS-specific reference -- no
-! prior SECOFS wave-spectrum resolution exists to check against. Coarser
-! than ww3_ufs1.1's NK=50/NTH=36 (global, deep-water-focused) and finer
-! than ww3_tp2.6's NK=25/NTH=24 (small nearshore test); NK=32 sits
-! between the two, reasonable for a regional shelf+nearshore domain but
-! NOT validated against a resolution/CFL study for the actual SECOFS
-! wave mesh.
+! SPECTRUM_NML (DUPLICATE COPY -- see the first &SPECTRUM_NML group
+! above for the full V19 rationale and the CRITICAL note on why both
+! copies must be kept identical). 36 directions x 50 frequencies,
+! FREQ1=0.035 Hz, XFR=1.07 -- the GFS-Wave station-spectra grid,
+! adopted V19 in place of the prior DRAFT NK=32/FREQ1=0.0373/XFR=1.1
+! guess (old f_max=0.716 Hz, new f_max=0.964 Hz). This copy is NOT read
+! by W3NMLGRID (REWIND-then-search reads only the FIRST SPECTRUM_NML
+! occurrence in the file) but is kept identical to the first copy so a
+! future re-read-order change cannot silently revert the grid.
 ! -------------------------------------------------------------------- !
 &SPECTRUM_NML
-  SPECTRUM%XFR       = 1.1
-  SPECTRUM%FREQ1     = 0.0373
-  SPECTRUM%NK        = 32
+  SPECTRUM%XFR       = 1.07
+  SPECTRUM%FREQ1     = 0.035
+  SPECTRUM%NK        = 50
   SPECTRUM%NTH       = 36
 /
 
