@@ -15,13 +15,14 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  ! currents='F' is the SETTLED OPERATIONAL configuration. The V9-V16
-  ! campaign proved the crash-on-currents is WW3-core: every partition of
-  ! the currents-dependent terms between the implicit matrix and the
-  ! explicit paths dies at the same unclamped ST4 tail-stress index
-  ! (w3src4md) once real currents flow. Re-enable only after an upstream
-  ! WW3 fix (NaN scrub at solver exit + index clamp) is pulled in.
-  input%forcing%currents     = 'F'
+  ! currents='C' REQUIRES the hardened WW3 build (ww3_currents_hardening
+  ! patch: ST4 tail-index clamp + PDLIB solver-exit non-finite scrub).
+  ! On an unpatched binary this configuration SIGSEGVs at w3src4md once
+  ! real currents flow (V9-V16 campaign). The patched binary converts
+  ! that to per-rank 'PDLIB scrub' diagnostics in the job .out; small
+  ! localized scrub counts = viable, exploding counts = revert to 'F'
+  ! (the V17-validated operational fallback).
+  input%forcing%currents     = 'C'
   input%forcing%water_levels = 'C'
   input%forcing%ice_conc     = 'F'
   input%forcing%ice_param1   = 'F'
