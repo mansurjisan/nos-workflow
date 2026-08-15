@@ -17,9 +17,10 @@ logger = logging.getLogger(__name__)
 
 _REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
 # Wave systems only (see _is_wave_enabled) -- appended onto _REQUIRED_CONFIGS.
-# The WAV ESMF mesh and ocn->wav regrid weight names are dynamic
-# (ufs_coastal.wav_mesh / ufs_coastal.ocn2wav_weights), so they're added
-# from $WAV_MESH / $WAV_OCN2WAV_WEIGHTS rather than hardcoded here.
+# The WAV ESMF mesh and ocn<->wav regrid weight names are dynamic
+# (ufs_coastal.wav_mesh / ufs_coastal.ocn2wav_weights / ufs_coastal.wav2ocn_weights),
+# so they're added from $WAV_MESH / $WAV_OCN2WAV_WEIGHTS / $WAV_WAV2OCN_WEIGHTS
+# rather than hardcoded here.
 _REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
 _HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
 _PETLIST_BOUNDS_RE = re.compile(
@@ -125,6 +126,13 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
         ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS")
         if ocn2wav_weights:
             required = required + (ocn2wav_weights,)
+        # Same rationale, transpose direction: fix/secofs_ufs_ww3/ufs.configure
+        # also sets wav2ocn_smapname unconditionally (requires the
+        # wav2ocn_smapname CMEPS-interface patch -- see cmeps_patch/ and the
+        # repo runbook's "V16 -- wav2ocn weights + CMEPS patch" section).
+        wav2ocn_weights = os.environ.get("WAV_WAV2OCN_WEIGHTS")
+        if wav2ocn_weights:
+            required = required + (wav2ocn_weights,)
     missing = []
     for name in required:
         f = ctx.data / name
@@ -174,11 +182,14 @@ def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
         (``ufs_coastal.coupling_interval`` from the YAML).
 
     Also checks every ``MED_attributes::*_smapname`` line (``ocn2wav_smapname``
-    today) against ``$DATA`` directly, independent of any env var. This is
-    the authoritative check for those weight files: staging derives the
-    expected filename from ``$WAV_OCN2WAV_WEIGHTS``, so if that variable is
-    unset (a stale yaml or a broken yaml-to-env eval) staging silently skips
-    the file and _validate_configs's env-driven check silently skips
+    and, since the wav2ocn_smapname CMEPS patch, ``wav2ocn_smapname`` too --
+    the regex is generic, so any future ``*_smapname`` attribute is covered
+    automatically with no code change here) against ``$DATA`` directly,
+    independent of any env var. This is the authoritative check for those
+    weight files: staging derives the expected filename from
+    ``$WAV_OCN2WAV_WEIGHTS``/``$WAV_WAV2OCN_WEIGHTS``, so if either variable
+    is unset (a stale yaml or a broken yaml-to-env eval) staging silently
+    skips the file and _validate_configs's env-driven check silently skips
     requiring it too, while ufs.configure -- a static template -- still
     carries the attribute unconditionally. CMEPS then opens the named file
     with a plain nf90_open at mediator init regardless of how it got (or

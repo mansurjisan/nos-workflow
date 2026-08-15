@@ -70,6 +70,15 @@ ufs_coastal:
   # portability problem with that format ever surfaces, NETCDF3_64BIT is
   # the maximally conservative container to regenerate it in.
   ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
+  # Precomputed wav->ocn regrid weight file -- the transpose-direction
+  # twin of ocn2wav_weights above, same ESMF_FieldSMMStore/row-col-S
+  # format, same prefixed-both-ends ($FIXofs and $DATA) staging
+  # convention. Requires the wav2ocn_smapname CMEPS-interface patch (see
+  # fix/secofs_ufs_ww3/ufs.configure's wav2ocn_smapname comment and the
+  # repo runbook's "V16 -- wav2ocn weights + CMEPS patch" section) --
+  # without that patch this value is inert (CMEPS never reads the
+  # attribute).
+  wav2ocn_weights: secofs_ufs.wav2ocn_weights.nc
 
 # GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor). Deep-merges
 # onto secofs_ufs's forcing block -- atmospheric/river/tidal/ocean stay
@@ -190,6 +199,7 @@ shell_mappings:
     WAV_MESH: ufs_coastal.wav_mesh
     WAV_PDLIB_NML: ufs_coastal.wav_pdlib_namelist
     WAV_OCN2WAV_WEIGHTS: ufs_coastal.ocn2wav_weights
+    WAV_WAV2OCN_WEIGHTS: ufs_coastal.wav2ocn_weights
     # Consumed by execute._validate_wave_ufs_configure's pre-MPI-launch
     # sanity check (the runSeq @<interval> line staged into ufs.configure
     # must match this).

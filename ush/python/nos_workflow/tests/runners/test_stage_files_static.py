@@ -959,28 +959,31 @@ def test_stage_wave_configs_noop_without_wav_tasks(tmp_path, monkeypatch):
 
 
 def test_stage_wave_configs_stages_from_fixofs(tmp_path, monkeypatch):
-    """WAV_TASKS>0: mod_def.ww3, the WAV mesh, the ocn->wav regrid
-    weights, ww3_shel.nml, and the PDLIB namelist all stage from $FIXofs
-    to their run-dir names."""
+    """WAV_TASKS>0: mod_def.ww3, the WAV mesh, the ocn->wav and wav->ocn
+    regrid weights, ww3_shel.nml, and the PDLIB namelist all stage from
+    $FIXofs to their run-dir names."""
     monkeypatch.setenv("WAV_TASKS", "2606")
     monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
     monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
     monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
     ctx = _make_ctx(tmp_path)
     (ctx.fixofs / f"{ctx.prefixnos}.mod_def.ww3").write_bytes(b"MODDEF\n")
     (ctx.fixofs / "secofs_ufs.mesh_wav.nc").write_bytes(b"MESH\n")
     (ctx.fixofs / "ww3_shel.nml").write_text("shel template\n")
     (ctx.fixofs / "secofs_ufs_ww3.namelists_pdlib.nml").write_text("&UNST /\n")
     (ctx.fixofs / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"WEIGHTS\n")
+    (ctx.fixofs / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"WEIGHTS2\n")
 
     n = stage_wave_configs(ctx, "nowcast")
 
-    assert n == 5
+    assert n == 6
     assert (ctx.data / "mod_def.ww3").read_bytes() == b"MODDEF\n"
     assert (ctx.data / "secofs_ufs.mesh_wav.nc").read_bytes() == b"MESH\n"
     assert (ctx.data / "ww3_shel.nml").read_text() == "shel template\n"
     assert (ctx.data / "secofs_ufs_ww3.namelists_pdlib.nml").read_text() == "&UNST /\n"
     assert (ctx.data / "secofs_ufs.ocn2wav_weights.nc").read_bytes() == b"WEIGHTS\n"
+    assert (ctx.data / "secofs_ufs.wav2ocn_weights.nc").read_bytes() == b"WEIGHTS2\n"
 
 
 def test_stage_wave_configs_ocn2wav_weights_falls_back_to_prefixed_name(
@@ -998,6 +1001,24 @@ def test_stage_wave_configs_ocn2wav_weights_falls_back_to_prefixed_name(
     assert n == 1
     assert (
         ctx.data / f"{ctx.prefixnos}.ocn2wav_weights.nc"
+    ).read_bytes() == b"WEIGHTS\n"
+
+
+def test_stage_wave_configs_wav2ocn_weights_falls_back_to_prefixed_name(
+    tmp_path, monkeypatch,
+):
+    """WAV_WAV2OCN_WEIGHTS unset -> defaults to <prefix>.wav2ocn_weights.nc,
+    matching the WAV_OCN2WAV_WEIGHTS fallback convention."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.wav2ocn_weights.nc").write_bytes(b"WEIGHTS\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 1
+    assert (
+        ctx.data / f"{ctx.prefixnos}.wav2ocn_weights.nc"
     ).read_bytes() == b"WEIGHTS\n"
 
 
@@ -1022,14 +1043,16 @@ def test_stage_wave_configs_pdlib_nml_skipped_when_unset(tmp_path, monkeypatch):
     monkeypatch.delenv("WAV_PDLIB_NML", raising=False)
     monkeypatch.delenv("WAV_MESH", raising=False)
     monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
     ctx = _make_ctx(tmp_path)
     (ctx.fixofs / "ww3_shel.nml").write_text("shel\n")
 
     n = stage_wave_configs(ctx, "nowcast")
 
-    # ww3_shel.nml + the WAV_MESH/WAV_OCN2WAV_WEIGHTS fallback names
-    # (prefix.mesh_wav.nc / prefix.ocn2wav_weights.nc, both absent here) --
-    # only ww3_shel.nml actually lands.
+    # ww3_shel.nml + the WAV_MESH/WAV_OCN2WAV_WEIGHTS/WAV_WAV2OCN_WEIGHTS
+    # fallback names (prefix.mesh_wav.nc / prefix.ocn2wav_weights.nc /
+    # prefix.wav2ocn_weights.nc, all absent here) -- only ww3_shel.nml
+    # actually lands.
     assert n == 1
     assert (ctx.data / "ww3_shel.nml").is_file()
     assert not any(ctx.data.glob("*namelists_pdlib*"))
@@ -1287,17 +1310,18 @@ def test_collect_staged_inputs_wave_category_present_when_enabled(
     monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
     monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
     monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
     ctx = _make_ctx(tmp_path)
     _seed_staged_data(ctx, ufs=True)
     for name in ("mod_def.ww3", "ww3_shel.nml", "nest.ww3",
                  "secofs_ufs.mesh_wav.nc", "secofs_ufs_ww3.namelists_pdlib.nml",
-                 "secofs_ufs.ocn2wav_weights.nc"):
+                 "secofs_ufs.ocn2wav_weights.nc", "secofs_ufs.wav2ocn_weights.nc"):
         (ctx.data / name).write_bytes(b"x\n")
 
     collector = collect_staged_inputs(ctx, "nowcast", ufs=True)
     keyed = {(g["category"], g["source"]): g for g in collector.groups()}
 
-    assert keyed[("wave", "WW3")]["count"] == 6
+    assert keyed[("wave", "WW3")]["count"] == 7
     for f in keyed[("wave", "WW3")]["files"]:
         assert f.startswith(str(ctx.data))
 

@@ -223,6 +223,9 @@ class TestSystemConfigs:
         # MED_attributes::ocn2wav_smapname line (same file) -- the
         # precomputed ocn->wav regrid weight file.
         assert ufs["ocn2wav_weights"] == "secofs_ufs.ocn2wav_weights.nc"
+        # wav2ocn_weights: the transpose-direction twin, must match
+        # ufs.configure's MED_attributes::wav2ocn_smapname line.
+        assert ufs["wav2ocn_weights"] == "secofs_ufs.wav2ocn_weights.nc"
 
         assert merged["model"]["executable"] == "fv3_coastalSW.exe"
         assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"

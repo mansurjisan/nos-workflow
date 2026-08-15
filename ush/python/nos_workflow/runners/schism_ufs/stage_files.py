@@ -488,6 +488,12 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
                            reads out of ufs.configure. Precomputed so ESMF
                            skips building an internal dual of SCHISM's mesh
                            for this map at runtime.
+      - the wav->ocn regrid weight file (``$WAV_WAV2OCN_WEIGHTS``), if
+                           configured -- the transpose-direction twin of
+                           the ocn->wav weight file above; name preserved
+                           verbatim, must match the ``wav2ocn_smapname``
+                           attribute CMEPS reads out of ufs.configure
+                           (requires the wav2ocn_smapname CMEPS patch).
       - ww3_shel.nml   -- the WW3 shell control namelist; staged as-is
                            (with @[VAR] placeholders) and patched in place
                            by configure.patch_ww3_shel.
@@ -529,6 +535,16 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
         src = ctx.fixofs / ocn2wav_weights
         if _copy_if_exists(
             src, ctx.data / ocn2wav_weights, label=ocn2wav_weights,
+        ):
+            staged += 1
+
+    wav2ocn_weights = os.environ.get("WAV_WAV2OCN_WEIGHTS") or (
+        f"{prefix}.wav2ocn_weights.nc" if prefix else ""
+    )
+    if wav2ocn_weights and ctx.fixofs is not None:
+        src = ctx.fixofs / wav2ocn_weights
+        if _copy_if_exists(
+            src, ctx.data / wav2ocn_weights, label=wav2ocn_weights,
         ):
             staged += 1
 
@@ -810,6 +826,9 @@ def collect_staged_inputs(
         ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS") or (
             f"{ctx.prefixnos}.ocn2wav_weights.nc" if ctx.prefixnos else ""
         )
+        wav2ocn_weights = os.environ.get("WAV_WAV2OCN_WEIGHTS") or (
+            f"{ctx.prefixnos}.wav2ocn_weights.nc" if ctx.prefixnos else ""
+        )
         wave_dest = ["mod_def.ww3", "ww3_shel.nml", "nest.ww3"]
         if wav_mesh:
             wave_dest.append(wav_mesh)
@@ -817,6 +836,8 @@ def collect_staged_inputs(
             wave_dest.append(wav_pdlib_nml)
         if ocn2wav_weights:
             wave_dest.append(ocn2wav_weights)
+        if wav2ocn_weights:
+            wave_dest.append(wav2ocn_weights)
         collector.add("wave", "WW3", _present_in_data(ctx, wave_dest))
 
     if ufs:

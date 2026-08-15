@@ -164,11 +164,32 @@ def test_validate_configs_wave_requires_ocn2wav_weights_when_set(tmp_path, monke
     assert rc == 0
 
 
+def test_validate_configs_wave_requires_wav2ocn_weights_when_set(tmp_path, monkeypatch):
+    """WAV_WAV2OCN_WEIGHTS names a required file too, dynamically -- the
+    precomputed wav->ocn regrid map (transpose-direction twin of
+    ocn2wav). Missing weights fail fast here rather than at a CMEPS abort
+    well into the MPI run."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # weights still missing
+
+    (ctx.data / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"weights\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
 def test_validate_configs_wave_pass_with_all_files_present(tmp_path, monkeypatch):
     """All 4 base + 2 wave configs present -> rc=0."""
     monkeypatch.setenv("WAV_TASKS", "2606")
     monkeypatch.delenv("WAV_MESH", raising=False)
     monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
     ctx = _make_ctx(tmp_path)
     _seed_configs(ctx.data)
     (ctx.data / "ww3_shel.nml").write_text("shel\n")
@@ -232,6 +253,18 @@ runSeq::
 _WAVE_UFS_CONFIGURE_WITH_SMAPNAME = _WAVE_UFS_CONFIGURE_VALID + (
     "\nMED_attributes::\n"
     "  ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc\n"
+    "::\n"
+)
+
+# Same idea, transpose direction (wav2ocn_smapname) -- exercises the
+# generic *_smapname regex against a DIFFERENT attribute name than
+# ocn2wav_smapname, proving the check isn't hardcoded to one string. A
+# separate constant, not a mutation of _WAVE_UFS_CONFIGURE_WITH_SMAPNAME,
+# for the same isolation reason that one is separate from
+# _WAVE_UFS_CONFIGURE_VALID.
+_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME = _WAVE_UFS_CONFIGURE_VALID + (
+    "\nMED_attributes::\n"
+    "  wav2ocn_smapname = secofs_ufs.wav2ocn_weights.nc\n"
     "::\n"
 )
 
@@ -415,6 +448,69 @@ def test_validate_wave_ufs_configure_passes_when_smapname_weights_present(
     assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
 
 
+def test_validate_wave_ufs_configure_rejects_missing_wav2ocn_smapname_weights(
+    tmp_path, monkeypatch, caplog,
+):
+    """wav2ocn_smapname names a file that isn't staged in $DATA -> rc=1.
+    Proves the generic *_smapname regex catches THIS attribute too, not
+    just ocn2wav_smapname -- the required CMEPS-interface behavior once
+    the wav2ocn_smapname patch is applied (see cmeps_patch/)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "wav2ocn_smapname" in msg
+    assert "secofs_ufs.wav2ocn_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_rejects_missing_wav2ocn_smapname_weights_env_unset(
+    tmp_path, monkeypatch, caplog,
+):
+    """Same hole as the ocn2wav env-unset case, transpose direction:
+    WAV_WAV2OCN_WEIGHTS unset means staging and _validate_configs's
+    env-driven pre-check both silently skip the file, but a static
+    ufs.configure with wav2ocn_smapname set still requires it -- the
+    config-derived check must reject this even with the env var unset."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "wav2ocn_smapname" in msg
+    assert "secofs_ufs.wav2ocn_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_passes_when_wav2ocn_smapname_weights_present(
+    tmp_path, monkeypatch,
+):
+    """Happy path: the file wav2ocn_smapname names is staged in $DATA ->
+    the smapname check doesn't block an otherwise-valid layout."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+    (ctx.data / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"weights\n")
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
 def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
     """End-to-end: run_python must refuse to launch mpiexec when the
     staged ufs.configure has the stale-pin corruption."""
@@ -452,6 +548,29 @@ def test_run_python_wave_missing_smapname_weights_blocks_mpi_launch(
     monkeypatch.setenv("USHnos", str(ctx.ushnos))
     _seed_configs(ctx.data)
     (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
+def test_run_python_wave_missing_wav2ocn_smapname_weights_blocks_mpi_launch(
+    tmp_path, monkeypatch,
+):
+    """Same end-to-end proof, transpose direction: run_python must refuse
+    to launch mpiexec when ufs.configure declares wav2ocn_smapname but
+    the named file was never staged (WAV_WAV2OCN_WEIGHTS unset)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
     (ctx.data / "ww3_shel.nml").write_text("shel\n")
     (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
 

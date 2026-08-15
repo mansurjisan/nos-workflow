@@ -34,10 +34,15 @@ MED_attributes::
   # bilinear map at runtime by constructing an internal dual of SCHISM's
   # mesh (source side), which aborts in ESMCI_MeshDual.C at this PET
   # count/mesh size. Supplying the weight file skips that construction
-  # entirely. No wav2ocn_smapname is needed for the reverse direction:
-  # the WAV mesh's own max node degree is 3, so ESMF's dual-construction
-  # trigger (elemType > 4) never opens on that mesh.
+  # entirely.
   ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc
+  # Precomputed wav->ocn regrid weights (CMEPS-interface patch
+  # cmeps_patch/wav2ocn_smapname.patch required -- see the repo runbook,
+  # "V16 -- wav2ocn weights + CMEPS patch"). Same ESMF_FieldSMMStore
+  # mechanism as ocn2wav_smapname above, applied to the reverse map, so
+  # ESMF never takes the online regrid-store path for either wav<->ocn
+  # direction at this PET count/mesh size.
+  wav2ocn_smapname = secofs_ufs.wav2ocn_weights.nc
 ::
 
 # ATM #
