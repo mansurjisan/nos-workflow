@@ -15,16 +15,13 @@
 ! mediator, not external WW3 input files. No ice in the SECOFS domain.
 &input_nml
   input%forcing%winds        = 'C'
-  ! DIAGNOSTIC RUN -- currents temporarily back ON to characterise them.
-  ! Expected to SIGSEGV in WW3's ST4 tail-stress table (w3src4md.F90:948);
-  ! that is not the point of this run. The point is the dbug_flag=6 output in
-  ! the WAV PET logs, which prints So_u/So_v min/max per coupling window before
-  ! the crash. If those show huge or non-finite values, SCHISM's depth-averaged
-  ! velocity at dry elements is confirmed as the source (41.7% of this wave
-  ! mesh is dry at datum) and the fix is upstream of WW3.
-  ! REVERT to 'F' after this run -- the settled configuration is currents off,
-  ! water levels on, which completed a clean nowcast.
-  input%forcing%currents     = 'C'
+  ! currents='F' is the SETTLED OPERATIONAL configuration. The V9-V16
+  ! campaign proved the crash-on-currents is WW3-core: every partition of
+  ! the currents-dependent terms between the implicit matrix and the
+  ! explicit paths dies at the same unclamped ST4 tail-stress index
+  ! (w3src4md) once real currents flow. Re-enable only after an upstream
+  ! WW3 fix (NaN scrub at solver exit + index clamp) is pulled in.
+  input%forcing%currents     = 'F'
   input%forcing%water_levels = 'C'
   input%forcing%ice_conc     = 'F'
   input%forcing%ice_param1   = 'F'
