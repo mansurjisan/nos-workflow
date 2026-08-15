@@ -45,6 +45,15 @@
 ! call is where every currents-enabled run (V9-V13) faulted; with        !
 ! FSSOURCE=F that call site is never made. Legal but has no upstream     !
 ! regtest coverage (IMPTOTAL=T + IMPSOURCE=F).                           !
+!                                                                        !
+! IMPREFRACTION=F, IMPFREQSHIFT=F (V15 bisect rung 2): with sources      !
+! already out (above), the V14 run still produced NaN wave exports the   !
+! window after imported currents reached ~2.9 m/s -- so a currents-      !
+! dependent term still inside the matrix diverges. Refraction and        !
+! frequency-shift are the two such terms left; both move to the          !
+! explicit W3KTP3/W3KTP path (CFL-limited by CTMAX), leaving a PURE      !
+! geographic-advection implicit matrix (upwind M-matrix, GS-safe).       !
+! Refraction physics is NOT lost -- only its placement changes.          !
 ! ---------------------------------------------------------------------- !
 
 &UNST UGOBCAUTO = F,
@@ -55,8 +64,8 @@ EXPFSFCT = F,
 IMPFSN = F,
 EXPTOTAL = F,
 IMPTOTAL = T,
-IMPREFRACTION = T,
-IMPFREQSHIFT = T,
+IMPREFRACTION = F,
+IMPFREQSHIFT = F,
 IMPSOURCE = F,
 SETUP_APPLY_WLV = F,
 SOLVERTHR_SETUP=1E-14,
