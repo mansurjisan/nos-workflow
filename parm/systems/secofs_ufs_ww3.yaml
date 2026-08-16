@@ -132,6 +132,11 @@ forcing:
     # warning and produces no nest.ww3 -- see the critical_sources note
     # below.
     points_file: secofs_ufs.ww3_bound_points.list
+    # ww3_bound reads mod_def.ww3 from its CWD; the processor stages it
+    # from $FIXofs. Explicit here because RUN (secofs_ufs_ww3) != the
+    # fix-file prefix (secofs_ufs), so nos-utils' RUN-derived default
+    # would compute a name that does not exist (nos-utils 20936b4).
+    mod_def: secofs_ufs.mod_def.ww3
     # How many additional 6h GFS-Wave cycles to walk back if the newest
     # cycle's ibp_tar/spec_tar.gz aren't posted yet. Not empirically
     # tuned (AK's own config left this as an open question too) -- 2
