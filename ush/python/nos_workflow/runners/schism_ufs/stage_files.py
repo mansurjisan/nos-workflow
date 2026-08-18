@@ -5,7 +5,7 @@ import logging
 import os
 import shutil
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Optional, Tuple
 
 from . import _dateutils
 from .context import SchismRunContext
@@ -574,19 +574,381 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
     return staged
 
 
+_DEFAULT_NOWCAST_WARM_START_BACK_HOURS = 48
+_DEFAULT_WARM_START_MAX_HS = 25.0
+
+# Variable names checked by _wave_restart_looks_sane's Hs-like fast path.
+# WW3 restarts normally carry the raw spectrum, not a derived Hs field --
+# these are checked defensively in case one happens to be present; when
+# none are, the guard falls back to a finite/non-negative sweep of every
+# floating-point variable instead (see _wave_restart_looks_sane).
+_HS_LIKE_VAR_NAMES: tuple = ("hs", "swh", "significant_wave_height", "wave_height")
+
+
+def _cmeps_restart_names(stamp: str) -> Tuple[str, str, str]:
+    """Build (mediator, WW3, pointer) basenames for a CMEPS restart stamp.
+
+    Same ``ufs.cpld.<comp>.r.<stamp>.nc`` / ``rpointer.cpl.<stamp>``
+    convention setup_paths.compute_paths uses to build
+    wav/med_rst_out_nowcast from _dateutils.cmeps_restart_stamp -- inlined
+    here (rather than imported) because the nowcast warm-start search
+    needs these names for a stamp OTHER than ctx's own
+    time_nowcastend-derived one (see _stage_wave_restarts_nowcast).
+    """
+    return (
+        f"ufs.cpld.cpl.r.{stamp}.nc",
+        f"ufs.cpld.ww3.r.{stamp}.nc",
+        f"rpointer.cpl.{stamp}",
+    )
+
+
+def _nowcast_warm_start_enabled() -> bool:
+    """True when the opt-in nowcast warm-start switch is on (default off).
+
+    Plumbed via $WAV_NOWCAST_WARM_START, exported from
+    forcing.waves.nowcast_warm_start the same way WAV_MESH/WAV_PDLIB_NML/
+    WAV_OCN2WAV_WEIGHTS/WAV_WAV2OCN_WEIGHTS are exported from their
+    forcing.waves siblings (see shell_mappings.variables in
+    parm/systems/secofs_ufs_ww3.yaml). Off by default: the wave blow-up
+    that motivated always cold-starting the nowcast leg must be resolved
+    before this is enabled operationally -- cold start currently acts as
+    a daily reset for that.
+    """
+    return os.environ.get("WAV_NOWCAST_WARM_START", "").strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+
+
+def _warm_start_max_hs() -> float:
+    """Max Hs-like sanity threshold (meters) for the warm-start guard.
+
+    $WAV_WARM_START_MAX_HS, exported from forcing.waves.warm_start_max_hs
+    the same way as the other forcing.waves keys; defaults to 25.0m when
+    unset or non-numeric.
+    """
+    raw = os.environ.get("WAV_WARM_START_MAX_HS", "")
+    try:
+        return float(raw) if raw else _DEFAULT_WARM_START_MAX_HS
+    except (TypeError, ValueError):
+        return _DEFAULT_WARM_START_MAX_HS
+
+
+def _nowcast_warm_start_back_hours() -> int:
+    """Backward-search window (hours) for the nowcast warm-start restart.
+
+    $WAV_NOWCAST_WARM_START_BACK_HOURS, an operational override in the
+    same spirit as hotstart.find_hotstart's $BACK_SEARCH; defaults to 48h
+    when unset or non-numeric. Not YAML-plumbed (no operational need for
+    a per-system default beyond this one identified so far); add a
+    forcing.waves key later if that changes.
+    """
+    raw = os.environ.get("WAV_NOWCAST_WARM_START_BACK_HOURS", "")
+    try:
+        return int(raw) if raw else _DEFAULT_NOWCAST_WARM_START_BACK_HOURS
+    except (TypeError, ValueError):
+        return _DEFAULT_NOWCAST_WARM_START_BACK_HOURS
+
+
+def _wave_restart_search_dir(ctx: SchismRunContext, candidate_time: str) -> Path:
+    """$COMOUT wave_restart archive dir for a candidate PRIOR cycle.
+
+    Mirrors hotstart._candidate_restart_path's $COMOUTroot/$RUN.$PDY
+    per-date layout (NCOEnv: comoutroot defaults to comout.parent when
+    $COMOUTROOT is unset) so a candidate cycle on an earlier date --
+    or simply an earlier cyc within today's $COMOUT -- resolves to the
+    right directory. ``candidate_time`` is a YYYYMMDDHH string; only the
+    date and hour are used (NCO cycles are always on-the-hour).
+    """
+    comoutroot = ctx.comoutroot or ctx.comout.parent
+    yyyymmdd = candidate_time[:8]
+    hh = candidate_time[8:10]
+    return (
+        comoutroot / f"{ctx.run}.{yyyymmdd}"
+        / f"{ctx.run}.t{hh}z.wave_restart"
+    )
+
+
+def _wave_restart_looks_sane(path: Path) -> Tuple[bool, str]:
+    """Cheap sanity guard on a candidate WW3 restart before warm-starting.
+
+    Only used by the nowcast warm-start path (_stage_wave_restarts_nowcast)
+    -- the existing forecast handoff restores this SAME cycle's own
+    just-completed nowcast leg output, which needs no such guard. The
+    nowcast path instead pulls a restart archived a full cycle (or more,
+    on the crash-recovery fallback) in the past, so a poisoned file
+    (the class of failure behind the wave blow-up this feature is gated
+    behind) is worth catching before it propagates into a multi-thousand-
+    rank job.
+
+    WW3 restarts store the raw 2D spectrum (freq x dir x node), not a
+    derived Hs field, so there is no cheap Hs threshold to read in the
+    general case. Guard two ways:
+      - if an Hs-like variable happens to be present (see
+        _HS_LIKE_VAR_NAMES), reject when its max exceeds
+        $WAV_WARM_START_MAX_HS (forcing.waves.warm_start_max_hs, default
+        25.0m);
+      - otherwise (the normal case -- spectra only), reject if ANY
+        floating-point variable holds a non-finite (NaN/Inf) value or a
+        value more negative than a small floating-point tolerance
+        (-1e-6) -- WW3 spectral energy density is physically >= 0.
+
+    Not over-engineered further: the job here is "obviously-poisoned
+    restart => cold start," not a full physical validation. Returns
+    (True, "") if the restart passes (or can't be checked -- see below),
+    else (False, reason). Never raises: an unreadable file is grounds for
+    rejection, not a hard failure, since this only gates an optional
+    warm start with an already-loud cold-start fallback.
+    """
+    try:
+        from netCDF4 import Dataset
+        import numpy as np
+    except ImportError as exc:
+        logger.warning(
+            "stage_wave_restarts: netCDF4/numpy not available (%s); "
+            "falling back to the size+nonzero check already applied to "
+            "%s -- no spectral sanity check performed", exc, path,
+        )
+        return True, ""
+
+    from ...bash_compat import preserve_preload
+
+    # Strip LD_PRELOAD before touching netCDF4 -- see mesh.generate_esmf_mesh.
+    with preserve_preload():
+        try:
+            ds = Dataset(str(path), "r")
+        except OSError as exc:
+            return False, f"unreadable as netCDF ({exc})"
+        try:
+            max_hs = _warm_start_max_hs()
+            for name in _HS_LIKE_VAR_NAMES:
+                if name not in ds.variables:
+                    continue
+                data = np.asarray(ds.variables[name][:], dtype="float64")
+                finite = np.isfinite(data)
+                if not finite.all():
+                    return False, f"{name} contains non-finite values"
+                peak = float(data[finite].max()) if finite.any() else 0.0
+                if peak > max_hs:
+                    return False, (
+                        f"{name} max={peak:.2f}m exceeds "
+                        f"warm_start_max_hs={max_hs:.2f}m"
+                    )
+                return True, ""
+
+            # No Hs-like variable -- spectra-only restart, the normal WW3
+            # case. Sweep every floating-point variable.
+            for name, var in ds.variables.items():
+                if not np.issubdtype(var.dtype, np.floating):
+                    continue
+                data = np.asarray(var[:], dtype="float64")
+                if data.size == 0:
+                    continue
+                if not np.all(np.isfinite(data)):
+                    return False, f"{name} contains non-finite values"
+                nanmin = float(np.nanmin(data))
+                if nanmin < -1e-6:
+                    return False, (
+                        f"{name} contains negative values "
+                        f"(min={nanmin:.3g}); WW3 spectral density must "
+                        f"be >= 0"
+                    )
+            return True, ""
+        finally:
+            ds.close()
+
+
+def _stage_wave_restarts_nowcast(ctx: SchismRunContext) -> bool:
+    """Warm-start the nowcast leg's WW3 + CMEPS mediator from a PRIOR cycle.
+
+    Opt-in (see _nowcast_warm_start_enabled) and off by default -- every
+    nowcast leg cold-starts WW3 today (see stage_wave_restarts's forecast
+    branch, which only restores THIS SAME cycle's own nowcast-end output
+    into the forecast leg). This restores the PREVIOUS cycle's archived
+    nowcast-end restart instead, so the nowcast leg itself stops resetting
+    the wave spectrum every cycle.
+
+    Stamp: this nowcast's own start time is ctx.time_hotstart (see
+    configure._resolve_phase_anchors -- nowcast's sim_start), exactly the
+    instant a normally-cycling predecessor's OWN nowcast leg ended
+    (setup_paths.compute_paths stamps wav/med_rst_out_nowcast from
+    time_nowcastend, which _compute_filenames/_read_comout_time_anchors
+    set to that cycle's own nominal PDY+cyc). So the immediate
+    predecessor cycle (one cycle-interval, i.e. one LEN_NOWCAST, back)
+    is the exact, non-stale match for THIS leg's start.
+
+    Search: walk candidate predecessor cycles backward from there in
+    LEN_NOWCAST steps -- the same ndate-walk shape as
+    hotstart.find_hotstart's back-search -- up to
+    $WAV_NOWCAST_WARM_START_BACK_HOURS (default 48h). Each candidate is
+    checked under ITS OWN natural stamp (its own nominal cycle time);
+    a complete match found on any candidate OTHER than the immediate
+    predecessor is a crash-recovery fallback and is therefore stale by
+    that many extra hours -- staged anyway (a stale warm start beats a
+    needless cold start), but logged loudly so it's visible.
+
+    All-three-or-nothing per candidate, restaged (never verbatim) to
+    THIS leg's own stamp -- the same destinations
+    stage_wave_restarts's forecast branch uses, just keyed on
+    time_hotstart instead of time_nowcastend:
+      - $DATA/RESTART/ufs.cpld.cpl.r.<stamp>.nc
+      - $DATA/rpointer.cpl.<stamp>   (content reconstructed to reference
+        the restaged mediator filename above -- NOT copied byte-for-byte
+        like the forecast branch, because a fallback candidate's archived
+        pointer names ITS OWN stamp, not this leg's)
+      - $DATA/ufs.cpld.ww3.r.<stamp>.nc
+
+    A complete candidate also passes _wave_restart_looks_sane before
+    staging; a poisoned candidate is rejected (logged) and the backward
+    search continues, same as a partial one.
+
+    Unlike the forecast branch, a partial archive here does NOT raise --
+    logs a warning naming the missing pieces and keeps searching older
+    candidates. Rationale: a prior cycle's crash must never wedge the
+    next cycle's nowcast. Returns True if a complete, sane candidate was
+    staged; False if the entire search window turned up nothing usable
+    (cold start, exactly today's behavior).
+    """
+    if not ctx.time_hotstart or not ctx.len_nowcast:
+        logger.warning(
+            "stage_wave_restarts: nowcast warm start requires "
+            "ctx.time_hotstart and ctx.len_nowcast (time_hotstart missing?); "
+            "treating as cold start",
+        )
+        return False
+
+    try:
+        interval = int(ctx.len_nowcast)
+    except (TypeError, ValueError):
+        interval = 0
+    if interval <= 0:
+        logger.warning(
+            "stage_wave_restarts: LEN_NOWCAST=%r is not a positive "
+            "integer; cannot step the nowcast warm-start backward "
+            "search -- treating as cold start", ctx.len_nowcast,
+        )
+        return False
+
+    back_hours = _nowcast_warm_start_back_hours()
+    dest_stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    dest_med_name, dest_wav_name, dest_pointer_name = _cmeps_restart_names(
+        dest_stamp,
+    )
+
+    partial_seen = False
+    poisoned_seen = False
+    offset = 0
+    while offset <= back_hours:
+        candidate_time = _dateutils.ndate(-offset, ctx.time_hotstart)
+        candidate_stamp = _dateutils.cmeps_restart_stamp(candidate_time)
+        candidate_med, candidate_wav, candidate_pointer = _cmeps_restart_names(
+            candidate_stamp,
+        )
+        archive_dir = _wave_restart_search_dir(ctx, candidate_time)
+
+        med_src = archive_dir / candidate_med
+        wav_src = archive_dir / candidate_wav
+        pointer_src = archive_dir / candidate_pointer
+
+        found = {
+            "mediator restart": med_src.is_file() and med_src.stat().st_size > 0,
+            "WW3 restart": wav_src.is_file() and wav_src.stat().st_size > 0,
+            "pointer file": pointer_src.is_file() and pointer_src.stat().st_size > 0,
+        }
+
+        if all(found.values()):
+            ok, reason = _wave_restart_looks_sane(wav_src)
+            if not ok:
+                poisoned_seen = True
+                logger.warning(
+                    "stage_wave_restarts: rejecting nowcast warm-start "
+                    "candidate at %s (offset=%dh from %s): %s -- "
+                    "continuing the backward search rather than "
+                    "warm-starting from a poisoned restart",
+                    archive_dir, offset, ctx.time_hotstart, reason,
+                )
+                offset += interval
+                continue
+
+            restart_dir = ctx.data / "RESTART"
+            restart_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(med_src, restart_dir / dest_med_name)
+            shutil.copy2(wav_src, ctx.data / dest_wav_name)
+            (ctx.data / dest_pointer_name).write_text(f"RESTART/{dest_med_name}\n")
+
+            if offset == 0:
+                logger.info(
+                    "  Staged nowcast wave restart handoff: %s, %s, %s "
+                    "(from %s)", dest_med_name, dest_wav_name,
+                    dest_pointer_name, archive_dir,
+                )
+            else:
+                logger.warning(
+                    "  Staged nowcast wave restart handoff from a %dh-"
+                    "stale predecessor cycle (%s) -- the immediate "
+                    "predecessor's archive was missing or partial: %s, "
+                    "%s, %s (from %s)",
+                    offset, candidate_time, dest_med_name, dest_wav_name,
+                    dest_pointer_name, archive_dir,
+                )
+            return True
+
+        if any(found.values()):
+            partial_seen = True
+            missing = [label for label, ok in found.items() if not ok]
+            logger.warning(
+                "stage_wave_restarts: partial wave restart archive at %s "
+                "(offset=%dh from %s) -- missing %s; this is NOT a "
+                "legitimate cold start, but the nowcast leg never raises "
+                "for it -- continuing the backward search rather than "
+                "wedging this cycle on a prior cycle's crash.",
+                archive_dir, offset, ctx.time_hotstart, missing,
+            )
+
+        offset += interval
+
+    extra = []
+    if partial_seen:
+        extra.append("partial archive(s) seen but never complete")
+    if poisoned_seen:
+        extra.append("a poisoned candidate was rejected")
+    suffix = f" ({'; '.join(extra)})" if extra else ""
+    logger.warning(
+        "stage_wave_restarts: no usable archived wave restart found in "
+        "the %dh nowcast warm-start search window back from %s%s; "
+        "treating this as a cold start -- WW3 and the CMEPS mediator "
+        "will start up fresh for this nowcast leg.",
+        back_hours, ctx.time_hotstart, suffix,
+    )
+    return False
+
+
 def stage_wave_restarts(ctx: SchismRunContext, phase: str) -> bool:
-    """Restore the WW3 + CMEPS mediator restart handoff into the forecast $DATA.
+    """Restore the WW3 + CMEPS mediator restart handoff into $DATA.
 
-    Forecast-phase-only wave systems only -- False (no-op) otherwise. SCHISM
-    cycles nowcast->forecast via its own hotstart (ihot=1), but WW3 and the
+    Wave systems only -- False (no-op) otherwise. SCHISM cycles
+    nowcast->forecast via its own hotstart (ihot=1), but WW3 and the
     CMEPS mediator have no such mechanism under UFS-Coastal NUOPC -- they
-    cycle via CMEPS netCDF restarts written by the NOWCAST leg (in a
-    DIFFERENT $DATA -- see execute._archive_wave_restarts) and must be
-    staged back here before ``configure.patch_ufs_configure`` decides
-    start_type for this leg.
+    cycle via CMEPS netCDF restarts (see execute._archive_wave_restarts)
+    and must be staged back here before ``configure.patch_ufs_configure``
+    decides start_type for the leg.
 
-    Three artifacts, restored verbatim (filenames and the pointer file's
-    content untouched -- CDEPS/WW3 locate them by these exact names/paths):
+    Two independent handoffs, both gated on this same entry point:
+      - forecast (always on): restores THIS SAME cycle's own nowcast-end
+        restart -- the cross-leg handoff that has existed since this
+        system's wave coupling landed. See the artifact list and
+        cold-start/partial-archive policy below.
+      - nowcast (opt-in, off by default -- see
+        _nowcast_warm_start_enabled): restores the PREVIOUS cycle's
+        archived nowcast-end restart, so the nowcast leg stops
+        cold-starting WW3 every cycle. See
+        :func:`_stage_wave_restarts_nowcast` for that branch's search,
+        staleness, and sanity-guard policy, which differs from the
+        forecast branch's below (crash tolerance instead of a hard
+        raise on a partial archive).
+
+    Forecast branch -- three artifacts, restored verbatim (filenames and
+    the pointer file's content untouched -- CDEPS/WW3 locate them by
+    these exact names/paths):
       - $DATA/RESTART/ufs.cpld.cpl.r.<stamp>.nc  (mediator restart;
         ufs.configure's restart_dir = RESTART/)
       - $DATA/rpointer.cpl.<stamp>                (pointer file, run-dir
@@ -609,7 +971,15 @@ def stage_wave_restarts(ctx: SchismRunContext, phase: str) -> bool:
     Returns True if all three artifacts were staged, False on the
     cold-start fallback (nothing archived).
     """
-    if not _is_wave_enabled() or phase != "forecast":
+    if not _is_wave_enabled():
+        return False
+
+    if phase == "nowcast":
+        if not _nowcast_warm_start_enabled():
+            return False
+        return _stage_wave_restarts_nowcast(ctx)
+
+    if phase != "forecast":
         return False
 
     if not ctx.med_rst_out_nowcast or not ctx.wav_rst_out_nowcast or not ctx.time_nowcastend:
@@ -975,6 +1345,7 @@ def run_python(ctx: SchismRunContext, phase: str):
 __all__ = [
     "_is_ufs",
     "_is_wave_enabled",
+    "_cmeps_restart_names",
     "stage_ufs_configs",
     "stage_wave_configs",
     "stage_wave_restarts",

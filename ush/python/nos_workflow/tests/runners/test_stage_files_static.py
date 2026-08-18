@@ -53,6 +53,15 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     stage_wave_restarts,
 )
 
+# netCDF4 may be absent in stripped CI; the nowcast warm-start sanity-guard
+# tests (which write real spectral-shaped restarts) skip then.
+try:
+    from netCDF4 import Dataset
+    import numpy as np
+    _NETCDF4_AVAILABLE = True
+except ImportError:
+    _NETCDF4_AVAILABLE = False
+
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -1132,9 +1141,13 @@ def test_stage_wave_restarts_noop_without_wav_tasks(tmp_path, monkeypatch):
 
 
 def test_stage_wave_restarts_noop_on_nowcast_phase(tmp_path, monkeypatch):
-    """Nowcast never stages a wave restart in -- only forecast continues
-    from the nowcast leg's own output."""
+    """Nowcast warm start is opt-in (forcing.waves.nowcast_warm_start) and
+    off by default -- with the switch unset, nowcast behaves exactly as
+    before: never stages a wave restart in, even with a same-cycle
+    archive present (which the nowcast branch wouldn't consult anyway --
+    it searches PRIOR cycles, not this one)."""
     monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
     ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
     _seed_wave_restart_archive(ctx)
 
@@ -1191,6 +1204,235 @@ def test_stage_wave_restarts_partial_archive_raises(tmp_path, monkeypatch):
 
     with pytest.raises(FileNotFoundError, match="partial archive"):
         stage_wave_restarts(ctx, "forecast")
+
+
+# ---------------------------------------------------------------------------
+# stage_wave_restarts -- nowcast cross-cycle warm start (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _make_nowcast_warm_start_ctx(
+    tmp_path: Path,
+    *,
+    time_hotstart: str = "2026051200",
+    len_nowcast: str = "6",
+    run: str = "nos.secofs_ufs",
+) -> SchismRunContext:
+    """Build a SchismRunContext for the nowcast warm-start search.
+
+    comoutroot is set explicitly (rather than left None, which falls back
+    to comout.parent -- see _wave_restart_search_dir) so candidate archive
+    paths are unambiguous in assertions."""
+    comout = tmp_path / "comout"
+    comoutroot = tmp_path / "comoutroot"
+    data = tmp_path / "data"
+    for p in (comout, comoutroot, data):
+        p.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        comoutroot=comoutroot,
+        data=data,
+        phase="nowcast",
+        run=run,
+        cycle="t06z",
+        time_hotstart=time_hotstart,
+        len_nowcast=len_nowcast,
+    )
+
+
+def _write_ww3_restart_nc(path: Path, *, poisoned: bool = False) -> None:
+    """Write a minimal netCDF file shaped like a WW3 spectral restart
+    (a 2D energy-density variable over node x freq, no Hs-like field --
+    the normal case _wave_restart_looks_sane's finite/non-negative sweep
+    is meant for)."""
+    ds = Dataset(str(path), "w")
+    try:
+        ds.createDimension("freq", 3)
+        ds.createDimension("node", 2)
+        var = ds.createVariable("efth", "f8", ("node", "freq"))
+        if poisoned:
+            var[:] = np.array([[1.0, float("nan"), 2.0], [-5.0, 0.5, 0.2]])
+        else:
+            var[:] = np.array([[0.1, 0.2, 0.3], [0.05, 0.15, 0.25]])
+    finally:
+        ds.close()
+
+
+def _seed_nowcast_candidate(
+    ctx: SchismRunContext,
+    candidate_time: str,
+    *,
+    med: bool = True,
+    wav: bool = True,
+    pointer: bool = True,
+    med_bytes: bytes = b"mediator",
+    poisoned: bool = False,
+) -> Path:
+    """Populate a candidate PRIOR cycle's archived wave_restart dir at the
+    $COMOUTroot/$RUN.$PDY/$RUN.tHHz.wave_restart path
+    stage_files._wave_restart_search_dir computes, the same way
+    execute._archive_wave_restarts would have for that candidate cycle's
+    own nowcast leg."""
+    stamp = _dateutils.cmeps_restart_stamp(candidate_time)
+    yyyymmdd = candidate_time[:8]
+    hh = candidate_time[8:10]
+    archive_dir = (
+        ctx.comoutroot / f"{ctx.run}.{yyyymmdd}"
+        / f"{ctx.run}.t{hh}z.wave_restart"
+    )
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
+    wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
+    pointer_name = f"rpointer.cpl.{stamp}"
+    if med:
+        (archive_dir / med_name).write_bytes(med_bytes)
+    if wav:
+        _write_ww3_restart_nc(archive_dir / wav_name, poisoned=poisoned)
+    if pointer:
+        (archive_dir / pointer_name).write_text(f"RESTART/{med_name}\n")
+    return archive_dir
+
+
+def test_stage_wave_restarts_nowcast_warm_start_off_by_default(
+    tmp_path, monkeypatch,
+):
+    """(a) forcing.waves.nowcast_warm_start off (no env var set) -> False,
+    even with a complete, matching predecessor archive present -- the
+    switch is checked before the search ever runs."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    # Raw bytes, not a real netCDF restart -- fine, the guard is never
+    # reached because the switch is off.
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    archive_dir = (
+        ctx.comoutroot / f"{ctx.run}.20260512" / f"{ctx.run}.t00z.wave_restart"
+    )
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / f"ufs.cpld.cpl.r.{stamp}.nc").write_bytes(b"mediator")
+    (archive_dir / f"ufs.cpld.ww3.r.{stamp}.nc").write_bytes(b"ww3")
+    (archive_dir / f"rpointer.cpl.{stamp}").write_text(
+        f"RESTART/ufs.cpld.cpl.r.{stamp}.nc\n"
+    )
+
+    assert stage_wave_restarts(ctx, "nowcast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_stages_immediate_predecessor(
+    tmp_path, monkeypatch,
+):
+    """(b) key on + a complete archive at the immediate predecessor cycle
+    (offset 0h, i.e. stamped exactly at THIS nowcast's own start time) ->
+    staged into $DATA and True."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(
+        ctx, ctx.time_hotstart, med_bytes=b"mediator-immediate",
+    )
+
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is True
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    med_dst = ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{stamp}.nc"
+    wav_dst = ctx.data / f"ufs.cpld.ww3.r.{stamp}.nc"
+    pointer_dst = ctx.data / f"rpointer.cpl.{stamp}"
+    assert med_dst.read_bytes() == b"mediator-immediate"
+    assert wav_dst.is_file() and wav_dst.stat().st_size > 0
+    assert pointer_dst.read_text() == f"RESTART/ufs.cpld.cpl.r.{stamp}.nc\n"
+
+
+def test_stage_wave_restarts_nowcast_warm_start_cold_start_when_nothing_archived(
+    tmp_path, monkeypatch, caplog,
+):
+    """(c) key on but nothing archived anywhere in the search window ->
+    False, loud WARNING, no exception -- exactly today's cold-start
+    behavior."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("cold start" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_falls_back_to_older_candidate(
+    tmp_path, monkeypatch, caplog,
+):
+    """(d) the immediate-predecessor (newest) candidate archive is partial
+    (a crashed nowcast leg archived only its mediator restart); the
+    search continues to the next-older candidate (one more LEN_NOWCAST
+    back), finds it complete and clean, and stages from THERE --
+    re-stamped to THIS leg's own stamp (not the older candidate's own,
+    staler one)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+
+    # Newest candidate (offset=0h): only the mediator restart present.
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, wav=False, pointer=False)
+
+    # Next-older candidate (offset=6h, one LEN_NOWCAST further back):
+    # complete and clean.
+    older_time = _dateutils.ndate(-6, ctx.time_hotstart)
+    _seed_nowcast_candidate(ctx, older_time, med_bytes=b"mediator-older")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is True
+    dest_stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    med_dst = ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{dest_stamp}.nc"
+    pointer_dst = ctx.data / f"rpointer.cpl.{dest_stamp}"
+    assert med_dst.read_bytes() == b"mediator-older"
+    assert pointer_dst.read_text() == f"RESTART/ufs.cpld.cpl.r.{dest_stamp}.nc\n"
+    # The older candidate's OWN stamp must NOT appear in $DATA -- staged
+    # artifacts are always re-stamped to this leg's own start time.
+    older_stamp = _dateutils.cmeps_restart_stamp(older_time)
+    assert not (ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{older_stamp}.nc").exists()
+    assert any(
+        "partial wave restart archive" in r.getMessage() for r in caplog.records
+    )
+    assert any(
+        "stale predecessor cycle" in r.getMessage() for r in caplog.records
+    )
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_guard_rejects_poisoned_restart(
+    tmp_path, monkeypatch, caplog,
+):
+    """(e) a complete archive is found, but its WW3 restart's spectrum
+    contains a non-finite/negative value -- the sanity guard rejects it
+    (rather than warm-starting from an obviously-poisoned restart) and,
+    with no older candidate available, the search falls back to cold
+    start."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, poisoned=True)
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("rejecting nowcast warm-start candidate" in r.getMessage()
+               for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------

@@ -142,7 +142,24 @@ forcing:
     # tuned (AK's own config left this as an open question too) -- 2
     # tolerates one missed/late post (12h) without reaching so far back
     # that the swell field served is stale enough to be meaningless.
+    # NOTE: governs the nest.ww3 boundary-spectra fallback (prep-side
+    # WaveBoundaryProcessor) -- unrelated to the cross-cycle restart
+    # warm-start keys below.
     max_cycle_fallback: 2
+    # Opt-in: warm-start the NOWCAST leg's WW3 + CMEPS mediator from the
+    # PREVIOUS cycle's archived end-of-nowcast wave restart, instead of
+    # cold-starting WW3 every nowcast (today's behavior, and this key's
+    # default). Do NOT enable before the PR/VI wave blow-up is resolved --
+    # cold start currently acts as a daily reset for that. See
+    # runners/schism_ufs/stage_files.py stage_wave_restarts's nowcast
+    # branch (_stage_wave_restarts_nowcast).
+    nowcast_warm_start: false
+    # Sanity guard for the nowcast warm start above: reject a candidate
+    # restart whose WW3 spectrum looks poisoned (non-finite/negative
+    # values, or an Hs-like variable's max if the restart happens to
+    # carry one) rather than warm-starting from it. Meters; see
+    # stage_files._wave_restart_looks_sane.
+    warm_start_max_hs: 25.0
 
 # Wave BC is deliberately NOT added to prep.critical_sources (this system
 # doesn't declare that key at all, so it inherits secofs_ufs's legacy
@@ -212,3 +229,7 @@ shell_mappings:
     # sanity check (the runSeq @<interval> line staged into ufs.configure
     # must match this).
     COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    # Consumed by stage_files.py's nowcast wave-restart warm start (see
+    # forcing.waves.nowcast_warm_start / warm_start_max_hs above).
+    WAV_NOWCAST_WARM_START: forcing.waves.nowcast_warm_start
+    WAV_WARM_START_MAX_HS: forcing.waves.warm_start_max_hs

@@ -755,6 +755,10 @@ class TestWaveShellMappings:
         assert "export WAV_PDLIB_NML=secofs_ufs_ww3.namelists_pdlib.nml" in output
         assert "export WAV_OCN2WAV_WEIGHTS=secofs_ufs.ocn2wav_weights.nc" in output
         assert "export WAV_WAV2OCN_WEIGHTS=secofs_ufs.wav2ocn_weights.nc" in output
+        # Cross-cycle nowcast warm-start keys (opt-in, off by default) --
+        # see stage_files.py's stage_wave_restarts nowcast branch.
+        assert "export WAV_NOWCAST_WARM_START=0" in output
+        assert "export WAV_WARM_START_MAX_HS=25.0" in output
         assert "export TOTAL_TASKS=5520" in output
         assert "export NPROCS=5520" in output
         assert "export PREFIXNOS=secofs_ufs" in output

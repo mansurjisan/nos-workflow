@@ -533,8 +533,11 @@ def test_patch_ufs_configure_non_wave_always_startup(tmp_path, monkeypatch):
 
 
 def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
-    """Wave system, nowcast leg: still 'startup' (SCHISM/DATM/MED all
-    cold-init the NUOPC clock at the start of every nowcast)."""
+    """Wave system, nowcast leg, with nothing staged in $DATA at this
+    leg's own stamp (the opt-in nowcast warm start off, or on but nothing
+    found): 'startup' -- SCHISM/DATM/MED cold-init the NUOPC clock at the
+    start of every nowcast either way, and WW3/the mediator have nothing
+    to continue from."""
     monkeypatch.setenv("WAV_TASKS", "2606")
     ctx = _make_ctx(tmp_path, phase="nowcast")
     target = ctx.data / "ufs.configure"
@@ -543,6 +546,35 @@ def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
     patch_ufs_configure(ctx, "nowcast")
 
     assert "start_type = startup" in target.read_text()
+
+
+def test_patch_ufs_configure_wave_nowcast_continues_when_restart_staged(
+    tmp_path, monkeypatch,
+):
+    """Wave system, nowcast leg, with the nowcast warm-start handoff
+    already staged in $DATA (stage_wave_restarts's nowcast branch found a
+    complete predecessor archive and restaged it to THIS leg's own
+    time_hotstart stamp): 'continue' -- same mechanism as the forecast
+    leg's own restart, just keyed on time_hotstart instead of
+    time_nowcastend."""
+    from nos_workflow.runners.schism_ufs._dateutils import cmeps_restart_stamp
+
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_ctx(tmp_path, phase="nowcast")  # time_hotstart="2026051200"
+    stamp = cmeps_restart_stamp(ctx.time_hotstart)
+    wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
+    med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
+    target = ctx.data / "ufs.configure"
+    target.write_text(_UFS_CONFIGURE_TEMPLATE)
+
+    (ctx.data / "RESTART").mkdir(parents=True, exist_ok=True)
+    (ctx.data / "RESTART" / med_name).write_bytes(b"mediator restart")
+    (ctx.data / wav_name).write_bytes(b"ww3 restart")
+    (ctx.data / f"rpointer.cpl.{stamp}").write_text(f"RESTART/{med_name}\n")
+
+    patch_ufs_configure(ctx, "nowcast")
+
+    assert "start_type = continue" in target.read_text()
 
 
 def test_patch_ufs_configure_wave_forecast_continues_when_restart_staged(

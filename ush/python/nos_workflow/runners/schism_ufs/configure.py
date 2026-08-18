@@ -8,7 +8,7 @@ from typing import Tuple
 
 from . import _dateutils, patches
 from .context import SchismRunContext
-from .stage_files import _is_ufs, _is_wave_enabled
+from .stage_files import _cmeps_restart_names, _is_ufs, _is_wave_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -270,6 +270,34 @@ def _wave_restart_staged(ctx: SchismRunContext) -> bool:
     )
 
 
+def _wave_restart_staged_nowcast(ctx: SchismRunContext) -> bool:
+    """True when stage_wave_restarts placed all three wave-restart
+    artifacts into $DATA for THIS nowcast leg's own start stamp.
+
+    Mirrors _wave_restart_staged's role for the forecast leg, but keyed
+    on ctx.time_hotstart (this nowcast's sim_start -- see
+    _resolve_phase_anchors) rather than ctx.time_nowcastend: the nowcast
+    warm start restores the PREVIOUS cycle's archived restart, always
+    re-stamped on the way in to match what CMEPS/WW3 look for at THIS
+    leg's init (see stage_files._stage_wave_restarts_nowcast). Off by
+    default (forcing.waves.nowcast_warm_start) -- when the switch is off,
+    or nothing was found, nothing lands at these paths and this is
+    silently False, same as the pre-existing nowcast=startup behavior.
+    """
+    if not ctx.time_hotstart:
+        return False
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    med_name, wav_name, pointer_name = _cmeps_restart_names(stamp)
+    med = ctx.data / "RESTART" / med_name
+    wav = ctx.data / wav_name
+    pointer = ctx.data / pointer_name
+    return (
+        med.is_file() and med.stat().st_size > 0
+        and wav.is_file() and wav.stat().st_size > 0
+        and pointer.is_file() and pointer.stat().st_size > 0
+    )
+
+
 def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
     """Patch $DATA/ufs.configure with stop_n, start_type, orb_iyear[_align].
 
@@ -299,6 +327,16 @@ def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
     # system's first wave-coupled cycle -- nothing archived yet), fall
     # back to 'startup' rather than pointing CDEPS/WW3 at restart files
     # that were never staged.
+    #
+    # The nowcast leg is the same story, opt-in (forcing.waves.
+    # nowcast_warm_start, off by default): when enabled and
+    # stage_wave_restarts's nowcast branch restored the PREVIOUS cycle's
+    # archived restart into $DATA, 'continue' picks it up instead of
+    # cold-starting WW3 every nowcast. When the switch is off (the
+    # default) or nothing landed in $DATA, this is silently 'startup' --
+    # exactly today's behavior; stage_wave_restarts already logs loudly
+    # on its own cold-start/partial-archive paths, so no warning is
+    # duplicated here.
     if _is_wave_enabled() and phase == "forecast":
         if _wave_restart_staged(ctx):
             start_type = "continue"
@@ -310,6 +348,8 @@ def patch_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
                 ctx.data,
             )
             start_type = "startup"
+    elif _is_wave_enabled() and phase == "nowcast":
+        start_type = "continue" if _wave_restart_staged_nowcast(ctx) else "startup"
     else:
         start_type = "startup"
 
