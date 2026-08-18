@@ -1273,6 +1273,11 @@ def _write_ww3_restart_nc(path: Path, *, mode: str = "clean") -> None:
         variable instead of a fixed-width float array -- reading it
         raises TypeError partway through the guard's sweep, exercising
         the never-raises contract against a pathological variable.
+      - "nan": one unmasked bin (va0003, node 1) is NaN while the
+        _FillValue is the normal positive nf90_fill_float -- corruption,
+        NOT fill, and must be rejected (a guard that masks non-finite
+        values before checking them would silently accept this; WW3
+        reads the original file, not the guard's masked view).
     """
     ds = Dataset(str(path), "w")
     try:
@@ -1304,6 +1309,8 @@ def _write_ww3_restart_nc(path: Path, *, mode: str = "clean") -> None:
             )
             if mode == "blowup" and i == 3:
                 values[1] = 1.0e18
+            if mode == "nan" and i == 3:
+                values[1] = np.nan
             var[:] = values
     finally:
         ds.close()
@@ -1552,6 +1559,24 @@ def test_wave_restart_looks_sane_rejects_finite_blowup(tmp_path, monkeypatch):
     assert "ceiling" in reason
     assert f"{_GUARD_CEILING_AT_DEFAULT_MAX_HS:.3g}" in reason
     assert "nth=24" in reason and "nk=6" in reason
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_rejects_nan_bin(tmp_path):
+    """A NaN in an unmasked va* bin is corruption, not fill (the
+    _FillValue here is the normal positive nf90_fill_float), and must be
+    rejected. Pins the non-finite check happening BEFORE any
+    invalid-value masking -- a guard that masks NaN first would silently
+    accept this file, and WW3 reads the original file, not the guard's
+    masked view."""
+    path = tmp_path / "nan.nc"
+    _write_ww3_restart_nc(path, mode="nan")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is False
+    assert "va0003" in reason
+    assert "non-finite" in reason
 
 
 @pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")

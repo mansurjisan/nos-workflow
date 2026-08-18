@@ -787,19 +787,26 @@ def _wave_restart_looks_sane(path: Path) -> Tuple[bool, str]:
 
                     raw = var[:]
                     fill = getattr(var, "_FillValue", None)
-                    masked = np.ma.masked_invalid(raw)
-                    if fill is not None:
-                        masked = np.ma.masked_equal(masked, fill)
-                    valid = ~np.ma.getmaskarray(masked)
-                    if masked.size == 0 or not valid.any():
-                        continue
-                    # Collapse via .filled()/np.ma.filled -- never
-                    # np.asarray() on a masked array, which returns the
-                    # raw (unmasked, fill-value-included) .data buffer.
-                    data = np.ma.filled(masked, 0.0).astype(
+                    # Non-finite detection must happen BEFORE any
+                    # masked_invalid-style masking: a NaN/Inf cell is
+                    # corruption unless it IS the declared fill, and
+                    # silently masking it would let a NaN-poisoned
+                    # restart through (WW3 reads the original file, not
+                    # this guard's masked view).
+                    data_arr = np.ma.getdata(raw).astype(
                         "float64", copy=False,
                     )
-                    unmasked = data[valid]
+                    fill_mask = np.ma.getmaskarray(raw).copy()
+                    if fill is not None:
+                        fill64 = float(fill)
+                        if np.isnan(fill64):
+                            fill_mask |= np.isnan(data_arr)
+                        else:
+                            fill_mask |= data_arr == fill64
+                    valid = ~fill_mask
+                    if data_arr.size == 0 or not valid.any():
+                        continue
+                    unmasked = data_arr[valid]
 
                     va_checked += 1
                     if not np.all(np.isfinite(unmasked)):
