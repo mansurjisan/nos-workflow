@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
@@ -577,12 +578,21 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
 _DEFAULT_NOWCAST_WARM_START_BACK_HOURS = 48
 _DEFAULT_WARM_START_MAX_HS = 25.0
 
-# Variable names checked by _wave_restart_looks_sane's Hs-like fast path.
-# WW3 restarts normally carry the raw spectrum, not a derived Hs field --
-# these are checked defensively in case one happens to be present; when
-# none are, the guard falls back to a finite/non-negative sweep of every
-# floating-point variable instead (see _wave_restart_looks_sane).
-_HS_LIKE_VAR_NAMES: tuple = ("hs", "swh", "significant_wave_height", "wave_height")
+# A real WW3 use_restartnc restart (ufs.cpld.ww3.r.*.nc) stores the 2D
+# spectrum as one variable PER spectral component -- va0001, va0002, ...
+# vaNSPEC (float32, ~node-length, with a _FillValue of nf90_fill_float,
+# +9.9692099683868690e+36, marking inactive/land nodes) -- never a single
+# derived Hs-like field. _wave_restart_looks_sane sweeps exactly these
+# variables; _VA_VAR_RE is anchored (^va\d+$) so it never matches an
+# unrelated variable that merely starts with "va".
+_VA_VAR_RE = re.compile(r"^va\d+$")
+
+# Scalar grid-shape variables present in a real restart; not validated
+# against anything external here (no independent source of truth for the
+# expected spectral grid is available at this call site), but surfaced in
+# the guard's accept/reject log line so a grid mismatch between the
+# candidate restart and this run's own WW3 grid is at least visible.
+_VA_GRID_VAR_NAMES: tuple = ("nth", "nk")
 
 
 def _cmeps_restart_names(stamp: str) -> Tuple[str, str, str]:
@@ -680,24 +690,55 @@ def _wave_restart_looks_sane(path: Path) -> Tuple[bool, str]:
     behind) is worth catching before it propagates into a multi-thousand-
     rank job.
 
-    WW3 restarts store the raw 2D spectrum (freq x dir x node), not a
-    derived Hs field, so there is no cheap Hs threshold to read in the
-    general case. Guard two ways:
-      - if an Hs-like variable happens to be present (see
-        _HS_LIKE_VAR_NAMES), reject when its max exceeds
-        $WAV_WARM_START_MAX_HS (forcing.waves.warm_start_max_hs, default
-        25.0m);
-      - otherwise (the normal case -- spectra only), reject if ANY
-        floating-point variable holds a non-finite (NaN/Inf) value or a
-        value more negative than a small floating-point tolerance
-        (-1e-6) -- WW3 spectral energy density is physically >= 0.
+    A real WW3 use_restartnc restart carries the 2D spectrum as one
+    variable PER spectral component -- va0001, va0002, ... vaNSPEC
+    (float32, ~node-length, _FillValue=nf90_fill_float marking inactive
+    nodes) -- alongside time, the nth/nk grid-shape scalars, mapsta, and
+    optionally ice. There is no single Hs-like field to threshold against,
+    so $WAV_WARM_START_MAX_HS (forcing.waves.warm_start_max_hs, default
+    25.0m) is instead converted into a bound on the raw spectral density:
+
+        ceiling = warm_start_max_hs ** 2 * 100.0
+
+    Derivation (order-of-magnitude tripwire, NOT a precise Hs
+    computation): Hs = 4*sqrt(E_total), where E_total is the spectrum
+    integrated over frequency and direction. A single bin's contribution
+    to E_total is ~ N * dsigma * dtheta, where N is that bin's
+    action/energy density (the va* value) -- but the actual bin widths
+    (dsigma, dtheta) aren't available from the restart file, so a
+    rigorous per-bin integral isn't possible here. Instead: treat
+    warm_start_max_hs**2 as a proxy for total spectral energy (dropping
+    the factor-of-16 from Hs=4*sqrt(E) and the sub-unity bin-width
+    factors, both of which only make the bound tighter), then scale it up
+    by two more orders of magnitude (100x) as slack for it being a
+    SINGLE-bin value rather than the full integral. A physically
+    plausible sea state -- even a 25m extreme -- cannot concentrate its
+    entire energy budget into one spectral bin at 100x that budget; a
+    blown-up (e.g. ~1e18) value trips it trivially.
+
+    For each va* variable: read as a masked array and mask _FillValue
+    occurrences using the variable's OWN _FillValue attribute (never
+    assume the fill is positive, and never collapse the masked array with
+    plain np.asarray -- that silently reads the raw .data buffer,
+    including masked fill cells, which is exactly the kind of leak this
+    guard exists to avoid). Reject if any UNMASKED value is non-finite
+    (NaN/Inf), more negative than a small floating-point tolerance
+    (-1e-6; WW3 spectral action/energy density is physically >= 0), or
+    exceeds ``ceiling`` above. The nth/nk grid-shape scalars aren't
+    checked against anything external (no independent source of truth at
+    this call site), but are surfaced in the accept/reject log line so a
+    grid mismatch between the candidate restart and this run's own WW3
+    grid is at least visible.
 
     Not over-engineered further: the job here is "obviously-poisoned
     restart => cold start," not a full physical validation. Returns
     (True, "") if the restart passes (or can't be checked -- see below),
-    else (False, reason). Never raises: an unreadable file is grounds for
-    rejection, not a hard failure, since this only gates an optional
-    warm start with an already-loud cold-start fallback.
+    else (False, reason). Never raises: the entire body below is wrapped
+    in a catch-all so any unreadable or pathological file (including one
+    that raises mid-sweep, e.g. an unsupported variable type) is grounds
+    for rejection, not a hard failure -- this only gates an optional warm
+    start with an already-loud cold-start fallback, and a crash here must
+    never kill the staging job.
     """
     try:
         from netCDF4 import Dataset
@@ -712,49 +753,98 @@ def _wave_restart_looks_sane(path: Path) -> Tuple[bool, str]:
 
     from ...bash_compat import preserve_preload
 
-    # Strip LD_PRELOAD before touching netCDF4 -- see mesh.generate_esmf_mesh.
-    with preserve_preload():
-        try:
-            ds = Dataset(str(path), "r")
-        except OSError as exc:
-            return False, f"unreadable as netCDF ({exc})"
-        try:
-            max_hs = _warm_start_max_hs()
-            for name in _HS_LIKE_VAR_NAMES:
-                if name not in ds.variables:
-                    continue
-                data = np.asarray(ds.variables[name][:], dtype="float64")
-                finite = np.isfinite(data)
-                if not finite.all():
-                    return False, f"{name} contains non-finite values"
-                peak = float(data[finite].max()) if finite.any() else 0.0
-                if peak > max_hs:
-                    return False, (
-                        f"{name} max={peak:.2f}m exceeds "
-                        f"warm_start_max_hs={max_hs:.2f}m"
-                    )
-                return True, ""
+    try:
+        # Strip LD_PRELOAD before touching netCDF4 -- see
+        # mesh.generate_esmf_mesh.
+        with preserve_preload():
+            try:
+                ds = Dataset(str(path), "r")
+            except OSError as exc:
+                return False, f"unreadable as netCDF ({exc})"
+            try:
+                max_hs = _warm_start_max_hs()
+                ceiling = max_hs ** 2 * 100.0
 
-            # No Hs-like variable -- spectra-only restart, the normal WW3
-            # case. Sweep every floating-point variable.
-            for name, var in ds.variables.items():
-                if not np.issubdtype(var.dtype, np.floating):
-                    continue
-                data = np.asarray(var[:], dtype="float64")
-                if data.size == 0:
-                    continue
-                if not np.all(np.isfinite(data)):
-                    return False, f"{name} contains non-finite values"
-                nanmin = float(np.nanmin(data))
-                if nanmin < -1e-6:
-                    return False, (
-                        f"{name} contains negative values "
-                        f"(min={nanmin:.3g}); WW3 spectral density must "
-                        f"be >= 0"
+                grid_bits = []
+                for dim_name in _VA_GRID_VAR_NAMES:
+                    if dim_name in ds.variables:
+                        try:
+                            grid_bits.append(
+                                f"{dim_name}="
+                                f"{int(ds.variables[dim_name][...])}"
+                            )
+                        except Exception:
+                            grid_bits.append(f"{dim_name}=<unreadable>")
+                grid_desc = f" [{', '.join(grid_bits)}]" if grid_bits else ""
+
+                va_checked = 0
+                va_max = float("-inf")
+                for name, var in ds.variables.items():
+                    if not _VA_VAR_RE.match(name):
+                        continue
+                    if not np.issubdtype(var.dtype, np.floating):
+                        continue
+
+                    raw = var[:]
+                    fill = getattr(var, "_FillValue", None)
+                    masked = np.ma.masked_invalid(raw)
+                    if fill is not None:
+                        masked = np.ma.masked_equal(masked, fill)
+                    valid = ~np.ma.getmaskarray(masked)
+                    if masked.size == 0 or not valid.any():
+                        continue
+                    # Collapse via .filled()/np.ma.filled -- never
+                    # np.asarray() on a masked array, which returns the
+                    # raw (unmasked, fill-value-included) .data buffer.
+                    data = np.ma.filled(masked, 0.0).astype(
+                        "float64", copy=False,
                     )
-            return True, ""
-        finally:
-            ds.close()
+                    unmasked = data[valid]
+
+                    va_checked += 1
+                    if not np.all(np.isfinite(unmasked)):
+                        return False, (
+                            f"{name} contains non-finite unmasked "
+                            f"spectral values{grid_desc}"
+                        )
+                    vmin = float(unmasked.min())
+                    if vmin < -1e-6:
+                        return False, (
+                            f"{name} contains negative unmasked spectral "
+                            f"density (min={vmin:.3g}); WW3 spectral "
+                            f"action/energy density must be >= 0"
+                            f"{grid_desc}"
+                        )
+                    vmax = float(unmasked.max())
+                    va_max = max(va_max, vmax)
+                    if vmax > ceiling:
+                        return False, (
+                            f"{name} max={vmax:.3g} exceeds the "
+                            f"spectral-density ceiling {ceiling:.3g} "
+                            f"derived from "
+                            f"warm_start_max_hs={max_hs:.2f}m{grid_desc}"
+                        )
+
+                if va_checked == 0:
+                    logger.warning(
+                        "stage_wave_restarts: %s has no va* spectral "
+                        "variables to check%s -- not a recognized WW3 "
+                        "use_restartnc layout; accepting without a "
+                        "spectral sanity check", path, grid_desc,
+                    )
+                    return True, ""
+
+                logger.debug(
+                    "stage_wave_restarts: guard accepted %s -- checked "
+                    "%d va* variable(s), max=%.3g (ceiling=%.3g, "
+                    "warm_start_max_hs=%.2fm)%s",
+                    path, va_checked, va_max, ceiling, max_hs, grid_desc,
+                )
+                return True, ""
+            finally:
+                ds.close()
+    except Exception as exc:  # never raises -- see docstring
+        return False, f"guard error: {exc}"
 
 
 def _stage_wave_restarts_nowcast(ctx: SchismRunContext) -> bool:
@@ -816,6 +906,16 @@ def _stage_wave_restarts_nowcast(ctx: SchismRunContext) -> bool:
         )
         return False
 
+    # NOTE: this equates the backward-search step with THIS system's own
+    # nowcast leg length, i.e. it assumes cycle spacing == hindcast_days
+    # (LEN_NOWCAST). That holds for SECOFS today (its cadence matches its
+    # nowcast length), so walking back one LEN_NOWCAST always lands
+    # exactly on the previous cycle's own nowcast-end stamp. It would be
+    # WRONG for a system whose cycle cadence differs from its nowcast
+    # length (e.g. a 6h-cadence system with a 12h nowcast leg) -- the
+    # step would overshoot or undershoot the actual predecessor cycle.
+    # Revisit (probably by threading an explicit cycle-interval value
+    # through ctx) before enabling this feature on such a system.
     try:
         interval = int(ctx.len_nowcast)
     except (TypeError, ValueError):
@@ -869,6 +969,16 @@ def _stage_wave_restarts_nowcast(ctx: SchismRunContext) -> bool:
                 offset += interval
                 continue
 
+            # Re-stamping (copying the candidate's files to THIS leg's own
+            # stamp rather than its native one) is safe ONLY because
+            # wav_restart_mod's netCDF read path (use_restartnc) ignores
+            # the restart file's own internal time field and simply
+            # trusts the filename/pointer it's told to open. The BINARY
+            # WW3 restart path (restart_from_binary='true' in
+            # ufs.configure) DOES validate the internal time against the
+            # run's expected start and would hard-abort on a mismatch --
+            # this whole re-stamping feature requires restart_from_binary
+            # to stay 'false' there.
             restart_dir = ctx.data / "RESTART"
             restart_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(med_src, restart_dir / dest_med_name)

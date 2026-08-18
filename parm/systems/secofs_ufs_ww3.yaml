@@ -155,10 +155,11 @@ forcing:
     # branch (_stage_wave_restarts_nowcast).
     nowcast_warm_start: false
     # Sanity guard for the nowcast warm start above: reject a candidate
-    # restart whose WW3 spectrum looks poisoned (non-finite/negative
-    # values, or an Hs-like variable's max if the restart happens to
-    # carry one) rather than warm-starting from it. Meters; see
-    # stage_files._wave_restart_looks_sane.
+    # restart whose va* spectral-component variables look poisoned
+    # (non-finite/negative unmasked values, or a value that exceeds an
+    # order-of-magnitude spectral-density ceiling derived from this Hs
+    # value -- warm_start_max_hs**2 * 100.0) rather than warm-starting
+    # from it. Meters; see stage_files._wave_restart_looks_sane.
     warm_start_max_hs: 25.0
 
 # Wave BC is deliberately NOT added to prep.critical_sources (this system

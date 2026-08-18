@@ -36,6 +36,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     _SCHISM_PROPERTY_FILES,
     _UFS_AUX_FILES,
     _UFS_CONFIG_FILES,
+    _wave_restart_looks_sane,
     collect_staged_inputs,
     copy_hgrid_to_outputs,
     fallback_nwm_files_from_fixofs,
@@ -1240,20 +1241,70 @@ def _make_nowcast_warm_start_ctx(
     )
 
 
-def _write_ww3_restart_nc(path: Path, *, poisoned: bool = False) -> None:
-    """Write a minimal netCDF file shaped like a WW3 spectral restart
-    (a 2D energy-density variable over node x freq, no Hs-like field --
-    the normal case _wave_restart_looks_sane's finite/non-negative sweep
-    is meant for)."""
+# nf90_fill_float -- netCDF-Fortran's default float fill, and what a real
+# WW3 use_restartnc restart's va* variables carry as _FillValue.
+_NF90_FILL_FLOAT = 9.9692099683868690e+36
+
+# Matches _wave_restart_looks_sane's ceiling for WAV_WARM_START_MAX_HS=25.0
+# (the default): warm_start_max_hs**2 * 100.0.
+_GUARD_CEILING_AT_DEFAULT_MAX_HS = 25.0 ** 2 * 100.0
+
+
+def _write_ww3_restart_nc(path: Path, *, mode: str = "clean") -> None:
+    """Write a netCDF file shaped like a REAL WW3 use_restartnc restart:
+    a scalar ``time`` (f8), scalar ``nth``/``nk`` (spectral grid shape,
+    int), ``mapsta`` (int, node-length), and one va0001..va0006 (f4,
+    node-length) variable PER spectral component -- never a single
+    Hs-like field, which is what _wave_restart_looks_sane's real bound
+    (see its docstring) is written against.
+
+    ``mode`` selects what the guard should make of the va* content:
+      - "clean": every unmasked value is small and physical -- the
+        accept case.
+      - "blowup": one unmasked bin (va0003, node 1) is a finite-but-
+        enormous 1e18 -- must trip the spectral-density ceiling.
+      - "negative_fill": _FillValue is set to a NEGATIVE value (-9999.0,
+        unlike a real restart's positive nf90_fill_float) and used at
+        the same land node every real restart marks via mapsta=0 --
+        proves the guard masks by each variable's OWN _FillValue
+        attribute rather than assuming a fill is positive, and that a
+        masked fill occurrence is never itself a rejection reason.
+      - "vlen": va0001 is written as a genuine netCDF4 VLEN (ragged)
+        variable instead of a fixed-width float array -- reading it
+        raises TypeError partway through the guard's sweep, exercising
+        the never-raises contract against a pathological variable.
+    """
     ds = Dataset(str(path), "w")
     try:
-        ds.createDimension("freq", 3)
-        ds.createDimension("node", 2)
-        var = ds.createVariable("efth", "f8", ("node", "freq"))
-        if poisoned:
-            var[:] = np.array([[1.0, float("nan"), 2.0], [-5.0, 0.5, 0.2]])
-        else:
-            var[:] = np.array([[0.1, 0.2, 0.3], [0.05, 0.15, 0.25]])
+        ds.createDimension("node", 4)
+        ds.createVariable("time", "f8")[...] = 0.0
+        ds.createVariable("nth", "i4")[...] = 24
+        ds.createVariable("nk", "i4")[...] = 6
+        # Node 3 is land/inactive (mapsta=0); every va* variable's own
+        # _FillValue marks that same node, same as a real restart.
+        ds.createVariable("mapsta", "i4", ("node",))[:] = [1, 1, 1, 0]
+
+        if mode == "vlen":
+            vlen_t = ds.createVLType(np.float64, "wave_spec_vlen")
+            var = ds.createVariable("va0001", vlen_t, ("node",))
+            var[:] = np.array(
+                [np.array([0.1, 0.2]), np.array([0.05]),
+                 np.array([0.2, 0.1]), np.array([0.0])],
+                dtype=object,
+            )
+            return
+
+        fill = -9999.0 if mode == "negative_fill" else _NF90_FILL_FLOAT
+        for i in range(1, 7):
+            var = ds.createVariable(
+                f"va{i:04d}", "f4", ("node",), fill_value=fill,
+            )
+            values = np.array(
+                [0.02 * i, 0.05 * i, 0.01 * i, fill], dtype="f4",
+            )
+            if mode == "blowup" and i == 3:
+                values[1] = 1.0e18
+            var[:] = values
     finally:
         ds.close()
 
@@ -1266,13 +1317,15 @@ def _seed_nowcast_candidate(
     wav: bool = True,
     pointer: bool = True,
     med_bytes: bytes = b"mediator",
-    poisoned: bool = False,
+    mode: str = "clean",
 ) -> Path:
     """Populate a candidate PRIOR cycle's archived wave_restart dir at the
     $COMOUTroot/$RUN.$PDY/$RUN.tHHz.wave_restart path
     stage_files._wave_restart_search_dir computes, the same way
     execute._archive_wave_restarts would have for that candidate cycle's
-    own nowcast leg."""
+    own nowcast leg. ``mode`` is forwarded to _write_ww3_restart_nc --
+    see its docstring for what each mode does to the WW3 restart's
+    content."""
     stamp = _dateutils.cmeps_restart_stamp(candidate_time)
     yyyymmdd = candidate_time[:8]
     hh = candidate_time[8:10]
@@ -1287,7 +1340,7 @@ def _seed_nowcast_candidate(
     if med:
         (archive_dir / med_name).write_bytes(med_bytes)
     if wav:
-        _write_ww3_restart_nc(archive_dir / wav_name, poisoned=poisoned)
+        _write_ww3_restart_nc(archive_dir / wav_name, mode=mode)
     if pointer:
         (archive_dir / pointer_name).write_text(f"RESTART/{med_name}\n")
     return archive_dir
@@ -1415,14 +1468,14 @@ def test_stage_wave_restarts_nowcast_warm_start_guard_rejects_poisoned_restart(
     tmp_path, monkeypatch, caplog,
 ):
     """(e) a complete archive is found, but its WW3 restart's spectrum
-    contains a non-finite/negative value -- the sanity guard rejects it
-    (rather than warm-starting from an obviously-poisoned restart) and,
-    with no older candidate available, the search falls back to cold
-    start."""
+    contains a finite-but-enormous (1e18) blow-up value in one va* bin --
+    the sanity guard rejects it (rather than warm-starting from an
+    obviously-poisoned restart) and, with no older candidate available,
+    the search falls back to cold start."""
     monkeypatch.setenv("WAV_TASKS", "2606")
     monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
     ctx = _make_nowcast_warm_start_ctx(tmp_path)
-    _seed_nowcast_candidate(ctx, ctx.time_hotstart, poisoned=True)
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, mode="blowup")
 
     caplog.set_level(
         "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
@@ -1433,6 +1486,103 @@ def test_stage_wave_restarts_nowcast_warm_start_guard_rejects_poisoned_restart(
     assert not (ctx.data / "RESTART").exists()
     assert any("rejecting nowcast warm-start candidate" in r.getMessage()
                for r in caplog.records)
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_guard_never_raises_on_pathological_restart(
+    tmp_path, monkeypatch, caplog,
+):
+    """(f) a complete archive is found, but its WW3 restart's va0001
+    variable is a genuine netCDF4 VLEN (ragged) variable -- reading it
+    raises TypeError partway through the guard's sweep. The never-raises
+    contract must hold end-to-end: stage_wave_restarts itself must not
+    raise, the candidate must be treated as rejected (not silently
+    accepted), and -- with no older candidate available -- the search
+    falls back to cold start, exactly like any other poisoned
+    candidate."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, mode="vlen")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")  # must not raise
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("rejecting nowcast warm-start candidate" in r.getMessage()
+               for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _wave_restart_looks_sane -- direct guard-level coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_accepts_all_physical_values(tmp_path):
+    """(iv) a restart shaped like a real WW3 use_restartnc output (time,
+    nth/nk, mapsta, va0001..va0006), with every unmasked va* value small
+    and physical -- accepted."""
+    path = tmp_path / "clean.nc"
+    _write_ww3_restart_nc(path, mode="clean")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is True
+    assert reason == ""
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_rejects_finite_blowup(tmp_path, monkeypatch):
+    """(i) a finite-but-enormous (1e18) value in one va* bin exceeds the
+    spectral-density ceiling (warm_start_max_hs**2 * 100.0) derived from
+    $WAV_WARM_START_MAX_HS -- rejected, and the reason cites both the
+    offending variable and the nth/nk grid shape."""
+    monkeypatch.setenv("WAV_WARM_START_MAX_HS", "25.0")
+    path = tmp_path / "blowup.nc"
+    _write_ww3_restart_nc(path, mode="blowup")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is False
+    assert "va0003" in reason
+    assert "ceiling" in reason
+    assert f"{_GUARD_CEILING_AT_DEFAULT_MAX_HS:.3g}" in reason
+    assert "nth=24" in reason and "nk=6" in reason
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_masks_fillvalue_even_when_negative(tmp_path):
+    """(ii) _FillValue occurrences are masked using the variable's OWN
+    _FillValue attribute rather than an assumption that a fill is
+    positive -- a restart whose _FillValue is a NEGATIVE sentinel
+    (-9999.0) is still accepted, because every occurrence of that
+    sentinel sits at a masked (land/inactive) node and must never itself
+    read as "spectral density < 0"."""
+    path = tmp_path / "negative_fill.nc"
+    _write_ww3_restart_nc(path, mode="negative_fill")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is True
+    assert reason == ""
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_never_raises_on_vlen_variable(tmp_path):
+    """(iii) a pathological (VLEN/ragged) va0001 variable raises
+    TypeError partway through the sweep -- the guard's catch-all must
+    turn that into a rejection, not let the exception escape."""
+    path = tmp_path / "vlen.nc"
+    _write_ww3_restart_nc(path, mode="vlen")
+
+    ok, reason = _wave_restart_looks_sane(path)  # must not raise
+
+    assert ok is False
+    assert "guard error" in reason
 
 
 # ---------------------------------------------------------------------------

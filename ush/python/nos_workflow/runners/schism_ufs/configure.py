@@ -8,7 +8,12 @@ from typing import Tuple
 
 from . import _dateutils, patches
 from .context import SchismRunContext
-from .stage_files import _cmeps_restart_names, _is_ufs, _is_wave_enabled
+from .stage_files import (
+    _cmeps_restart_names,
+    _is_ufs,
+    _is_wave_enabled,
+    _nowcast_warm_start_enabled,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +288,18 @@ def _wave_restart_staged_nowcast(ctx: SchismRunContext) -> bool:
     default (forcing.waves.nowcast_warm_start) -- when the switch is off,
     or nothing was found, nothing lands at these paths and this is
     silently False, same as the pre-existing nowcast=startup behavior.
+
+    Also re-checks _nowcast_warm_start_enabled() itself (not just
+    "did the files land"): stage_wave_restarts already refuses to write
+    these paths when the switch is off, but $DATA is not guaranteed to be
+    scratch-clean on every run (a reused/leftover $DATA from a prior
+    warm-start-enabled cycle could still hold these three files). Without
+    this check, disabling the switch would NOT reliably disable the
+    behavior -- leftover artifacts from before the switch was flipped off
+    could still flip a supposedly-disabled run to start_type=continue.
     """
+    if not _nowcast_warm_start_enabled():
+        return False
     if not ctx.time_hotstart:
         return False
     stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)

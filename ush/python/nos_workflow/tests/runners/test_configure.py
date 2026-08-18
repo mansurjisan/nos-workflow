@@ -551,15 +551,16 @@ def test_patch_ufs_configure_wave_nowcast_is_startup(tmp_path, monkeypatch):
 def test_patch_ufs_configure_wave_nowcast_continues_when_restart_staged(
     tmp_path, monkeypatch,
 ):
-    """Wave system, nowcast leg, with the nowcast warm-start handoff
-    already staged in $DATA (stage_wave_restarts's nowcast branch found a
-    complete predecessor archive and restaged it to THIS leg's own
-    time_hotstart stamp): 'continue' -- same mechanism as the forecast
-    leg's own restart, just keyed on time_hotstart instead of
-    time_nowcastend."""
+    """Wave system, nowcast leg, with the opt-in switch ON and the
+    nowcast warm-start handoff already staged in $DATA (stage_wave_
+    restarts's nowcast branch found a complete predecessor archive and
+    restaged it to THIS leg's own time_hotstart stamp): 'continue' --
+    same mechanism as the forecast leg's own restart, just keyed on
+    time_hotstart instead of time_nowcastend."""
     from nos_workflow.runners.schism_ufs._dateutils import cmeps_restart_stamp
 
     monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
     ctx = _make_ctx(tmp_path, phase="nowcast")  # time_hotstart="2026051200"
     stamp = cmeps_restart_stamp(ctx.time_hotstart)
     wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
@@ -575,6 +576,37 @@ def test_patch_ufs_configure_wave_nowcast_continues_when_restart_staged(
     patch_ufs_configure(ctx, "nowcast")
 
     assert "start_type = continue" in target.read_text()
+
+
+def test_patch_ufs_configure_wave_nowcast_leftover_artifacts_ignored_when_disabled(
+    tmp_path, monkeypatch,
+):
+    """Wave system, nowcast leg, opt-in switch OFF (the default), but
+    $DATA still holds a complete nowcast warm-start handoff at this leg's
+    own time_hotstart stamp -- e.g. a reused/leftover $DATA from a prior
+    cycle that ran with the switch on. _wave_restart_staged_nowcast must
+    re-check the switch itself (not just "did the files land"), so this
+    stays 'startup': leftover artifacts must never flip a disabled run to
+    start_type=continue."""
+    from nos_workflow.runners.schism_ufs._dateutils import cmeps_restart_stamp
+
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
+    ctx = _make_ctx(tmp_path, phase="nowcast")  # time_hotstart="2026051200"
+    stamp = cmeps_restart_stamp(ctx.time_hotstart)
+    wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
+    med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
+    target = ctx.data / "ufs.configure"
+    target.write_text(_UFS_CONFIGURE_TEMPLATE)
+
+    (ctx.data / "RESTART").mkdir(parents=True, exist_ok=True)
+    (ctx.data / "RESTART" / med_name).write_bytes(b"leftover mediator restart")
+    (ctx.data / wav_name).write_bytes(b"leftover ww3 restart")
+    (ctx.data / f"rpointer.cpl.{stamp}").write_text(f"RESTART/{med_name}\n")
+
+    patch_ufs_configure(ctx, "nowcast")
+
+    assert "start_type = startup" in target.read_text()
 
 
 def test_patch_ufs_configure_wave_forecast_continues_when_restart_staged(
