@@ -39,7 +39,7 @@ POLL=${POLL:-60}                       # seconds between status polls
 # mislabel a healthy cycle). Sized off pbs/secofs_ufs_ww3/jnos_*_00.pbs's
 # own walltime= lines, same convention as launch_secofs_ufs.sh.
 PREP_TIMEOUT=${PREP_TIMEOUT:-7800}          # walltime 2:00 + 10 min (no retry)
-NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-14400}   # walltime 2:00, x2 for blind retry
+NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-28800}   # walltime 4:00, x2 for blind retry
 FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-23400} # walltime 6:30 + 10 min
 POST_TIMEOUT=${POST_TIMEOUT:-7800}          # walltime 2:00 + 10 min
 STAGES=${STAGES:-"prep nowcast forecast post"}   # override e.g. STAGES=post for single-stage recovery

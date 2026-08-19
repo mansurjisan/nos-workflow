@@ -178,6 +178,36 @@ forcing:
 # UFS-Coastal coupled executable, wave-enabled build.
 model:
   executable: fv3_coastalSW.exe
+  run:
+    # Daily 12z realtime cadence: 24 h nowcast + 48 h forecast, replacing
+    # the ad-hoc 6 h/debug test cycling this system bootstrapped on.
+    # hindcast_days drives LEN_NOWCAST/time_hotstart (yaml_to_env.py
+    # compute_derived_values); nowcast_hours must stay in lockstep
+    # (nowcast_hours/24 == hindcast_days) because nos_utils.config.OFSConfig
+    # reads nowcast_hours directly for the prep-side time_hotstart anchor
+    # (orchestrator.py) and only falls back to hindcast_days*24 when
+    # nowcast_hours is absent -- secofs_ufs.yaml (the _base) sets
+    # nowcast_hours explicitly, so leaving it unoverridden here would
+    # silently keep prep on the old 6 h anchor while the run/post side
+    # moved to 24 h. Both keys below override secofs_ufs's 0.25/6.
+    #
+    # Ripple effects checked and left alone (already derive correctly
+    # from LEN_NOWCAST/ctx.len_nowcast at runtime, no hardcoded 6h):
+    #   - runners/schism_ufs/configure.py _resolve_phase_anchors /
+    #     patch_ufs_configure: restart_n is patched to the leg's own
+    #     nhours every run (fix/secofs_ufs_ww3/ufs.configure's checked-in
+    #     restart_n is just the template default, updated for clarity).
+    #   - runners/schism_ufs/setup_paths.py: NSTEP_NOWCAST/DSTART_FORECAST
+    #     formulas take len_nowcast as an argument.
+    #   - runners/schism_ufs/stage_files.py _stage_wave_restarts_nowcast:
+    #     its backward search steps by ctx.len_nowcast, which it documents
+    #     as ONLY correct when cycle spacing == nowcast length. Daily 12z
+    #     cadence (24 h between cycles) with hindcast_days=1.0 (24 h
+    #     nowcast) preserves that equality, so the derivation stays
+    #     correct as-is (feature itself remains opt-in/off via
+    #     forcing.waves.nowcast_warm_start below).
+    hindcast_days: 1.0
+    nowcast_hours: 24
   runtime:
     # Wave variant carries its own param.nml: adds RADFLAG='LON' and
     # flips fwvor_breaking 1->0 (USE_WW3 coupling block) relative to

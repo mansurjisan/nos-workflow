@@ -88,14 +88,16 @@ WAV_model:                      ww3
 WAV_petlist_bounds:             2914 5519
 WAV_omp_num_threads:            1
 WAV_attributes::
-  # dbug_flag = 6 makes the WW3 cap print imported-field min/max per coupling
-  # window (So_h, So_u, So_v) to the WAV PET logs, which is what identifies
-  # whether SCHISM's currents carry dry-element garbage. Keep at 6 through
-  # the first e0m fully-coupled validation run: it provided the per-window
-  # field-extrema diagnostics that pinned the current ranges in V12, and if
-  # e0m crashes we want the same evidence; log volume was acceptable at
-  # 4766 WAV PETs, 2606 is less. Set to 0 when promoting to routine cycling.
-  dbug_flag = 6
+  # dbug_flag = 0: promoted to routine daily 12z ops cycling, so the
+  # per-coupling-window imported-field min/max diagnostics (So_h, So_u,
+  # So_v) that dbug_flag=6 prints to the WAV PET logs are switched off.
+  # That level was kept through the first e0m fully-coupled validation
+  # run -- it provided the field-extrema evidence that pinned the current
+  # ranges in V12, and would have given the same evidence again had e0m
+  # crashed; log volume was acceptable at 4766 WAV PETs (2606 is less).
+  # Re-enable dbug_flag=6 only for a targeted diagnostic rerun, not for
+  # normal cycling.
+  dbug_flag = 0
   Verbosity = 0
   DumpFields = false
   ProfileMemory = false
@@ -146,10 +148,10 @@ runSeq::
 # start_type AND restart_n are both patched per-phase at run time (see
 # runners/schism_ufs/configure.py:patch_ufs_configure): start_type is
 # nowcast=startup, forecast=continue; restart_n is set to that leg's own
-# length in hours (6 for nowcast, 48 for forecast) so restart_option=nhours
+# length in hours (24 for nowcast, 48 for forecast) so restart_option=nhours
 # writes exactly one mediator/WW3 restart, at the end of the leg -- landing
-# on the nowcast/forecast handoff every cycle instead of (with a fixed 6h
-# stride) writing 8 multi-GB restarts across a 48h forecast. The values
+# on the nowcast/forecast handoff every cycle instead of (with a fixed 24h
+# stride) writing 2 multi-GB restarts across a 48h forecast. The values
 # below are the as-checked-in template defaults, overwritten every run.
 ALLCOMP_attributes::
   ScalarFieldCount = 3
@@ -160,7 +162,7 @@ ALLCOMP_attributes::
   start_type = startup
   restart_dir = RESTART/
   case_name = ufs.cpld
-  restart_n = 6
+  restart_n = 24
   restart_option = nhours
   restart_ymd = -999
   orb_eccen = 1.e36
