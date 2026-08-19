@@ -46,14 +46,18 @@
 ! FSSOURCE=F that call site is never made. Legal but has no upstream     !
 ! regtest coverage (IMPTOTAL=T + IMPSOURCE=F).                           !
 !                                                                        !
-! IMPREFRACTION=F, IMPFREQSHIFT=F (V15 bisect rung 2): with sources      !
-! already out (above), the V14 run still produced NaN wave exports the   !
-! window after imported currents reached ~2.9 m/s -- so a currents-      !
-! dependent term still inside the matrix diverges. Refraction and        !
-! frequency-shift are the two such terms left; both move to the          !
-! explicit W3KTP3/W3KTP path (CFL-limited by CTMAX), leaving a PURE      !
-! geographic-advection implicit matrix (upwind M-matrix, GS-safe).       !
-! Refraction physics is NOT lost -- only its placement changes.          !
+! IMPREFRACTION=T, IMPFREQSHIFT=T (V28b, 2026-08-19): back IN the        !
+! implicit matrix. The V15-era F/F setting was a workaround for the      !
+! currents crash, whose real cause (unclamped ST4 tail index) is fixed   !
+! by the WW3 hardening patch. Left explicit, the CTMAX-limited scheme    !
+! is unstable in shallow narrow channels with tidal depth cycling:      !
+! energy pumps down-spectrum until the breaking limiter caps it (the    !
+! PR/USVI 20-60 m and Georgia Bight 6-8 m Hs blow-ups; see ticket #320  !
+! forensics). V28b verified over a full 54 h cycle: PR max 2.6 m (was   !
+! 20.6), GA max <2.8 (was 6-8), hardening-scrub events down 237x,       !
+! tides bit-consistent. AK reference runs both terms implicit. Any      !
+! change here requires a mod_def rebuild (binary-verify FSREFRACTION/   !
+! FSFREQSHIFT via check_moddef_unst.py; ww3_grid's echo is unreliable). !
 ! ---------------------------------------------------------------------- !
 
 &UNST UGOBCAUTO = F,
@@ -64,8 +68,8 @@ EXPFSFCT = F,
 IMPFSN = F,
 EXPTOTAL = F,
 IMPTOTAL = T,
-IMPREFRACTION = F,
-IMPFREQSHIFT = F,
+IMPREFRACTION = T,
+IMPFREQSHIFT = T,
 IMPSOURCE = F,
 SETUP_APPLY_WLV = F,
 SOLVERTHR_SETUP=1E-14,
