@@ -848,10 +848,16 @@ def test_archive_wave_restarts_forecast_leg_is_noop(tmp_path, monkeypatch):
     assert list(ctx.comout.iterdir()) == []
 
 
-def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypatch, caplog):
-    """A missing artifact archives what it can and warns -- non-fatal,
-    matching _archive_restart's convention (the model already ran; only
-    a future leg's warm restart is at risk)."""
+def test_archive_wave_restarts_partial_is_nonfatal_but_leaves_no_target(
+    tmp_path, monkeypatch, caplog,
+):
+    """A missing artifact means the archive attempt is incomplete -- non-
+    fatal (rc=0, the model already ran; only a future leg's warm restart
+    is at risk), but per the atomic-archive contract the incomplete set
+    must NOT land at ``target``: partial artifacts collected in the tmp
+    dir are discarded rather than published, so ``target`` stays wholly
+    absent (never a mixed/partial directory) and the tmp dir itself is
+    cleaned up."""
     monkeypatch.setenv("WAV_TASKS", "2606")
     ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
     # Only the mediator restart is present; WW3 restart + pointer missing.
@@ -863,9 +869,57 @@ def test_archive_wave_restarts_partial_is_nonfatal_but_warns(tmp_path, monkeypat
 
     assert rc == 0
     target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
-    assert (target / ctx.med_rst_out_nowcast).is_file()
-    assert not (target / ctx.wav_rst_out_nowcast).exists()
+    assert not target.exists()
+    assert list(ctx.comout.iterdir()) == []
     assert any("WW3 restart" in r.getMessage() for r in caplog.records)
+    assert any("archive incomplete" in r.getMessage() for r in caplog.records)
+
+
+def test_archive_wave_restarts_crash_mid_archive_leaves_no_target(
+    tmp_path, monkeypatch, caplog,
+):
+    """All three source artifacts are present and healthy, but the copy
+    of the third one blows up mid-write (simulating a crash/IO failure
+    partway through the archive). The atomic-swap contract requires that
+    ``target`` never end up holding a mixed/partial set from this failed
+    attempt -- it must stay entirely absent (same as a clean cold start
+    downstream), the tmp scratch dir must not leak either, and (matching
+    this function's "non-fatal" docstring contract, mirrored by its
+    caller only warning on a non-zero rc) the failure must not propagate
+    as an exception -- it is logged loudly and rc stays 0."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (ctx.data / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    (ctx.data / "rpointer.cpl.2026-05-12-21600").write_text(
+        f"RESTART/{ctx.med_rst_out_nowcast}\n",
+    )
+
+    real_copy2 = execute.shutil.copy2
+    calls = {"n": 0}
+
+    def _flaky_copy2(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("simulated crash mid-archive")
+        return real_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(execute.shutil, "copy2", _flaky_copy2)
+
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert not target.exists()
+    # No leftover tmp.<pid> scratch dir either.
+    assert list(ctx.comout.iterdir()) == []
+    assert any(
+        "copying" in r.getMessage() and "pointer file" in r.getMessage()
+        for r in caplog.records
+    )
+    assert any("archive incomplete" in r.getMessage() for r in caplog.records)
 
 
 def test_archive_wave_restarts_unknown_phase_is_nonfatal(tmp_path, monkeypatch, caplog):

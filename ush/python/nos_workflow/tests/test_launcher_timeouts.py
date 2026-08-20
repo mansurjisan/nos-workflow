@@ -135,6 +135,31 @@ def test_ww3_pbs_scripts_point_at_wave_executable():
         assert re.search(r"UFS_EXEC_NAME:-fv3_coastalSW\.exe\}", text)
 
 
+def test_ww3_nowcast_timeout_covers_one_blind_retry_plus_headroom():
+    """NOWCAST_TIMEOUT must clear 2x walltime (one attempt + one ParMETIS
+    blind retry) with real queue/polling headroom on top -- not exactly
+    2x with zero slack, which false-FAILs a healthy cycle whose retry
+    submission is merely slow to schedule."""
+    walltime = _walltime_seconds(_WW3_JOBS["NOWCAST"])
+    timeout = _ww3_launcher_timeout("NOWCAST")
+    assert timeout >= 2 * walltime + 1800, (
+        f"NOWCAST_TIMEOUT={timeout}s leaves no real headroom over "
+        f"2x walltime ({2 * walltime}s)"
+    )
+
+
+def test_ww3_forecast_timeout_has_real_headroom_over_walltime():
+    """FORECAST_TIMEOUT's comment has always claimed '+ 10 min' (now
+    '+ 30 min') over the PBS walltime -- pin that the constant actually
+    carries it rather than silently drifting back to walltime exactly."""
+    walltime = _walltime_seconds(_WW3_JOBS["FORECAST"])
+    timeout = _ww3_launcher_timeout("FORECAST")
+    assert timeout >= walltime + 1800, (
+        f"FORECAST_TIMEOUT={timeout}s leaves no real headroom over "
+        f"walltime ({walltime}s)"
+    )
+
+
 def test_ww3_pbs_scripts_keep_parmetis_retry():
     """nowcast/forecast keep the ParMETIS blind-retry block (same
     signature-driven guard as secofs_ufs's own PBS cards)."""

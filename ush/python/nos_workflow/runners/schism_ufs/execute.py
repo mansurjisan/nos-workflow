@@ -434,6 +434,30 @@ def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
     nothing prunes. Re-enable the forecast-leg archive if a next-cycle
     consumer ever exists (chaining forecast-leg wave state forward).
 
+    Atomic swap, not an in-place write: the three artifacts are first
+    copied into a temporary sibling directory (``<target>.tmp.<pid>``, in
+    the same $COMOUT filesystem as ``target`` so the final step is a
+    cheap rename rather than a cross-filesystem copy), then swapped into
+    place with a single ``os.replace`` only once all three copied
+    successfully. This closes a reruns-of-the-same-cycle hazard: writing
+    the three files directly into ``target`` and reusing it across
+    reruns meant a crash mid-archive followed by a retry that *also*
+    failed partway could leave a MIXED set at ``target`` -- same
+    filenames, but from two different attempts -- which
+    ``stage_wave_restarts``' all-three-present check would then accept
+    as a legitimate, internally-consistent archive. The contract now is:
+    on entry, any existing ``target`` is removed outright (a fresh
+    nowcast supersedes any prior attempt -- this leg's own archive is
+    the only thing that should ever populate it); the new set is
+    assembled entirely in the tmp dir; ``target`` reappears atomically
+    only on full success. On any failure (a copy raises, or fewer than
+    three artifacts are found) the tmp dir is removed and the failure is
+    logged loudly, leaving ``target`` absent. After this change a
+    partial archive at ``target`` should be impossible --
+    ``stage_files.stage_wave_restarts``' forecast branch still raises
+    ``FileNotFoundError`` if it ever finds a partial set there, but that
+    is now purely defense-in-depth (see that function's docstring).
+
     Non-fatal: the model already ran successfully by this point, so a
     missing/failed artifact here only costs a future leg's warm restart,
     not this one.
@@ -466,30 +490,69 @@ def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
 
     pointer_name = f"rpointer.cpl.{_dateutils.cmeps_restart_stamp(stamp_date)}"
     target = _wave_restart_comout_dir(ctx)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_target = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+
+    # A fresh nowcast supersedes any prior attempt's archive outright --
+    # never reuse/merge into an existing target, that's the MIXED-set
+    # hazard this fix closes. Clear any leftover tmp dir from a prior
+    # crashed attempt too, so it doesn't collide with this one.
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+    if tmp_target.exists():
+        shutil.rmtree(tmp_target, ignore_errors=True)
 
     copied = 0
-    for label, src, dst_name in (
-        ("mediator restart", ctx.data / "RESTART" / med_name, med_name),
-        ("WW3 restart", ctx.data / wav_name, wav_name),
-        ("pointer file", ctx.data / pointer_name, pointer_name),
-    ):
-        if src.is_file() and src.stat().st_size > 0:
-            target.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, target / dst_name)
+    try:
+        tmp_target.mkdir(parents=True)
+        for label, src, dst_name in (
+            ("mediator restart", ctx.data / "RESTART" / med_name, med_name),
+            ("WW3 restart", ctx.data / wav_name, wav_name),
+            ("pointer file", ctx.data / pointer_name, pointer_name),
+        ):
+            if not (src.is_file() and src.stat().st_size > 0):
+                logger.warning(
+                    "execute: wave restart archive: %s not found at %s "
+                    "(phase=%s); a future leg's wave restart handoff may "
+                    "have to cold-start.",
+                    label, src, phase,
+                )
+                continue
+            try:
+                shutil.copy2(src, tmp_target / dst_name)
+            except OSError:
+                # Non-fatal (see docstring): the model already ran; log
+                # loudly and fall through to the incomplete-archive path
+                # below rather than letting this crash the execute stage.
+                logger.exception(
+                    "execute: wave restart archive: copying %s (%s) to "
+                    "%s failed (phase=%s); a future leg's wave restart "
+                    "handoff may have to cold-start.",
+                    label, src, tmp_target, phase,
+                )
+                continue
             copied += 1
+
+        if copied == 3:
+            os.replace(tmp_target, target)
+            logger.info(
+                "execute: archived %d/3 wave restart artifact(s) to %s",
+                copied, target,
+            )
         else:
             logger.warning(
-                "execute: wave restart archive: %s not found at %s "
-                "(phase=%s); a future leg's wave restart handoff may "
-                "have to cold-start.",
-                label, src, phase,
+                "execute: wave restart archive incomplete (%d/3 "
+                "artifacts); discarding this attempt so %s stays ABSENT "
+                "rather than partially populated -- stage_wave_restarts "
+                "treats an absent archive as a clean cold start and a "
+                "partial one as a hard error, so a future leg will "
+                "cold-start its wave restart instead of raising",
+                copied, target,
             )
+    finally:
+        if tmp_target.exists():
+            shutil.rmtree(tmp_target, ignore_errors=True)
 
-    if copied:
-        logger.info(
-            "execute: archived %d/3 wave restart artifact(s) to %s",
-            copied, target,
-        )
     return 0
 
 

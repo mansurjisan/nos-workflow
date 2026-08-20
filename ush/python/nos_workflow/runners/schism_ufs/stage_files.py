@@ -1084,6 +1084,12 @@ def stage_wave_restarts(ctx: SchismRunContext, phase: str) -> bool:
     should have produced all three together) -- raises
     FileNotFoundError rather than silently guessing, matching
     :func:`stage_hotstart`'s convention for SCHISM's own restart.
+    ``execute._archive_wave_restarts`` now assembles the archive
+    atomically (tmp dir + rename into place only on full success), so in
+    normal operation this branch should be unreachable -- the archive
+    dir is either absent or complete, never mixed. The raise stays as
+    defense-in-depth for anything that predates that fix or otherwise
+    tampers with the archive dir directly.
 
     Returns True if all three artifacts were staged, False on the
     cold-start fallback (nothing archived).

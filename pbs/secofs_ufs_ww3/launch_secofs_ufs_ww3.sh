@@ -38,9 +38,23 @@ POLL=${POLL:-60}                       # seconds between status polls
 # does not qdel -- it only stops watching -- so a shorter value can only
 # mislabel a healthy cycle). Sized off pbs/secofs_ufs_ww3/jnos_*_00.pbs's
 # own walltime= lines, same convention as launch_secofs_ufs.sh.
+#
+# nowcast/forecast additionally carry the ParMETIS blind-retry block (up
+# to MAXRETRY=8 resubmissions of the *same* PBS card, see jnos_*_00.pbs)
+# -- 8 full walltimes is far beyond anything worth blocking a cron-driven
+# launch on, so these timeouts intentionally do NOT try to watch the
+# whole retry chain. Policy: NOWCAST_TIMEOUT watches one attempt PLUS one
+# blind retry (2x walltime) with 30 min of queue/polling headroom on top;
+# FORECAST_TIMEOUT watches a single attempt (no next-cycle dependent
+# waits on it the way nowcast's rerun does) with the same 30 min
+# headroom. If a stage outlives its timeout because it is mid-retry, the
+# launcher reports FAIL[stage]: TIMEOUT and stops watching -- it does NOT
+# qdel anything -- and the actual outcome of any later retry must be read
+# from that stage's $RPTDIR/secofs_ufs_ww3_<stage>_00.<jobid>.out rpt log
+# directly, keyed by the resubmitted jobid PARMETIS_RETRY logs.
 PREP_TIMEOUT=${PREP_TIMEOUT:-7800}          # walltime 2:00 + 10 min (no retry)
-NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-28800}   # walltime 4:00, x2 for blind retry
-FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-23400} # walltime 6:30 + 10 min
+NOWCAST_TIMEOUT=${NOWCAST_TIMEOUT:-30600}   # walltime 4:00 x2 (1 retry) + 30 min headroom
+FORECAST_TIMEOUT=${FORECAST_TIMEOUT:-25200} # walltime 6:30 + 30 min headroom
 POST_TIMEOUT=${POST_TIMEOUT:-7800}          # walltime 2:00 + 10 min
 STAGES=${STAGES:-"prep nowcast forecast post"}   # override e.g. STAGES=post for single-stage recovery
 
