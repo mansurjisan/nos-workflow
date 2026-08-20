@@ -30,6 +30,13 @@ _STR_FIELDS: dict = {
     "rst_out_forecast":          "RST_OUT_FORECAST",
     "ini_file":                  "INI_FILE",
     "rst_file":                  "RST_FILE",
+    # WW3 + CMEPS mediator restarts (wave-coupled systems only -- None
+    # elsewhere). Named on the CMEPS case_name convention, not PREFIXNOS;
+    # see setup_paths.compute_paths and _dateutils.cmeps_restart_stamp.
+    "wav_rst_out_nowcast":       "WAV_RST_OUT_NOWCAST",
+    "wav_rst_out_forecast":      "WAV_RST_OUT_FORECAST",
+    "med_rst_out_nowcast":       "MED_RST_OUT_NOWCAST",
+    "med_rst_out_forecast":      "MED_RST_OUT_FORECAST",
     "base_date":                 "BASE_DATE",
     "time_hotstart":             "time_hotstart",
     "time_nowcastend":           "time_nowcastend",
@@ -84,6 +91,10 @@ class SchismRunContext:
     rst_out_forecast: Optional[str] = None
     ini_file: Optional[str] = None
     rst_file: Optional[str] = None
+    wav_rst_out_nowcast: Optional[str] = None
+    wav_rst_out_forecast: Optional[str] = None
+    med_rst_out_nowcast: Optional[str] = None
+    med_rst_out_forecast: Optional[str] = None
 
     base_date: Optional[str] = None
     time_hotstart: Optional[str] = None

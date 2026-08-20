@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -42,9 +43,14 @@ from nos_workflow.runners.schism_ufs.setup_paths import (
 
 def _make_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
               *, pdy: str = "20260512", cyc: str = "00",
-              ofs: str = "secofs_ufs") -> NCOEnv:
+              ofs: str = "secofs_ufs", run: Optional[str] = None) -> NCOEnv:
     """Build an :class:`NCOEnv` with $COMOUT/$DATA/$FIXofs rooted under
-    ``tmp_path``."""
+    ``tmp_path``.
+
+    ``run`` defaults to ``nos.{ofs}`` (matching every non-wave system,
+    where $RUN and $PREFIXNOS coincide); pass it explicitly to build a
+    fixture where they differ (e.g. the secofs_ufs_ww3 wave variant).
+    """
     comout = tmp_path / "comout"
     data = tmp_path / "data"
     fixofs = tmp_path / "fix"
@@ -53,7 +59,7 @@ def _make_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     fixofs.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("OFS", ofs)
-    monkeypatch.setenv("RUN", f"nos.{ofs}")
+    monkeypatch.setenv("RUN", run or f"nos.{ofs}")
     monkeypatch.setenv("PDY", pdy)
     monkeypatch.setenv("cyc", cyc)
     monkeypatch.setenv("COMOUT", str(comout))
@@ -227,6 +233,49 @@ def test_compute_paths_filename_conventions(tmp_path, monkeypatch):
     assert ctx.met_netcdf_forecast == f"{base}.met.forecast.nc.tar"
 
 
+def test_compute_paths_comout_products_key_on_run_not_prefixnos(
+    tmp_path, monkeypatch,
+):
+    """Per-cycle $COMOUT product filenames use $RUN; $FIXofs-keyed fields
+    stay on $PREFIXNOS.
+
+    Regression pin for the wave-variant bug: prep's archiver names
+    $COMOUT products (obc.tar, river.th.tar, nwm tars, bctides.in,
+    rst/init files) from $RUN, while a system that leaves system.prefix
+    unoverridden (e.g. secofs_ufs_ww3, prefix=secofs_ufs, run=
+    secofs_ufs_ww3) has $RUN != $PREFIXNOS. Every pre-existing system has
+    $RUN == $PREFIXNOS, so this is the only fixture shape that can catch
+    a regression back to PREFIXNOS-keyed $COMOUT names.
+    """
+    env = _make_env(
+        tmp_path, monkeypatch, pdy="20260512", cyc="00",
+        ofs="secofs_ufs_ww3", run="secofs_ufs_ww3",
+    )
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("PREFIXNOS", "secofs_ufs")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    run_base = "secofs_ufs_ww3.t00z.20260512"
+    assert ctx.ini_file_nowcast == f"{run_base}.init.nowcast.nc"
+    assert ctx.ini_file_forecast == f"{run_base}.rst.nowcast.nc"
+    assert ctx.rst_out_nowcast == f"{run_base}.rst.nowcast.nc"
+    assert ctx.rst_out_forecast == f"{run_base}.rst.forecast.nc"
+    assert ctx.bctides_in_nowcast == f"{run_base}.bctides.in"
+    assert ctx.obc_forcing_file_nowcast == f"{run_base}.obc.nowcast.tar"
+    assert ctx.obc_forcing_file_forecast == f"{run_base}.obc.forecast.tar"
+    assert ctx.nwm_source_sink_nowcast == f"{run_base}.nwm.source.sink.now.tar"
+    assert ctx.nwm_source_sink_forecast == f"{run_base}.nwm.source.sink.fore.tar"
+    assert ctx.river_forcing_file == f"{run_base}.river.th.tar"
+    assert ctx.met_netcdf_nowcast == f"{run_base}.met.nowcast.nc.tar"
+    assert ctx.met_netcdf_forecast == f"{run_base}.met.forecast.nc.tar"
+
+    # $FIXofs statics (the SCHISM-side fix set this variant deliberately
+    # reuses) stay $PREFIXNOS-keyed, not $RUN-keyed.
+    assert ctx.prefixnos == "secofs_ufs"
+    assert ctx.run == "secofs_ufs_ww3"
+
+
 def test_compute_paths_to_shell_filenames_helper(tmp_path, monkeypatch):
     """``to_shell_filenames`` returns the same dict shape the shell
     exports as env vars (NCO names, full ``${prefix}.${cycle}.${pdy1}``
@@ -261,6 +310,69 @@ def test_compute_paths_bctides_split_uses_same_filename(tmp_path, monkeypatch):
 
     assert ctx.bctides_in_nowcast == ctx.bctides_in_forecast
     assert ctx.bctides_in_nowcast.endswith(".bctides.in")
+
+
+# ---------------------------------------------------------------------------
+# Wave restart filenames (wave-coupled systems only; gated on WAV_TASKS)
+# ---------------------------------------------------------------------------
+
+
+def test_compute_paths_wave_restart_filenames_none_without_wav_tasks(
+    tmp_path, monkeypatch,
+):
+    """Non-wave systems (WAV_TASKS unset): all four wave restart fields
+    stay None -- they never surface in to_shell_env() either."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    env = _make_env(tmp_path, monkeypatch)
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    assert ctx.wav_rst_out_nowcast is None
+    assert ctx.wav_rst_out_forecast is None
+    assert ctx.med_rst_out_nowcast is None
+    assert ctx.med_rst_out_forecast is None
+    out = ctx.to_shell_env()
+    for key in ("WAV_RST_OUT_NOWCAST", "WAV_RST_OUT_FORECAST",
+                "MED_RST_OUT_NOWCAST", "MED_RST_OUT_FORECAST"):
+        assert key not in out
+
+
+def test_compute_paths_wave_restart_filenames_cmeps_stamp(tmp_path, monkeypatch):
+    """WAV_TASKS>0: wav/med restart names follow the CMEPS case_name
+    convention (ufs.cpld.<comp>.r.<YYYY-MM-DD-SSSSS>.nc), keyed on
+    time_nowcastend / time_forecastend -- NOT on PREFIXNOS or the
+    ${prefix}.${cycle}.${pdy1} pattern every other filename field uses.
+    """
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+    monkeypatch.setenv("LEN_NOWCAST", "6")
+    monkeypatch.setenv("LEN_FORECAST", "48")
+
+    ctx = compute_paths(env, phase="nowcast")
+
+    # time_nowcastend = 2026051200 -> 2026-05-12-00000
+    assert ctx.wav_rst_out_nowcast == "ufs.cpld.ww3.r.2026-05-12-00000.nc"
+    assert ctx.med_rst_out_nowcast == "ufs.cpld.cpl.r.2026-05-12-00000.nc"
+    # time_forecastend = 2026051400 -> 2026-05-14-00000
+    assert ctx.wav_rst_out_forecast == "ufs.cpld.ww3.r.2026-05-14-00000.nc"
+    assert ctx.med_rst_out_forecast == "ufs.cpld.cpl.r.2026-05-14-00000.nc"
+
+
+def test_compute_paths_wave_restart_filenames_reach_shell_env(tmp_path, monkeypatch):
+    """The four wave restart fields round-trip through to_shell_env()."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    env = _make_env(tmp_path, monkeypatch, pdy="20260512", cyc="00")
+    _seed_fix_files(env.fixofs, monkeypatch, with_optional=False)
+
+    ctx = compute_paths(env, phase="nowcast")
+    out = ctx.to_shell_env()
+
+    assert out["WAV_RST_OUT_NOWCAST"] == ctx.wav_rst_out_nowcast
+    assert out["MED_RST_OUT_NOWCAST"] == ctx.med_rst_out_nowcast
+    assert out["WAV_RST_OUT_FORECAST"] == ctx.wav_rst_out_forecast
+    assert out["MED_RST_OUT_FORECAST"] == ctx.med_rst_out_forecast
 
 
 # ---------------------------------------------------------------------------

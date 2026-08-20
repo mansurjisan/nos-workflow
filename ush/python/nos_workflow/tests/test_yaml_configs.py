@@ -180,6 +180,85 @@ class TestSystemConfigs:
         select_str = det.get("select")
         assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
 
+    def test_secofs_ufs_ww3_config(self, system_configs: Dict[str, Path]) -> None:
+        """SECOFS-UFS-WW3 -- DATM+SCHISM+WW3 4-component coupled variant.
+
+        Pins the AK-validated 4-component task split (nos-utils
+        UFSConfigProcessor._patch_pet_bounds cross-checks this exact
+        invariant at prep time: datm + schism + wav must equal total, or
+        the PET-bounds patch is rejected and ufs.configure is left
+        unpatched). Also pins that system.prefix stays "secofs_ufs"
+        (unchanged from the base) so this variant reuses the exact same
+        SCHISM-side fix filenames (hgrid, bctides, nudging, river, tidal)
+        as secofs_ufs -- only $FIXofs itself and the wave/coupling keys
+        differ.
+        """
+        if "secofs_ufs_ww3" not in system_configs:
+            pytest.skip("secofs_ufs_ww3.yaml not found")
+
+        path = system_configs["secofs_ufs_ww3"]
+        merged = load_yaml_with_inheritance(path, base_dir=path.parent.parent)
+
+        assert merged["system"]["name"] == "secofs_ufs_ww3"
+        assert merged["system"]["framework"] == "comf"
+        assert merged["system"]["prefix"] == "secofs_ufs"
+
+        ufs = merged["ufs_coastal"]
+        assert ufs["datm_tasks"] == 120
+        assert ufs["schism_tasks"] == 2794
+        assert ufs["wav_tasks"] == 2606
+        assert ufs["total_tasks"] == 5520
+        # The wave variant's invariant: datm + schism + wav == total.
+        assert ufs["datm_tasks"] + ufs["schism_tasks"] + ufs["wav_tasks"] == ufs["total_tasks"]
+        # Coupling interval must be an integer multiple of model.physics.dt
+        # (nos-utils UFSConfigProcessor._patch_runseq_interval enforces this
+        # at prep time; SCHISM can only land on whole-extstep boundaries).
+        assert ufs["coupling_interval"] % merged["model"]["physics"]["dt"] == 0
+        assert ufs["wav_model"] == "ww3"
+        # mesh_wav must match ufs.configure's WAV_attributes::mesh_wav line
+        # (fix/secofs_ufs_ww3/ufs.configure) -- this is the only place the
+        # two are cross-checked in-repo.
+        assert ufs["wav_mesh"] == "secofs_ufs.mesh_wav.nc"
+        # ocn2wav_weights must match ufs.configure's
+        # MED_attributes::ocn2wav_smapname line (same file) -- the
+        # precomputed ocn->wav regrid weight file.
+        assert ufs["ocn2wav_weights"] == "secofs_ufs.ocn2wav_weights.nc"
+        # wav2ocn_weights: the transpose-direction twin, must match
+        # ufs.configure's MED_attributes::wav2ocn_smapname line.
+        assert ufs["wav2ocn_weights"] == "secofs_ufs.wav2ocn_weights.nc"
+
+        assert merged["model"]["executable"] == "fv3_coastalSW.exe"
+        assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"
+
+        det = merged["resources"]
+        assert det["nprocs"] == ufs["total_tasks"]
+        assert det["select"] == "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
+
+        assert merged["ensemble"]["enabled"] is False
+
+        # forcing.waves: GFS-Wave boundary spectra (nos-utils
+        # WaveBoundaryProcessor). Deep-merged onto secofs_ufs's inherited
+        # forcing block -- prove the other forcing sources survive the merge.
+        waves = merged["forcing"]["waves"]
+        assert waves["enabled"] is True
+        window = waves["window"]
+        assert window["lon_min"] < window["lon_max"]
+        assert window["lat_min"] < window["lat_max"]
+        # Window must bracket the mesh's own open-boundary extent (both
+        # segments; see the yaml's own comment for the census this window
+        # is grounded in).
+        assert window["lon_min"] < -87.09 and window["lon_max"] > -64.00
+        assert window["lat_min"] < 17.54 and window["lat_max"] > 37.92
+        assert waves.get("extra_points") in (None, [])
+        assert waves["points_file"] == "secofs_ufs.ww3_bound_points.list"
+        assert waves["max_cycle_fallback"] >= 1
+        # Deliberately not critical: WAVE_BC must stay out of prep.critical_sources
+        # so a late/missing gfswave product degrades prep instead of failing it.
+        assert "prep" not in merged or "critical_sources" not in merged.get("prep", {})
+        # Other inherited forcing sources must survive the deep-merge.
+        assert "atmospheric" in merged["forcing"]
+        assert "river" in merged["forcing"]
+
     def test_stofs_3d_ak_ufs_rtofs_region(
         self,
         system_configs: Dict[str, Path],
@@ -400,6 +479,31 @@ class TestDomainBounds:
                     assert domain["lat_min"] < domain["lat_max"], (
                         f"{name}: lat_min should be less than lat_max"
                     )
+
+
+class TestWaveFixFiles:
+    """``fix/secofs_ufs_ww3/`` static content that isn't per-cycle patched."""
+
+    def test_ww3_shel_point_output_disabled(self) -> None:
+        """``date%point%stride`` must be '0' (point output OFF): no
+        SECOFS wave-station list exists yet, and WW3 opens
+        ``type%point%file`` unconditionally whenever the stride is
+        non-zero -- a non-existent ``ww3_points.list`` then hard-aborts
+        WW3 (EXTCDE 1104) after the allocation is already up. The
+        ``type%point%file`` line itself may stay (harmless -- never
+        opened while the stride is 0), but the stride is the load-bearing
+        value and must not silently flip back to non-zero.
+        """
+        repo_root = Path(__file__).resolve().parents[4]
+        ww3_shel = repo_root / "fix" / "secofs_ufs_ww3" / "ww3_shel.nml"
+        if not ww3_shel.is_file():
+            pytest.skip("fix/secofs_ufs_ww3/ww3_shel.nml not found")
+
+        text = ww3_shel.read_text()
+        assert "date%point%stride   = '0'" in text
+        # Nothing patches the point stride at run time -- confirm it isn't
+        # a @[...]-style placeholder either.
+        assert "@[" not in text.split("date%point%stride")[1].split("\n")[0]
 
 
 if __name__ == "__main__":

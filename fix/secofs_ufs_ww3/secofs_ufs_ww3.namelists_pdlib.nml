@@ -1,0 +1,87 @@
+! ---------------------------------------------------------------------- !
+! DRAFT -- secofs_ufs_ww3 -- companion "GRID%NML" auxiliary namelist for !
+! ww3_grid.nml (implicit-PDLIB solver flags). NOT one of the 6 requested !
+! deliverables -- added because ww3_grid.nml's GRID%NML pointer would be !
+! non-functional without it. See DECISIONS.txt.                          !
+!                                                                        !
+! SOURCE (real file, verbatim structure/flags):                          !
+!   WW3/regtests/ww3_tp2.6/input/                !
+!     namelists_pdlib.nml (implicit PDLIB: IMPFSN family, JGS_* Gauss-   !
+!     Seidel solver params)                                              !
+! Contrast source (explicit PDLIB, NOT used here -- task specifies       !
+! "implicit PDLIB"):                                                     !
+!   WW3/regtests/ww3_ufs1.1/input_unstr/        !
+!     namelists_a.nml (EXPFSN=T / IMPFSN=F)                              !
+!                                                                        !
+! This file's &UNST group is a DIFFERENT namelist from ww3_grid.nml's    !
+! own UNST_NML despite the shared name "UNST" -- WW3's legacy-style      !
+! (non-slash-terminated single-line) namelist for solver/physics flags   !
+! referenced via GRID%NML, vs. the modern UNST_NML mesh-file block       !
+! inside ww3_grid.nml itself. Both real references above use exactly     !
+! this split.                                                            !
+!                                                                        !
+! UGOBCAUTO=F (matches both real references): boundary nodes are NOT     !
+! auto-detected from the mesh; they must be supplied via the             !
+! INBND_POINT_NML block in ww3_grid.nml. UGOBCFILE (an alternative to    !
+! per-point INBND_POINT_NML -- a standalone boundary-node-list file) is  !
+! NOT set here; we default to the INBND_POINT_NML path since that is     !
+! what both real references do. If the mesh-tooling output instead       !
+! produces a ready-made boundary file, switching to UGOBCFILE='<path>'   !
+! is the lower-effort alternative -- flagged as an open choice in        !
+! DECISIONS.txt, not decided here.                                       !
+!                                                                        !
+! JGS_* (Jacobi/Gauss-Seidel implicit solver control) and IMP* flags     !
+! below are copied VERBATIM from the real ww3_tp2.6 implicit-PDLIB       !
+! reference -- these are generic WW3 solver-tuning defaults, not         !
+! SECOFS-specific, and are a reasonable starting point pending WCOSS2    !
+! convergence testing on the actual SECOFS wave mesh. UNVERIFIED for     !
+! SECOFS scale specifically (tp2.6 is a small nearshore test mesh).      !
+!                                                                        !
+! IMPSOURCE=F (V15 currents bisect): source terms are kept OUT of the    !
+! implicit Gauss-Seidel matrix (propagation-only system) and integrate   !
+! through the standard srce_direct path instead, which sub-steps down    !
+! to DTMIN with the per-substep amplitude limiter. The implicit-source   !
+! path took a single unlimited full-DTG source step and its post-solve   !
+! call is where every currents-enabled run (V9-V13) faulted; with        !
+! FSSOURCE=F that call site is never made. Legal but has no upstream     !
+! regtest coverage (IMPTOTAL=T + IMPSOURCE=F).                           !
+!                                                                        !
+! IMPREFRACTION=T, IMPFREQSHIFT=T (V28b, 2026-08-19): back IN the        !
+! implicit matrix. The V15-era F/F setting was a workaround for the      !
+! currents crash, whose real cause (unclamped ST4 tail index) is fixed   !
+! by the WW3 hardening patch. Left explicit, the CTMAX-limited scheme    !
+! is unstable in shallow narrow channels with tidal depth cycling:      !
+! energy pumps down-spectrum until the breaking limiter caps it (the    !
+! PR/USVI 20-60 m and Georgia Bight 6-8 m Hs blow-ups; see ticket #320  !
+! forensics). V28b verified over a full 54 h cycle: PR max 2.6 m (was   !
+! 20.6), GA max <2.8 (was 6-8), hardening-scrub events down 237x,       !
+! tides bit-consistent. AK reference runs both terms implicit. Any      !
+! change here requires a mod_def rebuild (binary-verify FSREFRACTION/   !
+! FSFREQSHIFT via check_moddef_unst.py; ww3_grid's echo is unreliable). !
+! ---------------------------------------------------------------------- !
+
+&UNST UGOBCAUTO = F,
+UGOBCDEPTH= -10.,
+EXPFSN = F,
+EXPFSPSI = F,
+EXPFSFCT = F,
+IMPFSN = F,
+EXPTOTAL = F,
+IMPTOTAL = T,
+IMPREFRACTION = T,
+IMPFREQSHIFT = T,
+IMPSOURCE = F,
+SETUP_APPLY_WLV = F,
+SOLVERTHR_SETUP=1E-14,
+CRIT_DEP_SETUP=0.1,
+JGS_USE_JACOBI = T,
+JGS_BLOCK_GAUSS_SEIDEL = T,
+JGS_TERMINATE_MAXITER = T,
+JGS_MAXITER = 1000,
+JGS_TERMINATE_NORM = F,
+JGS_TERMINATE_DIFFERENCE = T,
+JGS_DIFF_THR = 1.E-6,
+JGS_PMIN = 3.0,
+JGS_LIMITER = T,
+JGS_NORM_THR = 1.E-20 /
+END OF NAMELISTS

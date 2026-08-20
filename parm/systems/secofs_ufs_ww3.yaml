@@ -1,0 +1,266 @@
+# SECOFS UFS-Coastal Configuration -- DATM+SCHISM+WW3 (4-component)
+# Southeast Coastal Ocean Forecast System with wave coupling.
+#
+# Inherits secofs_ufs.yaml wholesale (mesh, forcing, prep, tidal, physics)
+# and only overrides what the wave component adds. system.prefix is
+# intentionally NOT overridden -- it stays "secofs_ufs" so this variant
+# reuses the exact same SCHISM-side fix filenames (hgrid.gr3, bctides.in,
+# nudging, river, tidal) as secofs_ufs; only $FIXofs itself differs
+# (fix/secofs_ufs_ww3/, keyed off system.name). WCOSS2 deployment must
+# populate that directory with the same secofs_ufs.* mesh/forcing statics
+# (copied or symlinked from fix/secofs_ufs/) alongside the wave-only files
+# this repo tracks in git.
+#
+# Cycling design (hybrid): SCHISM continues to cycle via its own hotstart
+# (ihot=1, unchanged from secofs_ufs). WW3 and the CMEPS mediator instead
+# cycle via CMEPS netCDF restarts (ufs.cpld.{ww3,cpl}.r.*.nc) + rpointer.cpl,
+# written at the end of each cycle's nowcast leg and read back by that same
+# cycle's forecast leg (start_type=continue -- see
+# runners/schism_ufs/configure.py patch_ufs_configure).
+
+_base: secofs_ufs
+
+system:
+  name: secofs_ufs_ww3
+  description: "Southeast Coastal Ocean Forecast System (UFS-Coastal, DATM+SCHISM+WW3)"
+
+# UFS-Coastal coupling configuration -- 4-component overrides only.
+# datm_tasks/schism_tasks/datm_domain/blend_*/templates/etc. are unchanged,
+# inherited from secofs_ufs.
+ufs_coastal:
+  # WAV PETs 2914-5519 (2606 PETs), sized for the e0m water-only wave mesh
+  # (E=0.0m ceiling, 676,342 nodes / 1,259,451 elements) -- the mesh that
+  # replaces the e5m 1,272,710-node mesh this system shipped with
+  # previously. Scaled from the only validated wave-PET data point, the
+  # Alaska DATM+SCHISM+WW3 config (4900 WAV PETs / 1,343,182 nodes =
+  # 274.12 nodes/PET): 676,342 / 274.12 ~= 2467 PETs minimum. datm=120 +
+  # schism=2794 = 2914; 2914 + 2467 = 5381, whose next whole node at the
+  # production-validated 120-ranks-per-node packing (the packing this
+  # system validated in prior production runs) is 45 nodes/5400 tasks;
+  # we chose 46 nodes/5520 instead, one node of headroom over that
+  # minimum, giving wav_tasks=5520-2914=2606 (259.5 nodes/PET -- slightly
+  # richer than Alaska's ratio, which is fine). This is a single-data-point
+  # extrapolation -- re-tune after a WCOSS2 profiling pass. See nos-utils
+  # UFSConfigProcessor._patch_pet_bounds for the PET-bounds patch this
+  # drives and the datm+schism+wav==total cross-check it enforces at prep
+  # time.
+  wav_tasks: 2606
+  total_tasks: 5520
+  # NUOPC runSeq coupling interval (seconds). Must be an integer multiple
+  # of model.physics.dt (120s here -- 360 = 3 SCHISM steps); enforced by
+  # nos-utils UFSConfigProcessor._patch_runseq_interval.
+  coupling_interval: 360
+  wav_model: ww3
+  # Must match the WAV_attributes::mesh_wav line in fix/secofs_ufs_ww3/ufs.configure.
+  wav_mesh: secofs_ufs.mesh_wav.nc
+  # Companion "GRID%NML" auxiliary namelist ww3_grid.nml points at (solver
+  # flags for the implicit-PDLIB run). Staged defensively at runtime in
+  # case ww3_shel/ww3_multi re-reads it directly; see stage_wave_configs.
+  wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
+  # Precomputed ocn->wav regrid weight file (ESMF_FieldSMMStore format:
+  # n_s-dimensioned row/col/S). Keeps ESMF from building an internal dual
+  # of SCHISM's mesh for the bilinear map at runtime, which aborts at this
+  # mesh size -- see the ocn2wav_smapname comment in
+  # fix/secofs_ufs_ww3/ufs.configure, which this value must match.
+  # Prefixed in both $FIXofs and $DATA (like wav_mesh, not mod_def.ww3's
+  # bare-name staging) because CMEPS opens this exact attribute string
+  # with a plain nf90_open against the run directory.
+  # The generated file is NETCDF4/HDF5; that opens fine under
+  # ESMF_FactorRead on WCOSS2's netCDF-4-enabled ESMF build. If a
+  # portability problem with that format ever surfaces, NETCDF3_64BIT is
+  # the maximally conservative container to regenerate it in.
+  ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
+  # Precomputed wav->ocn regrid weight file -- the transpose-direction
+  # twin of ocn2wav_weights above, same ESMF_FieldSMMStore/row-col-S
+  # format, same prefixed-both-ends ($FIXofs and $DATA) staging
+  # convention. Requires the wav2ocn_smapname CMEPS-interface patch (see
+  # fix/secofs_ufs_ww3/ufs.configure's wav2ocn_smapname comment and the
+  # repo runbook's "V16 -- wav2ocn weights + CMEPS patch" section) --
+  # without that patch this value is inert (CMEPS never reads the
+  # attribute).
+  wav2ocn_weights: secofs_ufs.wav2ocn_weights.nc
+
+# GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor). Deep-merges
+# onto secofs_ufs's forcing block -- atmospheric/river/tidal/ocean stay
+# inherited unchanged; this is the only new forcing key this variant adds.
+# Builds nest.ww3 per cycle from the operational gfswave IBP tarball, the
+# same pipeline already driving STOFS-3D-AK's wave-coupled variant.
+forcing:
+  waves:
+    enabled: true
+    # A direct census of NOAA-EMC/global-workflow's operational
+    # wave_gfs.buoys point registry (4,297 points total, filtered to
+    # TYPE==IBP) shows continuous WFO-tagged coastal coverage the full
+    # length of the SECOFS open boundary: NC (NW-MHX, NW-ILM) down
+    # through the FL peninsula (JAX, MLB, MIA, KEY, TBW), around the
+    # Gulf coast to LA (PCB, MOB, LIX), plus San Juan PR (SJU) bracketing
+    # the PR/USVI segment -- roughly 400+ IBP points fall inside the
+    # window below, spaced on the order of 0.1-0.5 degrees along the
+    # coast. That is denser than the 214 IBP points the AK bring-up
+    # found inside its own window, on a comparably sized boundary.
+    #
+    # The mesh's own open-boundary extent (extracted from the real
+    # hgrid.gr3; both open segments) is lon -87.09..-64.00,
+    # lat 17.54..37.92. The window below adds a 2-4 degree margin on
+    # every side -- enough to comfortably bracket that dense WFO network
+    # without reaching so far out that it pulls in unrelated open-ocean
+    # point groups. (A few incidental non-coastal points from other WFO
+    # regions do fall inside this box too; harmless -- ww3_bound selects
+    # each boundary node's two nearest input points by raw distance
+    # [ww3_bound.F90 W3BOUNC-equivalent DIST calc], not by list order,
+    # so a farther-off point already staged among the extracted spectra
+    # never wins over a genuinely nearer coastal one.)
+    window:
+      lon_min: -91.0
+      lon_max: -61.0
+      lat_min: 16.0
+      lat_max: 40.0
+    # No extra_points: AK needed 3 general NDBC buoys (46070/46071/46035)
+    # to backfill a real, zero-IBP-coverage gap along its western
+    # Aleutian arc. The same census shows no comparable gap here -- both
+    # SECOFS boundary segments have continuous IBP coverage end to end,
+    # so there is nothing in spec_tar.gz worth naming explicitly.
+    #
+    # points_file must be a wave_gfs.buoys-format point list (the exact
+    # format the census above parsed). The real WCOSS2 location was not
+    # confirmed here -- follow the same precedent stofs_3d_ak_ufs_ww3.yaml
+    # left this at: a bare name, resolved against $FIXofs the same way
+    # grid_file/bctides_template already are, that the operator must
+    # stage before this system's first wave-enabled prep (e.g. a copy of
+    # the gfswave app's own operational wave_gfs.buoys). Until staged,
+    # WaveBoundaryProcessor logs a non-fatal "points_file not found"
+    # warning and produces no nest.ww3 -- see the critical_sources note
+    # below.
+    points_file: secofs_ufs.ww3_bound_points.list
+    # ww3_bound reads mod_def.ww3 from its CWD; the processor stages it
+    # from $FIXofs. Explicit here because RUN (secofs_ufs_ww3) != the
+    # fix-file prefix (secofs_ufs), so nos-utils' RUN-derived default
+    # would compute a name that does not exist (nos-utils 20936b4).
+    mod_def: secofs_ufs.mod_def.ww3
+    # How many additional 6h GFS-Wave cycles to walk back if the newest
+    # cycle's ibp_tar/spec_tar.gz aren't posted yet. Not empirically
+    # tuned (AK's own config left this as an open question too) -- 2
+    # tolerates one missed/late post (12h) without reaching so far back
+    # that the swell field served is stale enough to be meaningless.
+    # NOTE: governs the nest.ww3 boundary-spectra fallback (prep-side
+    # WaveBoundaryProcessor) -- unrelated to the cross-cycle restart
+    # warm-start keys below.
+    max_cycle_fallback: 2
+    # Opt-in: warm-start the NOWCAST leg's WW3 + CMEPS mediator from the
+    # PREVIOUS cycle's archived end-of-nowcast wave restart, instead of
+    # cold-starting WW3 every nowcast (today's behavior, and this key's
+    # default). Do NOT enable before the PR/VI wave blow-up is resolved --
+    # cold start currently acts as a daily reset for that. See
+    # runners/schism_ufs/stage_files.py stage_wave_restarts's nowcast
+    # branch (_stage_wave_restarts_nowcast).
+    nowcast_warm_start: false
+    # Sanity guard for the nowcast warm start above: reject a candidate
+    # restart whose va* spectral-component variables look poisoned
+    # (non-finite/negative unmasked values, or a value that exceeds an
+    # order-of-magnitude spectral-density ceiling derived from this Hs
+    # value -- warm_start_max_hs**2 * 100.0) rather than warm-starting
+    # from it. Meters; see stage_files._wave_restart_looks_sane.
+    warm_start_max_hs: 25.0
+
+# Wave BC is deliberately NOT added to prep.critical_sources (this system
+# doesn't declare that key at all, so it inherits secofs_ufs's legacy
+# heuristic {GFS, PARAM_NML, TIDAL}). A missing/failed nest.ww3 therefore
+# degrades prep rather than failing it: WaveBoundaryProcessor's [FAIL]
+# result still logs loudly in the prep summary (PrepResult.summary()),
+# but does not flip overall success. At run time this matches WW3's own
+# behavior with no nest.ww3 present (verified against the vendored WW3
+# source, w3iobcmd.F90): the boundary-file OPEN failure is caught, FLBPI
+# is set to .FALSE., and the run continues with a logged warning --
+# "BOUNDARY CONDITIONS WILL NOT BE UPDATED" -- rather than aborting, i.e.
+# wind-sea-only, not a crash. This is the intended bring-up posture; make
+# WAVE_BC critical only once the pipeline has proven itself operationally.
+
+# UFS-Coastal coupled executable, wave-enabled build.
+model:
+  executable: fv3_coastalSW.exe
+  run:
+    # Daily 12z realtime cadence: 24 h nowcast + 48 h forecast, replacing
+    # the ad-hoc 6 h/debug test cycling this system bootstrapped on.
+    # hindcast_days drives LEN_NOWCAST/time_hotstart (yaml_to_env.py
+    # compute_derived_values); nowcast_hours must stay in lockstep
+    # (nowcast_hours/24 == hindcast_days) because nos_utils.config.OFSConfig
+    # reads nowcast_hours directly for the prep-side time_hotstart anchor
+    # (orchestrator.py) and only falls back to hindcast_days*24 when
+    # nowcast_hours is absent -- secofs_ufs.yaml (the _base) sets
+    # nowcast_hours explicitly, so leaving it unoverridden here would
+    # silently keep prep on the old 6 h anchor while the run/post side
+    # moved to 24 h. Both keys below override secofs_ufs's 0.25/6.
+    #
+    # Ripple effects checked and left alone (already derive correctly
+    # from LEN_NOWCAST/ctx.len_nowcast at runtime, no hardcoded 6h):
+    #   - runners/schism_ufs/configure.py _resolve_phase_anchors /
+    #     patch_ufs_configure: restart_n is patched to the leg's own
+    #     nhours every run (fix/secofs_ufs_ww3/ufs.configure's checked-in
+    #     restart_n is just the template default, updated for clarity).
+    #   - runners/schism_ufs/setup_paths.py: NSTEP_NOWCAST/DSTART_FORECAST
+    #     formulas take len_nowcast as an argument.
+    #   - runners/schism_ufs/stage_files.py _stage_wave_restarts_nowcast:
+    #     its backward search steps by ctx.len_nowcast, which it documents
+    #     as ONLY correct when cycle spacing == nowcast length. Daily 12z
+    #     cadence (24 h between cycles) with hindcast_days=1.0 (24 h
+    #     nowcast) preserves that equality, so the derivation stays
+    #     correct as-is (feature itself remains opt-in/off via
+    #     forcing.waves.nowcast_warm_start below).
+    hindcast_days: 1.0
+    nowcast_hours: 24
+  runtime:
+    # Wave variant carries its own param.nml: adds RADFLAG='LON' and
+    # flips fwvor_breaking 1->0 (USE_WW3 coupling block) relative to
+    # secofs_ufs.param.nml. See fix/secofs_ufs_ww3/secofs_ufs_ww3.param.nml.
+    ctl_file: secofs_ufs_ww3.param.nml
+
+# Computational resources (DATM + SCHISM + WW3).
+resources:
+  nprocs: 5520
+  nscribes: 0
+  # 46 nodes x 120 mpiprocs = 5520 tasks exactly, 0 idle slots -- the
+  # 120-ppn/node packing this system validated in production runs (same
+  # convention the prior e5m layout used at 64 nodes).
+  select: "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
+  # UNVERIFIED: naive linear scale from secofs_ufs's 1500 GB @ 2914 tasks
+  # gives ~3953 GB @ 7680 tasks -- kept as-is pending a WCOSS2 profiling
+  # pass at the new (smaller) 5520-task e0m layout; WW3's implicit-PDLIB
+  # solver keeps a full 2D spectrum (50 freq x 36 dir bins = NSPEC 1800,
+  # V19's GFS-Wave grid; was 32 freq x 36 dir = NSPEC 1152, x1.5625
+  # smaller, before the ww3_grid.nml SPECTRUM_NML change) resident per
+  # wave-mesh node, a different memory profile than SCHISM's transport
+  # arrays, and the WAV PET count itself is a single-data-point
+  # extrapolation (see wav_tasks above). Treat this as a starting point,
+  # not a sized value -- now additionally stale by the V19 NSPEC increase
+  # (memory_gb below was never re-derived from NK either way). (No
+  # consumer in ush/; PBS cards request no mem= -- documentation only.)
+  memory_gb: 4000
+  # walltime_hours unchanged: more WAV PETs only shortens WW3's per-step
+  # cost (better parallelism on the same mesh); it does not add work to
+  # SCHISM/DATM, which set the pace for the leg. Re-check once a real
+  # wave-coupled cycle has run at this PET count.
+  walltime_hours: 2
+
+# Ensemble disabled for the initial wave-coupled cut: the GEFS ensemble
+# resources block (select=, nprocs) is sized for secofs_ufs's 3-component
+# 2914-task layout and would under-allocate the 5520-task wave layout.
+ensemble:
+  enabled: false
+
+# Env var mappings -- additive only (dict-merged onto secofs_ufs's
+# shell_mappings.variables; every existing mapping is inherited unchanged).
+shell_mappings:
+  variables:
+    WAV_TASKS: ufs_coastal.wav_tasks
+    WAV_MESH: ufs_coastal.wav_mesh
+    WAV_PDLIB_NML: ufs_coastal.wav_pdlib_namelist
+    WAV_OCN2WAV_WEIGHTS: ufs_coastal.ocn2wav_weights
+    WAV_WAV2OCN_WEIGHTS: ufs_coastal.wav2ocn_weights
+    # Consumed by execute._validate_wave_ufs_configure's pre-MPI-launch
+    # sanity check (the runSeq @<interval> line staged into ufs.configure
+    # must match this).
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    # Consumed by stage_files.py's nowcast wave-restart warm start (see
+    # forcing.waves.nowcast_warm_start / warm_start_max_hs above).
+    WAV_NOWCAST_WARM_START: forcing.waves.nowcast_warm_start
+    WAV_WARM_START_MAX_HS: forcing.waves.warm_start_max_hs

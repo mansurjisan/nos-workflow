@@ -68,6 +68,34 @@ def test_from_env_missing_pdy_raises_configerror() -> None:
         NCOEnv.from_env()
 
 
+def test_run_cycle_match_nos_utils_publish_naming() -> None:
+    """env.run / env.cycle must match how nos-utils names published prep
+
+    artifacts, for wave-coupled systems' nest.ww3 handoff to be found.
+
+    stage_wave_configs (runners/schism_ufs/stage_files.py) looks for
+    ``$COMOUT/{ctx.run}.{ctx.cycle}.nest.ww3``. nos-utils' orchestrator
+    (nos_utils/orchestrator.py) publishes it as
+    ``{self.run_name}.t{cyc:02d}z.nest.ww3``, where
+    ``run_name = ofs or os.environ.get("RUN", "secofs")``
+    (nos_utils/nco_bridge.py run_prep, called with no ofs override). Both
+    sides read RUN off the same PBS-card export -- JNOS_PREP and
+    JNOS_NOWCAST/JNOS_FORECAST all do ``export RUN=${RUN:-$OFS}`` after
+    exporting the same OFS -- so this asserts the two independently
+    written naming formulas stay identical for the same env, without
+    importing nos-utils directly (a separate git submodule).
+    """
+    _set_minimum_env(ofs="secofs_ufs_ww3", cyc="0")
+    os.environ["RUN"] = "secofs_ufs_ww3"
+    env = NCOEnv.from_env()
+
+    run_name = os.environ.get("RUN", "secofs")
+    orchestrator_cycle = f"t{int(os.environ['cyc']):02d}z"
+
+    assert env.run == run_name
+    assert env.cycle == orchestrator_cycle
+
+
 def test_from_env_missing_cyc_raises_configerror() -> None:
     _set_minimum_env()
     del os.environ["cyc"]

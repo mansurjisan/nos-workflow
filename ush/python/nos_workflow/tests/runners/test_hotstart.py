@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -47,6 +48,8 @@ def _make_env(
     pdy: str = "20260512",
     cyc: str = "00",
     ofs: str = "secofs_ufs",
+    run: Optional[str] = None,
+    prefixnos: Optional[str] = None,
 ) -> NCOEnv:
     """Build an :class:`NCOEnv` rooted under ``tmp_path``.
 
@@ -54,6 +57,10 @@ def _make_env(
     which equals ``tmp_path`` here -- so tests can drop restart files
     directly into ``tmp_path/{run}.YYYYMMDD/`` and the walk-back will
     find them via the default lookup path.
+
+    ``run`` / ``prefixnos`` default to ``nos.{ofs}`` each (matching every
+    non-wave system, where they coincide); pass them explicitly to build
+    a fixture where they differ.
     """
     comout = tmp_path / "comout"
     data = tmp_path / "data"
@@ -63,13 +70,13 @@ def _make_env(
     fixofs.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.setenv("OFS", ofs)
-    monkeypatch.setenv("RUN", f"nos.{ofs}")
+    monkeypatch.setenv("RUN", run or f"nos.{ofs}")
     monkeypatch.setenv("PDY", pdy)
     monkeypatch.setenv("cyc", cyc)
     monkeypatch.setenv("COMOUT", str(comout))
     monkeypatch.setenv("DATA", str(data))
     monkeypatch.setenv("FIXofs", str(fixofs))
-    monkeypatch.setenv("PREFIXNOS", f"nos.{ofs}")
+    monkeypatch.setenv("PREFIXNOS", prefixnos or f"nos.{ofs}")
     return NCOEnv.from_env(ofs=ofs)
 
 
@@ -114,6 +121,32 @@ def test_find_hotstart_locates_restart_6h_back(tmp_path, monkeypatch):
     assert result.rst_file == rst_path
     assert result.base_date == "2026051118"
     assert result.time_hotstart == "2026051118"
+
+
+def test_find_hotstart_walkback_keys_restart_filename_on_run(
+    tmp_path, monkeypatch,
+):
+    """The walk-back search must key the restart FILENAME on $RUN, not
+    $PREFIXNOS, matching what execute._archive_restart actually writes.
+
+    Regression pin for the wave-variant bug: a system with $RUN !=
+    $PREFIXNOS (e.g. secofs_ufs_ww3, prefix=secofs_ufs) only archives
+    rst.nowcast.nc under the $RUN name. Seeding the restart under $RUN
+    only (never $PREFIXNOS) means this test can only pass if the
+    walk-back searches by $RUN.
+    """
+    env = _make_env(
+        tmp_path, monkeypatch, pdy="20260512", cyc="00",
+        ofs="secofs_ufs_ww3", run="secofs_ufs_ww3", prefixnos="secofs_ufs",
+    )
+    rst_path = _seed_restart(
+        tmp_path, "secofs_ufs_ww3", "secofs_ufs_ww3", "2026051118",
+    )
+
+    result = find_hotstart(env, phase="nowcast")
+
+    assert result.cold_start == "F"
+    assert result.rst_file == rst_path
 
 
 def test_find_hotstart_locates_restart_24h_back(tmp_path, monkeypatch):

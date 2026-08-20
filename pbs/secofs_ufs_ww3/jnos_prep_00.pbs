@@ -1,0 +1,124 @@
+#!/bin/bash
+#PBS  -N secofs_ufs_ww3_prep_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /dev/null
+#PBS  -e /dev/null
+#PBS  -l select=1:ncpus=8:mpiprocs=8
+#PBS  -l place=vscatter
+#PBS  -l walltime=02:00:00
+
+# Source nosofs version file (COMF systems)
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+
+# Working directory
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/secofs_ufs_ww3
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+# Per-job log files (PBS jobid as suffix). PBS -o/-e are pointed at
+# /dev/null above; this redirect is what populates prep logs.
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/secofs_ufs_ww3_prep_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== secofs_ufs_ww3_prep_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+cd ${WORKDIR}
+
+# Module setup (COMF/nosofs modules + ESMF for mesh generation)
+module purge
+module load envvar/${envvar_ver:-1.0}
+module load intel/${intel_ver:-19.1.3.304}
+module load PrgEnv-intel/${PrgEnv_intel_ver:-8.1.0}
+module load craype/${craype_ver:-2.7.8}
+module load cray-mpich/${cray_mpich_ver:-8.1.7}
+module load cray-pals/${cray_pals_ver:-1.0.12}
+module load hdf5/${hdf5_ver:-1.10.6}
+module load netcdf/${netcdf_ver:-4.7.4}
+module load jasper/${jasper_ver:-2.0.25}
+module load udunits/${udunits_ver:-2.2.28}
+module load zlib/${zlib_ver:-1.2.11}
+module load bufr/${bufr_ver:-11.5.0}
+module load g2/${g2_ver:-3.4.5}
+module load w3nco/${w3nco_ver:-2.4.1}
+module load w3emc/${w3emc_ver:-2.9.2}
+module load subversion/${subversion_ver:-1.14.0}
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module load cfp/${cfp_ver:-2.0.4}
+module load libjpeg/${libjpeg_ver:-9c}
+module load grib_util/${grib_util_ver:-1.2.4}
+module load gsl/${gsl_ver:-2.7}
+module load wgrib2/${wgrib2_ver:-2.0.8}
+module load nco/${nco_ver:-5.0.6}
+# ESMF module for ESMF_Scrip2Unstruct (mesh generation)
+module load esmf/${esmf_ver:-8.4.2} 2>/dev/null || echo "WARNING: esmf module not available"
+
+module list
+
+# EXPORT list
+set +x
+export envir=dev
+export OFS=${OFS:-secofs_ufs_ww3}
+export cyc=${CYC:-00}
+export NET=nos
+export model=nosofs
+export job=secofs_ufs_ww3_prep_${cyc}_$envir
+export platform=ptmp
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+# Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
+# nosofs_ver removed: tree is unversioned (was v3.7.0)
+export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+
+# Data and COM paths
+export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export DCOMROOT=/lfs/h1/ops/prod/dcom
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+
+# Input data paths for DATM forcing generation
+export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
+export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
+export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+# GFS-Wave (gfswave) boundary spectra for forcing.waves. WaveBoundaryProcessor
+# appends gfs.<PDY>/<cyc>/wave/station/ under this root, mirroring how the
+# atmospheric GFS processor appends gfs.<PDY>/<cyc>/atmos/ under COMINgfs --
+# gfswave ships inside the same gfs.<SHORTVER> COMROOT package as the
+# atmospheric GFS product, so the root is the same tree. ADAPT-AS-NEEDED:
+# not confirmed against a live WCOSS2 filesystem; verify this still holds
+# for whichever gfs_ver is current before relying on it operationally.
+export COMINgfswave=${COMINgfs}
+
+################################################
+# CALL executable job script here
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+# YAML configuration for secofs_ufs_ww3
+export HOMEnos=${PACKAGEROOT}/nos-workflow
+export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Use nos-utils (Python) for the full prep pipeline. config_from_env reads
+# OFS_CONFIG (set above) so the YAML drives nws=4, the ATLANTIC
+# datm_domain, and the 4-component ufs_coastal task layout (datm=120 +
+# schism=2794 + wav=2606 = total=5520). nos-utils patches ufs.configure's
+# PET bounds and runSeq coupling interval for the wave layout; it does
+# NOT stage the WW3 runtime files themselves (mod_def.ww3, the WAV mesh,
+# ww3_shel.nml) -- those are staged at run time by
+# runners/schism_ufs/stage_files.py:stage_wave_configs.
+#
+# USE_PYTHON_PREP=YES   - route prep through Python (vs legacy all-shell)
+# FULL_PYTHON_PREP=YES  - also run NWM river / RTOFS OBC / nudging in Python
+export USE_PYTHON_PREP=YES
+export FULL_PYTHON_PREP=YES
+
+${HOMEnos}/jobs/JNOS_PREP

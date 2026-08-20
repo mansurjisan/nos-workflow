@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional
 
 from . import _dateutils
 from .context import SchismRunContext
+from .stage_files import _is_wave_enabled
 
 if TYPE_CHECKING:
     from ...env import NCOEnv
@@ -99,9 +100,18 @@ def _stage_fix_files(env: "NCOEnv") -> None:
                 )
 
 
-def _compute_filenames(prefix: str, cycle: str, pdy1: str) -> dict:
-    """Build the per-cycle filename dict (forcing, restart, output products)."""
-    base = f"{prefix}.{cycle}.{pdy1}"
+def _compute_filenames(run: str, cycle: str, pdy1: str) -> dict:
+    """Build the per-cycle filename dict (forcing, restart, output products).
+
+    Keyed on ``run`` (``$RUN``), NOT ``$PREFIXNOS``: every entry here is a
+    per-cycle $COMOUT product written/read by this pipeline (prep's
+    archiver names them by $RUN), unlike the PREFIXNOS-keyed $FIXofs
+    statics (grid, param.nml template, ...) staged elsewhere. $RUN and
+    $PREFIXNOS coincide for every system except wave-coupled variants
+    that keep system.prefix pointed at the non-wave SCHISM fix set while
+    $RUN is the wave-coupled system name.
+    """
+    base = f"{run}.{cycle}.{pdy1}"
     return {
         # Phase-specific tars are written by prep with phase-specific sim
         # windows (nowcast=6h, forecast=48h). OBC_FORCING_FILE is the
@@ -269,6 +279,8 @@ def compute_paths(
     pdy = env.pdy
     cyc = env.cyc
     cycle = env.cycle
+    # prefix (PREFIXNOS) keys $FIXofs statics only; per-cycle $COMOUT
+    # product filenames key on $RUN -- see _compute_filenames.
     prefix = os.environ.get("PREFIXNOS") or f"nos.{env.ofs}"
     pdy1 = pdy
 
@@ -280,7 +292,7 @@ def compute_paths(
     except (TypeError, ValueError):
         delt_model_float = 120.0
 
-    filenames = _compute_filenames(prefix, cycle, pdy1)
+    filenames = _compute_filenames(env.run, cycle, pdy1)
 
     rst_file_for_ctx: Optional[str]
     ini_file_for_ctx: Optional[str]
@@ -352,6 +364,22 @@ def compute_paths(
         rst_file_for_ctx = os.environ.get("RST_FILE") or None
         ini_file_for_ctx = None
 
+    # WW3 + CMEPS mediator restarts (wave-coupled systems only). Named on
+    # the CMEPS case_name convention (ufs.cpld.<comp>.r.<stamp>.nc), not
+    # PREFIXNOS -- see _dateutils.cmeps_restart_stamp. Left None for every
+    # non-wave system so to_shell_env() never exports these vars there.
+    wav_rst_out_nowcast = wav_rst_out_forecast = None
+    med_rst_out_nowcast = med_rst_out_forecast = None
+    if _is_wave_enabled():
+        if time_nowcastend:
+            stamp = _dateutils.cmeps_restart_stamp(time_nowcastend)
+            wav_rst_out_nowcast = f"ufs.cpld.ww3.r.{stamp}.nc"
+            med_rst_out_nowcast = f"ufs.cpld.cpl.r.{stamp}.nc"
+        if time_forecastend:
+            stamp = _dateutils.cmeps_restart_stamp(time_forecastend)
+            wav_rst_out_forecast = f"ufs.cpld.ww3.r.{stamp}.nc"
+            med_rst_out_forecast = f"ufs.cpld.cpl.r.{stamp}.nc"
+
     return SchismRunContext(
         comout=env.comout,
         data=env.data,
@@ -373,6 +401,10 @@ def compute_paths(
         rst_out_forecast=filenames["RST_OUT_FORECAST"],
         ini_file=ini_file_for_ctx,
         rst_file=rst_file_for_ctx,
+        wav_rst_out_nowcast=wav_rst_out_nowcast,
+        wav_rst_out_forecast=wav_rst_out_forecast,
+        med_rst_out_nowcast=med_rst_out_nowcast,
+        med_rst_out_forecast=med_rst_out_forecast,
         base_date=base_date,
         time_hotstart=time_hotstart,
         time_nowcastend=time_nowcastend,
@@ -402,12 +434,12 @@ def compute_paths(
 
 
 def to_shell_filenames(
-    prefix: str,
+    run: str,
     cycle: str,
     pdy1: str,
 ) -> dict:
     """Public wrapper around _compute_filenames for callers and tests."""
-    return _compute_filenames(prefix, cycle, pdy1)
+    return _compute_filenames(run, cycle, pdy1)
 
 
 __all__ = [

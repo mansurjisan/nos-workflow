@@ -240,7 +240,7 @@ def untar_met_sflux(ctx: SchismRunContext, phase: str) -> int:
             f"requires the GFS sflux tar but it was not found.\n"
             f"  Expected: {ctx.comout / gfs_tar if gfs_tar else '(unset)'}\n"
             f"  Fix: ensure prep archived "
-            f"$COMOUT/$PREFIXNOS.$cycle.$PDY.met.{phase}.nc.tar "
+            f"$COMOUT/$RUN.$cycle.$PDY.met.{phase}.nc.tar "
             f"(nos_utils.orchestrator.archive_to_comout)."
         )
 

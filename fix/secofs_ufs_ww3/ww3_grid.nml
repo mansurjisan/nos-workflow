@@ -1,0 +1,2018 @@
+! ---------------------------------------------------------------------- !
+! FINALIZED (mesh-selection dependent fields only) -- secofs_ufs_ww3 --   !
+! ww3_grid.nml (WW3 grid pre-processor namelist, unstructured/UNST mesh). !
+! SECOFS wave-mesh preparation (mesh finalization pass, WCOSS2 mesh-prep      !
+! task). Selected mesh: the E=5 m elevation-ceiling candidate,            !
+! secofs_wave_e5m.msh (1,305,953 nodes / 2,515,436 elements per the       !
+! mesh's own $Nodes/$Elements counts -- see                               !
+! WW3_SECOFS/artifacts/mesh_candidates_report.txt "E = 5 m" block; the    !
+! 1,305,939 figure quoted when this candidate was chosen was off by 14    !
+! nodes from the actual committed .msh file and is superseded here by     !
+! the value read directly out of the file).                              !
+!                                                                        !
+! SUBSEQUENT FIX: a pre-flight validator written against the real WW3    !
+! Gmsh reader (model/src/w3triamd.F90 READMSH / model/src/w3servmd.F90   !
+! NEXTLN) found the .msh writer (tools/hgrid_to_msh.py) had two fatal    !
+! format defects (an interior $Comments block that NEXTLN cannot skip,   !
+! and a non-integer 2.2 0 8 MeshFormat version line where READMSH does a !
+! list-directed INTEGER read) plus one cosmetic defect (2 boundary node  !
+! ids -- the shared corner nodes where open-boundary segments 2 and 3    !
+! meet -- listed twice each as separate type-15 elements). All three     !
+! were fixed at the writer and every candidate .msh, including           !
+! secofs_wave_e5m.msh, was regenerated (node/element counts unchanged;   !
+! only the header and the boundary-point element list changed). The de-  !
+! duplication drops INBND_COUNT%N_POINT from 1,498 to 1,496 and shrinks  !
+! open-boundary segment 3 from 8 to 6 nodes (its first and last nodes    !
+! were the same two nodes already listed as segment 2's last and first); !
+! the INBND_POINT_NML block below was regenerated from the fixed .msh's  !
+! own type-15 elements to match exactly.                                 !
+!                                                                        !
+! FURTHER SUBSEQUENT FIX (boundary-manifoldness repair): a real WCOSS2   !
+! run of ww3_grid on this mesh STOPped inside GET_BOUNDARY               !
+! (w3triamd.F90) with "We have a dramatic inconsistency" (IP=276         !
+! IP2=274 IP3=273) -- 1,079 boundary nodes had boundary-edge degree 4    !
+! (pinch/bowtie points where the elevation-ceiling cut severed a one-    !
+! element-wide marsh channel down to a single shared vertex), which no   !
+! prior check here had modeled. tools/ww3_boundary_predictor.py          !
+! reproduces WW3's own GET_BOUNDARY fan-walk closely enough to predict   !
+! that exact IP/IP2/IP3 triple; tools/repair_boundary.py removed the     !
+! minority ("neck") triangle wedge at each pinch node (2 rounds, 1,083   !
+! triangles), re-applied the connected-component keep rule (drops small  !
+! severed fragments with no open-boundary node), and re-derived a        !
+! strictly manifold boundary -- confirmed zero inconsistency by the same !
+! predictor. secofs_wave_e5m.msh was overwritten in place with the       !
+! repaired mesh: now 1,299,007 nodes / 2,505,554 elements (was           !
+! 1,305,953 / 2,515,436); secofs_wave_e5m_ESMFmesh.nc/_scrip.nc and      !
+! artifacts/secofs_ufs.mesh_wav.nc (regenerated via the real             !
+! ESMF_Scrip2Unstruct) were rebuilt from the repaired mesh to match. All !
+! 1,496 open-boundary nodes survived unchanged in count/segment grouping !
+! (only their ID VALUES shifted from the renumbering); the               !
+! INBND_POINT_NML block below reflects the repaired mesh's own node      !
+! numbering -- see the block-local note just above it for detail.        !
+!                                                                        !
+! THIS PASS changed exactly three things relative to the prior DRAFT      !
+! (history below); everything else (SPECTRUM_NML, RUN_NML minus one       !
+! field, TIMESTEPS_NML, GRID%NAME/TYPE/COORD/CLOS/DMIN, UNST%SF/IDLA/     !
+! FORMAT) is untouched and remains exactly as UNVERIFIED/DRAFT as before: !
+!                                                                          !
+!   1. UNST_NML boundary-index remap (see that section below): the        !
+!      INBND_POINT_NML block's 1,498 node ids were re-derived from        !
+!      secofs_wave_e5m.msh's OWN filtered/renumbered node numbering       !
+!      (previously they were hgrid.gr3's native ids, valid only for the   !
+!      unfiltered "samegrid" candidate -- see the CAVEAT that was already !
+!      in this file and is now resolved).                                !
+!   2. INBND_POINT CONNECT flags changed from "T within a segment, F at   !
+!      the last node" to F UNCONDITIONALLY for all 1,498 points -- this   !
+!      is a CORRECTNESS FIX, not a style choice: see the INBND_POINT_NML  !
+!      section below for the w3gridmd.F90-sourced explanation of why      !
+!      CONNECT=T is dangerous for UNST/UNGTYPE grids whose node ids are   !
+!      not spatially sequential (true for every candidate here, filtered  !
+!      or not).                                                           !
+!   3. GRID%ZLIM: corrected/tightened the no-op finding and the value     !
+!      (see GRID_NML section below) -- it is now understood to be         !
+!      UNCONDITIONALLY inert for GTYPE='UNST', not merely inert when      !
+!      UGOBCAUTO=T as previously assumed.                                 !
+!   4. (bonus, found during "verify every namelist key" pass) RUN_NML was !
+!      missing RUN%FLCK=T -- both real UNST references this file cites    !
+!      set it, and the file's own header claimed "all physics terms on"; !
+!      added to make the file consistent with its own stated intent.     !
+!                                                                          !
+! UNST%FILENAME remains the placeholder literal 'secofs_ufs_ww3.msh' --   !
+! see MESH_PREP_WCOSS2.md for the instruction to stage/rename the actual  !
+! secofs_wave_e5m.msh artifact to that name in the ww3_grid working       !
+! directory before running the preprocessor.                              !
+!                                                                          !
+! ORIGINAL DRAFT PROVENANCE (unchanged from the prior pass, restated for  !
+! continuity):                                                            !
+!   AK working coupled run has NO ww3_grid.nml -- grid preprocessing was  !
+!   already done offline; only the compiled binary mod_def.ww3 is         !
+!   present in the Alaska DATM+SCHISM+WW3 reference configuration, no text namelist. AK is   !
+!   therefore NOT a syntax source for this file. Namelist syntax verified !
+!   against the real vendored WW3 submodule at                            !
+!   WW3/regtests/ww3_tp2.6/input/                !
+!   ww3_grid_pdlib.nml + namelists_pdlib.nml, and                         !
+!   WW3/regtests/ww3_ufs1.1/input_unstr/         !
+!   ww3_grid_a.nml + namelists_a.nml. This pass additionally verified     !
+!   every namelist key/field name used below directly against            !
+!   WW3/model/nml/ww3_grid.nml (the shipped      !
+!   documentation template) and the reader code in                       !
+!   WW3/model/src/w3gridmd.F90 (SELECT CASE      !
+!   (GTYPE) / CASE(UNGTYPE) block, the INBND_POINT_NML consumer loop      !
+!   around line 4520-4590, and the ZLIM/TMPSTA classification around      !
+!   line 4045-4058) -- not just cross-referenced against other namelist   !
+!   examples. Every SECOFS-scale numeric value not explicitly called out  !
+!   above (spectral resolution, timesteps) is still a DRAFT and remains   !
+!   marked UNVERIFIED at its own namelist block.                          !
+!                                                                          !
+! COMPANION FILE: this file's GRID%NML points at                          !
+!   secofs_ufs_ww3.namelists_pdlib.nml                                    !
+! (unchanged by this pass; see DECISIONS.txt).                            !
+! ---------------------------------------------------------------------- !
+
+! -------------------------------------------------------------------- !
+! SPECTRUM_NML: 36 directions x 50 frequencies, FREQ1=0.035 Hz, XFR=1.07.
+!
+! V19: adopts the GFS-Wave station-spectra grid EXACTLY (the same grid
+! the working Alaska DATM+SCHISM+WW3 reference configuration uses),
+! superseding the prior DRAFT/UNVERIFIED NK=32/FREQ1=0.0373/XFR=1.1
+! guess. Reason: the boundary-spectra processor (nos-utils
+! WaveBoundaryProcessor, wired into prep) shells out to WW3's ASCII
+! ww3_bound, which HARD-FAILS -- STOP, not a graceful fallback -- when
+! the input spectra carry more frequencies than the model grid
+! (ww3_bound.F90:497 "IF (NKI.GT.NK) GOTO 808"; the 808 branch's own
+! message says spectral conversion "WILL BE MANAGED SOON BY SPCONV",
+! i.e. unimplemented). GFS-Wave station spectra are 50 freq x 36 dir,
+! FREQ1=0.035, XFR~1.07 -- matching that grid exactly makes ww3_bound a
+! bit-exact NKI==NK match instead of a guaranteed failure, and as a
+! side effect raises f_max from 0.716 Hz (old NK=32/XFR=1.1/
+! FREQ1=0.0373) to 0.964 Hz, fixing the validated calm-regime wind-sea
+! truncation at the old f_max. Cost: NSPEC rises 1152->1800 (x1.5625
+! wave-model CPU/memory; WAV PET retune deferred pending measurement),
+! and every WW3 restart written under the old NK=32 grid is invalidated
+! by this change (acceptable now, before daily cycling starts).
+!
+! CRITICAL: this SPECTRUM_NML group is DUPLICATED in this file (see the
+! second copy further below). W3NMLGRID's READ_SPECTRUM_NML REWINDs the
+! unit before its own search, so only the FIRST occurrence in the file
+! is EVER actually read -- tools/preflight_ww3_grid.py's own duplicate-
+! group check documents exactly this behavior and WARNs on it. The
+! second copy is therefore inert, but BOTH copies were edited
+! identically here: a future change to the file's read order (or a
+! trim of the "unused" first copy) would otherwise silently revert this
+! grid back to the old NK=32 values with no error raised anywhere.
+! -------------------------------------------------------------------- !
+&SPECTRUM_NML
+  SPECTRUM%XFR       = 1.07
+  SPECTRUM%FREQ1     = 0.035
+  SPECTRUM%NK        = 50
+  SPECTRUM%NTH       = 36
+/
+
+! -------------------------------------------------------------------- !
+! RUN_NML: all physics terms on -- matches both real references.
+! RUN%FLCK (wavenumber/depth-refraction shift) was MISSING from the prior
+! draft (defaults to F if omitted) despite this header already claiming
+! "all physics terms on" -- both real UNST references this file cites
+! (ww3_tp2.6/ww3_ufs1.1) explicitly set RUN%FLCK=T. Added here to match
+! the file's own stated intent; verified field name against
+! model/nml/ww3_grid.nml's RUN_NML documentation block (RUN%FLDRY/FLCX/
+! FLCY/FLCTH/FLCK/FLSOU, defaults all F). FLDRY (dry run, I/O only) is
+! correctly left at its default F -- we want an actual physics run, not
+! a dry run -- and was never part of "all propagation/source terms".
+! -------------------------------------------------------------------- !
+&RUN_NML
+  RUN%FLCX         = T
+  RUN%FLCY         = T
+  RUN%FLCTH        = T
+  RUN%FLCK         = T
+  RUN%FLSOU        = T
+/
+
+! -------------------------------------------------------------------- !
+! TIMESTEPS_NML: DTMAX=DTXY=120s, DTKTH=60s, DTMIN=15s.
+!
+! Reduced from 360/180 after the first currents-coupled run died with SIGSEGV
+! in ST4's tail-stress table. The implicit PDLIB solve was already marginal
+! without currents (54 of 60 solves exhausting JGS_MAXITER=1000 with 3-4%
+! of nodes unconverged); coupling SCHISM's currents adds the k-shift terms,
+! which are built entirely from the current field and its gradients, and tips
+! those stalled rows into growth. A smaller propagation step restores diagonal
+! dominance and should also clear the chronic iteration stall.
+!
+! The NUOPC coupling interval stays at 360s -- WW3 substeps internally, so this
+! does not change the exchange frequency or the SCHISM dt=120 multiple rule.
+!   ww3_grid_a.nml + namelists_a.nml. This pass additionally verified     !
+!   every namelist key/field name used below directly against            !
+!   WW3/model/nml/ww3_grid.nml (the shipped      !
+!   documentation template) and the reader code in                       !
+!   WW3/model/src/w3gridmd.F90 (SELECT CASE      !
+!   (GTYPE) / CASE(UNGTYPE) block, the INBND_POINT_NML consumer loop      !
+!   around line 4520-4590, and the ZLIM/TMPSTA classification around      !
+!   line 4045-4058) -- not just cross-referenced against other namelist   !
+!   examples. Every SECOFS-scale numeric value not explicitly called out  !
+!   above (spectral resolution, timesteps) is still a DRAFT and remains   !
+!   marked UNVERIFIED at its own namelist block.                          !
+!                                                                          !
+! COMPANION FILE: this file's GRID%NML points at                          !
+!   secofs_ufs_ww3.namelists_pdlib.nml                                    !
+! (unchanged by this pass; see DECISIONS.txt).                            !
+! ---------------------------------------------------------------------- !
+
+! -------------------------------------------------------------------- !
+! SPECTRUM_NML (DUPLICATE COPY -- see the first &SPECTRUM_NML group
+! above for the full V19 rationale and the CRITICAL note on why both
+! copies must be kept identical). 36 directions x 50 frequencies,
+! FREQ1=0.035 Hz, XFR=1.07 -- the GFS-Wave station-spectra grid,
+! adopted V19 in place of the prior DRAFT NK=32/FREQ1=0.0373/XFR=1.1
+! guess (old f_max=0.716 Hz, new f_max=0.964 Hz). This copy is NOT read
+! by W3NMLGRID (REWIND-then-search reads only the FIRST SPECTRUM_NML
+! occurrence in the file) but is kept identical to the first copy so a
+! future re-read-order change cannot silently revert the grid.
+! -------------------------------------------------------------------- !
+&SPECTRUM_NML
+  SPECTRUM%XFR       = 1.07
+  SPECTRUM%FREQ1     = 0.035
+  SPECTRUM%NK        = 50
+  SPECTRUM%NTH       = 36
+/
+
+! -------------------------------------------------------------------- !
+! RUN_NML: all physics terms on -- matches both real references.
+! RUN%FLCK (wavenumber/depth-refraction shift) was MISSING from the prior
+! draft (defaults to F if omitted) despite this header already claiming
+! "all physics terms on" -- both real UNST references this file cites
+! (ww3_tp2.6/ww3_ufs1.1) explicitly set RUN%FLCK=T. Added here to match
+! the file's own stated intent; verified field name against
+! model/nml/ww3_grid.nml's RUN_NML documentation block (RUN%FLDRY/FLCX/
+! FLCY/FLCTH/FLCK/FLSOU, defaults all F). FLDRY (dry run, I/O only) is
+! correctly left at its default F -- we want an actual physics run, not
+! a dry run -- and was never part of "all propagation/source terms".
+! -------------------------------------------------------------------- !
+&RUN_NML
+  RUN%FLCX         = T
+  RUN%FLCY         = T
+  RUN%FLCTH        = T
+  RUN%FLCK         = T
+  RUN%FLSOU        = T
+/
+
+! -------------------------------------------------------------------- !
+! TIMESTEPS_NML: DTMAX=DTXY=360s, DTKTH=180s, DTMIN=15s.
+!
+! DTMAX/DTXY = 360s is chosen to match the ufs.configure runSeq coupling
+! interval (@360, see that file's header) 1:1 -- a clean ratio where one
+! WW3 spatial-propagation step spans exactly one coupling window. This
+! is a DRAFT choice, reasoned from the coupling-interval divisibility
+! constraint (see DECISIONS.txt), not copied from a SECOFS reference.
+!
+! Real reference values for comparison:
+!   ww3_ufs1.1 (global 1deg UNST, explicit PDLIB): DTMAX=720 DTXY=360
+!     DTKTH=360 DTMIN=30
+!   ww3_tp2.6  (tiny nearshore UNST, implicit PDLIB): all four = 10
+!     (dominated by the test's very small/high-res mesh, not comparable
+!     in scale)
+! DTKTH=180 (half of DTXY) and DTMIN=15 (task-specified "implicit PDLIB"
+! class) are UNVERIFIED against SECOFS's actual mesh edge-length/CFL --
+! the implicit PDLIB solver (see UNST_NML flags in the companion file)
+! is exactly what permits DTXY to exceed the explicit-scheme CFL limit,
+! but the real minimum stable value depends on the coarsened wave mesh's
+! smallest edge, which does not exist yet (pending mesh tooling). Treat
+! DTMAX/DTXY/DTKTH/DTMIN here as a starting point for WCOSS2 CFL
+! validation, not a verified stable configuration.
+! -------------------------------------------------------------------- !
+&TIMESTEPS_NML
+  TIMESTEPS%DTMAX        = 120.
+  TIMESTEPS%DTXY         = 120.
+  TIMESTEPS%DTKTH        = 60.
+  TIMESTEPS%DTMIN        = 15.
+/
+
+! -------------------------------------------------------------------- !
+! GRID_NML: GRID%CLOS='NONE' because SECOFS is a regional (non-global)
+! domain -- unlike ww3_ufs1.1's GLOBAL grid (CLOS='T', dateline-closed).
+! GRID%COORD='SPHE' (spherical, lon/lat) matches SECOFS's domain bounds
+! in secofs_ufs.yaml (grid.domain: lon -88..-63, lat 17..40). GRID%DMIN
+! =0.30 matches BOTH real references exactly (a stable WW3-side
+! convention for minimum permitted water depth, distinct from SCHISM's
+! own min_depth=0.01 in secofs_ufs.yaml -- SCHISM's wetting/drying floor
+! is much shallower than WW3's, which is expected: wave physics should
+! not be evaluated in near-zero-depth swash/drying zones even where
+! SCHISM continues to wet/dry).
+!
+! GRID%ZLIM -- CORRECTED FINDING (this pass): the prior draft's header
+! said ZLIM "only applies when UGOBCAUTO=T" and was a no-op here because
+! the companion namelist sets UGOBCAUTO=F. Reading w3gridmd.F90 directly
+! shows this is not quite right, and the true situation is simpler and
+! more absolute: for GTYPE='UNST' (UNGTYPE), the land/sea classification
+! block unconditionally sets TMPSTA=1 for every point --
+!   "IF (GTYPE .EQ. UNGTYPE) THEN
+!      TMPSTA = 1
+!    ELSE
+!      DO IY=1, NY
+!        DO IX=1, NX
+!          IF ( ZBIN(IX,IY) .LE. ZLIM ) TMPSTA(IY,IX) = 1
+!        END DO
+!      END DO
+!    ENDIF"                                   (w3gridmd.F90, ~line 4045)
+! i.e. the ZLIM-vs-depth comparison that actually classifies land/sea is
+! in the ELSE branch, which UNGTYPE never enters -- every unstructured
+! mesh node is treated as a sea point regardless of ZLIM or UGOBCAUTO.
+! ZLIM IS still read into a live variable for GTYPE='UNST'
+! ("ZLIM = NML_GRID%ZLIM" a few lines earlier in the same CASE(UNGTYPE)
+! block), so the namelist field is not rejected/ignored by the parser --
+! it is read and then simply never compared against anything for this
+! grid type. This makes it UNCONDITIONALLY inert for GTYPE='UNST', not
+! merely inert under our specific UGOBCAUTO=F choice as previously
+! assumed -- the earlier finding was directionally right (harmless to
+! leave as-is) but attributed the no-op to the wrong condition. Value
+! changed from the previous placeholder 4.0 to 0.0 (the documented
+! namelist default) specifically so that a reader does not infer a
+! coastline-depth meaning that the code never applies for this grid
+! type; the field is kept (not deleted) because GRID_NML's other
+! fields are mandatory and removing a single member of the namelist
+! group is not meaningfully different from setting it to the neutral
+! default.
+! -------------------------------------------------------------------- !
+&GRID_NML
+  GRID%NAME         = 'SECOFS_UFS_WAV'
+  GRID%NML          = './secofs_ufs_ww3.namelists_pdlib.nml'
+  GRID%TYPE         = 'UNST'
+  GRID%COORD        = 'SPHE'
+  GRID%CLOS         = 'NONE'
+  GRID%ZLIM         = 0.0
+  GRID%DMIN         = 0.30
+/
+
+! -------------------------------------------------------------------- !
+! UNST_NML: mesh-file block. SF/IDLA/FORMAT match BOTH real references
+! exactly (SF=-1 = depths stored as-is/no external scale factor; IDLA=4
+! FORMAT='(20f10.2)' is the standard WW3 unstructured .msh read layout)
+! -- these three are a stable convention, not a guess. UPDATE (this
+! pass): the mesh now exists -- the E=5m elevation-ceiling candidate,
+! secofs_wave_e5m.msh (1,305,953 nodes / 2,515,436 elements), was
+! selected as final. UNST%FILENAME is kept as the deployment-convention
+! literal 'secofs_ufs_ww3.msh' rather than the artifacts/ working name
+! 'secofs_wave_e5m.msh' -- MESH_PREP_WCOSS2.md documents staging/
+! renaming that file to this literal in the ww3_grid working directory
+! before running the preprocessor, so this namelist itself does not
+! need to change if a future mesh candidate is ever swapped in.
+!
+! ALSO VERIFIED (this pass, source-grounded but not itself a change):
+! for GTYPE='UNST', w3gridmd.F90 reads depths via a dedicated
+! CALL READMSH(NDSG,FNAME) (model/src/w3triamd.F90's READMSH, signature
+! (NDS,FNAME) only) rather than through the generic IDLA/IDFM/FORMAT-
+! driven array reader (INA2R) used for RECT/CURV DEPTH_NML blocks --
+! IDLA and FORMAT are read into local variables but never passed to
+! READMSH, so they are not actually consulted while parsing the Gmsh
+! file (Gmsh's own file structure is self-describing). UNST%SF (via the
+! local variable VSC) IS still applied, directly scaling the depths
+! READMSH returns ("ZBIN(:,1) = VSC * ZB(:)"). This matches both real
+! UNST regtest examples, which also carry IDLA/FORMAT despite this --
+! evidently a stable convention/precedent, not something to change here.
+!
+! UGOBCAUTO / UGOBCFILE do NOT belong in this UNST_NML block -- they
+! live in the auxiliary &UNST group inside the companion GRID%NML file
+! (secofs_ufs_ww3.namelists_pdlib.nml), a DIFFERENT namelist despite the
+! same name. See that file for the UGOBCAUTO=F / INBND_POINT_NML
+! discussion.
+! -------------------------------------------------------------------- !
+&UNST_NML
+  UNST%SF          = -1.
+  UNST%FILENAME    = 'secofs_wave_e0m_final.msh'
+  UNST%IDLA        = 4
+  UNST%FORMAT      = '(20f10.2)'
+/
+
+! -------------------------------------------------------------------- !
+! INBND_COUNT_NML / INBND_POINT_NML: per-point open-boundary flagging.
+! UGOBCAUTO=F in the companion GRID%NML file means WW3 will NOT
+! auto-detect boundary nodes from the mesh's own Gmsh type-15 point-
+! elements, so every open-boundary node must be listed explicitly
+! here (see ALTERNATIVE note below for the auto-detect path that was
+! considered and not used).
+!
+! REMAPPED (this pass) for the FINAL mesh, secofs_wave_e5m.msh (E=5m
+! elevation-ceiling candidate). Node ids below are that mesh's OWN
+! contiguously-renumbered ids, NOT hgrid.gr3's native ids (those only
+! apply to the unfiltered 'samegrid' candidate -- see the CAVEAT that
+! used to be here, now resolved).
+!
+! METHOD: filter_mesh.py's open-boundary remap never drops nodes and
+! preserves segment/within-segment order exactly (see that module's
+! docstring, step 5, and mesh_candidates_report.txt's "E = 5 m" block:
+! "open boundary: 5 segments, 1,498 nodes ... MATCH", "open-boundary
+! nodes dropped by filtering: 0"). hgrid_to_msh.py then writes the
+! filtered mesh's open-boundary nodes as Gmsh type-15 point elements,
+! FIRST in the $Elements block, grouped by segment (geometric-id tag)
+! in the SAME preserved order, EXCEPT that a node id already written for
+! an earlier segment is not written again (see the SUBSEQUENT FIX note
+! at the top of this file) -- 2 of the raw 1,498 NOPE entries are the
+! shared corner nodes where segment 2 and segment 3 meet, so the
+! de-duplicated .msh carries 1,496 type-15 elements. This pass parsed
+! those type-15 lines directly out of the real, committed
+! secofs_wave_e5m.msh (the ground-truth artifact itself, not a
+! re-derivation of it): 1,496 type-15 entries found, matching the
+! de-duplicated count exactly, spanning 5 segments (geometric-id tags
+! 1..5) of sizes 1199/281/6/6/4 = 1496.
+! Spot-checked node coordinates (read back from the same .msh file's
+! $Nodes block) confirm BOTH disjoint shelves are represented and in
+! the expected grouping:
+!   segment 1 (1199 nodes): SE-US/Gulf shelf, the big ocean-facing arc
+!     -- endpoints sampled at (-86.76, 30.39) [Gulf of Mexico, off the
+!     FL panhandle] and (-75.31, 37.92) [offshore DE/VA]
+!   segment 2 (281 nodes):  Puerto Rico/USVI shelf, the big arc --
+!     sampled at (-67.25, 18.48); its last node (-67.31, 18.62) is the
+!     corner shared with segment 3's first node
+!   segment 3 (6 nodes):    Puerto Rico/USVI shelf, tiny opening near
+!     Mona Passage -- sampled at (-67.30, 18.60); its former first/last
+!     nodes (duplicates of segment 2's last/first node) are dropped
+!   segment 4 (6 nodes):    SE-US/Gulf shelf, tiny river-mouth opening
+!     near Savannah, GA -- sampled at (-81.27, 32.53)
+!   segment 5 (4 nodes):    SE-US/Gulf shelf, tiny river-mouth opening
+!     near Winyah Bay, SC -- sampled at (-79.97, 33.21)
+! i.e. segments {1,4,5} = 1199+6+4 = 1,209 nodes are the SE-US/Gulf
+! shelf and segments {2,3} = 281+6 = 287 nodes are the Puerto Rico/USVI
+! shelf -- the 1,209/287 split differs from the 1,209/289 figure
+! documented since the original (pre-mesh-selection) draft of this file
+! only by the 2 de-duplicated corner nodes (both counted, before this
+! fix, on the Puerto Rico/USVI side since that is where segment 3
+! lived) -- both disjoint shelves are present and correctly represented
+! in the final, mesh-specific node numbering.
+!
+! Fields are X_INDEX, Y_INDEX, CONNECT (model/src/w3gridmd.F90's
+! NML_INBND_POINT_T / READ_INBOUND_NML, confirmed directly against the
+! type declaration at w3nmlgridmd.F90 ~line 200-204 and the consumer
+! loop at w3gridmd.F90 ~line 4520-4590, not just the tp2.6 example's
+! bare numbers). X_INDEX=node id (1-based, this mesh's own numbering).
+! Y_INDEX=1 always: for a structured grid this would be the second (IY)
+! grid index, but an unstructured (UNGTYPE) mesh has no second
+! dimension, so WW3's own bounds check just requires 1<=Y_INDEX<=NY
+! with NY=1 for UNGTYPE -- 1 is the only legal value.
+!
+! CONNECT -- CHANGED to F for EVERY point (this pass; CORRECTNESS FIX,
+! not a style choice). The prior draft set CONNECT=T within a segment
+! (F only at each segment's last node), on the stated theory that T
+! means "this node's spectrum interpolates continuously with the next
+! node in the same NOPE segment". Reading w3gridmd.F90's actual consumer
+! loop shows that theory does not describe what CONNECT does, and that
+! using T here would have been actively harmful:
+!   IF ( CONNCT .AND. .NOT.FIRST ) THEN
+!     IDX = IX - IXO ;  IDY = IY - IYO
+!     IF ( IDX.EQ.0 .OR. IDY.EQ.0 .OR. ABS(IDX).EQ.ABS(IDY) ) THEN
+!       NBA = MAX( MAX(ABS(IDX),ABS(IDY)) - 1, 0 )
+!       ... loop IBA=1,NBA stepping IX by SIGN(IDX) each time,
+!           promoting TMPSTA(IY,IX) to boundary status if it is
+!           currently a sea point ...
+!                                          (w3gridmd.F90, ~line 4558-4580)
+! CONNECT=T triggers a "fill in the intermediate grid-line points"
+! behaviour meant for STRUCTURED (RECT/CURV) grids, where IX/IY are 2-D
+! grid indices and an intermediate index genuinely sits geographically
+! between two boundary points. For UNGTYPE, Y_INDEX is pinned at 1, so
+! IDY is always 0, which makes the guard condition
+! "IDX.EQ.0 .OR. IDY.EQ.0 .OR. ABS(IDX).EQ.ABS(IDY)" ALWAYS true --
+! the fill-in branch always activates whenever CONNECT=T. NBA then
+! becomes ABS(IDX)-1, i.e. the raw difference between two consecutive
+! listed nodes' 1-based mesh-wide ids minus one, and every INTEGER id in
+! that range gets walked and (since GTYPE='UNST' unconditionally sets
+! TMPSTA=1 for every node, see the GRID_NML/ZLIM note above) promoted to
+! active-boundary status if currently 1 -- which is every node. Because
+! this mesh's contiguous renumbering scatters along-boundary-adjacent
+! nodes across the FULL 1..1,305,953 id range (consecutive boundary
+! nodes here are commonly ~1,500-2,500 ids apart, and segment 1 alone
+! spans ids 26,674 to 992,584), CONNECT=T would have caused ww3_grid to
+! silently promote a huge, essentially arbitrary swath of interior mesh
+! nodes to "active open-boundary point" status -- nodes with no real
+! spectral forcing, an error rather than a convenience. This is a
+! structured-grid feature that does not have a safe meaning for an
+! unstructured mesh's arbitrary node numbering; it was already latent
+! in the prior draft (which used hgrid.gr3's native ids -- also not
+! spatially sequential along the boundary), not something newly
+! introduced by the renumbering itself. Setting CONNECT=F for every
+! entry is safe and sufficient: every one of the 1,496 real
+! open-boundary nodes is already listed explicitly and individually, so
+! no "fill between" convenience is needed. (UGOBCAUTO=T, bypassing this
+! whole INBND_POINT_NML mechanism in favour of the mesh's own type-15
+! elements, remains a simpler and structurally safer alternative worth
+! considering separately -- not adopted here since it would mean editing
+! the companion namelist, out of this pass's scope.)
+!
+! ALTERNATIVE NOTED, NOT USED: w3gridmd.F90 (~line 4550) skips this
+! entire INBND_POINT_NML list for UNGTYPE grids whenever UGOBCAUTO or
+! UGOBCOK is TRUE ('IF (GTYPE.EQ.UNGTYPE.AND.(UGOBCAUTO.OR.UGOBCOK))
+! CYCLE') -- i.e. WW3 can auto-detect every boundary node directly from
+! the mesh's own Gmsh type-15 point-elements instead of an explicit
+! list. This repo's companion namelist already commits to UGOBCAUTO=F
+! (explicit list), matching the tp2.6 reference -- this block is the
+! fill-in for that choice, not a proposal to change it.
+! -------------------------------------------------------------------- !
+! REMAPPED AGAIN (boundary-repair pass): secofs_wave_e5m.msh was found  !
+! to fail ww3_grid at runtime (GET_BOUNDARY, w3triamd.F90 -- "We have a !
+! dramatic inconsistency", IP=276 IP2=274 IP3=273) because 1,079 boundary!
+! nodes had boundary-edge degree 4 (pinch/bowtie points where the       !
+! elevation-ceiling cut severed a one-element-wide marsh channel down   !
+! to a single shared vertex -- see tools/ww3_boundary_predictor.py and  !
+! tools/repair_boundary.py). tools/repair_boundary.py removed the       !
+! minority ("neck") triangle wedge at each pinch node, iterated to a    !
+! fixed point (2 rounds, 1,083 triangles removed directly) and then     !
+! re-applied the connected-component keep rule (drops small severed     !
+! fragments with no open-boundary node), yielding a strictly manifold   !
+! boundary confirmed by the GET_BOUNDARY predictor: 1,299,007 nodes /    !
+! 2,505,554 elements (was 1,305,953 / 2,515,436), all renumbered         !
+! contiguously 1..1,299,007. secofs_wave_e5m.msh was overwritten in      !
+! place with this repaired mesh. ALL 1,496 open-boundary nodes survived  !
+! repair unchanged in count and segment grouping (segment sizes [1199, 281, 6, 6, 4]!
+! matches the pre-repair block exactly), but their ID VALUES shifted     !
+! because of the contiguous renumbering, so the INBND_POINT_NML block    !
+! below was regenerated from the repaired .msh's own type-15 elements    !
+! (ground truth, not re-derived indirectly). CONNECT remains F           !
+! unconditionally for every point -- see the CONNECT correctness-fix     !
+! discussion above this block, unaffected by the repair.                 !
+! -------------------------------------------------------------------- !
+&INBND_COUNT_NML
+  INBND_COUNT%N_POINT = 1496
+/
+
+&INBND_POINT_NML
+  INBND_POINT(1) = 7148 1 F
+  INBND_POINT(2) = 7598 1 F
+  INBND_POINT(3) = 7998 1 F
+  INBND_POINT(4) = 8402 1 F
+  INBND_POINT(5) = 8784 1 F
+  INBND_POINT(6) = 9094 1 F
+  INBND_POINT(7) = 9469 1 F
+  INBND_POINT(8) = 9775 1 F
+  INBND_POINT(9) = 10095 1 F
+  INBND_POINT(10) = 10410 1 F
+  INBND_POINT(11) = 10744 1 F
+  INBND_POINT(12) = 11172 1 F
+  INBND_POINT(13) = 11173 1 F
+  INBND_POINT(14) = 11600 1 F
+  INBND_POINT(15) = 11602 1 F
+  INBND_POINT(16) = 11603 1 F
+  INBND_POINT(17) = 12039 1 F
+  INBND_POINT(18) = 12041 1 F
+  INBND_POINT(19) = 12572 1 F
+  INBND_POINT(20) = 12574 1 F
+  INBND_POINT(21) = 13089 1 F
+  INBND_POINT(22) = 13603 1 F
+  INBND_POINT(23) = 13605 1 F
+  INBND_POINT(24) = 13819 1 F
+  INBND_POINT(25) = 13821 1 F
+  INBND_POINT(26) = 14081 1 F
+  INBND_POINT(27) = 14083 1 F
+  INBND_POINT(28) = 14085 1 F
+  INBND_POINT(29) = 14638 1 F
+  INBND_POINT(30) = 15149 1 F
+  INBND_POINT(31) = 15151 1 F
+  INBND_POINT(32) = 15153 1 F
+  INBND_POINT(33) = 15662 1 F
+  INBND_POINT(34) = 16180 1 F
+  INBND_POINT(35) = 16179 1 F
+  INBND_POINT(36) = 16623 1 F
+  INBND_POINT(37) = 17029 1 F
+  INBND_POINT(38) = 17368 1 F
+  INBND_POINT(39) = 17733 1 F
+  INBND_POINT(40) = 18118 1 F
+  INBND_POINT(41) = 18475 1 F
+  INBND_POINT(42) = 18827 1 F
+  INBND_POINT(43) = 19148 1 F
+  INBND_POINT(44) = 19486 1 F
+  INBND_POINT(45) = 19830 1 F
+  INBND_POINT(46) = 20190 1 F
+  INBND_POINT(47) = 20611 1 F
+  INBND_POINT(48) = 21032 1 F
+  INBND_POINT(49) = 21462 1 F
+  INBND_POINT(50) = 21905 1 F
+  INBND_POINT(51) = 22396 1 F
+  INBND_POINT(52) = 22887 1 F
+  INBND_POINT(53) = 23387 1 F
+  INBND_POINT(54) = 23908 1 F
+  INBND_POINT(55) = 24442 1 F
+  INBND_POINT(56) = 24946 1 F
+  INBND_POINT(57) = 25423 1 F
+  INBND_POINT(58) = 25895 1 F
+  INBND_POINT(59) = 26386 1 F
+  INBND_POINT(60) = 26854 1 F
+  INBND_POINT(61) = 27342 1 F
+  INBND_POINT(62) = 27820 1 F
+  INBND_POINT(63) = 28301 1 F
+  INBND_POINT(64) = 28761 1 F
+  INBND_POINT(65) = 29154 1 F
+  INBND_POINT(66) = 29605 1 F
+  INBND_POINT(67) = 30104 1 F
+  INBND_POINT(68) = 30503 1 F
+  INBND_POINT(69) = 30855 1 F
+  INBND_POINT(70) = 31219 1 F
+  INBND_POINT(71) = 31564 1 F
+  INBND_POINT(72) = 31893 1 F
+  INBND_POINT(73) = 32212 1 F
+  INBND_POINT(74) = 32572 1 F
+  INBND_POINT(75) = 32965 1 F
+  INBND_POINT(76) = 33324 1 F
+  INBND_POINT(77) = 33656 1 F
+  INBND_POINT(78) = 34019 1 F
+  INBND_POINT(79) = 34397 1 F
+  INBND_POINT(80) = 34824 1 F
+  INBND_POINT(81) = 35382 1 F
+  INBND_POINT(82) = 35974 1 F
+  INBND_POINT(83) = 36560 1 F
+  INBND_POINT(84) = 37126 1 F
+  INBND_POINT(85) = 37671 1 F
+  INBND_POINT(86) = 38270 1 F
+  INBND_POINT(87) = 38847 1 F
+  INBND_POINT(88) = 39444 1 F
+  INBND_POINT(89) = 39992 1 F
+  INBND_POINT(90) = 40522 1 F
+  INBND_POINT(91) = 41040 1 F
+  INBND_POINT(92) = 41535 1 F
+  INBND_POINT(93) = 42010 1 F
+  INBND_POINT(94) = 42427 1 F
+  INBND_POINT(95) = 42828 1 F
+  INBND_POINT(96) = 43218 1 F
+  INBND_POINT(97) = 43601 1 F
+  INBND_POINT(98) = 43967 1 F
+  INBND_POINT(99) = 44320 1 F
+  INBND_POINT(100) = 44655 1 F
+  INBND_POINT(101) = 44993 1 F
+  INBND_POINT(102) = 45313 1 F
+  INBND_POINT(103) = 45634 1 F
+  INBND_POINT(104) = 45945 1 F
+  INBND_POINT(105) = 46267 1 F
+  INBND_POINT(106) = 46576 1 F
+  INBND_POINT(107) = 46874 1 F
+  INBND_POINT(108) = 47189 1 F
+  INBND_POINT(109) = 47481 1 F
+  INBND_POINT(110) = 47769 1 F
+  INBND_POINT(111) = 48055 1 F
+  INBND_POINT(112) = 48354 1 F
+  INBND_POINT(113) = 48646 1 F
+  INBND_POINT(114) = 48935 1 F
+  INBND_POINT(115) = 49222 1 F
+  INBND_POINT(116) = 49534 1 F
+  INBND_POINT(117) = 49848 1 F
+  INBND_POINT(118) = 50175 1 F
+  INBND_POINT(119) = 50489 1 F
+  INBND_POINT(120) = 50805 1 F
+  INBND_POINT(121) = 51097 1 F
+  INBND_POINT(122) = 51401 1 F
+  INBND_POINT(123) = 51685 1 F
+  INBND_POINT(124) = 51995 1 F
+  INBND_POINT(125) = 52286 1 F
+  INBND_POINT(126) = 52606 1 F
+  INBND_POINT(127) = 52876 1 F
+  INBND_POINT(128) = 53154 1 F
+  INBND_POINT(129) = 53432 1 F
+  INBND_POINT(130) = 53732 1 F
+  INBND_POINT(131) = 54055 1 F
+  INBND_POINT(132) = 54383 1 F
+  INBND_POINT(133) = 54726 1 F
+  INBND_POINT(134) = 55078 1 F
+  INBND_POINT(135) = 55440 1 F
+  INBND_POINT(136) = 55769 1 F
+  INBND_POINT(137) = 56083 1 F
+  INBND_POINT(138) = 56395 1 F
+  INBND_POINT(139) = 56739 1 F
+  INBND_POINT(140) = 57080 1 F
+  INBND_POINT(141) = 57463 1 F
+  INBND_POINT(142) = 57847 1 F
+  INBND_POINT(143) = 58232 1 F
+  INBND_POINT(144) = 58663 1 F
+  INBND_POINT(145) = 59054 1 F
+  INBND_POINT(146) = 59468 1 F
+  INBND_POINT(147) = 59857 1 F
+  INBND_POINT(148) = 60197 1 F
+  INBND_POINT(149) = 60562 1 F
+  INBND_POINT(150) = 60910 1 F
+  INBND_POINT(151) = 61258 1 F
+  INBND_POINT(152) = 61600 1 F
+  INBND_POINT(153) = 61958 1 F
+  INBND_POINT(154) = 62351 1 F
+  INBND_POINT(155) = 62715 1 F
+  INBND_POINT(156) = 63081 1 F
+  INBND_POINT(157) = 63406 1 F
+  INBND_POINT(158) = 63729 1 F
+  INBND_POINT(159) = 64047 1 F
+  INBND_POINT(160) = 64367 1 F
+  INBND_POINT(161) = 64696 1 F
+  INBND_POINT(162) = 65008 1 F
+  INBND_POINT(163) = 65325 1 F
+  INBND_POINT(164) = 65616 1 F
+  INBND_POINT(165) = 65918 1 F
+  INBND_POINT(166) = 66198 1 F
+  INBND_POINT(167) = 66472 1 F
+  INBND_POINT(168) = 66736 1 F
+  INBND_POINT(169) = 67006 1 F
+  INBND_POINT(170) = 67291 1 F
+  INBND_POINT(171) = 67548 1 F
+  INBND_POINT(172) = 67807 1 F
+  INBND_POINT(173) = 68041 1 F
+  INBND_POINT(174) = 68274 1 F
+  INBND_POINT(175) = 68494 1 F
+  INBND_POINT(176) = 68741 1 F
+  INBND_POINT(177) = 69019 1 F
+  INBND_POINT(178) = 69292 1 F
+  INBND_POINT(179) = 69572 1 F
+  INBND_POINT(180) = 69868 1 F
+  INBND_POINT(181) = 70172 1 F
+  INBND_POINT(182) = 70466 1 F
+  INBND_POINT(183) = 70763 1 F
+  INBND_POINT(184) = 71060 1 F
+  INBND_POINT(185) = 71362 1 F
+  INBND_POINT(186) = 71672 1 F
+  INBND_POINT(187) = 71988 1 F
+  INBND_POINT(188) = 72294 1 F
+  INBND_POINT(189) = 72585 1 F
+  INBND_POINT(190) = 72871 1 F
+  INBND_POINT(191) = 73139 1 F
+  INBND_POINT(192) = 73392 1 F
+  INBND_POINT(193) = 73632 1 F
+  INBND_POINT(194) = 73860 1 F
+  INBND_POINT(195) = 74068 1 F
+  INBND_POINT(196) = 74266 1 F
+  INBND_POINT(197) = 74462 1 F
+  INBND_POINT(198) = 74671 1 F
+  INBND_POINT(199) = 74886 1 F
+  INBND_POINT(200) = 75103 1 F
+  INBND_POINT(201) = 75311 1 F
+  INBND_POINT(202) = 75525 1 F
+  INBND_POINT(203) = 75780 1 F
+  INBND_POINT(204) = 76092 1 F
+  INBND_POINT(205) = 76405 1 F
+  INBND_POINT(206) = 76679 1 F
+  INBND_POINT(207) = 77001 1 F
+  INBND_POINT(208) = 77326 1 F
+  INBND_POINT(209) = 77612 1 F
+  INBND_POINT(210) = 77895 1 F
+  INBND_POINT(211) = 78164 1 F
+  INBND_POINT(212) = 78439 1 F
+  INBND_POINT(213) = 78694 1 F
+  INBND_POINT(214) = 78880 1 F
+  INBND_POINT(215) = 79051 1 F
+  INBND_POINT(216) = 79229 1 F
+  INBND_POINT(217) = 79405 1 F
+  INBND_POINT(218) = 79407 1 F
+  INBND_POINT(219) = 79585 1 F
+  INBND_POINT(220) = 79754 1 F
+  INBND_POINT(221) = 79928 1 F
+  INBND_POINT(222) = 80058 1 F
+  INBND_POINT(223) = 80228 1 F
+  INBND_POINT(224) = 80407 1 F
+  INBND_POINT(225) = 80567 1 F
+  INBND_POINT(226) = 80749 1 F
+  INBND_POINT(227) = 80946 1 F
+  INBND_POINT(228) = 81113 1 F
+  INBND_POINT(229) = 81269 1 F
+  INBND_POINT(230) = 81412 1 F
+  INBND_POINT(231) = 81552 1 F
+  INBND_POINT(232) = 81692 1 F
+  INBND_POINT(233) = 81842 1 F
+  INBND_POINT(234) = 81980 1 F
+  INBND_POINT(235) = 82113 1 F
+  INBND_POINT(236) = 82248 1 F
+  INBND_POINT(237) = 82381 1 F
+  INBND_POINT(238) = 82515 1 F
+  INBND_POINT(239) = 82635 1 F
+  INBND_POINT(240) = 82637 1 F
+  INBND_POINT(241) = 82639 1 F
+  INBND_POINT(242) = 82778 1 F
+  INBND_POINT(243) = 82780 1 F
+  INBND_POINT(244) = 82784 1 F
+  INBND_POINT(245) = 82786 1 F
+  INBND_POINT(246) = 82788 1 F
+  INBND_POINT(247) = 82790 1 F
+  INBND_POINT(248) = 82792 1 F
+  INBND_POINT(249) = 82794 1 F
+  INBND_POINT(250) = 82936 1 F
+  INBND_POINT(251) = 82943 1 F
+  INBND_POINT(252) = 82945 1 F
+  INBND_POINT(253) = 82947 1 F
+  INBND_POINT(254) = 82949 1 F
+  INBND_POINT(255) = 83105 1 F
+  INBND_POINT(256) = 83255 1 F
+  INBND_POINT(257) = 83257 1 F
+  INBND_POINT(258) = 83393 1 F
+  INBND_POINT(259) = 83563 1 F
+  INBND_POINT(260) = 83565 1 F
+  INBND_POINT(261) = 83750 1 F
+  INBND_POINT(262) = 83931 1 F
+  INBND_POINT(263) = 84102 1 F
+  INBND_POINT(264) = 84104 1 F
+  INBND_POINT(265) = 84106 1 F
+  INBND_POINT(266) = 84276 1 F
+  INBND_POINT(267) = 84440 1 F
+  INBND_POINT(268) = 84443 1 F
+  INBND_POINT(269) = 84612 1 F
+  INBND_POINT(270) = 84614 1 F
+  INBND_POINT(271) = 84616 1 F
+  INBND_POINT(272) = 84621 1 F
+  INBND_POINT(273) = 84807 1 F
+  INBND_POINT(274) = 84995 1 F
+  INBND_POINT(275) = 84997 1 F
+  INBND_POINT(276) = 85193 1 F
+  INBND_POINT(277) = 85196 1 F
+  INBND_POINT(278) = 85392 1 F
+  INBND_POINT(279) = 85609 1 F
+  INBND_POINT(280) = 85864 1 F
+  INBND_POINT(281) = 86132 1 F
+  INBND_POINT(282) = 86374 1 F
+  INBND_POINT(283) = 86615 1 F
+  INBND_POINT(284) = 86856 1 F
+  INBND_POINT(285) = 87131 1 F
+  INBND_POINT(286) = 87413 1 F
+  INBND_POINT(287) = 87415 1 F
+  INBND_POINT(288) = 87687 1 F
+  INBND_POINT(289) = 87691 1 F
+  INBND_POINT(290) = 87979 1 F
+  INBND_POINT(291) = 87980 1 F
+  INBND_POINT(292) = 88284 1 F
+  INBND_POINT(293) = 88605 1 F
+  INBND_POINT(294) = 88898 1 F
+  INBND_POINT(295) = 89209 1 F
+  INBND_POINT(296) = 89515 1 F
+  INBND_POINT(297) = 89845 1 F
+  INBND_POINT(298) = 90151 1 F
+  INBND_POINT(299) = 90492 1 F
+  INBND_POINT(300) = 90820 1 F
+  INBND_POINT(301) = 91159 1 F
+  INBND_POINT(302) = 91486 1 F
+  INBND_POINT(303) = 91806 1 F
+  INBND_POINT(304) = 92126 1 F
+  INBND_POINT(305) = 92461 1 F
+  INBND_POINT(306) = 92911 1 F
+  INBND_POINT(307) = 93378 1 F
+  INBND_POINT(308) = 93829 1 F
+  INBND_POINT(309) = 94299 1 F
+  INBND_POINT(310) = 94729 1 F
+  INBND_POINT(311) = 95117 1 F
+  INBND_POINT(312) = 95530 1 F
+  INBND_POINT(313) = 95962 1 F
+  INBND_POINT(314) = 96411 1 F
+  INBND_POINT(315) = 96861 1 F
+  INBND_POINT(316) = 96862 1 F
+  INBND_POINT(317) = 97341 1 F
+  INBND_POINT(318) = 97851 1 F
+  INBND_POINT(319) = 97852 1 F
+  INBND_POINT(320) = 97944 1 F
+  INBND_POINT(321) = 98472 1 F
+  INBND_POINT(322) = 98956 1 F
+  INBND_POINT(323) = 99413 1 F
+  INBND_POINT(324) = 99970 1 F
+  INBND_POINT(325) = 100503 1 F
+  INBND_POINT(326) = 101055 1 F
+  INBND_POINT(327) = 101586 1 F
+  INBND_POINT(328) = 102186 1 F
+  INBND_POINT(329) = 102795 1 F
+  INBND_POINT(330) = 103347 1 F
+  INBND_POINT(331) = 103870 1 F
+  INBND_POINT(332) = 104361 1 F
+  INBND_POINT(333) = 104800 1 F
+  INBND_POINT(334) = 105219 1 F
+  INBND_POINT(335) = 105621 1 F
+  INBND_POINT(336) = 106097 1 F
+  INBND_POINT(337) = 106524 1 F
+  INBND_POINT(338) = 106956 1 F
+  INBND_POINT(339) = 107360 1 F
+  INBND_POINT(340) = 107813 1 F
+  INBND_POINT(341) = 108297 1 F
+  INBND_POINT(342) = 108770 1 F
+  INBND_POINT(343) = 109263 1 F
+  INBND_POINT(344) = 109700 1 F
+  INBND_POINT(345) = 110127 1 F
+  INBND_POINT(346) = 110515 1 F
+  INBND_POINT(347) = 110907 1 F
+  INBND_POINT(348) = 111281 1 F
+  INBND_POINT(349) = 111661 1 F
+  INBND_POINT(350) = 112082 1 F
+  INBND_POINT(351) = 112516 1 F
+  INBND_POINT(352) = 112971 1 F
+  INBND_POINT(353) = 113409 1 F
+  INBND_POINT(354) = 113811 1 F
+  INBND_POINT(355) = 114251 1 F
+  INBND_POINT(356) = 114658 1 F
+  INBND_POINT(357) = 114992 1 F
+  INBND_POINT(358) = 115331 1 F
+  INBND_POINT(359) = 115697 1 F
+  INBND_POINT(360) = 116111 1 F
+  INBND_POINT(361) = 116442 1 F
+  INBND_POINT(362) = 116746 1 F
+  INBND_POINT(363) = 117037 1 F
+  INBND_POINT(364) = 117321 1 F
+  INBND_POINT(365) = 117617 1 F
+  INBND_POINT(366) = 117920 1 F
+  INBND_POINT(367) = 118224 1 F
+  INBND_POINT(368) = 118497 1 F
+  INBND_POINT(369) = 118735 1 F
+  INBND_POINT(370) = 118957 1 F
+  INBND_POINT(371) = 119162 1 F
+  INBND_POINT(372) = 119359 1 F
+  INBND_POINT(373) = 119551 1 F
+  INBND_POINT(374) = 119763 1 F
+  INBND_POINT(375) = 119996 1 F
+  INBND_POINT(376) = 120227 1 F
+  INBND_POINT(377) = 120474 1 F
+  INBND_POINT(378) = 120715 1 F
+  INBND_POINT(379) = 120963 1 F
+  INBND_POINT(380) = 121190 1 F
+  INBND_POINT(381) = 121416 1 F
+  INBND_POINT(382) = 121630 1 F
+  INBND_POINT(383) = 121857 1 F
+  INBND_POINT(384) = 122065 1 F
+  INBND_POINT(385) = 122309 1 F
+  INBND_POINT(386) = 122561 1 F
+  INBND_POINT(387) = 122912 1 F
+  INBND_POINT(388) = 123248 1 F
+  INBND_POINT(389) = 123622 1 F
+  INBND_POINT(390) = 123966 1 F
+  INBND_POINT(391) = 124309 1 F
+  INBND_POINT(392) = 124622 1 F
+  INBND_POINT(393) = 124940 1 F
+  INBND_POINT(394) = 125309 1 F
+  INBND_POINT(395) = 125639 1 F
+  INBND_POINT(396) = 126015 1 F
+  INBND_POINT(397) = 126395 1 F
+  INBND_POINT(398) = 126753 1 F
+  INBND_POINT(399) = 127110 1 F
+  INBND_POINT(400) = 127453 1 F
+  INBND_POINT(401) = 127799 1 F
+  INBND_POINT(402) = 128169 1 F
+  INBND_POINT(403) = 128505 1 F
+  INBND_POINT(404) = 128793 1 F
+  INBND_POINT(405) = 129077 1 F
+  INBND_POINT(406) = 129353 1 F
+  INBND_POINT(407) = 129628 1 F
+  INBND_POINT(408) = 129630 1 F
+  INBND_POINT(409) = 129886 1 F
+  INBND_POINT(410) = 130149 1 F
+  INBND_POINT(411) = 130150 1 F
+  INBND_POINT(412) = 130153 1 F
+  INBND_POINT(413) = 130233 1 F
+  INBND_POINT(414) = 130459 1 F
+  INBND_POINT(415) = 130677 1 F
+  INBND_POINT(416) = 130886 1 F
+  INBND_POINT(417) = 131066 1 F
+  INBND_POINT(418) = 131255 1 F
+  INBND_POINT(419) = 131422 1 F
+  INBND_POINT(420) = 131603 1 F
+  INBND_POINT(421) = 131804 1 F
+  INBND_POINT(422) = 132011 1 F
+  INBND_POINT(423) = 132213 1 F
+  INBND_POINT(424) = 132433 1 F
+  INBND_POINT(425) = 132624 1 F
+  INBND_POINT(426) = 132805 1 F
+  INBND_POINT(427) = 132982 1 F
+  INBND_POINT(428) = 133163 1 F
+  INBND_POINT(429) = 133346 1 F
+  INBND_POINT(430) = 133531 1 F
+  INBND_POINT(431) = 133740 1 F
+  INBND_POINT(432) = 133926 1 F
+  INBND_POINT(433) = 134107 1 F
+  INBND_POINT(434) = 134275 1 F
+  INBND_POINT(435) = 134434 1 F
+  INBND_POINT(436) = 134571 1 F
+  INBND_POINT(437) = 134705 1 F
+  INBND_POINT(438) = 134851 1 F
+  INBND_POINT(439) = 135000 1 F
+  INBND_POINT(440) = 135144 1 F
+  INBND_POINT(441) = 135275 1 F
+  INBND_POINT(442) = 135408 1 F
+  INBND_POINT(443) = 135527 1 F
+  INBND_POINT(444) = 135639 1 F
+  INBND_POINT(445) = 135763 1 F
+  INBND_POINT(446) = 135870 1 F
+  INBND_POINT(447) = 135963 1 F
+  INBND_POINT(448) = 136058 1 F
+  INBND_POINT(449) = 136149 1 F
+  INBND_POINT(450) = 136236 1 F
+  INBND_POINT(451) = 136320 1 F
+  INBND_POINT(452) = 136400 1 F
+  INBND_POINT(453) = 136486 1 F
+  INBND_POINT(454) = 136565 1 F
+  INBND_POINT(455) = 136649 1 F
+  INBND_POINT(456) = 136730 1 F
+  INBND_POINT(457) = 136825 1 F
+  INBND_POINT(458) = 136911 1 F
+  INBND_POINT(459) = 136993 1 F
+  INBND_POINT(460) = 137072 1 F
+  INBND_POINT(461) = 137155 1 F
+  INBND_POINT(462) = 137238 1 F
+  INBND_POINT(463) = 137315 1 F
+  INBND_POINT(464) = 137390 1 F
+  INBND_POINT(465) = 137462 1 F
+  INBND_POINT(466) = 137557 1 F
+  INBND_POINT(467) = 137657 1 F
+  INBND_POINT(468) = 137756 1 F
+  INBND_POINT(469) = 137861 1 F
+  INBND_POINT(470) = 137974 1 F
+  INBND_POINT(471) = 138106 1 F
+  INBND_POINT(472) = 138235 1 F
+  INBND_POINT(473) = 138379 1 F
+  INBND_POINT(474) = 138504 1 F
+  INBND_POINT(475) = 138686 1 F
+  INBND_POINT(476) = 138894 1 F
+  INBND_POINT(477) = 139071 1 F
+  INBND_POINT(478) = 139234 1 F
+  INBND_POINT(479) = 139416 1 F
+  INBND_POINT(480) = 139616 1 F
+  INBND_POINT(481) = 139841 1 F
+  INBND_POINT(482) = 140075 1 F
+  INBND_POINT(483) = 140316 1 F
+  INBND_POINT(484) = 140551 1 F
+  INBND_POINT(485) = 140781 1 F
+  INBND_POINT(486) = 140982 1 F
+  INBND_POINT(487) = 141218 1 F
+  INBND_POINT(488) = 141465 1 F
+  INBND_POINT(489) = 141713 1 F
+  INBND_POINT(490) = 141934 1 F
+  INBND_POINT(491) = 142225 1 F
+  INBND_POINT(492) = 142508 1 F
+  INBND_POINT(493) = 142808 1 F
+  INBND_POINT(494) = 143064 1 F
+  INBND_POINT(495) = 143310 1 F
+  INBND_POINT(496) = 143574 1 F
+  INBND_POINT(497) = 143832 1 F
+  INBND_POINT(498) = 144094 1 F
+  INBND_POINT(499) = 144354 1 F
+  INBND_POINT(500) = 144572 1 F
+  INBND_POINT(501) = 144802 1 F
+  INBND_POINT(502) = 145021 1 F
+  INBND_POINT(503) = 145227 1 F
+  INBND_POINT(504) = 145411 1 F
+  INBND_POINT(505) = 145597 1 F
+  INBND_POINT(506) = 145787 1 F
+  INBND_POINT(507) = 145988 1 F
+  INBND_POINT(508) = 146187 1 F
+  INBND_POINT(509) = 146369 1 F
+  INBND_POINT(510) = 146543 1 F
+  INBND_POINT(511) = 146715 1 F
+  INBND_POINT(512) = 146891 1 F
+  INBND_POINT(513) = 147075 1 F
+  INBND_POINT(514) = 147256 1 F
+  INBND_POINT(515) = 147440 1 F
+  INBND_POINT(516) = 147660 1 F
+  INBND_POINT(517) = 147868 1 F
+  INBND_POINT(518) = 148088 1 F
+  INBND_POINT(519) = 148310 1 F
+  INBND_POINT(520) = 148586 1 F
+  INBND_POINT(521) = 148843 1 F
+  INBND_POINT(522) = 149106 1 F
+  INBND_POINT(523) = 149333 1 F
+  INBND_POINT(524) = 149573 1 F
+  INBND_POINT(525) = 149793 1 F
+  INBND_POINT(526) = 150007 1 F
+  INBND_POINT(527) = 150236 1 F
+  INBND_POINT(528) = 150469 1 F
+  INBND_POINT(529) = 150722 1 F
+  INBND_POINT(530) = 150978 1 F
+  INBND_POINT(531) = 151311 1 F
+  INBND_POINT(532) = 151689 1 F
+  INBND_POINT(533) = 152078 1 F
+  INBND_POINT(534) = 152458 1 F
+  INBND_POINT(535) = 152867 1 F
+  INBND_POINT(536) = 153350 1 F
+  INBND_POINT(537) = 153849 1 F
+  INBND_POINT(538) = 154254 1 F
+  INBND_POINT(539) = 154645 1 F
+  INBND_POINT(540) = 154999 1 F
+  INBND_POINT(541) = 155350 1 F
+  INBND_POINT(542) = 155728 1 F
+  INBND_POINT(543) = 156120 1 F
+  INBND_POINT(544) = 156494 1 F
+  INBND_POINT(545) = 156873 1 F
+  INBND_POINT(546) = 157199 1 F
+  INBND_POINT(547) = 157507 1 F
+  INBND_POINT(548) = 157787 1 F
+  INBND_POINT(549) = 158089 1 F
+  INBND_POINT(550) = 158403 1 F
+  INBND_POINT(551) = 158701 1 F
+  INBND_POINT(552) = 159041 1 F
+  INBND_POINT(553) = 159422 1 F
+  INBND_POINT(554) = 159829 1 F
+  INBND_POINT(555) = 160221 1 F
+  INBND_POINT(556) = 160628 1 F
+  INBND_POINT(557) = 160984 1 F
+  INBND_POINT(558) = 161279 1 F
+  INBND_POINT(559) = 161596 1 F
+  INBND_POINT(560) = 161902 1 F
+  INBND_POINT(561) = 162299 1 F
+  INBND_POINT(562) = 162607 1 F
+  INBND_POINT(563) = 162905 1 F
+  INBND_POINT(564) = 163150 1 F
+  INBND_POINT(565) = 163346 1 F
+  INBND_POINT(566) = 163523 1 F
+  INBND_POINT(567) = 163708 1 F
+  INBND_POINT(568) = 163932 1 F
+  INBND_POINT(569) = 164152 1 F
+  INBND_POINT(570) = 164399 1 F
+  INBND_POINT(571) = 164699 1 F
+  INBND_POINT(572) = 164985 1 F
+  INBND_POINT(573) = 165250 1 F
+  INBND_POINT(574) = 165579 1 F
+  INBND_POINT(575) = 165921 1 F
+  INBND_POINT(576) = 166259 1 F
+  INBND_POINT(577) = 166628 1 F
+  INBND_POINT(578) = 166995 1 F
+  INBND_POINT(579) = 167358 1 F
+  INBND_POINT(580) = 167710 1 F
+  INBND_POINT(581) = 168135 1 F
+  INBND_POINT(582) = 168504 1 F
+  INBND_POINT(583) = 168897 1 F
+  INBND_POINT(584) = 169292 1 F
+  INBND_POINT(585) = 169746 1 F
+  INBND_POINT(586) = 170150 1 F
+  INBND_POINT(587) = 170572 1 F
+  INBND_POINT(588) = 171048 1 F
+  INBND_POINT(589) = 171554 1 F
+  INBND_POINT(590) = 171944 1 F
+  INBND_POINT(591) = 172369 1 F
+  INBND_POINT(592) = 172824 1 F
+  INBND_POINT(593) = 173193 1 F
+  INBND_POINT(594) = 173556 1 F
+  INBND_POINT(595) = 173943 1 F
+  INBND_POINT(596) = 174390 1 F
+  INBND_POINT(597) = 174837 1 F
+  INBND_POINT(598) = 175256 1 F
+  INBND_POINT(599) = 175674 1 F
+  INBND_POINT(600) = 176151 1 F
+  INBND_POINT(601) = 176650 1 F
+  INBND_POINT(602) = 177160 1 F
+  INBND_POINT(603) = 177753 1 F
+  INBND_POINT(604) = 178303 1 F
+  INBND_POINT(605) = 178792 1 F
+  INBND_POINT(606) = 179213 1 F
+  INBND_POINT(607) = 179611 1 F
+  INBND_POINT(608) = 180030 1 F
+  INBND_POINT(609) = 180487 1 F
+  INBND_POINT(610) = 180882 1 F
+  INBND_POINT(611) = 181182 1 F
+  INBND_POINT(612) = 181492 1 F
+  INBND_POINT(613) = 181863 1 F
+  INBND_POINT(614) = 182137 1 F
+  INBND_POINT(615) = 182492 1 F
+  INBND_POINT(616) = 182886 1 F
+  INBND_POINT(617) = 183330 1 F
+  INBND_POINT(618) = 183800 1 F
+  INBND_POINT(619) = 184269 1 F
+  INBND_POINT(620) = 184753 1 F
+  INBND_POINT(621) = 185201 1 F
+  INBND_POINT(622) = 185645 1 F
+  INBND_POINT(623) = 186086 1 F
+  INBND_POINT(624) = 186536 1 F
+  INBND_POINT(625) = 187024 1 F
+  INBND_POINT(626) = 187473 1 F
+  INBND_POINT(627) = 187940 1 F
+  INBND_POINT(628) = 188448 1 F
+  INBND_POINT(629) = 188940 1 F
+  INBND_POINT(630) = 189440 1 F
+  INBND_POINT(631) = 190035 1 F
+  INBND_POINT(632) = 190627 1 F
+  INBND_POINT(633) = 191232 1 F
+  INBND_POINT(634) = 191818 1 F
+  INBND_POINT(635) = 192351 1 F
+  INBND_POINT(636) = 192858 1 F
+  INBND_POINT(637) = 193359 1 F
+  INBND_POINT(638) = 193878 1 F
+  INBND_POINT(639) = 194462 1 F
+  INBND_POINT(640) = 195128 1 F
+  INBND_POINT(641) = 195943 1 F
+  INBND_POINT(642) = 196745 1 F
+  INBND_POINT(643) = 197565 1 F
+  INBND_POINT(644) = 198418 1 F
+  INBND_POINT(645) = 199204 1 F
+  INBND_POINT(646) = 199958 1 F
+  INBND_POINT(647) = 200751 1 F
+  INBND_POINT(648) = 201585 1 F
+  INBND_POINT(649) = 202570 1 F
+  INBND_POINT(650) = 203525 1 F
+  INBND_POINT(651) = 204422 1 F
+  INBND_POINT(652) = 205397 1 F
+  INBND_POINT(653) = 206392 1 F
+  INBND_POINT(654) = 207419 1 F
+  INBND_POINT(655) = 208443 1 F
+  INBND_POINT(656) = 209493 1 F
+  INBND_POINT(657) = 210500 1 F
+  INBND_POINT(658) = 211488 1 F
+  INBND_POINT(659) = 212496 1 F
+  INBND_POINT(660) = 213718 1 F
+  INBND_POINT(661) = 214956 1 F
+  INBND_POINT(662) = 216253 1 F
+  INBND_POINT(663) = 217626 1 F
+  INBND_POINT(664) = 219009 1 F
+  INBND_POINT(665) = 220422 1 F
+  INBND_POINT(666) = 221876 1 F
+  INBND_POINT(667) = 223290 1 F
+  INBND_POINT(668) = 224765 1 F
+  INBND_POINT(669) = 226217 1 F
+  INBND_POINT(670) = 227708 1 F
+  INBND_POINT(671) = 229160 1 F
+  INBND_POINT(672) = 230629 1 F
+  INBND_POINT(673) = 232040 1 F
+  INBND_POINT(674) = 233386 1 F
+  INBND_POINT(675) = 234614 1 F
+  INBND_POINT(676) = 235762 1 F
+  INBND_POINT(677) = 236776 1 F
+  INBND_POINT(678) = 237834 1 F
+  INBND_POINT(679) = 238845 1 F
+  INBND_POINT(680) = 239827 1 F
+  INBND_POINT(681) = 240814 1 F
+  INBND_POINT(682) = 241835 1 F
+  INBND_POINT(683) = 242877 1 F
+  INBND_POINT(684) = 243926 1 F
+  INBND_POINT(685) = 244946 1 F
+  INBND_POINT(686) = 245980 1 F
+  INBND_POINT(687) = 246933 1 F
+  INBND_POINT(688) = 247838 1 F
+  INBND_POINT(689) = 248704 1 F
+  INBND_POINT(690) = 249635 1 F
+  INBND_POINT(691) = 250637 1 F
+  INBND_POINT(692) = 251682 1 F
+  INBND_POINT(693) = 252725 1 F
+  INBND_POINT(694) = 253792 1 F
+  INBND_POINT(695) = 254878 1 F
+  INBND_POINT(696) = 255955 1 F
+  INBND_POINT(697) = 257022 1 F
+  INBND_POINT(698) = 258121 1 F
+  INBND_POINT(699) = 259115 1 F
+  INBND_POINT(700) = 260041 1 F
+  INBND_POINT(701) = 260883 1 F
+  INBND_POINT(702) = 261807 1 F
+  INBND_POINT(703) = 262706 1 F
+  INBND_POINT(704) = 263604 1 F
+  INBND_POINT(705) = 264550 1 F
+  INBND_POINT(706) = 265481 1 F
+  INBND_POINT(707) = 266349 1 F
+  INBND_POINT(708) = 267160 1 F
+  INBND_POINT(709) = 267922 1 F
+  INBND_POINT(710) = 268717 1 F
+  INBND_POINT(711) = 269454 1 F
+  INBND_POINT(712) = 270224 1 F
+  INBND_POINT(713) = 270997 1 F
+  INBND_POINT(714) = 271751 1 F
+  INBND_POINT(715) = 272499 1 F
+  INBND_POINT(716) = 273201 1 F
+  INBND_POINT(717) = 273893 1 F
+  INBND_POINT(718) = 274542 1 F
+  INBND_POINT(719) = 275159 1 F
+  INBND_POINT(720) = 275766 1 F
+  INBND_POINT(721) = 276408 1 F
+  INBND_POINT(722) = 277049 1 F
+  INBND_POINT(723) = 277740 1 F
+  INBND_POINT(724) = 278337 1 F
+  INBND_POINT(725) = 278938 1 F
+  INBND_POINT(726) = 279506 1 F
+  INBND_POINT(727) = 280043 1 F
+  INBND_POINT(728) = 280580 1 F
+  INBND_POINT(729) = 281109 1 F
+  INBND_POINT(730) = 281670 1 F
+  INBND_POINT(731) = 282221 1 F
+  INBND_POINT(732) = 282757 1 F
+  INBND_POINT(733) = 283254 1 F
+  INBND_POINT(734) = 283765 1 F
+  INBND_POINT(735) = 284211 1 F
+  INBND_POINT(736) = 284650 1 F
+  INBND_POINT(737) = 285087 1 F
+  INBND_POINT(738) = 285567 1 F
+  INBND_POINT(739) = 286090 1 F
+  INBND_POINT(740) = 286551 1 F
+  INBND_POINT(741) = 287038 1 F
+  INBND_POINT(742) = 287455 1 F
+  INBND_POINT(743) = 287871 1 F
+  INBND_POINT(744) = 288275 1 F
+  INBND_POINT(745) = 288687 1 F
+  INBND_POINT(746) = 289081 1 F
+  INBND_POINT(747) = 289484 1 F
+  INBND_POINT(748) = 289931 1 F
+  INBND_POINT(749) = 290351 1 F
+  INBND_POINT(750) = 290767 1 F
+  INBND_POINT(751) = 291163 1 F
+  INBND_POINT(752) = 291531 1 F
+  INBND_POINT(753) = 291904 1 F
+  INBND_POINT(754) = 292260 1 F
+  INBND_POINT(755) = 292607 1 F
+  INBND_POINT(756) = 292922 1 F
+  INBND_POINT(757) = 293250 1 F
+  INBND_POINT(758) = 293566 1 F
+  INBND_POINT(759) = 293892 1 F
+  INBND_POINT(760) = 294213 1 F
+  INBND_POINT(761) = 294559 1 F
+  INBND_POINT(762) = 294918 1 F
+  INBND_POINT(763) = 295269 1 F
+  INBND_POINT(764) = 295622 1 F
+  INBND_POINT(765) = 296008 1 F
+  INBND_POINT(766) = 296394 1 F
+  INBND_POINT(767) = 296816 1 F
+  INBND_POINT(768) = 297239 1 F
+  INBND_POINT(769) = 297631 1 F
+  INBND_POINT(770) = 298060 1 F
+  INBND_POINT(771) = 298492 1 F
+  INBND_POINT(772) = 299005 1 F
+  INBND_POINT(773) = 299552 1 F
+  INBND_POINT(774) = 300063 1 F
+  INBND_POINT(775) = 300593 1 F
+  INBND_POINT(776) = 301107 1 F
+  INBND_POINT(777) = 301615 1 F
+  INBND_POINT(778) = 302076 1 F
+  INBND_POINT(779) = 302501 1 F
+  INBND_POINT(780) = 302970 1 F
+  INBND_POINT(781) = 303389 1 F
+  INBND_POINT(782) = 303847 1 F
+  INBND_POINT(783) = 304298 1 F
+  INBND_POINT(784) = 304757 1 F
+  INBND_POINT(785) = 305196 1 F
+  INBND_POINT(786) = 305630 1 F
+  INBND_POINT(787) = 306056 1 F
+  INBND_POINT(788) = 306489 1 F
+  INBND_POINT(789) = 306973 1 F
+  INBND_POINT(790) = 307423 1 F
+  INBND_POINT(791) = 307844 1 F
+  INBND_POINT(792) = 308271 1 F
+  INBND_POINT(793) = 308692 1 F
+  INBND_POINT(794) = 309110 1 F
+  INBND_POINT(795) = 309516 1 F
+  INBND_POINT(796) = 309930 1 F
+  INBND_POINT(797) = 310357 1 F
+  INBND_POINT(798) = 310790 1 F
+  INBND_POINT(799) = 311198 1 F
+  INBND_POINT(800) = 311590 1 F
+  INBND_POINT(801) = 311961 1 F
+  INBND_POINT(802) = 312334 1 F
+  INBND_POINT(803) = 312714 1 F
+  INBND_POINT(804) = 313088 1 F
+  INBND_POINT(805) = 313453 1 F
+  INBND_POINT(806) = 313822 1 F
+  INBND_POINT(807) = 314180 1 F
+  INBND_POINT(808) = 314555 1 F
+  INBND_POINT(809) = 314926 1 F
+  INBND_POINT(810) = 315285 1 F
+  INBND_POINT(811) = 315647 1 F
+  INBND_POINT(812) = 316013 1 F
+  INBND_POINT(813) = 316373 1 F
+  INBND_POINT(814) = 316728 1 F
+  INBND_POINT(815) = 317106 1 F
+  INBND_POINT(816) = 317467 1 F
+  INBND_POINT(817) = 317838 1 F
+  INBND_POINT(818) = 318191 1 F
+  INBND_POINT(819) = 318540 1 F
+  INBND_POINT(820) = 318881 1 F
+  INBND_POINT(821) = 319218 1 F
+  INBND_POINT(822) = 319561 1 F
+  INBND_POINT(823) = 319912 1 F
+  INBND_POINT(824) = 320231 1 F
+  INBND_POINT(825) = 320567 1 F
+  INBND_POINT(826) = 320898 1 F
+  INBND_POINT(827) = 321260 1 F
+  INBND_POINT(828) = 321623 1 F
+  INBND_POINT(829) = 321987 1 F
+  INBND_POINT(830) = 322353 1 F
+  INBND_POINT(831) = 322719 1 F
+  INBND_POINT(832) = 323081 1 F
+  INBND_POINT(833) = 323429 1 F
+  INBND_POINT(834) = 323794 1 F
+  INBND_POINT(835) = 324180 1 F
+  INBND_POINT(836) = 324554 1 F
+  INBND_POINT(837) = 324911 1 F
+  INBND_POINT(838) = 325283 1 F
+  INBND_POINT(839) = 325693 1 F
+  INBND_POINT(840) = 326086 1 F
+  INBND_POINT(841) = 326465 1 F
+  INBND_POINT(842) = 326867 1 F
+  INBND_POINT(843) = 327284 1 F
+  INBND_POINT(844) = 327735 1 F
+  INBND_POINT(845) = 328120 1 F
+  INBND_POINT(846) = 328482 1 F
+  INBND_POINT(847) = 328834 1 F
+  INBND_POINT(848) = 329159 1 F
+  INBND_POINT(849) = 329477 1 F
+  INBND_POINT(850) = 329782 1 F
+  INBND_POINT(851) = 330104 1 F
+  INBND_POINT(852) = 330422 1 F
+  INBND_POINT(853) = 330759 1 F
+  INBND_POINT(854) = 331099 1 F
+  INBND_POINT(855) = 331496 1 F
+  INBND_POINT(856) = 331863 1 F
+  INBND_POINT(857) = 332308 1 F
+  INBND_POINT(858) = 332769 1 F
+  INBND_POINT(859) = 333169 1 F
+  INBND_POINT(860) = 333534 1 F
+  INBND_POINT(861) = 333873 1 F
+  INBND_POINT(862) = 334210 1 F
+  INBND_POINT(863) = 334496 1 F
+  INBND_POINT(864) = 334777 1 F
+  INBND_POINT(865) = 335131 1 F
+  INBND_POINT(866) = 335517 1 F
+  INBND_POINT(867) = 335910 1 F
+  INBND_POINT(868) = 336368 1 F
+  INBND_POINT(869) = 336861 1 F
+  INBND_POINT(870) = 337372 1 F
+  INBND_POINT(871) = 337846 1 F
+  INBND_POINT(872) = 338317 1 F
+  INBND_POINT(873) = 338780 1 F
+  INBND_POINT(874) = 339199 1 F
+  INBND_POINT(875) = 339617 1 F
+  INBND_POINT(876) = 340028 1 F
+  INBND_POINT(877) = 340423 1 F
+  INBND_POINT(878) = 340843 1 F
+  INBND_POINT(879) = 341273 1 F
+  INBND_POINT(880) = 341702 1 F
+  INBND_POINT(881) = 342100 1 F
+  INBND_POINT(882) = 342518 1 F
+  INBND_POINT(883) = 342918 1 F
+  INBND_POINT(884) = 343284 1 F
+  INBND_POINT(885) = 343632 1 F
+  INBND_POINT(886) = 343966 1 F
+  INBND_POINT(887) = 344325 1 F
+  INBND_POINT(888) = 344726 1 F
+  INBND_POINT(889) = 345157 1 F
+  INBND_POINT(890) = 345603 1 F
+  INBND_POINT(891) = 346057 1 F
+  INBND_POINT(892) = 346487 1 F
+  INBND_POINT(893) = 346872 1 F
+  INBND_POINT(894) = 347286 1 F
+  INBND_POINT(895) = 347705 1 F
+  INBND_POINT(896) = 348098 1 F
+  INBND_POINT(897) = 348503 1 F
+  INBND_POINT(898) = 348953 1 F
+  INBND_POINT(899) = 349393 1 F
+  INBND_POINT(900) = 349909 1 F
+  INBND_POINT(901) = 350408 1 F
+  INBND_POINT(902) = 350952 1 F
+  INBND_POINT(903) = 351495 1 F
+  INBND_POINT(904) = 352058 1 F
+  INBND_POINT(905) = 352608 1 F
+  INBND_POINT(906) = 353102 1 F
+  INBND_POINT(907) = 353566 1 F
+  INBND_POINT(908) = 354040 1 F
+  INBND_POINT(909) = 354480 1 F
+  INBND_POINT(910) = 354909 1 F
+  INBND_POINT(911) = 355344 1 F
+  INBND_POINT(912) = 355797 1 F
+  INBND_POINT(913) = 356273 1 F
+  INBND_POINT(914) = 356723 1 F
+  INBND_POINT(915) = 357173 1 F
+  INBND_POINT(916) = 357631 1 F
+  INBND_POINT(917) = 358083 1 F
+  INBND_POINT(918) = 358504 1 F
+  INBND_POINT(919) = 358950 1 F
+  INBND_POINT(920) = 359411 1 F
+  INBND_POINT(921) = 359876 1 F
+  INBND_POINT(922) = 360338 1 F
+  INBND_POINT(923) = 360796 1 F
+  INBND_POINT(924) = 361265 1 F
+  INBND_POINT(925) = 361732 1 F
+  INBND_POINT(926) = 362189 1 F
+  INBND_POINT(927) = 362677 1 F
+  INBND_POINT(928) = 363146 1 F
+  INBND_POINT(929) = 363575 1 F
+  INBND_POINT(930) = 364038 1 F
+  INBND_POINT(931) = 364455 1 F
+  INBND_POINT(932) = 364867 1 F
+  INBND_POINT(933) = 365275 1 F
+  INBND_POINT(934) = 365664 1 F
+  INBND_POINT(935) = 366059 1 F
+  INBND_POINT(936) = 366438 1 F
+  INBND_POINT(937) = 366800 1 F
+  INBND_POINT(938) = 367151 1 F
+  INBND_POINT(939) = 367496 1 F
+  INBND_POINT(940) = 367838 1 F
+  INBND_POINT(941) = 368171 1 F
+  INBND_POINT(942) = 368497 1 F
+  INBND_POINT(943) = 368837 1 F
+  INBND_POINT(944) = 369168 1 F
+  INBND_POINT(945) = 369507 1 F
+  INBND_POINT(946) = 369846 1 F
+  INBND_POINT(947) = 370194 1 F
+  INBND_POINT(948) = 370552 1 F
+  INBND_POINT(949) = 370932 1 F
+  INBND_POINT(950) = 371309 1 F
+  INBND_POINT(951) = 371710 1 F
+  INBND_POINT(952) = 372110 1 F
+  INBND_POINT(953) = 372490 1 F
+  INBND_POINT(954) = 372839 1 F
+  INBND_POINT(955) = 373176 1 F
+  INBND_POINT(956) = 373522 1 F
+  INBND_POINT(957) = 373867 1 F
+  INBND_POINT(958) = 374185 1 F
+  INBND_POINT(959) = 374482 1 F
+  INBND_POINT(960) = 374788 1 F
+  INBND_POINT(961) = 375082 1 F
+  INBND_POINT(962) = 375361 1 F
+  INBND_POINT(963) = 375641 1 F
+  INBND_POINT(964) = 375926 1 F
+  INBND_POINT(965) = 376202 1 F
+  INBND_POINT(966) = 376477 1 F
+  INBND_POINT(967) = 376733 1 F
+  INBND_POINT(968) = 376977 1 F
+  INBND_POINT(969) = 377217 1 F
+  INBND_POINT(970) = 377445 1 F
+  INBND_POINT(971) = 377677 1 F
+  INBND_POINT(972) = 377896 1 F
+  INBND_POINT(973) = 378126 1 F
+  INBND_POINT(974) = 378351 1 F
+  INBND_POINT(975) = 378571 1 F
+  INBND_POINT(976) = 378785 1 F
+  INBND_POINT(977) = 379010 1 F
+  INBND_POINT(978) = 379231 1 F
+  INBND_POINT(979) = 379483 1 F
+  INBND_POINT(980) = 379715 1 F
+  INBND_POINT(981) = 379929 1 F
+  INBND_POINT(982) = 380142 1 F
+  INBND_POINT(983) = 380353 1 F
+  INBND_POINT(984) = 380569 1 F
+  INBND_POINT(985) = 380779 1 F
+  INBND_POINT(986) = 380980 1 F
+  INBND_POINT(987) = 381217 1 F
+  INBND_POINT(988) = 381472 1 F
+  INBND_POINT(989) = 381738 1 F
+  INBND_POINT(990) = 381982 1 F
+  INBND_POINT(991) = 382255 1 F
+  INBND_POINT(992) = 382495 1 F
+  INBND_POINT(993) = 382731 1 F
+  INBND_POINT(994) = 382957 1 F
+  INBND_POINT(995) = 383186 1 F
+  INBND_POINT(996) = 383407 1 F
+  INBND_POINT(997) = 383629 1 F
+  INBND_POINT(998) = 383849 1 F
+  INBND_POINT(999) = 384092 1 F
+  INBND_POINT(1000) = 384330 1 F
+  INBND_POINT(1001) = 384563 1 F
+  INBND_POINT(1002) = 384805 1 F
+  INBND_POINT(1003) = 385060 1 F
+  INBND_POINT(1004) = 385314 1 F
+  INBND_POINT(1005) = 385561 1 F
+  INBND_POINT(1006) = 385807 1 F
+  INBND_POINT(1007) = 386040 1 F
+  INBND_POINT(1008) = 386258 1 F
+  INBND_POINT(1009) = 386479 1 F
+  INBND_POINT(1010) = 386710 1 F
+  INBND_POINT(1011) = 386945 1 F
+  INBND_POINT(1012) = 387172 1 F
+  INBND_POINT(1013) = 387370 1 F
+  INBND_POINT(1014) = 387567 1 F
+  INBND_POINT(1015) = 387751 1 F
+  INBND_POINT(1016) = 387921 1 F
+  INBND_POINT(1017) = 388081 1 F
+  INBND_POINT(1018) = 388232 1 F
+  INBND_POINT(1019) = 388393 1 F
+  INBND_POINT(1020) = 388551 1 F
+  INBND_POINT(1021) = 388701 1 F
+  INBND_POINT(1022) = 388839 1 F
+  INBND_POINT(1023) = 388996 1 F
+  INBND_POINT(1024) = 389163 1 F
+  INBND_POINT(1025) = 389333 1 F
+  INBND_POINT(1026) = 389514 1 F
+  INBND_POINT(1027) = 389688 1 F
+  INBND_POINT(1028) = 389907 1 F
+  INBND_POINT(1029) = 390137 1 F
+  INBND_POINT(1030) = 390371 1 F
+  INBND_POINT(1031) = 390613 1 F
+  INBND_POINT(1032) = 390868 1 F
+  INBND_POINT(1033) = 391126 1 F
+  INBND_POINT(1034) = 391363 1 F
+  INBND_POINT(1035) = 391590 1 F
+  INBND_POINT(1036) = 391837 1 F
+  INBND_POINT(1037) = 392087 1 F
+  INBND_POINT(1038) = 392338 1 F
+  INBND_POINT(1039) = 392607 1 F
+  INBND_POINT(1040) = 392889 1 F
+  INBND_POINT(1041) = 393174 1 F
+  INBND_POINT(1042) = 393471 1 F
+  INBND_POINT(1043) = 393767 1 F
+  INBND_POINT(1044) = 394072 1 F
+  INBND_POINT(1045) = 394377 1 F
+  INBND_POINT(1046) = 394677 1 F
+  INBND_POINT(1047) = 394936 1 F
+  INBND_POINT(1048) = 395200 1 F
+  INBND_POINT(1049) = 395462 1 F
+  INBND_POINT(1050) = 395724 1 F
+  INBND_POINT(1051) = 395998 1 F
+  INBND_POINT(1052) = 396268 1 F
+  INBND_POINT(1053) = 396543 1 F
+  INBND_POINT(1054) = 396817 1 F
+  INBND_POINT(1055) = 397128 1 F
+  INBND_POINT(1056) = 397443 1 F
+  INBND_POINT(1057) = 397749 1 F
+  INBND_POINT(1058) = 398044 1 F
+  INBND_POINT(1059) = 398310 1 F
+  INBND_POINT(1060) = 398590 1 F
+  INBND_POINT(1061) = 398876 1 F
+  INBND_POINT(1062) = 399170 1 F
+  INBND_POINT(1063) = 399477 1 F
+  INBND_POINT(1064) = 399783 1 F
+  INBND_POINT(1065) = 400120 1 F
+  INBND_POINT(1066) = 400491 1 F
+  INBND_POINT(1067) = 400855 1 F
+  INBND_POINT(1068) = 401232 1 F
+  INBND_POINT(1069) = 401595 1 F
+  INBND_POINT(1070) = 401992 1 F
+  INBND_POINT(1071) = 402345 1 F
+  INBND_POINT(1072) = 402674 1 F
+  INBND_POINT(1073) = 402992 1 F
+  INBND_POINT(1074) = 403296 1 F
+  INBND_POINT(1075) = 403591 1 F
+  INBND_POINT(1076) = 403879 1 F
+  INBND_POINT(1077) = 404180 1 F
+  INBND_POINT(1078) = 404476 1 F
+  INBND_POINT(1079) = 404753 1 F
+  INBND_POINT(1080) = 405057 1 F
+  INBND_POINT(1081) = 405324 1 F
+  INBND_POINT(1082) = 405577 1 F
+  INBND_POINT(1083) = 405861 1 F
+  INBND_POINT(1084) = 406127 1 F
+  INBND_POINT(1085) = 406415 1 F
+  INBND_POINT(1086) = 406708 1 F
+  INBND_POINT(1087) = 407006 1 F
+  INBND_POINT(1088) = 407324 1 F
+  INBND_POINT(1089) = 407619 1 F
+  INBND_POINT(1090) = 407923 1 F
+  INBND_POINT(1091) = 408199 1 F
+  INBND_POINT(1092) = 408472 1 F
+  INBND_POINT(1093) = 408745 1 F
+  INBND_POINT(1094) = 409032 1 F
+  INBND_POINT(1095) = 409324 1 F
+  INBND_POINT(1096) = 409325 1 F
+  INBND_POINT(1097) = 409327 1 F
+  INBND_POINT(1098) = 409623 1 F
+  INBND_POINT(1099) = 409904 1 F
+  INBND_POINT(1100) = 409906 1 F
+  INBND_POINT(1101) = 410188 1 F
+  INBND_POINT(1102) = 410466 1 F
+  INBND_POINT(1103) = 410467 1 F
+  INBND_POINT(1104) = 410470 1 F
+  INBND_POINT(1105) = 410471 1 F
+  INBND_POINT(1106) = 410735 1 F
+  INBND_POINT(1107) = 410738 1 F
+  INBND_POINT(1108) = 411016 1 F
+  INBND_POINT(1109) = 411019 1 F
+  INBND_POINT(1110) = 411020 1 F
+  INBND_POINT(1111) = 411022 1 F
+  INBND_POINT(1112) = 411282 1 F
+  INBND_POINT(1113) = 411544 1 F
+  INBND_POINT(1114) = 411545 1 F
+  INBND_POINT(1115) = 411547 1 F
+  INBND_POINT(1116) = 411549 1 F
+  INBND_POINT(1117) = 411552 1 F
+  INBND_POINT(1118) = 411553 1 F
+  INBND_POINT(1119) = 411555 1 F
+  INBND_POINT(1120) = 411842 1 F
+  INBND_POINT(1121) = 411845 1 F
+  INBND_POINT(1122) = 412138 1 F
+  INBND_POINT(1123) = 412143 1 F
+  INBND_POINT(1124) = 412144 1 F
+  INBND_POINT(1125) = 412146 1 F
+  INBND_POINT(1126) = 412149 1 F
+  INBND_POINT(1127) = 412151 1 F
+  INBND_POINT(1128) = 412152 1 F
+  INBND_POINT(1129) = 412141 1 F
+  INBND_POINT(1130) = 412136 1 F
+  INBND_POINT(1131) = 412103 1 F
+  INBND_POINT(1132) = 412102 1 F
+  INBND_POINT(1133) = 411849 1 F
+  INBND_POINT(1134) = 411847 1 F
+  INBND_POINT(1135) = 411558 1 F
+  INBND_POINT(1136) = 411284 1 F
+  INBND_POINT(1137) = 411025 1 F
+  INBND_POINT(1138) = 410740 1 F
+  INBND_POINT(1139) = 410474 1 F
+  INBND_POINT(1140) = 410190 1 F
+  INBND_POINT(1141) = 410005 1 F
+  INBND_POINT(1142) = 410004 1 F
+  INBND_POINT(1143) = 409718 1 F
+  INBND_POINT(1144) = 409427 1 F
+  INBND_POINT(1145) = 409425 1 F
+  INBND_POINT(1146) = 409130 1 F
+  INBND_POINT(1147) = 408847 1 F
+  INBND_POINT(1148) = 408577 1 F
+  INBND_POINT(1149) = 408303 1 F
+  INBND_POINT(1150) = 408023 1 F
+  INBND_POINT(1151) = 407720 1 F
+  INBND_POINT(1152) = 407425 1 F
+  INBND_POINT(1153) = 407106 1 F
+  INBND_POINT(1154) = 406807 1 F
+  INBND_POINT(1155) = 406513 1 F
+  INBND_POINT(1156) = 406224 1 F
+  INBND_POINT(1157) = 405950 1 F
+  INBND_POINT(1158) = 405666 1 F
+  INBND_POINT(1159) = 405667 1 F
+  INBND_POINT(1160) = 405669 1 F
+  INBND_POINT(1161) = 405671 1 F
+  INBND_POINT(1162) = 405673 1 F
+  INBND_POINT(1163) = 405675 1 F
+  INBND_POINT(1164) = 405677 1 F
+  INBND_POINT(1165) = 405679 1 F
+  INBND_POINT(1166) = 405681 1 F
+  INBND_POINT(1167) = 405683 1 F
+  INBND_POINT(1168) = 405685 1 F
+  INBND_POINT(1169) = 405687 1 F
+  INBND_POINT(1170) = 405689 1 F
+  INBND_POINT(1171) = 405691 1 F
+  INBND_POINT(1172) = 405693 1 F
+  INBND_POINT(1173) = 405695 1 F
+  INBND_POINT(1174) = 405697 1 F
+  INBND_POINT(1175) = 405698 1 F
+  INBND_POINT(1176) = 405701 1 F
+  INBND_POINT(1177) = 405703 1 F
+  INBND_POINT(1178) = 405410 1 F
+  INBND_POINT(1179) = 405145 1 F
+  INBND_POINT(1180) = 405143 1 F
+  INBND_POINT(1181) = 404848 1 F
+  INBND_POINT(1182) = 404846 1 F
+  INBND_POINT(1183) = 404556 1 F
+  INBND_POINT(1184) = 404557 1 F
+  INBND_POINT(1185) = 404559 1 F
+  INBND_POINT(1186) = 404267 1 F
+  INBND_POINT(1187) = 404268 1 F
+  INBND_POINT(1188) = 404270 1 F
+  INBND_POINT(1189) = 404272 1 F
+  INBND_POINT(1190) = 404274 1 F
+  INBND_POINT(1191) = 404277 1 F
+  INBND_POINT(1192) = 404275 1 F
+  INBND_POINT(1193) = 403977 1 F
+  INBND_POINT(1194) = 403689 1 F
+  INBND_POINT(1195) = 403404 1 F
+  INBND_POINT(1196) = 403402 1 F
+  INBND_POINT(1197) = 403397 1 F
+  INBND_POINT(1198) = 403398 1 F
+  INBND_POINT(1199) = 403399 1 F
+  INBND_POINT(1200) = 634467 1 F
+  INBND_POINT(1201) = 633758 1 F
+  INBND_POINT(1202) = 633039 1 F
+  INBND_POINT(1203) = 632312 1 F
+  INBND_POINT(1204) = 631566 1 F
+  INBND_POINT(1205) = 630805 1 F
+  INBND_POINT(1206) = 630037 1 F
+  INBND_POINT(1207) = 629264 1 F
+  INBND_POINT(1208) = 628486 1 F
+  INBND_POINT(1209) = 627710 1 F
+  INBND_POINT(1210) = 626925 1 F
+  INBND_POINT(1211) = 626121 1 F
+  INBND_POINT(1212) = 625282 1 F
+  INBND_POINT(1213) = 624381 1 F
+  INBND_POINT(1214) = 623434 1 F
+  INBND_POINT(1215) = 622478 1 F
+  INBND_POINT(1216) = 621513 1 F
+  INBND_POINT(1217) = 620568 1 F
+  INBND_POINT(1218) = 619594 1 F
+  INBND_POINT(1219) = 618583 1 F
+  INBND_POINT(1220) = 617543 1 F
+  INBND_POINT(1221) = 616452 1 F
+  INBND_POINT(1222) = 615318 1 F
+  INBND_POINT(1223) = 614139 1 F
+  INBND_POINT(1224) = 614136 1 F
+  INBND_POINT(1225) = 612924 1 F
+  INBND_POINT(1226) = 611697 1 F
+  INBND_POINT(1227) = 610437 1 F
+  INBND_POINT(1228) = 609143 1 F
+  INBND_POINT(1229) = 607801 1 F
+  INBND_POINT(1230) = 606413 1 F
+  INBND_POINT(1231) = 605017 1 F
+  INBND_POINT(1232) = 605015 1 F
+  INBND_POINT(1233) = 603532 1 F
+  INBND_POINT(1234) = 603531 1 F
+  INBND_POINT(1235) = 601969 1 F
+  INBND_POINT(1236) = 601968 1 F
+  INBND_POINT(1237) = 601960 1 F
+  INBND_POINT(1238) = 601959 1 F
+  INBND_POINT(1239) = 600376 1 F
+  INBND_POINT(1240) = 598771 1 F
+  INBND_POINT(1241) = 597177 1 F
+  INBND_POINT(1242) = 595612 1 F
+  INBND_POINT(1243) = 594054 1 F
+  INBND_POINT(1244) = 592459 1 F
+  INBND_POINT(1245) = 590836 1 F
+  INBND_POINT(1246) = 589207 1 F
+  INBND_POINT(1247) = 587552 1 F
+  INBND_POINT(1248) = 585877 1 F
+  INBND_POINT(1249) = 584194 1 F
+  INBND_POINT(1250) = 582506 1 F
+  INBND_POINT(1251) = 580800 1 F
+  INBND_POINT(1252) = 579085 1 F
+  INBND_POINT(1253) = 577378 1 F
+  INBND_POINT(1254) = 575662 1 F
+  INBND_POINT(1255) = 573982 1 F
+  INBND_POINT(1256) = 572342 1 F
+  INBND_POINT(1257) = 570737 1 F
+  INBND_POINT(1258) = 569182 1 F
+  INBND_POINT(1259) = 567707 1 F
+  INBND_POINT(1260) = 566306 1 F
+  INBND_POINT(1261) = 564920 1 F
+  INBND_POINT(1262) = 563569 1 F
+  INBND_POINT(1263) = 562232 1 F
+  INBND_POINT(1264) = 560890 1 F
+  INBND_POINT(1265) = 559510 1 F
+  INBND_POINT(1266) = 558138 1 F
+  INBND_POINT(1267) = 556751 1 F
+  INBND_POINT(1268) = 555341 1 F
+  INBND_POINT(1269) = 553863 1 F
+  INBND_POINT(1270) = 552362 1 F
+  INBND_POINT(1271) = 550807 1 F
+  INBND_POINT(1272) = 549234 1 F
+  INBND_POINT(1273) = 549937 1 F
+  INBND_POINT(1274) = 551511 1 F
+  INBND_POINT(1275) = 553035 1 F
+  INBND_POINT(1276) = 554522 1 F
+  INBND_POINT(1277) = 555960 1 F
+  INBND_POINT(1278) = 557356 1 F
+  INBND_POINT(1279) = 558708 1 F
+  INBND_POINT(1280) = 560038 1 F
+  INBND_POINT(1281) = 561391 1 F
+  INBND_POINT(1282) = 562717 1 F
+  INBND_POINT(1283) = 564056 1 F
+  INBND_POINT(1284) = 565419 1 F
+  INBND_POINT(1285) = 566790 1 F
+  INBND_POINT(1286) = 568202 1 F
+  INBND_POINT(1287) = 569692 1 F
+  INBND_POINT(1288) = 571261 1 F
+  INBND_POINT(1289) = 572879 1 F
+  INBND_POINT(1290) = 574535 1 F
+  INBND_POINT(1291) = 576236 1 F
+  INBND_POINT(1292) = 577936 1 F
+  INBND_POINT(1293) = 579643 1 F
+  INBND_POINT(1294) = 581353 1 F
+  INBND_POINT(1295) = 583021 1 F
+  INBND_POINT(1296) = 584702 1 F
+  INBND_POINT(1297) = 586384 1 F
+  INBND_POINT(1298) = 588060 1 F
+  INBND_POINT(1299) = 589702 1 F
+  INBND_POINT(1300) = 591311 1 F
+  INBND_POINT(1301) = 592926 1 F
+  INBND_POINT(1302) = 594502 1 F
+  INBND_POINT(1303) = 594503 1 F
+  INBND_POINT(1304) = 596053 1 F
+  INBND_POINT(1305) = 597656 1 F
+  INBND_POINT(1306) = 599262 1 F
+  INBND_POINT(1307) = 599263 1 F
+  INBND_POINT(1308) = 599264 1 F
+  INBND_POINT(1309) = 599532 1 F
+  INBND_POINT(1310) = 601148 1 F
+  INBND_POINT(1311) = 602728 1 F
+  INBND_POINT(1312) = 602732 1 F
+  INBND_POINT(1313) = 604252 1 F
+  INBND_POINT(1314) = 605698 1 F
+  INBND_POINT(1315) = 605702 1 F
+  INBND_POINT(1316) = 607099 1 F
+  INBND_POINT(1317) = 607111 1 F
+  INBND_POINT(1318) = 607112 1 F
+  INBND_POINT(1319) = 607113 1 F
+  INBND_POINT(1320) = 607114 1 F
+  INBND_POINT(1321) = 605703 1 F
+  INBND_POINT(1322) = 604274 1 F
+  INBND_POINT(1323) = 604275 1 F
+  INBND_POINT(1324) = 604276 1 F
+  INBND_POINT(1325) = 604273 1 F
+  INBND_POINT(1326) = 604267 1 F
+  INBND_POINT(1327) = 604266 1 F
+  INBND_POINT(1328) = 602751 1 F
+  INBND_POINT(1329) = 601168 1 F
+  INBND_POINT(1330) = 599558 1 F
+  INBND_POINT(1331) = 597931 1 F
+  INBND_POINT(1332) = 596320 1 F
+  INBND_POINT(1333) = 597168 1 F
+  INBND_POINT(1334) = 598762 1 F
+  INBND_POINT(1335) = 600367 1 F
+  INBND_POINT(1336) = 601952 1 F
+  INBND_POINT(1337) = 603510 1 F
+  INBND_POINT(1338) = 604993 1 F
+  INBND_POINT(1339) = 606390 1 F
+  INBND_POINT(1340) = 607779 1 F
+  INBND_POINT(1341) = 609124 1 F
+  INBND_POINT(1342) = 610418 1 F
+  INBND_POINT(1343) = 611679 1 F
+  INBND_POINT(1344) = 612905 1 F
+  INBND_POINT(1345) = 614117 1 F
+  INBND_POINT(1346) = 615297 1 F
+  INBND_POINT(1347) = 616430 1 F
+  INBND_POINT(1348) = 617523 1 F
+  INBND_POINT(1349) = 618564 1 F
+  INBND_POINT(1350) = 619575 1 F
+  INBND_POINT(1351) = 620550 1 F
+  INBND_POINT(1352) = 621496 1 F
+  INBND_POINT(1353) = 622462 1 F
+  INBND_POINT(1354) = 623419 1 F
+  INBND_POINT(1355) = 624367 1 F
+  INBND_POINT(1356) = 625269 1 F
+  INBND_POINT(1357) = 626109 1 F
+  INBND_POINT(1358) = 626913 1 F
+  INBND_POINT(1359) = 627701 1 F
+  INBND_POINT(1360) = 628468 1 F
+  INBND_POINT(1361) = 629231 1 F
+  INBND_POINT(1362) = 629996 1 F
+  INBND_POINT(1363) = 630757 1 F
+  INBND_POINT(1364) = 631513 1 F
+  INBND_POINT(1365) = 632255 1 F
+  INBND_POINT(1366) = 632979 1 F
+  INBND_POINT(1367) = 633696 1 F
+  INBND_POINT(1368) = 634400 1 F
+  INBND_POINT(1369) = 634403 1 F
+  INBND_POINT(1370) = 635127 1 F
+  INBND_POINT(1371) = 635829 1 F
+  INBND_POINT(1372) = 636534 1 F
+  INBND_POINT(1373) = 636535 1 F
+  INBND_POINT(1374) = 636536 1 F
+  INBND_POINT(1375) = 636537 1 F
+  INBND_POINT(1376) = 636538 1 F
+  INBND_POINT(1377) = 636539 1 F
+  INBND_POINT(1378) = 636540 1 F
+  INBND_POINT(1379) = 636541 1 F
+  INBND_POINT(1380) = 636542 1 F
+  INBND_POINT(1381) = 636543 1 F
+  INBND_POINT(1382) = 637252 1 F
+  INBND_POINT(1383) = 637923 1 F
+  INBND_POINT(1384) = 638571 1 F
+  INBND_POINT(1385) = 639209 1 F
+  INBND_POINT(1386) = 639824 1 F
+  INBND_POINT(1387) = 640404 1 F
+  INBND_POINT(1388) = 640954 1 F
+  INBND_POINT(1389) = 641483 1 F
+  INBND_POINT(1390) = 641990 1 F
+  INBND_POINT(1391) = 642477 1 F
+  INBND_POINT(1392) = 642940 1 F
+  INBND_POINT(1393) = 643382 1 F
+  INBND_POINT(1394) = 643806 1 F
+  INBND_POINT(1395) = 644229 1 F
+  INBND_POINT(1396) = 644650 1 F
+  INBND_POINT(1397) = 645082 1 F
+  INBND_POINT(1398) = 645527 1 F
+  INBND_POINT(1399) = 645970 1 F
+  INBND_POINT(1400) = 646407 1 F
+  INBND_POINT(1401) = 646839 1 F
+  INBND_POINT(1402) = 647258 1 F
+  INBND_POINT(1403) = 647679 1 F
+  INBND_POINT(1404) = 648081 1 F
+  INBND_POINT(1405) = 648467 1 F
+  INBND_POINT(1406) = 648837 1 F
+  INBND_POINT(1407) = 649194 1 F
+  INBND_POINT(1408) = 649543 1 F
+  INBND_POINT(1409) = 649880 1 F
+  INBND_POINT(1410) = 650213 1 F
+  INBND_POINT(1411) = 650547 1 F
+  INBND_POINT(1412) = 650885 1 F
+  INBND_POINT(1413) = 651232 1 F
+  INBND_POINT(1414) = 651591 1 F
+  INBND_POINT(1415) = 651967 1 F
+  INBND_POINT(1416) = 652373 1 F
+  INBND_POINT(1417) = 652796 1 F
+  INBND_POINT(1418) = 653216 1 F
+  INBND_POINT(1419) = 653664 1 F
+  INBND_POINT(1420) = 654119 1 F
+  INBND_POINT(1421) = 654590 1 F
+  INBND_POINT(1422) = 655088 1 F
+  INBND_POINT(1423) = 655594 1 F
+  INBND_POINT(1424) = 656121 1 F
+  INBND_POINT(1425) = 656641 1 F
+  INBND_POINT(1426) = 656642 1 F
+  INBND_POINT(1427) = 656640 1 F
+  INBND_POINT(1428) = 656169 1 F
+  INBND_POINT(1429) = 655649 1 F
+  INBND_POINT(1430) = 655168 1 F
+  INBND_POINT(1431) = 654653 1 F
+  INBND_POINT(1432) = 654171 1 F
+  INBND_POINT(1433) = 654091 1 F
+  INBND_POINT(1434) = 654563 1 F
+  INBND_POINT(1435) = 654564 1 F
+  INBND_POINT(1436) = 654568 1 F
+  INBND_POINT(1437) = 654569 1 F
+  INBND_POINT(1438) = 654567 1 F
+  INBND_POINT(1439) = 654094 1 F
+  INBND_POINT(1440) = 653643 1 F
+  INBND_POINT(1441) = 653181 1 F
+  INBND_POINT(1442) = 653177 1 F
+  INBND_POINT(1443) = 652755 1 F
+  INBND_POINT(1444) = 652332 1 F
+  INBND_POINT(1445) = 651934 1 F
+  INBND_POINT(1446) = 651558 1 F
+  INBND_POINT(1447) = 651194 1 F
+  INBND_POINT(1448) = 650846 1 F
+  INBND_POINT(1449) = 650506 1 F
+  INBND_POINT(1450) = 650168 1 F
+  INBND_POINT(1451) = 649829 1 F
+  INBND_POINT(1452) = 649486 1 F
+  INBND_POINT(1453) = 649129 1 F
+  INBND_POINT(1454) = 648763 1 F
+  INBND_POINT(1455) = 648381 1 F
+  INBND_POINT(1456) = 647980 1 F
+  INBND_POINT(1457) = 647557 1 F
+  INBND_POINT(1458) = 647130 1 F
+  INBND_POINT(1459) = 646698 1 F
+  INBND_POINT(1460) = 646256 1 F
+  INBND_POINT(1461) = 645808 1 F
+  INBND_POINT(1462) = 645352 1 F
+  INBND_POINT(1463) = 644895 1 F
+  INBND_POINT(1464) = 644446 1 F
+  INBND_POINT(1465) = 644005 1 F
+  INBND_POINT(1466) = 643565 1 F
+  INBND_POINT(1467) = 643112 1 F
+  INBND_POINT(1468) = 642639 1 F
+  INBND_POINT(1469) = 642144 1 F
+  INBND_POINT(1470) = 641624 1 F
+  INBND_POINT(1471) = 641082 1 F
+  INBND_POINT(1472) = 640518 1 F
+  INBND_POINT(1473) = 639927 1 F
+  INBND_POINT(1474) = 639309 1 F
+  INBND_POINT(1475) = 638661 1 F
+  INBND_POINT(1476) = 637991 1 F
+  INBND_POINT(1477) = 637326 1 F
+  INBND_POINT(1478) = 636617 1 F
+  INBND_POINT(1479) = 635908 1 F
+  INBND_POINT(1480) = 635208 1 F
+  INBND_POINT(1481) = 634484 1 F
+  INBND_POINT(1482) = 634483 1 F
+  INBND_POINT(1483) = 634482 1 F
+  INBND_POINT(1484) = 634481 1 F
+  INBND_POINT(1485) = 634466 1 F
+  INBND_POINT(1486) = 634468 1 F
+  INBND_POINT(1487) = 184309 1 F
+  INBND_POINT(1488) = 183835 1 F
+  INBND_POINT(1489) = 183356 1 F
+  INBND_POINT(1490) = 182902 1 F
+  INBND_POINT(1491) = 182495 1 F
+  INBND_POINT(1492) = 182494 1 F
+  INBND_POINT(1493) = 199205 1 F
+  INBND_POINT(1494) = 199960 1 F
+  INBND_POINT(1495) = 201589 1 F
+  INBND_POINT(1496) = 201590 1 F
+/
+
+! -------------------------------------------------------------------- !
+
+! -------------------------------------------------------------------- !
+! WAVEWATCH III - end of namelist                                      !
+! -------------------------------------------------------------------- !

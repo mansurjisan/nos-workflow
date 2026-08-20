@@ -23,6 +23,7 @@ from typing import Optional
 
 import pytest
 
+from nos_workflow.runners.schism_ufs import _dateutils
 from nos_workflow.runners.schism_ufs.context import SchismRunContext
 from nos_workflow.runners.schism_ufs.forcing import (
     _NWM_PAYLOAD_NAMES,
@@ -35,6 +36,7 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     _SCHISM_PROPERTY_FILES,
     _UFS_AUX_FILES,
     _UFS_CONFIG_FILES,
+    _wave_restart_looks_sane,
     collect_staged_inputs,
     copy_hgrid_to_outputs,
     fallback_nwm_files_from_fixofs,
@@ -48,7 +50,18 @@ from nos_workflow.runners.schism_ufs.stage_files import (
     stage_schism_bare_names,
     stage_sflux_inputs_txt,
     stage_ufs_configs,
+    stage_wave_configs,
+    stage_wave_restarts,
 )
+
+# netCDF4 may be absent in stripped CI; the nowcast warm-start sanity-guard
+# tests (which write real spectral-shaped restarts) skip then.
+try:
+    from netCDF4 import Dataset
+    import numpy as np
+    _NETCDF4_AVAILABLE = True
+except ImportError:
+    _NETCDF4_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -933,6 +946,671 @@ def test_stage_sflux_inputs_txt_absent_returns_zero(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# stage_wave_configs (wave-coupled systems only; gated on WAV_TASKS)
+# ---------------------------------------------------------------------------
+
+
+def test_stage_wave_configs_noop_without_wav_tasks(tmp_path, monkeypatch):
+    """WAV_TASKS unset (every non-wave system) -> rc 0, nothing staged.
+
+    This is the primary safety property: a non-wave system's staging must
+    be completely unaffected by the wave staging code path existing.
+    """
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.mod_def.ww3").write_bytes(b"MODDEF\n")
+    (ctx.fixofs / "ww3_shel.nml").write_text("&domain_nml\n/\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 0
+    assert not (ctx.data / "mod_def.ww3").exists()
+    assert not (ctx.data / "ww3_shel.nml").exists()
+
+
+def test_stage_wave_configs_stages_from_fixofs(tmp_path, monkeypatch):
+    """WAV_TASKS>0: mod_def.ww3, the WAV mesh, the ocn->wav and wav->ocn
+    regrid weights, ww3_shel.nml, and the PDLIB namelist all stage from
+    $FIXofs to their run-dir names."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
+    monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.mod_def.ww3").write_bytes(b"MODDEF\n")
+    (ctx.fixofs / "secofs_ufs.mesh_wav.nc").write_bytes(b"MESH\n")
+    (ctx.fixofs / "ww3_shel.nml").write_text("shel template\n")
+    (ctx.fixofs / "secofs_ufs_ww3.namelists_pdlib.nml").write_text("&UNST /\n")
+    (ctx.fixofs / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"WEIGHTS\n")
+    (ctx.fixofs / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"WEIGHTS2\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 6
+    assert (ctx.data / "mod_def.ww3").read_bytes() == b"MODDEF\n"
+    assert (ctx.data / "secofs_ufs.mesh_wav.nc").read_bytes() == b"MESH\n"
+    assert (ctx.data / "ww3_shel.nml").read_text() == "shel template\n"
+    assert (ctx.data / "secofs_ufs_ww3.namelists_pdlib.nml").read_text() == "&UNST /\n"
+    assert (ctx.data / "secofs_ufs.ocn2wav_weights.nc").read_bytes() == b"WEIGHTS\n"
+    assert (ctx.data / "secofs_ufs.wav2ocn_weights.nc").read_bytes() == b"WEIGHTS2\n"
+
+
+def test_stage_wave_configs_ocn2wav_weights_falls_back_to_prefixed_name(
+    tmp_path, monkeypatch,
+):
+    """WAV_OCN2WAV_WEIGHTS unset -> defaults to <prefix>.ocn2wav_weights.nc,
+    matching the WAV_MESH fallback convention."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.ocn2wav_weights.nc").write_bytes(b"WEIGHTS\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 1
+    assert (
+        ctx.data / f"{ctx.prefixnos}.ocn2wav_weights.nc"
+    ).read_bytes() == b"WEIGHTS\n"
+
+
+def test_stage_wave_configs_wav2ocn_weights_falls_back_to_prefixed_name(
+    tmp_path, monkeypatch,
+):
+    """WAV_WAV2OCN_WEIGHTS unset -> defaults to <prefix>.wav2ocn_weights.nc,
+    matching the WAV_OCN2WAV_WEIGHTS fallback convention."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.wav2ocn_weights.nc").write_bytes(b"WEIGHTS\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 1
+    assert (
+        ctx.data / f"{ctx.prefixnos}.wav2ocn_weights.nc"
+    ).read_bytes() == b"WEIGHTS\n"
+
+
+def test_stage_wave_configs_ww3_shel_falls_back_to_comout(tmp_path, monkeypatch):
+    """ww3_shel.nml absent from $FIXofs falls back to the per-cycle
+    $COMOUT/$RUN.$cycle.ww3_shel.nml basename."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_ctx(tmp_path)
+    prefix = f"{ctx.run}.{ctx.cycle}"
+    (ctx.comout / f"{prefix}.ww3_shel.nml").write_text("comout shel\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert n == 1
+    assert (ctx.data / "ww3_shel.nml").read_text() == "comout shel\n"
+
+
+def test_stage_wave_configs_pdlib_nml_skipped_when_unset(tmp_path, monkeypatch):
+    """WAV_PDLIB_NML unset -> only ww3_shel.nml (and whatever else is
+    present) is considered; no PDLIB namelist staged, no error."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_PDLIB_NML", raising=False)
+    monkeypatch.delenv("WAV_MESH", raising=False)
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / "ww3_shel.nml").write_text("shel\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    # ww3_shel.nml + the WAV_MESH/WAV_OCN2WAV_WEIGHTS/WAV_WAV2OCN_WEIGHTS
+    # fallback names (prefix.mesh_wav.nc / prefix.ocn2wav_weights.nc /
+    # prefix.wav2ocn_weights.nc, all absent here) -- only ww3_shel.nml
+    # actually lands.
+    assert n == 1
+    assert (ctx.data / "ww3_shel.nml").is_file()
+    assert not any(ctx.data.glob("*namelists_pdlib*"))
+
+
+def test_stage_wave_configs_stages_nest_ww3_from_comout_when_present(
+    tmp_path, monkeypatch,
+):
+    """The per-cycle boundary file nest.ww3 stages from $COMOUT only
+    (no $FIXofs fallback -- it's a per-cycle artifact, not a static)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_ctx(tmp_path)
+    prefix = f"{ctx.run}.{ctx.cycle}"
+    (ctx.comout / f"{prefix}.nest.ww3").write_bytes(b"NEST\n")
+
+    n = stage_wave_configs(ctx, "nowcast")
+
+    assert (ctx.data / "nest.ww3").read_bytes() == b"NEST\n"
+    assert n >= 1
+
+
+def test_stage_wave_configs_nest_ww3_absent_is_silent(tmp_path, monkeypatch):
+    """No nest.ww3 in $COMOUT -> no error, no file created (SECOFS may not
+    need an external nesting boundary at all)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_ctx(tmp_path)
+
+    stage_wave_configs(ctx, "nowcast")
+
+    assert not (ctx.data / "nest.ww3").exists()
+
+
+# ---------------------------------------------------------------------------
+# stage_wave_restarts (nowcast -> forecast wave restart handoff)
+# ---------------------------------------------------------------------------
+
+
+def _make_wave_restart_ctx(
+    tmp_path: Path, *, phase: str = "forecast",
+) -> SchismRunContext:
+    comout = tmp_path / "comout"
+    data = tmp_path / "data"
+    comout.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        data=data,
+        phase=phase,
+        run="nos.secofs_ufs",
+        cycle="t00z",
+        time_nowcastend="2026051206",
+        wav_rst_out_nowcast="ufs.cpld.ww3.r.2026-05-12-21600.nc",
+        med_rst_out_nowcast="ufs.cpld.cpl.r.2026-05-12-21600.nc",
+    )
+
+
+def _seed_wave_restart_archive(ctx: SchismRunContext) -> Path:
+    """Populate the archived $COMOUT wave_restart dir with all three
+    artifacts, matching what execute._archive_wave_restarts writes."""
+    archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (archive_dir / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    pointer_name = f"rpointer.cpl.{_dateutils.cmeps_restart_stamp(ctx.time_nowcastend)}"
+    (archive_dir / pointer_name).write_text(f"RESTART/{ctx.med_rst_out_nowcast}\n")
+    return archive_dir
+
+
+def test_stage_wave_restarts_noop_without_wav_tasks(tmp_path, monkeypatch):
+    """WAV_TASKS unset -> False, nothing staged (primary safety property)."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_wave_restart_ctx(tmp_path)
+    _seed_wave_restart_archive(ctx)
+
+    assert stage_wave_restarts(ctx, "forecast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+def test_stage_wave_restarts_noop_on_nowcast_phase(tmp_path, monkeypatch):
+    """Nowcast warm start is opt-in (forcing.waves.nowcast_warm_start) and
+    off by default -- with the switch unset, nowcast behaves exactly as
+    before: never stages a wave restart in, even with a same-cycle
+    archive present (which the nowcast branch wouldn't consult anyway --
+    it searches PRIOR cycles, not this one)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    _seed_wave_restart_archive(ctx)
+
+    assert stage_wave_restarts(ctx, "nowcast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+def test_stage_wave_restarts_restores_all_three_artifacts(tmp_path, monkeypatch):
+    """All three artifacts land at their exact run-dir paths, with the
+    pointer file's content preserved byte-for-byte."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    _seed_wave_restart_archive(ctx)
+
+    result = stage_wave_restarts(ctx, "forecast")
+
+    assert result is True
+    assert (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).read_bytes() == b"mediator"
+    assert (ctx.data / ctx.wav_rst_out_nowcast).read_bytes() == b"ww3"
+    pointer = ctx.data / "rpointer.cpl.2026-05-12-21600"
+    assert pointer.read_text() == f"RESTART/{ctx.med_rst_out_nowcast}\n"
+
+
+def test_stage_wave_restarts_cold_start_when_nothing_archived(
+    tmp_path, monkeypatch, caplog,
+):
+    """Nothing archived at all (first-ever wave-coupled cycle) -> False,
+    loud WARNING, no exception -- the caller (patch_ufs_configure) falls
+    back to start_type=startup."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "forecast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("cold start" in r.getMessage() for r in caplog.records)
+
+
+def test_stage_wave_restarts_partial_archive_raises(tmp_path, monkeypatch):
+    """Only SOME of the three artifacts archived (e.g. a failed/partial
+    nowcast-leg archive) is NOT a legitimate cold start -- must fail
+    loudly rather than silently guessing and letting the model abort at
+    full allocation."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    archive_dir = ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    # Only the mediator restart present; pointer + WW3 restart missing.
+    (archive_dir / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+
+    with pytest.raises(FileNotFoundError, match="partial archive"):
+        stage_wave_restarts(ctx, "forecast")
+
+
+# ---------------------------------------------------------------------------
+# stage_wave_restarts -- nowcast cross-cycle warm start (opt-in)
+# ---------------------------------------------------------------------------
+
+
+def _make_nowcast_warm_start_ctx(
+    tmp_path: Path,
+    *,
+    time_hotstart: str = "2026051200",
+    len_nowcast: str = "6",
+    run: str = "nos.secofs_ufs",
+) -> SchismRunContext:
+    """Build a SchismRunContext for the nowcast warm-start search.
+
+    comoutroot is set explicitly (rather than left None, which falls back
+    to comout.parent -- see _wave_restart_search_dir) so candidate archive
+    paths are unambiguous in assertions."""
+    comout = tmp_path / "comout"
+    comoutroot = tmp_path / "comoutroot"
+    data = tmp_path / "data"
+    for p in (comout, comoutroot, data):
+        p.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        comoutroot=comoutroot,
+        data=data,
+        phase="nowcast",
+        run=run,
+        cycle="t06z",
+        time_hotstart=time_hotstart,
+        len_nowcast=len_nowcast,
+    )
+
+
+# nf90_fill_float -- netCDF-Fortran's default float fill, and what a real
+# WW3 use_restartnc restart's va* variables carry as _FillValue.
+_NF90_FILL_FLOAT = 9.9692099683868690e+36
+
+# Matches _wave_restart_looks_sane's ceiling for WAV_WARM_START_MAX_HS=25.0
+# (the default): warm_start_max_hs**2 * 100.0.
+_GUARD_CEILING_AT_DEFAULT_MAX_HS = 25.0 ** 2 * 100.0
+
+
+def _write_ww3_restart_nc(path: Path, *, mode: str = "clean") -> None:
+    """Write a netCDF file shaped like a REAL WW3 use_restartnc restart:
+    a scalar ``time`` (f8), scalar ``nth``/``nk`` (spectral grid shape,
+    int), ``mapsta`` (int, node-length), and one va0001..va0006 (f4,
+    node-length) variable PER spectral component -- never a single
+    Hs-like field, which is what _wave_restart_looks_sane's real bound
+    (see its docstring) is written against.
+
+    ``mode`` selects what the guard should make of the va* content:
+      - "clean": every unmasked value is small and physical -- the
+        accept case.
+      - "blowup": one unmasked bin (va0003, node 1) is a finite-but-
+        enormous 1e18 -- must trip the spectral-density ceiling.
+      - "negative_fill": _FillValue is set to a NEGATIVE value (-9999.0,
+        unlike a real restart's positive nf90_fill_float) and used at
+        the same land node every real restart marks via mapsta=0 --
+        proves the guard masks by each variable's OWN _FillValue
+        attribute rather than assuming a fill is positive, and that a
+        masked fill occurrence is never itself a rejection reason.
+      - "vlen": va0001 is written as a genuine netCDF4 VLEN (ragged)
+        variable instead of a fixed-width float array -- reading it
+        raises TypeError partway through the guard's sweep, exercising
+        the never-raises contract against a pathological variable.
+      - "nan": one unmasked bin (va0003, node 1) is NaN while the
+        _FillValue is the normal positive nf90_fill_float -- corruption,
+        NOT fill, and must be rejected (a guard that masks non-finite
+        values before checking them would silently accept this; WW3
+        reads the original file, not the guard's masked view).
+    """
+    ds = Dataset(str(path), "w")
+    try:
+        ds.createDimension("node", 4)
+        ds.createVariable("time", "f8")[...] = 0.0
+        ds.createVariable("nth", "i4")[...] = 24
+        ds.createVariable("nk", "i4")[...] = 6
+        # Node 3 is land/inactive (mapsta=0); every va* variable's own
+        # _FillValue marks that same node, same as a real restart.
+        ds.createVariable("mapsta", "i4", ("node",))[:] = [1, 1, 1, 0]
+
+        if mode == "vlen":
+            vlen_t = ds.createVLType(np.float64, "wave_spec_vlen")
+            var = ds.createVariable("va0001", vlen_t, ("node",))
+            var[:] = np.array(
+                [np.array([0.1, 0.2]), np.array([0.05]),
+                 np.array([0.2, 0.1]), np.array([0.0])],
+                dtype=object,
+            )
+            return
+
+        fill = -9999.0 if mode == "negative_fill" else _NF90_FILL_FLOAT
+        for i in range(1, 7):
+            var = ds.createVariable(
+                f"va{i:04d}", "f4", ("node",), fill_value=fill,
+            )
+            values = np.array(
+                [0.02 * i, 0.05 * i, 0.01 * i, fill], dtype="f4",
+            )
+            if mode == "blowup" and i == 3:
+                values[1] = 1.0e18
+            if mode == "nan" and i == 3:
+                values[1] = np.nan
+            var[:] = values
+    finally:
+        ds.close()
+
+
+def _seed_nowcast_candidate(
+    ctx: SchismRunContext,
+    candidate_time: str,
+    *,
+    med: bool = True,
+    wav: bool = True,
+    pointer: bool = True,
+    med_bytes: bytes = b"mediator",
+    mode: str = "clean",
+) -> Path:
+    """Populate a candidate PRIOR cycle's archived wave_restart dir at the
+    $COMOUTroot/$RUN.$PDY/$RUN.tHHz.wave_restart path
+    stage_files._wave_restart_search_dir computes, the same way
+    execute._archive_wave_restarts would have for that candidate cycle's
+    own nowcast leg. ``mode`` is forwarded to _write_ww3_restart_nc --
+    see its docstring for what each mode does to the WW3 restart's
+    content."""
+    stamp = _dateutils.cmeps_restart_stamp(candidate_time)
+    yyyymmdd = candidate_time[:8]
+    hh = candidate_time[8:10]
+    archive_dir = (
+        ctx.comoutroot / f"{ctx.run}.{yyyymmdd}"
+        / f"{ctx.run}.t{hh}z.wave_restart"
+    )
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    med_name = f"ufs.cpld.cpl.r.{stamp}.nc"
+    wav_name = f"ufs.cpld.ww3.r.{stamp}.nc"
+    pointer_name = f"rpointer.cpl.{stamp}"
+    if med:
+        (archive_dir / med_name).write_bytes(med_bytes)
+    if wav:
+        _write_ww3_restart_nc(archive_dir / wav_name, mode=mode)
+    if pointer:
+        (archive_dir / pointer_name).write_text(f"RESTART/{med_name}\n")
+    return archive_dir
+
+
+def test_stage_wave_restarts_nowcast_warm_start_off_by_default(
+    tmp_path, monkeypatch,
+):
+    """(a) forcing.waves.nowcast_warm_start off (no env var set) -> False,
+    even with a complete, matching predecessor archive present -- the
+    switch is checked before the search ever runs."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    # Raw bytes, not a real netCDF restart -- fine, the guard is never
+    # reached because the switch is off.
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    archive_dir = (
+        ctx.comoutroot / f"{ctx.run}.20260512" / f"{ctx.run}.t00z.wave_restart"
+    )
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    (archive_dir / f"ufs.cpld.cpl.r.{stamp}.nc").write_bytes(b"mediator")
+    (archive_dir / f"ufs.cpld.ww3.r.{stamp}.nc").write_bytes(b"ww3")
+    (archive_dir / f"rpointer.cpl.{stamp}").write_text(
+        f"RESTART/ufs.cpld.cpl.r.{stamp}.nc\n"
+    )
+
+    assert stage_wave_restarts(ctx, "nowcast") is False
+    assert not (ctx.data / "RESTART").exists()
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_stages_immediate_predecessor(
+    tmp_path, monkeypatch,
+):
+    """(b) key on + a complete archive at the immediate predecessor cycle
+    (offset 0h, i.e. stamped exactly at THIS nowcast's own start time) ->
+    staged into $DATA and True."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(
+        ctx, ctx.time_hotstart, med_bytes=b"mediator-immediate",
+    )
+
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is True
+    stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    med_dst = ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{stamp}.nc"
+    wav_dst = ctx.data / f"ufs.cpld.ww3.r.{stamp}.nc"
+    pointer_dst = ctx.data / f"rpointer.cpl.{stamp}"
+    assert med_dst.read_bytes() == b"mediator-immediate"
+    assert wav_dst.is_file() and wav_dst.stat().st_size > 0
+    assert pointer_dst.read_text() == f"RESTART/ufs.cpld.cpl.r.{stamp}.nc\n"
+
+
+def test_stage_wave_restarts_nowcast_warm_start_cold_start_when_nothing_archived(
+    tmp_path, monkeypatch, caplog,
+):
+    """(c) key on but nothing archived anywhere in the search window ->
+    False, loud WARNING, no exception -- exactly today's cold-start
+    behavior."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("cold start" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_falls_back_to_older_candidate(
+    tmp_path, monkeypatch, caplog,
+):
+    """(d) the immediate-predecessor (newest) candidate archive is partial
+    (a crashed nowcast leg archived only its mediator restart); the
+    search continues to the next-older candidate (one more LEN_NOWCAST
+    back), finds it complete and clean, and stages from THERE --
+    re-stamped to THIS leg's own stamp (not the older candidate's own,
+    staler one)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+
+    # Newest candidate (offset=0h): only the mediator restart present.
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, wav=False, pointer=False)
+
+    # Next-older candidate (offset=6h, one LEN_NOWCAST further back):
+    # complete and clean.
+    older_time = _dateutils.ndate(-6, ctx.time_hotstart)
+    _seed_nowcast_candidate(ctx, older_time, med_bytes=b"mediator-older")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is True
+    dest_stamp = _dateutils.cmeps_restart_stamp(ctx.time_hotstart)
+    med_dst = ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{dest_stamp}.nc"
+    pointer_dst = ctx.data / f"rpointer.cpl.{dest_stamp}"
+    assert med_dst.read_bytes() == b"mediator-older"
+    assert pointer_dst.read_text() == f"RESTART/ufs.cpld.cpl.r.{dest_stamp}.nc\n"
+    # The older candidate's OWN stamp must NOT appear in $DATA -- staged
+    # artifacts are always re-stamped to this leg's own start time.
+    older_stamp = _dateutils.cmeps_restart_stamp(older_time)
+    assert not (ctx.data / "RESTART" / f"ufs.cpld.cpl.r.{older_stamp}.nc").exists()
+    assert any(
+        "partial wave restart archive" in r.getMessage() for r in caplog.records
+    )
+    assert any(
+        "stale predecessor cycle" in r.getMessage() for r in caplog.records
+    )
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_guard_rejects_poisoned_restart(
+    tmp_path, monkeypatch, caplog,
+):
+    """(e) a complete archive is found, but its WW3 restart's spectrum
+    contains a finite-but-enormous (1e18) blow-up value in one va* bin --
+    the sanity guard rejects it (rather than warm-starting from an
+    obviously-poisoned restart) and, with no older candidate available,
+    the search falls back to cold start."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, mode="blowup")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("rejecting nowcast warm-start candidate" in r.getMessage()
+               for r in caplog.records)
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_stage_wave_restarts_nowcast_warm_start_guard_never_raises_on_pathological_restart(
+    tmp_path, monkeypatch, caplog,
+):
+    """(f) a complete archive is found, but its WW3 restart's va0001
+    variable is a genuine netCDF4 VLEN (ragged) variable -- reading it
+    raises TypeError partway through the guard's sweep. The never-raises
+    contract must hold end-to-end: stage_wave_restarts itself must not
+    raise, the candidate must be treated as rejected (not silently
+    accepted), and -- with no older candidate available -- the search
+    falls back to cold start, exactly like any other poisoned
+    candidate."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+    ctx = _make_nowcast_warm_start_ctx(tmp_path)
+    _seed_nowcast_candidate(ctx, ctx.time_hotstart, mode="vlen")
+
+    caplog.set_level(
+        "WARNING", logger="nos_workflow.runners.schism_ufs.stage_files",
+    )
+    result = stage_wave_restarts(ctx, "nowcast")  # must not raise
+
+    assert result is False
+    assert not (ctx.data / "RESTART").exists()
+    assert any("rejecting nowcast warm-start candidate" in r.getMessage()
+               for r in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _wave_restart_looks_sane -- direct guard-level coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_accepts_all_physical_values(tmp_path):
+    """(iv) a restart shaped like a real WW3 use_restartnc output (time,
+    nth/nk, mapsta, va0001..va0006), with every unmasked va* value small
+    and physical -- accepted."""
+    path = tmp_path / "clean.nc"
+    _write_ww3_restart_nc(path, mode="clean")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is True
+    assert reason == ""
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_rejects_finite_blowup(tmp_path, monkeypatch):
+    """(i) a finite-but-enormous (1e18) value in one va* bin exceeds the
+    spectral-density ceiling (warm_start_max_hs**2 * 100.0) derived from
+    $WAV_WARM_START_MAX_HS -- rejected, and the reason cites both the
+    offending variable and the nth/nk grid shape."""
+    monkeypatch.setenv("WAV_WARM_START_MAX_HS", "25.0")
+    path = tmp_path / "blowup.nc"
+    _write_ww3_restart_nc(path, mode="blowup")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is False
+    assert "va0003" in reason
+    assert "ceiling" in reason
+    assert f"{_GUARD_CEILING_AT_DEFAULT_MAX_HS:.3g}" in reason
+    assert "nth=24" in reason and "nk=6" in reason
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_rejects_nan_bin(tmp_path):
+    """A NaN in an unmasked va* bin is corruption, not fill (the
+    _FillValue here is the normal positive nf90_fill_float), and must be
+    rejected. Pins the non-finite check happening BEFORE any
+    invalid-value masking -- a guard that masks NaN first would silently
+    accept this file, and WW3 reads the original file, not the guard's
+    masked view."""
+    path = tmp_path / "nan.nc"
+    _write_ww3_restart_nc(path, mode="nan")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is False
+    assert "va0003" in reason
+    assert "non-finite" in reason
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_masks_fillvalue_even_when_negative(tmp_path):
+    """(ii) _FillValue occurrences are masked using the variable's OWN
+    _FillValue attribute rather than an assumption that a fill is
+    positive -- a restart whose _FillValue is a NEGATIVE sentinel
+    (-9999.0) is still accepted, because every occurrence of that
+    sentinel sits at a masked (land/inactive) node and must never itself
+    read as "spectral density < 0"."""
+    path = tmp_path / "negative_fill.nc"
+    _write_ww3_restart_nc(path, mode="negative_fill")
+
+    ok, reason = _wave_restart_looks_sane(path)
+
+    assert ok is True
+    assert reason == ""
+
+
+@pytest.mark.skipif(not _NETCDF4_AVAILABLE, reason="netCDF4 not installed")
+def test_wave_restart_looks_sane_never_raises_on_vlen_variable(tmp_path):
+    """(iii) a pathological (VLEN/ragged) va0001 variable raises
+    TypeError partway through the sweep -- the guard's catch-all must
+    turn that into a rejection, not let the exception escape."""
+    path = tmp_path / "vlen.nc"
+    _write_ww3_restart_nc(path, mode="vlen")
+
+    ok, reason = _wave_restart_looks_sane(path)  # must not raise
+
+    assert ok is False
+    assert "guard error" in reason
+
+
+# ---------------------------------------------------------------------------
 # copy_hgrid_to_outputs
 # ---------------------------------------------------------------------------
 
@@ -1039,6 +1717,44 @@ def test_collect_staged_inputs_standalone_uses_met_not_datm(tmp_path):
     assert keyed[("atmospheric", "MET")]["count"] == 3
     assert ("datm", "DATM") not in keyed
     assert ("static", "UFS_CONFIG") not in keyed
+
+
+def test_collect_staged_inputs_wave_category_present_when_enabled(
+    tmp_path, monkeypatch,
+):
+    """WAV_TASKS>0: a "wave"/"WW3" group surfaces the staged WW3 files."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
+    monkeypatch.setenv("WAV_PDLIB_NML", "secofs_ufs_ww3.namelists_pdlib.nml")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_staged_data(ctx, ufs=True)
+    for name in ("mod_def.ww3", "ww3_shel.nml", "nest.ww3",
+                 "secofs_ufs.mesh_wav.nc", "secofs_ufs_ww3.namelists_pdlib.nml",
+                 "secofs_ufs.ocn2wav_weights.nc", "secofs_ufs.wav2ocn_weights.nc"):
+        (ctx.data / name).write_bytes(b"x\n")
+
+    collector = collect_staged_inputs(ctx, "nowcast", ufs=True)
+    keyed = {(g["category"], g["source"]): g for g in collector.groups()}
+
+    assert keyed[("wave", "WW3")]["count"] == 7
+    for f in keyed[("wave", "WW3")]["files"]:
+        assert f.startswith(str(ctx.data))
+
+
+def test_collect_staged_inputs_no_wave_category_without_wav_tasks(
+    tmp_path, monkeypatch,
+):
+    """WAV_TASKS unset -> no "wave" group at all (non-wave systems)."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    _seed_staged_data(ctx, ufs=True)
+
+    collector = collect_staged_inputs(ctx, "nowcast", ufs=True)
+    keyed = {(g["category"], g["source"]): g for g in collector.groups()}
+
+    assert ("wave", "WW3") not in keyed
 
 
 def test_collect_staged_inputs_absent_files_yield_empty_groups(tmp_path):

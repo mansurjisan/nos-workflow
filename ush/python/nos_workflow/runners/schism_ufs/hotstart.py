@@ -56,19 +56,22 @@ class HotstartResult:
 def _candidate_restart_path(
     comoutroot: Path,
     run: str,
-    prefix: str,
     candidate_time: str,
 ) -> Path:
-    """Build $COMOUTroot/${RUN}.YYYYMMDD/${PREFIX}.tHHz.YYYYMMDD.rst.nowcast.nc.
+    """Build $COMOUTroot/${RUN}.YYYYMMDD/${RUN}.tHHz.YYYYMMDD.rst.nowcast.nc.
 
     YYYYMMDD appears in both the directory and the filename (intentional).
+    Filename is $RUN-keyed, matching what execute._archive_restart (and
+    the nos_run.sh combine_hotstart7 shell path) actually write to
+    $COMOUT: rst.nowcast.nc is a per-cycle $COMOUT product, not a
+    $PREFIXNOS-keyed $FIXofs static.
     """
     yyyymmdd = candidate_time[:8]
     hh = candidate_time[8:10]
     return (
         comoutroot
         / f"{run}.{yyyymmdd}"
-        / f"{prefix}.t{hh}z.{yyyymmdd}.rst.nowcast.nc"
+        / f"{run}.t{hh}z.{yyyymmdd}.rst.nowcast.nc"
     )
 
 
@@ -130,7 +133,7 @@ def find_hotstart(
         if candidate_anchor < earliest_anchor:
             break
         candidate_path = _candidate_restart_path(
-            comoutroot, run, prefix, candidate_anchor,
+            comoutroot, run, candidate_anchor,
         )
         if _is_usable_restart(candidate_path):
             found_anchor = candidate_anchor
@@ -183,7 +186,7 @@ def find_hotstart(
 
     base_date = found_anchor
     rst_file = found_path
-    ini_file_root = data / f"{prefix}.{cycle}.{env.pdy}.init.nowcast.nc"
+    ini_file_root = data / f"{env.run}.{cycle}.{env.pdy}.init.nowcast.nc"
 
     nh_nowcast = _dateutils.nhour(time_nowcastend, base_date)
     cold_start = "F"

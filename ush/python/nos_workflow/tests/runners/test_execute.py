@@ -110,6 +110,476 @@ def test_validate_configs_fails_on_empty_config(tmp_path):
     assert rc == 1
 
 
+def test_validate_configs_wave_requires_ww3_files(tmp_path, monkeypatch, caplog):
+    """WAV_TASKS>0: ww3_shel.nml + mod_def.ww3 are ALSO required -- a
+    non-wave system never hits this branch (see the next test)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    caplog.set_level(
+        logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute",
+    )
+
+    rc = execute._validate_configs(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(rec.getMessage() for rec in caplog.records)
+    assert "ww3_shel.nml" in msg
+    assert "mod_def.ww3" in msg
+
+
+def test_validate_configs_wave_requires_wav_mesh_when_set(tmp_path, monkeypatch):
+    """WAV_MESH names a required file too, dynamically."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_MESH", "secofs_ufs.mesh_wav.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # mesh still missing
+
+    (ctx.data / "secofs_ufs.mesh_wav.nc").write_bytes(b"mesh\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
+def test_validate_configs_wave_requires_ocn2wav_weights_when_set(tmp_path, monkeypatch):
+    """WAV_OCN2WAV_WEIGHTS names a required file too, dynamically -- the
+    precomputed ocn->wav regrid map. Missing weights fail fast here
+    rather than at a CMEPS abort well into the MPI run."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # weights still missing
+
+    (ctx.data / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"weights\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
+def test_validate_configs_wave_requires_wav2ocn_weights_when_set(tmp_path, monkeypatch):
+    """WAV_WAV2OCN_WEIGHTS names a required file too, dynamically -- the
+    precomputed wav->ocn regrid map (transpose-direction twin of
+    ocn2wav). Missing weights fail fast here rather than at a CMEPS abort
+    well into the MPI run."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 1  # weights still missing
+
+    (ctx.data / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"weights\n")
+    rc = execute._validate_configs(ctx, "nowcast")
+    assert rc == 0
+
+
+def test_validate_configs_wave_pass_with_all_files_present(tmp_path, monkeypatch):
+    """All 4 base + 2 wave configs present -> rc=0."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.delenv("WAV_MESH", raising=False)
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    assert execute._validate_configs(ctx, "nowcast") == 0
+
+
+def test_validate_configs_non_wave_system_unaffected_by_wave_configs(tmp_path):
+    """WAV_TASKS unset: ww3_shel.nml/mod_def.ww3 are NOT required, even if
+    absent -- the primary safety property for non-wave systems."""
+    ctx = _make_ctx(tmp_path)
+    _seed_configs(ctx.data)
+    assert execute._validate_configs(ctx, "nowcast") == 0
+
+
+# ---------------------------------------------------------------------------
+# _validate_wave_ufs_configure
+# ---------------------------------------------------------------------------
+
+
+_WAVE_UFS_CONFIGURE_VALID = """\
+MED_petlist_bounds:             0 5519
+ATM_petlist_bounds:             0 119
+OCN_petlist_bounds:             120 2913
+WAV_petlist_bounds:             2914 5519
+
+runSeq::
+@360
+  ATM
+  OCN
+  WAV
+@
+::
+"""
+
+# The exact corruption the review describes: a stale nos-utils pin falls
+# back to the 3-component PET patcher, which widens OCN across the
+# untouched WAV PETs (an overlap) and reverts the runSeq interval to
+# @<model_dt> (120) instead of the configured @360.
+_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION = """\
+MED_petlist_bounds:             0 119
+ATM_petlist_bounds:             0 119
+OCN_petlist_bounds:             120 5519
+WAV_petlist_bounds:             2914 5519
+
+runSeq::
+@120
+  ATM
+  OCN
+  WAV
+@
+::
+"""
+
+# Adds the precomputed ocn->wav regrid weight attribute on top of an
+# otherwise-valid layout, to exercise the config-derived smapname check
+# in isolation. A separate constant (not a mutation of
+# _WAVE_UFS_CONFIGURE_VALID) so the existing PET-layout tests, which don't
+# stage a weights file, are unaffected.
+_WAVE_UFS_CONFIGURE_WITH_SMAPNAME = _WAVE_UFS_CONFIGURE_VALID + (
+    "\nMED_attributes::\n"
+    "  ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc\n"
+    "::\n"
+)
+
+# Same idea, transpose direction (wav2ocn_smapname) -- exercises the
+# generic *_smapname regex against a DIFFERENT attribute name than
+# ocn2wav_smapname, proving the check isn't hardcoded to one string. A
+# separate constant, not a mutation of _WAVE_UFS_CONFIGURE_WITH_SMAPNAME,
+# for the same isolation reason that one is separate from
+# _WAVE_UFS_CONFIGURE_VALID.
+_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME = _WAVE_UFS_CONFIGURE_VALID + (
+    "\nMED_attributes::\n"
+    "  wav2ocn_smapname = secofs_ufs.wav2ocn_weights.nc\n"
+    "::\n"
+)
+
+
+def test_validate_wave_ufs_configure_non_wave_is_noop(tmp_path, monkeypatch):
+    """Non-wave systems: rc=0 immediately -- no ufs.configure needed."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_passes_on_valid_layout(tmp_path, monkeypatch):
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_VALID)
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_passes_on_indented_layout(tmp_path, monkeypatch):
+    """The nos-utils patcher preserves leading whitespace on each
+    *_petlist_bounds line (it replaces "^(\\s*<COMP>_petlist_bounds:\\s*)");
+    an indented but otherwise valid layout must not be rejected."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    indented = "\n".join(
+        f"  {line}" if "_petlist_bounds:" in line else line
+        for line in _WAVE_UFS_CONFIGURE_VALID.splitlines()
+    ) + "\n"
+    (ctx.data / "ufs.configure").write_text(indented)
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_rejects_stale_pin_corruption(
+    tmp_path, monkeypatch, caplog,
+):
+    """The stale-pin corruption (OCN/WAV overlap) must be rejected before
+    mpiexec, not discovered via a CDEPS/WW3 abort 5520 ranks in."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any(
+        "not contiguous" in r.getMessage() for r in caplog.records
+    )
+
+
+def test_validate_wave_ufs_configure_rejects_missing_wav_line(
+    tmp_path, monkeypatch, caplog,
+):
+    """A fix file predating the wave component (only 3 *_petlist_bounds
+    lines survived staging) must be rejected outright."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    ctx = _make_ctx(tmp_path)
+    three_component = _WAVE_UFS_CONFIGURE_VALID.replace(
+        "WAV_petlist_bounds:             2914 5519\n", "",
+    )
+    (ctx.data / "ufs.configure").write_text(three_component)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any("missing" in r.getMessage().lower() for r in caplog.records)
+
+
+def test_validate_wave_ufs_configure_rejects_wrong_interval(
+    tmp_path, monkeypatch, caplog,
+):
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    ctx = _make_ctx(tmp_path)
+    wrong_interval = _WAVE_UFS_CONFIGURE_VALID.replace("@360", "@120")
+    (ctx.data / "ufs.configure").write_text(wrong_interval)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any(
+        "coupling interval" in r.getMessage().lower() for r in caplog.records
+    )
+
+
+def test_validate_wave_ufs_configure_rejects_med_not_full_span(
+    tmp_path, monkeypatch, caplog,
+):
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    ctx = _make_ctx(tmp_path)
+    bad_med = _WAVE_UFS_CONFIGURE_VALID.replace(
+        "MED_petlist_bounds:             0 5519",
+        "MED_petlist_bounds:             0 119",
+    )
+    (ctx.data / "ufs.configure").write_text(bad_med)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    assert any("MED_petlist_bounds" in r.getMessage() for r in caplog.records)
+
+
+def test_validate_wave_ufs_configure_rejects_missing_smapname_weights_env_set(
+    tmp_path, monkeypatch, caplog,
+):
+    """ocn2wav_smapname names a file that isn't staged in $DATA -> rc=1,
+    even with WAV_OCN2WAV_WEIGHTS set to the same name. This is the
+    config-derived check: it must reject the missing file on its own,
+    independent of _validate_configs's env-driven pre-check."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.setenv("WAV_OCN2WAV_WEIGHTS", "secofs_ufs.ocn2wav_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "ocn2wav_smapname" in msg
+    assert "secofs_ufs.ocn2wav_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_rejects_missing_smapname_weights_env_unset(
+    tmp_path, monkeypatch, caplog,
+):
+    """The hole this check closes: WAV_OCN2WAV_WEIGHTS unset (a stale
+    yaml or a broken yaml-to-env eval) means stage_wave_configs silently
+    skips staging the file and _validate_configs's env-driven pre-check
+    silently skips requiring it too -- but fix/secofs_ufs_ww3/ufs.configure
+    is a static template that carries ocn2wav_smapname unconditionally,
+    and CMEPS reads that attribute regardless of the env chain. Reading
+    the requirement from the staged file itself must reject this even
+    with the env var unset."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "ocn2wav_smapname" in msg
+    assert "secofs_ufs.ocn2wav_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_passes_when_smapname_weights_present(
+    tmp_path, monkeypatch,
+):
+    """Happy path: the file ocn2wav_smapname names is staged in $DATA ->
+    the smapname check doesn't block an otherwise-valid layout, whether
+    or not WAV_OCN2WAV_WEIGHTS happens to be set."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+    (ctx.data / "secofs_ufs.ocn2wav_weights.nc").write_bytes(b"weights\n")
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_validate_wave_ufs_configure_rejects_missing_wav2ocn_smapname_weights(
+    tmp_path, monkeypatch, caplog,
+):
+    """wav2ocn_smapname names a file that isn't staged in $DATA -> rc=1.
+    Proves the generic *_smapname regex catches THIS attribute too, not
+    just ocn2wav_smapname -- the required CMEPS-interface behavior once
+    the wav2ocn_smapname patch is applied (see cmeps_patch/)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.setenv("WAV_WAV2OCN_WEIGHTS", "secofs_ufs.wav2ocn_weights.nc")
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "wav2ocn_smapname" in msg
+    assert "secofs_ufs.wav2ocn_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_rejects_missing_wav2ocn_smapname_weights_env_unset(
+    tmp_path, monkeypatch, caplog,
+):
+    """Same hole as the ocn2wav env-unset case, transpose direction:
+    WAV_WAV2OCN_WEIGHTS unset means staging and _validate_configs's
+    env-driven pre-check both silently skip the file, but a static
+    ufs.configure with wav2ocn_smapname set still requires it -- the
+    config-derived check must reject this even with the env var unset."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+
+    caplog.set_level(logging.ERROR, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._validate_wave_ufs_configure(ctx, "nowcast")
+
+    assert rc == 1
+    msg = " ".join(r.getMessage() for r in caplog.records)
+    assert "wav2ocn_smapname" in msg
+    assert "secofs_ufs.wav2ocn_weights.nc" in msg
+
+
+def test_validate_wave_ufs_configure_passes_when_wav2ocn_smapname_weights_present(
+    tmp_path, monkeypatch,
+):
+    """Happy path: the file wav2ocn_smapname names is staged in $DATA ->
+    the smapname check doesn't block an otherwise-valid layout."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+    (ctx.data / "secofs_ufs.wav2ocn_weights.nc").write_bytes(b"weights\n")
+
+    assert execute._validate_wave_ufs_configure(ctx, "nowcast") == 0
+
+
+def test_run_python_wave_stale_pin_blocks_mpi_launch(tmp_path, monkeypatch):
+    """End-to-end: run_python must refuse to launch mpiexec when the
+    staged ufs.configure has the stale-pin corruption."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_STALE_PIN_CORRUPTION)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
+def test_run_python_wave_missing_smapname_weights_blocks_mpi_launch(
+    tmp_path, monkeypatch,
+):
+    """End-to-end, env-unset case: run_python must refuse to launch
+    mpiexec when ufs.configure declares ocn2wav_smapname but the named
+    file was never staged. This is the scenario a broken yaml-to-env
+    eval produces -- staging and _validate_configs's env-driven pre-check
+    both silently skip the file because WAV_OCN2WAV_WEIGHTS is unset;
+    only the config-derived check in _validate_wave_ufs_configure still
+    catches it, before mpiexec rather than at a CMEPS abort deep into a
+    multi-thousand-PET launch."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_OCN2WAV_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_SMAPNAME)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
+def test_run_python_wave_missing_wav2ocn_smapname_weights_blocks_mpi_launch(
+    tmp_path, monkeypatch,
+):
+    """Same end-to-end proof, transpose direction: run_python must refuse
+    to launch mpiexec when ufs.configure declares wav2ocn_smapname but
+    the named file was never staged (WAV_WAV2OCN_WEIGHTS unset)."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    monkeypatch.setenv("TOTAL_TASKS", "5520")
+    monkeypatch.setenv("COUPLING_INTERVAL", "360")
+    monkeypatch.delenv("WAV_WAV2OCN_WEIGHTS", raising=False)
+    ctx = _make_ctx(tmp_path)
+    monkeypatch.setenv("USHnos", str(ctx.ushnos))
+    _seed_configs(ctx.data)
+    (ctx.data / "ufs.configure").write_text(_WAVE_UFS_CONFIGURE_WITH_WAV2OCN_SMAPNAME)
+    (ctx.data / "ww3_shel.nml").write_text("shel\n")
+    (ctx.data / "mod_def.ww3").write_bytes(b"moddef\n")
+
+    with patch.object(execute, "run_shell_function") as rsf:
+        rc = execute.run_python(ctx, "nowcast")
+    assert rc != 0
+    rsf.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # _maybe_regenerate_mesh
 # ---------------------------------------------------------------------------
@@ -301,6 +771,166 @@ def test_archive_restart_skips_when_rst_out_is_none(tmp_path):
     assert rc == 0
     # Nothing should have been copied (no destination set).
     assert list(ctx.comout.iterdir()) == []
+
+
+# ---------------------------------------------------------------------------
+# _archive_wave_restarts
+# ---------------------------------------------------------------------------
+
+
+def _make_wave_restart_ctx(tmp_path: Path, *, phase: str = "nowcast") -> SchismRunContext:
+    comout = tmp_path / "comout"
+    data = tmp_path / "data"
+    comout.mkdir(parents=True, exist_ok=True)
+    data.mkdir(parents=True, exist_ok=True)
+    return SchismRunContext(
+        comout=comout,
+        data=data,
+        phase=phase,
+        run="nos.secofs_ufs",
+        cycle="t00z",
+        time_nowcastend="2026051206",
+        time_forecastend="2026051400",
+        wav_rst_out_nowcast="ufs.cpld.ww3.r.2026-05-12-21600.nc",
+        med_rst_out_nowcast="ufs.cpld.cpl.r.2026-05-12-21600.nc",
+        wav_rst_out_forecast="ufs.cpld.ww3.r.2026-05-14-00000.nc",
+        med_rst_out_forecast="ufs.cpld.cpl.r.2026-05-14-00000.nc",
+    )
+
+
+def test_archive_wave_restarts_non_wave_is_noop(tmp_path, monkeypatch):
+    """WAV_TASKS unset -> rc=0, nothing archived (primary safety property)."""
+    monkeypatch.delenv("WAV_TASKS", raising=False)
+    ctx = _make_wave_restart_ctx(tmp_path)
+    assert execute._archive_wave_restarts(ctx, "nowcast") == 0
+    assert list(ctx.comout.iterdir()) == []
+
+
+def test_archive_wave_restarts_copies_all_three_from_nowcast(tmp_path, monkeypatch):
+    """All three artifacts, verbatim basenames, under
+    $COMOUT/{run}.{cycle}.wave_restart/."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (ctx.data / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    (ctx.data / "rpointer.cpl.2026-05-12-21600").write_text(
+        f"RESTART/{ctx.med_rst_out_nowcast}\n",
+    )
+
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert (target / ctx.med_rst_out_nowcast).read_bytes() == b"mediator"
+    assert (target / ctx.wav_rst_out_nowcast).read_bytes() == b"ww3"
+    assert (
+        target / "rpointer.cpl.2026-05-12-21600"
+    ).read_text() == f"RESTART/{ctx.med_rst_out_nowcast}\n"
+
+
+def test_archive_wave_restarts_forecast_leg_is_noop(tmp_path, monkeypatch):
+    """Forecast leg's own restart pair has no consumer today (nothing
+    stages it back in), so it must NOT be archived -- rc=0 and nothing
+    written to $COMOUT."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="forecast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_forecast).write_bytes(b"mediator-fcst")
+    (ctx.data / ctx.wav_rst_out_forecast).write_bytes(b"ww3-fcst")
+    (ctx.data / "rpointer.cpl.2026-05-14-00000").write_text(
+        f"RESTART/{ctx.med_rst_out_forecast}\n",
+    )
+
+    rc = execute._archive_wave_restarts(ctx, "forecast")
+
+    assert rc == 0
+    assert list(ctx.comout.iterdir()) == []
+
+
+def test_archive_wave_restarts_partial_is_nonfatal_but_leaves_no_target(
+    tmp_path, monkeypatch, caplog,
+):
+    """A missing artifact means the archive attempt is incomplete -- non-
+    fatal (rc=0, the model already ran; only a future leg's warm restart
+    is at risk), but per the atomic-archive contract the incomplete set
+    must NOT land at ``target``: partial artifacts collected in the tmp
+    dir are discarded rather than published, so ``target`` stays wholly
+    absent (never a mixed/partial directory) and the tmp dir itself is
+    cleaned up."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    # Only the mediator restart is present; WW3 restart + pointer missing.
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert not target.exists()
+    assert list(ctx.comout.iterdir()) == []
+    assert any("WW3 restart" in r.getMessage() for r in caplog.records)
+    assert any("archive incomplete" in r.getMessage() for r in caplog.records)
+
+
+def test_archive_wave_restarts_crash_mid_archive_leaves_no_target(
+    tmp_path, monkeypatch, caplog,
+):
+    """All three source artifacts are present and healthy, but the copy
+    of the third one blows up mid-write (simulating a crash/IO failure
+    partway through the archive). The atomic-swap contract requires that
+    ``target`` never end up holding a mixed/partial set from this failed
+    attempt -- it must stay entirely absent (same as a clean cold start
+    downstream), the tmp scratch dir must not leak either, and (matching
+    this function's "non-fatal" docstring contract, mirrored by its
+    caller only warning on a non-zero rc) the failure must not propagate
+    as an exception -- it is logged loudly and rc stays 0."""
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="nowcast")
+    (ctx.data / "RESTART").mkdir()
+    (ctx.data / "RESTART" / ctx.med_rst_out_nowcast).write_bytes(b"mediator")
+    (ctx.data / ctx.wav_rst_out_nowcast).write_bytes(b"ww3")
+    (ctx.data / "rpointer.cpl.2026-05-12-21600").write_text(
+        f"RESTART/{ctx.med_rst_out_nowcast}\n",
+    )
+
+    real_copy2 = execute.shutil.copy2
+    calls = {"n": 0}
+
+    def _flaky_copy2(src, dst, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise OSError("simulated crash mid-archive")
+        return real_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(execute.shutil, "copy2", _flaky_copy2)
+
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+    rc = execute._archive_wave_restarts(ctx, "nowcast")
+
+    assert rc == 0
+    target = ctx.comout / "nos.secofs_ufs.t00z.wave_restart"
+    assert not target.exists()
+    # No leftover tmp.<pid> scratch dir either.
+    assert list(ctx.comout.iterdir()) == []
+    assert any(
+        "copying" in r.getMessage() and "pointer file" in r.getMessage()
+        for r in caplog.records
+    )
+    assert any("archive incomplete" in r.getMessage() for r in caplog.records)
+
+
+def test_archive_wave_restarts_unknown_phase_is_nonfatal(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("WAV_TASKS", "2606")
+    ctx = _make_wave_restart_ctx(tmp_path, phase="bogus")
+    caplog.set_level(logging.WARNING, logger="nos_workflow.runners.schism_ufs.execute")
+
+    rc = execute._archive_wave_restarts(ctx, "bogus")
+
+    assert rc == 0
+    assert any("unknown phase" in r.getMessage().lower() for r in caplog.records)
 
 
 # ---------------------------------------------------------------------------
