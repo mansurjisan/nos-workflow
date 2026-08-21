@@ -7,13 +7,11 @@
 #PBS  -l place=vscatter:excl,select=30:ncpus=128:mpiprocs=120:ompthreads=1
 #PBS  -l walltime=02:15:00
 
-# STOFS-3D-AK + WW3 nowcast, DRAFT. select=30 (vs the base's 21): 30 nodes x
-# 120 ppn = 3600 slots = ufs_coastal.total_tasks exactly (120 DATM/MED PETs +
-# 2393 OCN PETs + 1087 WAV PETs, layout A -- AK_WW3_SESSION_MEMO.md (a),
-# PROFILE-FIRST, NOT FINAL). Walltime ~1.5x the base's 01:30:00, pending the
-# layout-A profiling run: WW3's per-step cost relative to SCHISM is unmeasured
-# (see the yaml's coupling_interval comment), so this is a rough starting
-# budget, not a measured one.
+# select=30 (vs the base's 21): 30 nodes x 120 ppn = 3600 slots =
+# ufs_coastal.total_tasks exactly (layout A, PROFILE-FIRST, NOT FINAL -- see
+# the yaml). Walltime ~1.5x the base's 01:30:00: WW3's per-step cost
+# relative to SCHISM is unmeasured until the layout-A profiling run, so this
+# is a rough starting budget, not a measured one.
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
@@ -90,11 +88,10 @@ export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
 export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
 
-# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-2512 (2393 SCHISM
-# ranks), WAV PETs 2513-3599 (1087 ranks, layout A, PROFILE-FIRST). nscribes=0
-# -- coupled, CMEPS/the mediator handles output, so every OCN rank is a
-# compute rank. 30 nodes x 120 mpiprocs = 3600 slots = TOTAL_TASKS exactly
-# (no idle slots, unlike the base's 21 nodes / 2520 slots >= 2513 tasks).
+# UFS-Coastal: MED+ATM PETs 0-119, OCN 120-2512 (2393 SCHISM ranks), WAV
+# 2513-3599 (1087 ranks, layout A, PROFILE-FIRST). nscribes=0 -- coupled,
+# CMEPS/the mediator handles output, so every OCN rank is a compute rank.
+# 30 nodes x 120 mpiprocs = 3600 slots exactly (no idle slots).
 export TOTAL_TASKS=${TOTAL_TASKS:-3600}
 # This system runs a NO_PARMETIS SCHISM build, which cannot start without a
 # partition.prop generated for 2393 compute ranks (unchanged from the base --

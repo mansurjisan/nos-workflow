@@ -1,4 +1,4 @@
-# STOFS-3D-AK WW3 Coupling — DRAFT wave-variant configuration.
+# STOFS-3D-AK WW3 Coupling -- DATM+SCHISM+WW3 wave-variant configuration.
 # Storm Surge and Tide Operational Forecast System - 3D Alaska (DATM+SCHISM+WW3)
 #
 # `_base: stofs_3d_ak_ufs` inherits the whole no-wave UFS-coupled config (mesh,
@@ -8,107 +8,79 @@
 # stofs_3d_atl_ufs_standalone.yaml overlays stofs_3d_atl_ufs.yaml -- minimal,
 # targeted overrides, everything else inherited verbatim.
 #
-# Reference: Yunfang Sun's working coupled DATM+SCHISM+WW3 run
-# (E:\STOFS_ALASKA\ATMWW3_AK_, mounted here at /mnt/e/STOFS_ALASKA/ATMWW3_AK_/)
-# on the SAME 1,343,182-node AK mesh as the ops no-wave system. Decisions below
-# come from AK_WW3_SESSION_MEMO.md (2026-08-08); see that file for the full
-# PET-budget table, the GFS-Wave boundary recon, and the leg-cycling change map.
+# Reference: the working Alaska DATM+SCHISM+WW3 configuration, validated on
+# the same 1,343,182-node AK mesh as the ops no-wave system.
 #
 # STAGING CHECKLIST (large WW3 binaries only -- everything else this variant
-# needs is now checked into fix/stofs_3d_ak_ufs_ww3/):
-# The PBS cards for this variant set OFS=stofs_3d_ak_ufs_ww3, so FIXofs
-# resolves to fix/stofs_3d_ak_ufs_ww3/ (${HOMEnos}/fix/${OFS}, same rule the
-# base AK cards use). Before a run:
-# (1) hand-stage the two large WW3 static fix files from the reference run,
-# renamed to the {PREFIXNOS}.<bare> convention stage_ww3_fix_files expects
-# (PREFIXNOS stays "stofs_3d_ak_ufs", inherited -- see the note on
-# system.prefix below): mod_def.ww3 (664 MB) ->
-# fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.mod_def.ww3, and
-# alaska_ESMFmesh.nc (134 MB) -> renamed to
-# fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.wav_esmf_mesh.nc (matches
-# _WW3_FIX_FILES' "wav_esmf_mesh.nc" bare name, also what WAV_attributes.mesh_wav
-# in the new ufs.configure expects at run time). ww3_shel.nml and
-# ww3_points.list are NOT hand-staged -- both are already checked into this
-# fix dir under the {PREFIXNOS}.<bare> convention (stofs_3d_ak_ufs.ww3_shel.nml
-# is drafted content, see below; stofs_3d_ak_ufs.ww3_points.list is a
-# verbatim copy of the reference run's own ww3_points.list -- 69 points,
-# matches this system's station.in 1-for-1; NOT the unrelated points.list
-# also sitting in that run's directory, which is a stray Atlantic-coordinate
-# file from a different system). (2) stofs_3d_ak_ufs.nest.ww3
-# is deliberately NOT hand-staged as a permanent fixture: operationally it is
-# produced per cycle by prep once the nos-utils wave_boundary processor
-# (branch feature/ww3-boundary-spectra) lands (gfswave IBP tarball ->
-# ww3_bound -> nest.ww3, see forcing.waves below) and published to THIS
-# cycle's $COMOUT, which stage_ww3_fix_files now reads first; for an interim
-# smoke test before that lands, Yunfang's static nest.ww3 (5.6 GB) can be
-# hand-staged under the same {PREFIXNOS}.<bare> convention as the fix-dir
-# fallback stage_ww3_fix_files falls back to when $COMOUT has none.
-# (3) fv3_coastalSW.exe comes from
-# the CSTLSW build runbook (out of this repo's scope) and lands in $EXECnos.
-# (4) fix/stofs_3d_ak_ufs_ww3/ also needs the REST of the static complement
-# stofs_3d_ak_ufs.yaml already relies on (hgrid/vgrid/station/property/
-# partition/nudge/bctides-template files under the stofs_3d_ak_ufs.* bare
-# names) plus the DATM template quintet (model_configure.template,
-# datm_in.template, datm.streams.template, fd_ufs.yaml, noahmptable.tbl) --
-# symlinked or copied over from fix/stofs_3d_ak_ufs/, since UFSConfigProcessor
-# requires all four _REQUIRED_TEMPLATES co-located with ufs.configure or its
-# template-dir resolution fails outright. Only 4 files are genuinely new
-# content drafted alongside this yaml (this file, ufs.configure,
-# stofs_3d_ak_ufs.ww3_shel.nml, stofs_3d_ak_ufs.param.nml);
-# stofs_3d_ak_ufs.ww3_points.list is a verbatim copy, not authored content;
-# everything else above is a staging/symlink action.
+# needs is checked into fix/stofs_3d_ak_ufs_ww3/, which is where FIXofs
+# resolves for OFS=stofs_3d_ak_ufs_ww3). Before a run:
+# (1) hand-stage the two large WW3 statics, renamed to the {PREFIXNOS}.<bare>
+# convention stage_ww3_fix_files expects (PREFIXNOS stays "stofs_3d_ak_ufs",
+# inherited -- see system.prefix below): mod_def.ww3 (664 MB) ->
+# stofs_3d_ak_ufs.mod_def.ww3, and the ESMF wave mesh (134 MB) ->
+# stofs_3d_ak_ufs.wav_esmf_mesh.nc (the bare name WAV_attributes.mesh_wav in
+# ufs.configure expects). ww3_shel.nml and ww3_points.list are already
+# checked into this fix dir.
+# (2) stofs_3d_ak_ufs.nest.ww3 is NOT a permanent fixture: prep's
+# wave_boundary processor produces it per cycle into $COMOUT (see
+# forcing.waves below), which stage_ww3_fix_files reads first; a static
+# nest.ww3 can be hand-staged as the fix-dir fallback for an interim smoke
+# test.
+# (3) fv3_coastalSW.exe comes from the CSTLSW build runbook and lands in
+# $EXECnos.
+# (4) fix/stofs_3d_ak_ufs_ww3/ also needs the rest of the static complement
+# stofs_3d_ak_ufs.yaml relies on (hgrid/vgrid/station/property/partition/
+# nudge/bctides-template files, plus the DATM template quintet) --
+# symlinked or copied from fix/stofs_3d_ak_ufs/, since UFSConfigProcessor
+# requires all four _REQUIRED_TEMPLATES co-located with ufs.configure.
 
 _base: stofs_3d_ak_ufs
 
 system:
-  # Overridden (base stays "stofs_3d_ak_ufs"): COMOUT is ${RUN}.${PDY} (see
-  # jobs/JNOS_*), and RUN comes from system.name. Leaving this inherited would
-  # point the wave variant at the SAME COMOUT tree as the operational no-wave
-  # AK system -- sharing hotstarts/restarts/station output between two runs
-  # with different rank counts and physics. system.prefix is deliberately
-  # NOT overridden (stays "stofs_3d_ak_ufs", inherited): every bare-name mesh/
+  # name is overridden (drives COMOUT=${RUN}.${PDY}, RUN=system.name) so this
+  # variant does not share the ops no-wave AK system's COMOUT tree -- shared
+  # hotstarts/restarts/station output across two runs with different rank
+  # counts and physics would corrupt both. prefix is deliberately NOT
+  # overridden (stays "stofs_3d_ak_ufs", inherited): every bare-name mesh/
   # property/nudge/tidal file this config inherits (grid.files.*,
   # tidal.files.*, forcing.ocean.nudging.files.*) is a literal
-  # "stofs_3d_ak_ufs.<bare>" string copied from the base yaml, and
-  # stage_schism_bare_names/stage_partition_props/stage_ww3_fix_files derive
-  # the SAME bare names from PREFIXNOS at runtime -- diverging system.prefix
-  # from those literals would break that invariant and split one set of fix
-  # files across two prefixes for no benefit.
+  # "stofs_3d_ak_ufs.<bare>" string, and stage_schism_bare_names/
+  # stage_partition_props/stage_ww3_fix_files derive the SAME bare names from
+  # PREFIXNOS at runtime -- diverging prefix would split one set of fix files
+  # across two prefixes for no benefit.
   name: stofs_3d_ak_ufs_ww3
   description: "STOFS-3D-AK UFS-Coastal + WW3 wave coupling (DATM+SCHISM+WW3, DRAFT)"
 
 model:
-  # UNVERIFIED / open question: fv3_coastalSW.exe is the 4-component
-  # (ATM/OCN/WAV/MED) UFS-Coastal build; it does not exist yet in this repo's
-  # tree and comes from the CSTLSW build runbook (see the staging checklist
-  # above). NOTE a real wiring gap this override alone does NOT close: for
-  # execution.mode=ufs (unchanged here), yaml_to_env.py's get_standard_exports
-  # only reads model.executable inside the execution.mode=standalone overlay
-  # branch -- for the coupled path it is otherwise declarative-only, and
-  # stage_executable() would silently keep staging fv3_coastalS.exe (the
-  # 3-component binary) instead. Closed below via a new UFS_EXEC_NAME
-  # shell_mappings entry (generic shell_mappings.variables IS read for every
-  # execution mode), not by editing yaml_to_env.py.
+  # fv3_coastalSW.exe (the 4-component ATM/OCN/WAV/MED build) still needs
+  # staging into $EXECnos -- see the staging checklist above. Also closes a
+  # wiring gap: for execution.mode=ufs (unchanged here), yaml_to_env.py's
+  # get_standard_exports only reads model.executable inside the
+  # execution.mode=standalone overlay branch, so the coupled path would
+  # otherwise silently keep staging fv3_coastalS.exe (the 3-component
+  # binary) instead. Closed via the UFS_EXEC_NAME shell_mappings entry below
+  # (generic shell_mappings.variables IS read for every execution mode), not
+  # by editing yaml_to_env.py.
   executable: fv3_coastalSW.exe
 
 ufs_coastal:
   enabled: true
-  # WAV rank count -- PROFILE-FIRST, NOT FINAL. AK_WW3_SESSION_MEMO.md (a):
-  # SCHISM (2393) and DATM (120) are fixed (2393 pins the reusable
-  # NO_PARMETIS partition.prop; 120 ppn is the WCOSS2 node size), so only WAV
-  # is free (SCOTCH decomposition, no pinned partition file to invalidate).
-  # Three layouts were costed (A lean 0.45x OCN/3600 total/30 nodes, B
-  # balanced 1.0x/4920/41 nodes, C reference-scaled 1.66x/6480/54 nodes,
-  # matching Yunfang's own 4900/3000 ratio). Chosen: layout A, profiled with
-  # ESMF_RUNTIME_PROFILE=ON on one 6h nowcast-length leg, then scaled toward
-  # B/C by the measured [WAV] vs [OCN] RunPhase ratio if WAV lags -- WW3 takes
-  # only 4 steps/hour at mod_def timesteps 900s vs SCHISM's 80 (dt=45), but
-  # each implicit PDLIB step carries ~50x the DOF (1.34M nodes x ~50 freq x
-  # ~36 dir), so the true balance point is unknown until measured.
+  # WAV rank count -- PROFILE-FIRST, NOT FINAL. SCHISM (2393) and DATM (120)
+  # are fixed (2393 pins the reusable NO_PARMETIS partition.prop; 120 ppn is
+  # the WCOSS2 node size), so only WAV is free (SCOTCH decomposition, no
+  # pinned partition file to invalidate). Three layouts were costed (A lean
+  # 0.45x OCN/3600 total/30 nodes, B balanced 1.0x/4920/41 nodes, C
+  # reference-scaled 1.66x/6480/54 nodes). Chosen: layout A, to be profiled
+  # with ESMF_RUNTIME_PROFILE=ON on one nowcast-length leg, then scaled
+  # toward B/C by the measured [WAV] vs [OCN] RunPhase ratio if WAV lags --
+  # WW3 takes only 4 steps/hour at mod_def timestep 900s vs SCHISM's 80
+  # (dt=45), but each implicit PDLIB step carries ~50x the DOF (1.34M nodes
+  # x ~50 freq x ~36 dir), so the true balance point is unknown until
+  # measured.
   wav_tasks: 1087
-  # datm_tasks (120) and schism_tasks (2393) are UNCHANGED from the base --
-  # restated here only as the layout-A arithmetic this file's total_tasks and
-  # the new ufs.configure's PET bounds depend on:
+  # datm_tasks and schism_tasks are UNCHANGED from the base -- restated here
+  # only as the layout-A arithmetic this file's total_tasks and the new
+  # ufs.configure's PET bounds depend on:
   #   ATM/MED co-located : PETs    0 -  119  (120 = datm_tasks)
   #   OCN                : PETs  120 - 2512  (2393 = schism_tasks)
   #   WAV                : PETs 2513 - 3599  (1087 = wav_tasks)
@@ -116,110 +88,79 @@ ufs_coastal:
   datm_tasks: 120
   schism_tasks: 2393
   total_tasks: 3600
-  # Coupling interval: integer multiple of dt=45s (required). DECISION
-  # 2026-08-15 (reconciliation with the mature SECOFS WW3 variant): the first
-  # AK bring-up uses 3600 (= 80 * 45), the value Yunfang Sun's TESTED
-  # DATM+SCHISM+WW3 reference ran (50+ days stable on Hercules). Rationale --
-  # de-risk the first coupled AK cycle by adopting the one interval with real
-  # validation behind it, instead of stacking an untested interval on top of
-  # the other first-run unknowns (new PET layout + reused reference mod_def +
-  # first coupled AK run). 3600 is a clean multiple of dt_atmos=900 (4x) and
-  # the WW3 native step (900, 4x), so DATM and WW3 sub-cycle 4x per mediator
-  # window and SCHISM 80x -- all landing on integer boundaries. The scaffold's
-  # original 900 (= dt_atmos, lowest mediator overhead) is DEFERRED to an
-  # isolated single-variable tuning experiment once a 3600 baseline cycles
-  # clean; 45 (the no-wave AK value, mediator every SCHISM step) is the
-  # conservative-but-expensive comparison baseline.
-  #
-  # PATCHER STATUS: nos-utils ufs_config.py ``_patch_runseq_interval``
-  # historically drove the runSeq ``@<n>`` token to ``config.model_dt`` (45)
-  # unconditionally. The ``ufs_coastal.coupling_interval`` override (PR #48,
-  # feature/ufs-config-4component) is NOW MERGED to nos-utils main (6a6b44a) --
-  # so once this repo's nos-utils submodule is bumped to main (it is currently
-  # pinned to the SECOFS river branch fix/secofs-boundary-river-nwm-overlay @
-  # ba8ef40, which predates #48), this key drives the runSeq to @3600. Bump
-  # the submodule before the first real AK-WW3 prep run, or prep patches the
-  # token back to @45 and also (pre-#48) corrupts the MED/OCN PET bounds for
-  # lack of a WAV clause. The ufs.configure fix file's seed should be updated
-  # to @3600 to match once the bump lands.
+  # Must be an integer multiple of dt=45. 3600 (= 80 x 45, 4 x dt_atmos, 4 x
+  # the WW3 native step) is the value the working Alaska DATM+SCHISM+WW3
+  # reference ran, adopted so the first coupled cycle changes one thing at a
+  # time. 900 (= dt_atmos, lower mediator overhead) is a later single-variable
+  # tuning experiment, not a bring-up choice.
   coupling_interval: 3600
-  # UNCHANGED from the base (900). Restated here because its relationship to
-  # coupling_interval changes: the base's own comment reads "= 20 *
-  # coupling_interval" (900 = 20 * 45); with coupling_interval now also 900,
-  # dt_atmos = coupling_interval, i.e. DATM, the mediator, and WW3 all update
-  # on the same cadence once the interval fix above lands.
+  # UNCHANGED from the base (900). coupling_interval (3600) is now 4 x
+  # dt_atmos, so DATM and WW3 both sub-cycle 4x per mediator exchange window
+  # rather than updating in lockstep with it.
   dt_atmos: 900
   templates:
     model_configure: model_configure.template
     datm_in: datm_in.template
     datm_streams: datm.streams.template
     ufs_configure: ufs.configure
-    # stage_files.py's stage_ww3_fix_files DOES stage ww3_shel.nml now (part
-    # of _WW3_FIX_FILES, same {PREFIXNOS}.<bare> convention as mod_def.ww3),
-    # but as-authored -- its start/end date tokens are not yet patched
-    # per-cycle by any nos-utils processor. This key is recorded so that
-    # future prep-time patcher has a yaml-driven filename to read instead of
-    # a second hardcoded literal, once it lands.
+    # stage_ww3_fix_files stages ww3_shel.nml (part of _WW3_FIX_FILES), but
+    # as-authored -- its start/end date tokens are not yet patched
+    # per-cycle. This key is recorded so a future patcher has a yaml-driven
+    # filename to read instead of a hardcoded literal.
     ww3_shel: ww3_shel.nml
-  # Gates ALL wave-restart/WW3-fix-file logic in nos_workflow (already merged,
-  # unlike the nos-utils gap above): stage_files.py's stage_ww3_fix_files /
-  # stage_wave_restarts / collect_staged_inputs, and configure.py's
-  # patch_ufs_configure start_type/restart_n/restart_option branch, are all
-  # gated on WAV_RESTART_ENABLED, which yaml_to_env.py's get_standard_exports
-  # only sets when this key is true (no other system YAML sets it, so this is
-  # the first system to opt in). Turning it on also flips the ufs.configure
-  # patcher from the no-wave "always startup, never restart_n" branch to the
-  # phase-aware one (forecast always continues the same-cycle nowcast leg;
-  # nowcast continues only if a previous-cycle wave restart bundle is found).
+  # Gates all wave-restart/WW3-fix-file logic in nos_workflow: stage_files.py's
+  # stage_ww3_fix_files / stage_wave_restarts / collect_staged_inputs, and
+  # configure.py's patch_ufs_configure start_type/restart_n/restart_option
+  # branch, are all gated on WAV_RESTART_ENABLED, which yaml_to_env.py's
+  # get_standard_exports only sets when this key is true (no other system
+  # YAML sets it, so this is the first system to opt in). Turning it on also
+  # flips the ufs.configure patcher from the no-wave "always startup, never
+  # restart_n" branch to the phase-aware one (forecast always continues the
+  # same-cycle nowcast leg; nowcast continues only if a previous-cycle wave
+  # restart bundle is found).
   wav_restart_enabled: true
-  # Left UNSET (see the staging-checklist header comment): $WAV_FIX_DIR only
-  # needs setting when wave fix files live somewhere OTHER than $FIXofs. Here
-  # $FIXofs already resolves to fix/stofs_3d_ak_ufs_ww3/ -- this yaml's own
-  # fix dir, and exactly where the WW3 fix files are hand-staged -- so the
-  # stage_ww3_fix_files fallback (wav_fix_dir_env or FIXofs) already does the
-  # right thing without restating the path here.
+  # Left UNSET: $WAV_FIX_DIR only needs setting when wave fix files live
+  # somewhere OTHER than $FIXofs. Here $FIXofs already resolves to
+  # fix/stofs_3d_ak_ufs_ww3/ -- this yaml's own fix dir, and exactly where
+  # the WW3 fix files are hand-staged -- so the stage_ww3_fix_files fallback
+  # (wav_fix_dir_env or FIXofs) already does the right thing without
+  # restating the path here.
 
 forcing:
   waves:
     enabled: true
-    # Declarative only today: the consumer is the nos-utils wave_boundary
-    # processor on branch feature/ww3-boundary-spectra (not yet merged to
-    # main / not in this checked-out submodule -- nothing here reads
-    # forcing.waves yet). Per-cycle pipeline it will run (prep stage, cheap,
-    # serial -- AK_WW3_SESSION_MEMO.md (b)): fetch gfswave.tCCz.ibp_tar (ASCII
-    # WW3-format 2D spectra at Input Boundary Points) from the GFS-Wave
-    # COMOUT/product tree, untar just the members inside `window` plus
-    # extra_points (pulled from the separate gfswave.tCCz.spec_tar.gz, since
-    # buoy stations aren't in the IBP tarball), run ww3_bound against the
-    # staged mod_def.ww3, and write nest.ww3 directly -- the same binary
-    # format the reference run consumes (no netCDF conversion; that was the
-    # 2019 research pipeline's ww3_bounc route, not the ops one).
+    # Consumed by nos-utils' WaveBoundaryProcessor (pinned in the nos-utils
+    # submodule). Per-cycle pipeline it runs (prep stage): fetch
+    # gfswave.tCCz.ibp_tar (ASCII WW3-format 2D spectra at Input Boundary
+    # Points) from the GFS-Wave COMOUT/product tree, untar just the members
+    # inside `window` plus extra_points (pulled from the separate
+    # gfswave.tCCz.spec_tar.gz, since buoy stations aren't in the IBP
+    # tarball), run ww3_bound against the staged mod_def.ww3, and write
+    # nest.ww3 directly -- the same binary format the reference run consumes
+    # (no netCDF conversion).
     #
     # Bare-name placeholder for the curated point-ID list ww3_bound will
     # subset to; nothing produces this file today (no prep code writes it).
     points_file: stofs_3d_ak_ufs.ww3_bound_points.list
-    # Verified 2026-08-08 against the live NOMADS product (mirrors WCOSS2
-    # COMOUT per the memo): 214 IBP points fall inside `window` (NW-ALU
-    # 183.0-207.6E and NW-AFG 183.5-221.0E arcs), but none west of 183E -- a
-    # real gap covering 794 of 1613 Pacific-arc boundary nodes (49%). These 3
-    # NDBC buoys close most of it by interpolation/extrapolation from just
-    # two of them (46070 ~175E, 46071 ~180E); acceptable for bring-up per the
-    # memo, not a long-term fix (that's parametric gap-fill from gridded
-    # gfswave partitions, or requesting EMC add western-Aleutian IBP points).
+    # 214 IBP points fall inside `window` (NW-ALU 183.0-207.6E and NW-AFG
+    # 183.5-221.0E arcs), but none west of 183E -- a real gap covering 794 of
+    # 1613 Pacific-arc boundary nodes (49%). These 3 NDBC buoys close most of
+    # it by interpolation/extrapolation from just two of them (46070 ~175E,
+    # 46071 ~180E); acceptable for bring-up, not a long-term fix (that's
+    # parametric gap-fill from gridded gfswave partitions, or requesting EMC
+    # add western-Aleutian IBP points).
     extra_points: ['46070', '46071', '46035']
-    # AK_WW3_SESSION_MEMO.md (b): lon 150-210E covers both the NW-ALU
-    # (183.0-207.6E) and NW-AFG (183.5-221.0E) IBP arcs; lat 45-67.5N covers
-    # the Pacific arc (156.7-203.1E boundary nodes) and the Bering Strait
-    # segment (207 nodes at 66.3N). Taken directly from the memo's own
-    # subsetting window, not independently re-derived here.
+    # lon 150-210E covers both the NW-ALU (183.0-207.6E) and NW-AFG
+    # (183.5-221.0E) IBP arcs; lat 45-67.5N covers the Pacific arc
+    # (156.7-203.1E boundary nodes) and the Bering Strait segment (207 nodes
+    # at 66.3N).
     window:
       lon_min: 150.0
       lon_max: 210.0
       lat_min: 45.0
       lat_max: 67.5
-    # UNDETERMINED / open question: how many gfswave cycles back to search if
-    # the current cycle's IBP tarball isn't posted yet. 1 is a placeholder,
-    # not a memo decision -- AK_WW3_SESSION_MEMO.md does not set this value.
+    # Placeholder, not a settled value: how many gfswave cycles back to
+    # search if the current cycle's IBP tarball isn't posted yet.
     max_cycle_fallback: 1
 
 resources:
@@ -243,11 +184,11 @@ shell_mappings:
     # execution mode (unlike get_standard_exports' standalone-only
     # UFS_EXEC_NAME branch), so it works here without touching yaml_to_env.py.
     UFS_EXEC_NAME: model.executable
-    # Declarative today (no nos-utils code reads a WAV_TASKS env var yet);
-    # wired here so it exists the moment feature/ufs-config-4component's
-    # wav_tasks PET-layout support merges, instead of needing a second yaml
-    # edit at that point.
+    # WAV_TASKS also gates the wave-staging paths in the runners; the
+    # 4-component PET patcher that consumes it is in the pinned nos-utils.
     WAV_TASKS: ufs_coastal.wav_tasks
+    # Lets execute.py verify the prep-patched runSeq interval pre-launch.
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
 
 # Not yet configured for the wave variant (inherits the base's disabled
 # ensemble block).

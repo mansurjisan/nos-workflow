@@ -8,10 +8,9 @@
 # budget instead of the base's 21 nodes/2513 ranks (see the yaml and PBS
 # cards in this directory for the full rationale).
 #
-# NOT RUNNABLE YET: this system needs nos-utils' 4-component PET-bounds /
-# coupling-interval patcher (branch feature/ufs-config-4component) merged,
-# fv3_coastalSW.exe built, and the WW3 fix files hand-staged -- see the
-# staging checklist at the top of parm/systems/stofs_3d_ak_ufs_ww3.yaml.
+# NOT YET RUN: fv3_coastalSW.exe still needs building and the WW3 fix files
+# still need hand-staging -- see the staging checklist at the top of
+# parm/systems/stofs_3d_ak_ufs_ww3.yaml.
 #
 # Usage:    ./launch_stofs_3d_ak_ufs_ww3.sh <PDY:YYYYMMDD> [CYC:HH (default 00)]
 # Example:  ./launch_stofs_3d_ak_ufs_ww3.sh 20260728 00

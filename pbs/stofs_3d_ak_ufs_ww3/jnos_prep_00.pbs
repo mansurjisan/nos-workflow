@@ -110,8 +110,8 @@ export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 # Use nos-utils (Python) for the full prep pipeline. config_from_env reads
 # OFS_CONFIG (set above), which drives nws=4, the ALASKA datm_domain, and the
 # ufs_coastal task layout (3600 total tasks = 120 DATM/MED + 2393 OCN +
-# 1087 WAV -- WAV/MED PET-bounds computation is not yet supported by the
-# checked-in nos-utils; see the yaml's own comments).
+# 1087 WAV). nos-utils patches ufs.configure's PET bounds and runSeq
+# coupling interval for the wave layout.
 #
 # USE_PYTHON_PREP=YES   - route prep through Python (vs legacy all-shell)
 # FULL_PYTHON_PREP=YES  - also run RTOFS OBC / nudging in Python

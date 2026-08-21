@@ -5,12 +5,12 @@
 !(4) array inputs follow column major (like FORTRAN) and can spill to multiple lines
 !(5) space allowed before/after '='
 !
-! STOFS-3D-AK + WW3 UFS-Coastal param.nml, DRAFT.
+! STOFS-3D-AK + WW3 UFS-Coastal param.nml.
 ! Copy of fix/stofs_3d_ak_ufs/stofs_3d_ak_ufs.param.nml (see that file's own
 ! header for the SECOFS-schema / R09a-values provenance note, which is
 ! unchanged here) with ONE section modified: the WWM/wave-coupling block
-! below now carries the reference run's (E:\STOFS_ALASKA\ATMWW3_AK_/param.nml)
-! ACTIVE wave-coupling values instead of the base's WW3-decoupled ones.
+! below now carries the working Alaska DATM+SCHISM+WW3 reference's ACTIVE
+! wave-coupling values instead of the base's WW3-decoupled ones.
 ! icou_elfe_wwm stays 0 -- deliberately (see the comment at that line): WW3
 ! arrives here via NUOPC/CMEPS as an external coupled component, not through
 ! SCHISM's internal WWM driver, so the icou_elfe_wwm switch (which selects
@@ -178,19 +178,16 @@
   turbinj = 0.15      !% of depth-induced wave breaking energy injected in turbulence (default: 0.15 (15%), as proposed by Feddersen, 2012)
 ! RADFLAG: ADDED vs the base file (which has no active RADFLAG at all --
 ! icou_elfe_wwm=0 there means these wave-force terms are present-but-inert
-! namelist padding). 'LON' matches the reference run's active value.
+! namelist padding). 'LON' matches the reference configuration's active value.
   RADFLAG = 'LON'
   fwvor_advxy_stokes = 1 !  --> Stokes drift advection (xy), Coriolis
   fwvor_advz_stokes = 1  !  --> Stokes drift advection (z) , Coriolis
   fwvor_gradpress = 1    !  --> Pressure term
-! fwvor_breaking: CHANGED from the base's 1 to the reference run's 0. OPEN
-! QUESTION, not resolved here: AK_WW3_SESSION_MEMO.md does not discuss this
-! choice, and the reference run's value may simply reflect Yunfang's own
-! research settings rather than a considered ops choice for this system --
-! confirm with her (or re-derive from first principles: whether SCHISM's own
-! wave-breaking vortex-force term should stay on when the wave FIELD itself
-! now comes from a spectrally-resolved external WW3 rather than R09a's
-! decoupled configuration) before this system leaves bring-up.
+! fwvor_breaking: CHANGED from the base's 1 to the reference configuration's
+! 0. OPEN QUESTION, not resolved here: whether SCHISM's own wave-breaking
+! vortex-force term should stay on when the wave FIELD itself now comes from
+! a spectrally-resolved external WW3 rather than R09a's decoupled
+! configuration -- confirm before this system leaves bring-up.
   fwvor_breaking = 0     !  --> Wave breaking
   cur_wwm = 0            ! Coupling current in WWM
                          ! 0: surface layer current
