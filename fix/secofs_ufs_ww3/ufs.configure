@@ -14,9 +14,8 @@ EARTH_attributes::
 ::
 
 # MED #
-# PET span = 0 5519, the FULL union of ATM+OCN+WAV -- deliberately wider
-# than the 3-component secofs_ufs file (MED there is co-located with ATM
-# only, 0 119). Matches the validated Alaska DATM+SCHISM+WW3 reference.
+# MED spans the full ATM+OCN+WAV union (wider than the 3-component file,
+# where MED is co-located with ATM only). Matches the Alaska reference.
 MED_model:                      cmeps
 MED_petlist_bounds:             0 5519
 MED_omp_num_threads:            1
@@ -30,18 +29,12 @@ MED_attributes::
   coupling_mode = coastal
   pio_typename = PNETCDF
   pio_stride = 8
-  # Precomputed ocn->wav regrid weights. Without this, ESMF builds the
-  # bilinear map at runtime by constructing an internal dual of SCHISM's
-  # mesh (source side), which aborts in ESMCI_MeshDual.C at this PET
-  # count/mesh size. Supplying the weight file skips that construction
-  # entirely.
+  # Precomputed regrid weights for both directions. Without them ESMF builds
+  # the map at runtime by constructing an internal dual mesh, which aborts at
+  # this mesh size. wav2ocn additionally requires the CMEPS wav2ocn_smapname
+  # patch; unpatched, CMEPS never reads the attribute. Both filenames must
+  # match ufs_coastal.{ocn2wav,wav2ocn}_weights in the system yaml.
   ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc
-  # Precomputed wav->ocn regrid weights (CMEPS-interface patch
-  # cmeps_patch/wav2ocn_smapname.patch required -- see the repo runbook,
-  # "V16 -- wav2ocn weights + CMEPS patch"). Same ESMF_FieldSMMStore
-  # mechanism as ocn2wav_smapname above, applied to the reverse map, so
-  # ESMF never takes the online regrid-store path for either wav<->ocn
-  # direction at this PET count/mesh size.
   wav2ocn_smapname = secofs_ufs.wav2ocn_weights.nc
 ::
 
@@ -65,38 +58,22 @@ OCN_attributes::
   DumpFields = false
   ProfileMemory = false
   OverwriteSlice = true
-  # element, NOT node. The node path in SCHISM's cap publishes the AUGMENTED
-  # element set (nea, allocate elementids(nea)/nv(sum(i34(1:nea)))), so ghost
-  # elements are duplicated across PETs with no owners -- the transferred
-  # element distgrid grows past ne_global and the OCN-MED connector's
-  # RedistStore fails with truncated messages. The element path publishes
-  # resident-only elements (ne) and is the exercised one.
-  # Consequence: ESMF would build an internal dual of SCHISM's mesh for the
-  # ocn-to-wav bilinear map (source side only), which aborts at this scale.
-  # That is avoided by supplying precomputed regrid weights instead, not by
-  # switching meshloc.
+  # element, NOT node: the node path publishes SCHISM's augmented element set,
+  # duplicating ghost elements across PETs until the OCN-MED connector's
+  # RedistStore fails. The element path publishes resident-only elements.
   meshloc = element
   CouplingConfig = none
 ::
 
 # WAV #
-# PETs 2914-5519 (2606 PETs, sized for the shipped e0m water-only wave
-# mesh) -- see nos-utils UFSConfigProcessor._patch_pet_bounds for the
-# datm+schism+wav==total cross-check applied at prep time. mesh_wav must
-# match ufs_coastal.wav_mesh in parm/systems/secofs_ufs_ww3.yaml.
+# PET bounds and mesh_wav must match ufs_coastal.* in the system yaml;
+# nos-utils cross-checks datm+schism+wav == total at prep time.
 WAV_model:                      ww3
 WAV_petlist_bounds:             2914 5519
 WAV_omp_num_threads:            1
 WAV_attributes::
-  # dbug_flag = 0: promoted to routine daily 12z ops cycling, so the
-  # per-coupling-window imported-field min/max diagnostics (So_h, So_u,
-  # So_v) that dbug_flag=6 prints to the WAV PET logs are switched off.
-  # That level was kept through the first e0m fully-coupled validation
-  # run -- it provided the field-extrema evidence that pinned the current
-  # ranges in V12, and would have given the same evidence again had e0m
-  # crashed; log volume was acceptable at 4766 WAV PETs (2606 is less).
-  # Re-enable dbug_flag=6 only for a targeted diagnostic rerun, not for
-  # normal cycling.
+  # 0 for routine cycling. Set 6 for a targeted diagnostic rerun: it prints
+  # per-window imported-field min/max (So_h, So_u, So_v) to every WAV PET log.
   dbug_flag = 0
   Verbosity = 0
   DumpFields = false
@@ -115,13 +92,8 @@ WAV_attributes::
 ::
 
 # Run Sequence #
-# @360 = 3x SCHISM's 120s dt (nos_utils enforces the coupling interval is
-# an integer multiple of model.physics.dt). WW3's own UNST_NML
-# TIMESTEPS%DTXY has been 120s since commit 715e9f8 (halved from 360s to
-# restore diagonal dominance for the currents-coupled implicit solve), so
-# WW3 now substeps 3x internally per 360s coupling window, not 1:1 -- the
-# NUOPC exchange frequency and the SCHISM dt multiple rule are unaffected
-# either way, since WW3 substeps on its own between exchanges.
+# @360 = 3x SCHISM's 120 s dt; nos_utils enforces the integer-multiple rule.
+# WW3 substeps internally (DTXY=120 s) between exchanges.
 runSeq::
 @360
   MED med_phases_prep_atm
@@ -145,14 +117,10 @@ runSeq::
 @
 ::
 
-# start_type AND restart_n are both patched per-phase at run time (see
-# runners/schism_ufs/configure.py:patch_ufs_configure): start_type is
-# nowcast=startup, forecast=continue; restart_n is set to that leg's own
-# length in hours (24 for nowcast, 48 for forecast) so restart_option=nhours
-# writes exactly one mediator/WW3 restart, at the end of the leg -- landing
-# on the nowcast/forecast handoff every cycle instead of (with a fixed 24h
-# stride) writing 2 multi-GB restarts across a 48h forecast. The values
-# below are the as-checked-in template defaults, overwritten every run.
+# start_type and restart_n are patched per phase at run time
+# (configure.py:patch_ufs_configure): startup/continue, and restart_n set to
+# the leg's own length so exactly one restart is written, at the leg end. The
+# values below are template defaults and are overwritten every run.
 ALLCOMP_attributes::
   ScalarFieldCount = 3
   ScalarFieldIdxGridNX = 1
