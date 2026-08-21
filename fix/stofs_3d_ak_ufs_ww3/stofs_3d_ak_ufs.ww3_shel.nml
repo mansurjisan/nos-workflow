@@ -1,0 +1,82 @@
+! STOFS-3D-AK + WW3, DRAFT. Ops adaptation of Yunfang Sun's reference run's
+! ww3_shel.nml (E:\STOFS_ALASKA\ATMWW3_AK_/ww3_shel.nml), which ran a fixed
+! 2019-07-01..2019-11-15 continuous hindcast window. Renamed to the
+! {PREFIXNOS}.<bare> convention (bare name "ww3_shel.nml") so
+! stage_files.py's stage_ww3_fix_files actually finds it -- it IS staged
+! today (part of _WW3_FIX_FILES, alongside mod_def.ww3 / wav_esmf_mesh.nc /
+! ww3_points.list; nest.ww3 is handled separately, see stage_ww3_fix_files'
+! own docstring), just as-authored: no processor reads
+! ufs_coastal.templates.ww3_shel, so the date-token patcher below is still
+! future nos-utils work.
+!
+! Token style matches datm_in.template / model_configure.template
+! (@[TOKEN] markers, substituted by nos-utils' UFSConfigProcessor at prep
+! time): @[YYYY]/@[MM]/@[DD]/@[HH] are reused verbatim (same phase-start
+! anchor those templates use). @[STOP_YYYY]/@[STOP_MM]/@[STOP_DD]/@[STOP_HH]
+! are NEW tokens this file introduces -- the future patcher must compute them
+! as phase start + NHOURS (mirroring how patch_ufs_configure derives stop_n
+! from the same phase anchors in runners/schism_ufs/configure.py), since
+! nothing today computes a "stop" timestamp for any of the four config files.
+
+&domain_nml
+  domain%start = '@[YYYY]@[MM]@[DD] @[HH]0000'
+  domain%stop  = '@[STOP_YYYY]@[STOP_MM]@[STOP_DD] @[STOP_HH]0000'
+/
+
+&input_nml
+  input%forcing%winds        = 'C'
+  input%forcing%currents     = 'C'
+  input%forcing%water_levels = 'C'
+  input%forcing%ice_conc     = 'F'
+  input%forcing%ice_param1   = 'F'
+  input%forcing%ice_param5   = 'F'
+/
+
+&output_type_nml
+  ! Field list copied verbatim from the reference run.
+  type%field%list  = 'WND WLV CUR HS FP DP PHS PTP PDIR DIR T01'
+  ! Matches the reference run's literal filename. stage_ww3_fix_files
+  ! stages fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.ww3_points.list to this
+  ! bare name (part of _WW3_FIX_FILES, same {PREFIXNOS}.<bare> convention
+  ! as the other WW3 fix files) -- content copied from the reference run's
+  ! own ww3_points.list (69 points, matches this system's station.in
+  ! 1-for-1; NOT the unrelated points.list also sitting in that run's
+  ! directory, which is a stray Atlantic-coordinate file from a different
+  ! system).
+  TYPE%POINT%FILE = 'ww3_points.list'
+/
+
+! -------------------------------------------------------------------- !
+&OUTPUT_DATE_NML
+  ! Field/point output cadence (3600s = hourly) copied from the reference
+  ! run; independent of the SCHISM<->WW3 coupling_interval.
+  DATE%FIELD   = '@[YYYY]@[MM]@[DD] @[HH]0000' '3600' '@[STOP_YYYY]@[STOP_MM]@[STOP_DD] @[STOP_HH]0000'
+  DATE%POINT   = '@[YYYY]@[MM]@[DD] @[HH]0000' '3600' '@[STOP_YYYY]@[STOP_MM]@[STOP_DD] @[STOP_HH]0000'
+  ! Native WW3 restart (binary restart.ww3), kept at a large stride (864000s
+  ! = 10 days, same value the reference run used) so it never fires within a
+  ! single 6h nowcast or 48h forecast leg. This is DELIBERATE, not an
+  ! oversight: cross-cycle continuity for WAV/MED is carried by WW3's own
+  ! CMEPS-written netCDF restart instead (use_restartnc='true'). CORRECTED
+  ! (was: "RESTART/ufs.cpld.ww3.r.*.nc + rpointer.cpl" -- wrong on both
+  ! counts): ground truth from the reference run's own log.ww3 is that
+  ! CMEPS writes "Writing restart file ./ufs.cpld.ww3.r.<ts>.nc" at the
+  ! rundir ROOT, never under ufs.configure's restart_dir=RESTART/, and
+  ! with NO rpointer naming it at all -- neither rpointer.wav nor
+  ! rpointer.ww3 exists anywhere in that run's $DATA. Only the mediator's
+  ! OWN restart (RESTART/ufs.cpld.cpl.r.*.nc + rpointer.cpl) is
+  ! restart_dir- and rpointer-driven; ufs.configure's
+  ! restart_n/restart_option still govern WHEN WW3's restart gets written
+  ! (the same MED med_phases_restart_write call triggers it), just not
+  ! WHERE or via what pointer -- see nos_workflow's stage_files.py
+  ! (stage_wave_restarts) / execute.py (_select_wave_harvest), which stage
+  ! and harvest this CMEPS netCDF restart per-component accordingly. Per
+  ! AK_WW3_SESSION_MEMO.md (c) -- WW3's own NATIVE (binary) restart
+  ! mechanism above is not part of the leg-cycling design here.
+  DATE%RESTART = '@[YYYY]@[MM]@[DD] @[HH]0000' '864000' '@[STOP_YYYY]@[STOP_MM]@[STOP_DD] @[STOP_HH]0000'
+/
+
+&HOMOG_COUNT_NML
+/
+
+&HOMOG_INPUT_NML
+/

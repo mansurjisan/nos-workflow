@@ -1,0 +1,195 @@
+#############################################
+####  NEMS Run-Time Configuration File  #####
+#############################################
+# STOFS-3D-AK + WW3, DRAFT. 4-component adaptation of
+# fix/stofs_3d_ak_ufs/ufs.configure (ATM OCN MED), using Yunfang Sun's working
+# coupled DATM+SCHISM+WW3 run (E:\STOFS_ALASKA\ATMWW3_AK_) as the reference
+# for the added WAV component. Diffed line-by-line against the base file:
+# only ADDs are the WAV block, WAV in EARTH_component_list/MED_attributes,
+# the WAV/MED/OCN petlist_bounds values below, and a commented-out
+# write_restart_at_endofrun line in ALLCOMP_attributes (see the note next
+# to it) -- restart_n/restart_option/orb_iyear/stop_n/start_type
+# themselves are byte-identical to the base (see the note at the bottom).
+#
+# PET-BOUNDS CONFLICT WITH THE CURRENT PATCHER: nos-utils' checked-in
+# ufs_config.py._patch_pet_bounds is 3-component-only -- it regexes
+# MED_petlist_bounds:/ATM_petlist_bounds:/OCN_petlist_bounds: (same
+# "^(\s*KEY_petlist_bounds:\s*).*$" prefix this file keeps, so the regex
+# still MATCHES), but its formula sets MED = "0 (datm_tasks-1)" and OCN =
+# "datm_tasks (total_tasks-1)" -- correct for a 3-component file where MED
+# only needs to reach ATM, but wrong here: it would shrink MED down to
+# ATM's range instead of all 3600 PETs, and it would stretch OCN across
+# WAV's PETs too, since total_tasks now includes wav_tasks. It also has no
+# WAV_petlist_bounds regex at all, so that line is never touched -- whatever
+# is seeded below is what ships. This file seeds the CORRECT layout-A numbers
+# directly (as a 4-component-aware patcher would compute them) rather than
+# numbers the current patcher would produce, so running this file through
+# today's nos-utils would corrupt MED/OCN on top of leaving WAV alone --
+# this system is not runnable until nos-utils' 4-component
+# _patch_pet_bounds (branch feature/ufs-config-4component) merges.
+
+# ESMF #
+logKindFlag:            ESMF_LOGKIND_MULTI
+globalResourceControl:  true
+
+# EARTH #
+EARTH_component_list: ATM OCN WAV MED
+EARTH_attributes::
+  Verbosity = 0
+::
+
+# MED #
+# Only ADD vs the base: WAV_model = ww3. MED_petlist_bounds below spans every
+# rank (reference-run convention -- MED must talk to ATM, OCN, and WAV), NOT
+# datm_tasks-1 the way a 3-component file's MED does.
+MED_model:                      cmeps
+MED_petlist_bounds:             0 3599
+MED_omp_num_threads:            1
+MED_attributes::
+  ATM_model = datm
+  OCN_model = schism
+  WAV_model = ww3
+  history_n = 9999
+  history_option = nhours
+  history_ymd = -999
+  coupling_mode = coastal
+::
+
+# ATM #
+ATM_model:                      datm
+ATM_petlist_bounds:             0 119
+ATM_omp_num_threads:            1
+ATM_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+::
+
+# OCN #
+OCN_model:                      schism
+OCN_petlist_bounds:             120 2512
+OCN_omp_num_threads:            1
+OCN_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+  meshloc = element
+  CouplingConfig = none
+::
+
+# WAV #
+# Layout A (AK_WW3_SESSION_MEMO.md (a)): PETs 2513-3599 = 1087 wav_tasks,
+# right after OCN's 120-2512. PROFILE-FIRST, NOT FINAL -- see the yaml.
+WAV_model:                      ww3
+WAV_petlist_bounds:             2513 3599
+WAV_omp_num_threads:            1
+WAV_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  # Bare name from stage_files.py's _WW3_FIX_FILES ("wav_esmf_mesh.nc"), NOT
+  # the reference run's literal "alaska_ESMFmesh.nc" -- stage_ww3_fix_files
+  # copies $FIXofs/stofs_3d_ak_ufs.wav_esmf_mesh.nc (the hand-staged, renamed
+  # alaska_ESMFmesh.nc) to this bare name in $DATA before launch.
+  mesh_wav = wav_esmf_mesh.nc
+  multigrid = false
+  user_histname = 'false'
+  use_historync = 'true'
+  use_restartnc = 'true'
+  restart_from_binary = 'false'
+  pio_typename = 'pnetcdf'
+  pio_numiotasks = 4
+  pio_stride = -99
+  pio_rearranger = 'box'
+  pio_root = -99
+::
+
+# Run Sequence #
+# Structure adapted from the reference run (prep -> send to components -> step
+# -> collect -> post -> restart_write), NOT the base 3-component file's
+# simpler ATM->MED-first ordering -- the base file has no
+# "MED med_phases_restart_write" call at all, so even a finite restart_n
+# there would never actually write a CMEPS restart. That call is REQUIRED
+# here: WAV/MED warm-start cycling (AK_WW3_SESSION_MEMO.md (c)) depends on it.
+#
+# Interval: patched at prep. Seeded here at @45 (== model.physics.dt), the
+# SAME value nos-utils' CURRENT _patch_runseq_interval would force it to
+# regardless (it drives this token to config.model_dt unconditionally, not to
+# ufs_coastal.coupling_interval) -- see the long comment on
+# ufs_coastal.coupling_interval in the yaml for why 900 does not take effect
+# yet and what nos-utils change closes that gap. Token format (a bare
+# "@<digits>" line with nothing else on it) is unchanged from the base file
+# so the existing regex (``^@\d+\s*$``) still matches.
+runSeq::
+@45
+  MED med_phases_prep_atm
+  MED med_phases_prep_ocn_accum
+  MED med_phases_prep_ocn_avg
+  MED med_phases_prep_wav_accum
+  MED med_phases_prep_wav_avg
+  MED -> ATM :remapMethod=redist
+  MED -> OCN :remapMethod=redist
+  MED -> WAV :remapMethod=redist
+  ATM
+  OCN
+  WAV
+  ATM -> MED :remapMethod=redist
+  OCN -> MED :remapMethod=redist
+  WAV -> MED :remapMethod=redist
+  MED med_phases_post_atm
+  MED med_phases_post_ocn
+  MED med_phases_post_wav
+  MED med_phases_restart_write
+@
+::
+
+# ALLCOMP_attributes -- byte-identical to the base file, aside from the
+# commented-out write_restart_at_endofrun line below (see the note next to
+# it). restart_n=9999 / restart_option=nhours are the base's own inert
+# seed (CMEPS never actually writes a restart at 9999 nhours):
+# nos_workflow's configure.py already
+# patches both, phase-aware, whenever WAV_RESTART_ENABLED is set (this
+# system's yaml sets it) -- see patch_ufs_configure in
+# runners/schism_ufs/configure.py. Leaving the seed at 9999/nhours/startup
+# means a waves-off reuse of this file (WAV_RESTART_ENABLED unset) degrades
+# harmlessly to exactly the base file's behavior. orb_iyear/stop_n are
+# likewise overwritten every run from the actual cycle by the same patcher.
+ALLCOMP_attributes::
+  ScalarFieldCount = 3
+  ScalarFieldIdxGridNX = 1
+  ScalarFieldIdxGridNY = 2
+  ScalarFieldIdxNextSwCday = 3
+  ScalarFieldName = cpl_scalars
+  start_type = startup
+  restart_dir = RESTART/
+  case_name = ufs.cpld
+  restart_n = 9999
+  restart_option = nhours
+  # write_restart_at_endofrun = .true.
+  # UNVERIFIED key name/placement -- reviewer-suggested safety net (force a
+  # restart write at leg-end regardless of the restart_n/restart_option
+  # alarm timing, alongside nos_workflow's own per-leg restart_n/
+  # restart_option patching in configure.py:patch_ufs_configure). No
+  # precedent for actually SETTING this key exists anywhere reachable
+  # here: neither the reference run's own ufs.configure nor any
+  # fix/*/ufs.configure in this repo sets it (CMEPS is not vendored in
+  # nos-utils, so its source can't be checked directly either). The
+  # reference run's mediator.log DOES confirm CMEPS reads a key by this
+  # exact name -- its restart-alarm-init log line reports
+  # "write_restart_at_endofrun :       F" (the CMEPS default, since the
+  # reference ufs.configure never sets it) -- which is the closest thing
+  # to precedent available; confirm the name against the CMEPS coastal
+  # fork build during bring-up before uncommenting.
+  restart_ymd = -999
+  orb_eccen = 1.e36
+  orb_iyear = 2026
+  orb_iyear_align = 2026
+  orb_mode = fixed_year
+  orb_mvelp = 1.e36
+  orb_obliq = 1.e36
+  stop_n = 48
+  stop_option = nhours
+  stop_ymd = -999
+::
