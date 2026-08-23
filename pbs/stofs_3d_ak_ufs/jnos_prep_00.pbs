@@ -86,10 +86,10 @@ export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 # Alaska/Bering/Aleutians needs GFS (global) + HRRR (Alaska tile) + RTOFS.
 # No COMINnwm: the Alaska mesh carries no river sources (if_source=0), so the
 # NWM river stage is not run and a COMINnwm path here would be misleading.
-export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
-export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
-export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver}}
+export COMINhrrr=${COMINhrrr:-/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}}
+export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 
 ################################################
 # CALL executable job script here

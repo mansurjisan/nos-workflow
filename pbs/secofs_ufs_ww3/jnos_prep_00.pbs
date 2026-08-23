@@ -82,11 +82,11 @@ export DCOMROOT=/lfs/h1/ops/prod/dcom
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 
 # Input data paths for DATM forcing generation
-export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
-export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
-export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver}}
+export COMINhrrr=${COMINhrrr:-/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}}
+export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINnwm=${COMINnwm:-/lfs/h1/ops/prod/com/nwm/${nwm_ver}}
 # GFS-Wave (gfswave) boundary spectra for forcing.waves. WaveBoundaryProcessor
 # appends gfs.<PDY>/<cyc>/wave/station/ under this root, mirroring how the
 # atmospheric GFS processor appends gfs.<PDY>/<cyc>/atmos/ under COMINgfs --
