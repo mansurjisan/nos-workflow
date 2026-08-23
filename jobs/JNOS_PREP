@@ -163,7 +163,7 @@ if command -v compath.py &> /dev/null; then
     export COMINrtofs=$(compath.py prod/rtofs/${rtofs_ver:-v2.5})
     export COMINrtofs_2d=${COMINrtofs_2d:-${COMINrtofs}}
     export COMINrtofs_3d=${COMINrtofs_3d:-${COMINrtofs}}
-    export COMINnwm=${COMINnwm:-$(compath.py prod/nwm/${nwm_ver:-v3.0})}
+    export COMINnwm=${COMINnwm:-$(compath.py prod/nwm/${nwm_ver:-v3.1})}
 fi
 
 export DCOMINndfd=${DCOMROOT:-}
