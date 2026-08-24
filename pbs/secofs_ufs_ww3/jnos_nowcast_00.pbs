@@ -85,15 +85,15 @@ export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 export COMIN=/lfs/h1/ops/prod/com
 
 # Input data paths (production WCOSS2)
-export COMINnam=/lfs/h1/ops/prod/com/nam/${nam_ver}
-export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
-export COMINrap=/lfs/h1/ops/prod/com/rap/${rap_ver}
-export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
-export COMINrtma=/lfs/h1/ops/prod/com/rtma/${rtma_ver}
-export COMINetss=/lfs/h1/ops/prod/com/petss/${petss_ver}
-export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINnwm=/lfs/h1/ops/prod/com/nwm/${nwm_ver}
+export COMINnam=${COMINnam:-/lfs/h1/ops/prod/com/nam/${nam_ver}}
+export COMINhrrr=${COMINhrrr:-/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}}
+export COMINrap=${COMINrap:-/lfs/h1/ops/prod/com/rap/${rap_ver}}
+export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver}}
+export COMINrtma=${COMINrtma:-/lfs/h1/ops/prod/com/rtma/${rtma_ver}}
+export COMINetss=${COMINetss:-/lfs/h1/ops/prod/com/petss/${petss_ver}}
+export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINnwm=${COMINnwm:-/lfs/h1/ops/prod/com/nwm/${nwm_ver}}
 
 # UFS-Coastal 4-component: MED spans PETs 0-5519 (full ATM+OCN+WAV union),
 # ATM 0-119, OCN 120-2913, WAV 2914-5519 (e0m water-only wave mesh).

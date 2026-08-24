@@ -77,10 +77,10 @@ export COMIN=/lfs/h1/ops/prod/com
 # Input data paths (production WCOSS2).
 # Alaska/Bering/Aleutians needs GFS (global) + HRRR (Alaska tile) + RTOFS.
 # No COMINnwm: the Alaska mesh carries no river sources (if_source=0).
-export COMINgfs=/lfs/h1/ops/prod/com/gfs/${gfs_ver}
-export COMINhrrr=/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}
-export COMINrtofs_2d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
-export COMINrtofs_3d=/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}
+export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver}}
+export COMINhrrr=${COMINhrrr:-/lfs/h1/ops/prod/com/hrrr/${hrrr_ver}}
+export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
+export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 
 # UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-2512 (2393 SCHISM ranks).
 # nscribes=0 -- coupled, CMEPS/the mediator handles output, so every OCN rank
