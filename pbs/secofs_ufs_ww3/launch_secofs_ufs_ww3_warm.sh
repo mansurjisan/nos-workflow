@@ -1,0 +1,119 @@
+#!/bin/bash
+# launch_secofs_ufs_ww3_warm.sh -- daily WW3 warm-start experiment.
+#
+# Companion to launch_secofs_ufs_ww3.sh. That one drives the operational
+# cold-start chain through all four stages. This one runs the NOWCAST leg
+# only, warm-started from the previous cycle's WW3 + mediator restarts,
+# into a scratch COMOUT. The operational chain is never touched, and it
+# supplies a cold twin for every warm cycle at no extra cost.
+#
+# Why it exists: cross-cycle warm start was held off on the assumption that
+# warm cycling would carry the marginal-node artifact forward. A single
+# controlled cycle showed it does not (water level moved under 1 cm at every
+# station) and that it cuts buoy Hs RMSE by ~37%. What one cycle cannot show
+# is whether anything accumulates across consecutive warm cycles. This builds
+# that chain and logs one line per day so the trend is readable.
+#
+# Deliberately NOT routed through launch_secofs_ufs_ww3.sh: that script reads
+# completion from $RPTDIR/secofs_ufs_ww3_<stage>_00.*.out files newer than a
+# sentinel, but the PBS job writes its .out to the real rpt directory whatever
+# RPTDIR says. The warm nowcast overlaps the operational one in wall-clock, so
+# each launcher could latch onto the other's .out. This polls on the job id
+# instead, which is unambiguous.
+#
+# Usage: launch_secofs_ufs_ww3_warm.sh [PDY]      (default: today, UTC)
+#   DRYRUN=1   stage everything, log the qsub, submit nothing
+set -u
+
+PDY=${PDY:-${1:-$(date -u +%Y%m%d)}}
+CYC=12                                  # the experiment is 12z only
+PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
+P=${PTMPROOT:-/lfs/h1/nos/ptmp/${USER}}
+RPT=$P/rpt/secofs_ufs_ww3
+ROOT=${WARM_ROOT:-$P/warmtest/com/nos}
+SCRATCH=$ROOT/secofs_ufs_ww3.$PDY
+BASE=${WARM_BASE:-/lfs/h1/nos/estofs/noscrub/${USER}/warm_chain}
+LOG=$BASE/launch_secofs_ufs_ww3_warm.chain.log
+PREP_WAIT_MIN=${PREP_WAIT_MIN:-180}     # operational prep has taken 31-80 min
+RUN_WAIT_MIN=${RUN_WAIT_MIN:-270}       # jnos_nowcast_00 walltime 4:00 + 30 min.
+                                        # Must be >= the PBS walltime: this script
+                                        # does not qdel, so a shorter value cannot
+                                        # stop anything, it can only mislabel a
+                                        # healthy cycle (see test_launcher_timeouts).
+POLL=${POLL:-60}
+KEEP_DAYS=${KEEP_DAYS:-4}               # each cycle's restarts are ~7.2 GB
+
+mkdir -p "$BASE" "$ROOT"
+log(){ echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG" ; }
+
+# ---- 1. wait for the operational prep for THIS cycle -----------------------
+log "START $PDY 12z: waiting for operational prep (<= ${PREP_WAIT_MIN} min)"
+deadline=$(( $(date +%s) + PREP_WAIT_MIN*60 )); ok=0
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  for f in "$RPT"/secofs_ufs_ww3_prep_00.*.out; do
+    [ -f "$f" ] || continue
+    grep -q "^PDY=${PDY}$" "$f" 2>/dev/null || continue
+    grep -q "STAGE_SUMMARY stage=prep .*status=PASS" "$f" 2>/dev/null && ok=1
+  done
+  [ "$ok" -eq 1 ] && break
+  sleep "$POLL"
+done
+[ "$ok" -eq 1 ] || { log "ABORT $PDY: operational prep did not pass in ${PREP_WAIT_MIN} min"; exit 1; }
+
+# ---- 2. seed the scratch COMOUT -------------------------------------------
+# The nowcast stage reads its inputs FROM $COMOUT, so an empty scratch tree
+# fails at staging.
+SRC=$P/com/nos/secofs_ufs_ww3.$PDY
+[ -d "$SRC" ] || { log "ABORT $PDY: no operational COMOUT at $SRC"; exit 1; }
+mkdir -p "$SCRATCH"
+rsync -a "$SRC/" "$SCRATCH/"
+
+# The backward search for prior-cycle restarts resolves against $COMOUTroot,
+# which defaults to the parent of $COMOUT -- so the previous cycle has to be
+# visible under the SAME root or this silently cold-starts.
+PREV=$(date -u -d "$PDY -1 day" +%Y%m%d)
+if [ -d "$ROOT/secofs_ufs_ww3.$PREV/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
+  log "chain: $PREV warm restarts present"
+elif [ -d "$P/com/nos/secofs_ufs_ww3.$PREV/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
+  ln -sfn "$P/com/nos/secofs_ufs_ww3.$PREV" "$ROOT/secofs_ufs_ww3.$PREV"
+  log "chain: seeding from the operational $PREV restarts (chain starts here)"
+else
+  log "chain: no $PREV restarts anywhere -- this cycle will cold-start"
+fi
+
+# ---- 3. submit -------------------------------------------------------------
+if [ "${DRYRUN:-0}" = "1" ]; then
+  log "DRYRUN $PDY: would qsub -v PDY=$PDY,CYC=$CYC,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES"
+  exit 0
+fi
+cd "$PKG" || { log "ABORT: cannot cd $PKG"; exit 2; }
+raw=$(qsub -v "PDY=$PDY,CYC=$CYC,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES" \
+        pbs/secofs_ufs_ww3/jnos_nowcast_00.pbs 2>&1) || { log "ABORT $PDY: qsub failed: $raw"; exit 2; }
+JID=$(echo "$raw" | grep -oE '^[0-9]+' | head -1)
+log "SUBMIT $PDY: jobid=${JID:-?} ($raw)"
+[ -n "$JID" ] || { log "ABORT $PDY: could not parse a job id"; exit 2; }
+
+# ---- 4. wait for THIS job, by id ------------------------------------------
+OUT=""; deadline=$(( $(date +%s) + RUN_WAIT_MIN*60 ))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  for f in "$RPT"/secofs_ufs_ww3_nowcast_00."$JID".out; do
+    [ -f "$f" ] && grep -q "STAGE_SUMMARY" "$f" 2>/dev/null && OUT=$f
+  done
+  [ -n "$OUT" ] && break
+  sleep "$POLL"
+done
+if [ -z "$OUT" ]; then
+  log "RESULT $PDY: TIMEOUT after ${RUN_WAIT_MIN} min (job $JID still running or no STAGE_SUMMARY)"
+  exit 1
+fi
+
+# ---- 5. one result line, so the chain is readable at a glance -------------
+st=$(grep -ah "STAGE_SUMMARY" "$OUT" | tail -1 | sed -E 's/.*status=([A-Z]+).*runtime_s=([0-9.]+).*/\1 \2s/')
+sc=$(grep -ac "PDLIB scrub:" "$OUT")
+if grep -q "Staged nowcast wave restart handoff" "$OUT"; then warm=WARM; else warm=COLD-FALLBACK; fi
+log "RESULT $PDY: $warm $st scrub=$sc"
+[ "$warm" = "WARM" ] || log "NOTE $PDY: warm start did not engage -- this cycle is not evidence"
+
+# ---- 6. prune old scratch cycles ------------------------------------------
+find "$ROOT" -maxdepth 1 -name "secofs_ufs_ww3.*" -type d -mtime +"$KEEP_DAYS" -exec rm -rf {} + 2>/dev/null
+exit 0

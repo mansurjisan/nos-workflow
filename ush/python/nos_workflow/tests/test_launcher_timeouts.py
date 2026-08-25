@@ -170,3 +170,45 @@ def test_ww3_pbs_scripts_keep_parmetis_retry():
         text = pbs.read_text()
         assert "PARMETIS_RETRY" in text
         assert "partition_hgrid" in text
+
+
+class TestWarmLauncherTimeout:
+    """The warm-start launcher obeys the same timeout rule as its sibling.
+
+    launch_secofs_ufs_ww3_warm.sh polls for a STAGE_SUMMARY and gives up
+    after RUN_WAIT_MIN. Like the operational launcher it does not qdel, so
+    a value below the PBS job's own walltime cannot stop anything -- it can
+    only mislabel a healthy cycle, which is the failure this module exists
+    to prevent.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+    _NOWCAST = _ROOT / "pbs" / "secofs_ufs_ww3" / "jnos_nowcast_00.pbs"
+
+    def _walltime_minutes(self) -> int:
+        m = re.search(r"walltime=(\d+):(\d+):(\d+)", self._NOWCAST.read_text())
+        assert m, "no walltime= in jnos_nowcast_00.pbs"
+        return int(m.group(1)) * 60 + int(m.group(2))
+
+    def _run_wait_minutes(self) -> int:
+        m = re.search(r"RUN_WAIT_MIN=\$\{RUN_WAIT_MIN:-(\d+)\}", self._WARM.read_text())
+        assert m, "no RUN_WAIT_MIN default in launch_secofs_ufs_ww3_warm.sh"
+        return int(m.group(1))
+
+    def test_warm_launcher_exists_and_is_executable(self) -> None:
+        assert self._WARM.is_file()
+        assert self._WARM.stat().st_mode & 0o111, "warm launcher must be executable (cron runs it)"
+
+    def test_run_wait_covers_nowcast_walltime(self) -> None:
+        wall = self._walltime_minutes()
+        wait = self._run_wait_minutes()
+        assert wait >= wall, (
+            f"RUN_WAIT_MIN={wait} min is below the nowcast walltime of {wall} min; "
+            "a healthy slow cycle would be reported as TIMEOUT"
+        )
+
+    def test_scratch_comout_is_not_the_operational_one(self) -> None:
+        """The experiment must never write into the operational COMOUT."""
+        txt = self._WARM.read_text()
+        assert "warmtest" in txt
+        assert "COMOUT=$SCRATCH" in txt
