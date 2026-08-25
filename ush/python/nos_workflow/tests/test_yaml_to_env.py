@@ -31,6 +31,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from nos_workflow.utils.yaml_to_env import (  # noqa: E402
     deep_merge,
     export_for_shell,
+    export_shell_mappings,
     format_shell_exports,
     get_runtime_from_env,
     load_yaml_with_inheritance,
@@ -790,3 +791,58 @@ class TestWaveShellMappings:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestEnvironmentOverrides:
+    """A non-empty environment value must win over the YAML default.
+
+    shell_mappings.variables is the per-run tuning surface. Before this,
+    a value passed on the qsub line was silently overwritten when the YAML
+    was resolved, so the run did something other than what was asked for
+    with nothing in the log to say so.
+    """
+
+    YAML = """
+system:
+  name: test_ofs
+  framework: comf
+
+forcing:
+  waves:
+    nowcast_warm_start: false
+    warm_start_max_hs: 25.0
+
+shell_mappings:
+  variables:
+    WAV_NOWCAST_WARM_START: forcing.waves.nowcast_warm_start
+    WAV_WARM_START_MAX_HS: forcing.waves.warm_start_max_hs
+"""
+
+    def _exports(self) -> dict:
+        import yaml as _yaml
+        return export_shell_mappings(_yaml.safe_load(self.YAML), framework="comf")
+
+    def test_yaml_value_used_when_env_unset(self, monkeypatch) -> None:
+        monkeypatch.delenv("WAV_NOWCAST_WARM_START", raising=False)
+        assert self._exports()["WAV_NOWCAST_WARM_START"] is False
+
+    def test_env_value_overrides_yaml(self, monkeypatch) -> None:
+        monkeypatch.setenv("WAV_NOWCAST_WARM_START", "YES")
+        assert self._exports()["WAV_NOWCAST_WARM_START"] == "YES"
+
+    def test_empty_env_value_is_treated_as_unset(self, monkeypatch) -> None:
+        """Matches ${VAR:-default}; the PBS cards re-submit unset vars as empty."""
+        monkeypatch.setenv("WAV_NOWCAST_WARM_START", "")
+        assert self._exports()["WAV_NOWCAST_WARM_START"] is False
+
+    def test_override_is_per_variable(self, monkeypatch) -> None:
+        monkeypatch.setenv("WAV_NOWCAST_WARM_START", "1")
+        monkeypatch.delenv("WAV_WARM_START_MAX_HS", raising=False)
+        e = self._exports()
+        assert e["WAV_NOWCAST_WARM_START"] == "1"
+        assert e["WAV_WARM_START_MAX_HS"] == 25.0
+
+    def test_system_identity_is_not_overridable(self, monkeypatch) -> None:
+        """get_standard_exports is config identity, not a per-run knob."""
+        monkeypatch.setenv("OFS", "some_other_ofs")
+        assert self._exports()["OFS"] == "test_ofs"
