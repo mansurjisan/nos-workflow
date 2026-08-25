@@ -183,6 +183,19 @@ def export_shell_mappings(
     for shell_var, yaml_path in variable_mappings.items():
         if not isinstance(yaml_path, str):
             continue
+        # A non-empty value already in the environment wins over the YAML
+        # default. shell_mappings.variables is the per-run tuning surface,
+        # so a value passed on the qsub line has to survive being resolved
+        # here -- otherwise the YAML silently overwrites it and the run
+        # does something other than what was asked for, with nothing in the
+        # log to say so. Same ${VAR:-default} semantics the PBS cards use
+        # for the COMIN* paths, including treating empty as unset (the
+        # cards' own retry re-submits with empty values for unset vars).
+        # get_standard_exports() is deliberately not covered: OFS,
+        # OCEAN_MODEL and friends are the config's identity, not knobs.
+        if os.environ.get(shell_var, "") != "":
+            exports[shell_var] = os.environ[shell_var]
+            continue
         if yaml_path.startswith("_computed."):
             computed_key = yaml_path.split(".", 1)[1]
             if computed_key in computed:
