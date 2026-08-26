@@ -45,15 +45,30 @@ echo "installed ${EXECnos}/fv3_coastalS.exe (from fv3_${COMPILE_ID}.exe)"
 # (at the pinned SHA) sets BUILD_DIR=$(pwd)/build_fv3_${COMPILE_ID}, i.e.
 # tests/build_fv3_coastalS_V3 -- not build_${COMPILE_ID} -- and is invoked
 # above with clean_after=NO precisely so that directory survives for this
-# search. The -name group is parenthesized so -type f applies to both
-# alternatives, not just the first.
-found_utils=$(find "build_fv3_${COMPILE_ID}" ../build -maxdepth 6 -type f \
-  \( -name 'combine_hotstart7*' -o -name 'combine_output11*' \) 2>/dev/null | head -5 || true)
+# search. The -name group is parenthesized so -perm/-type apply to every
+# alternative, not just the first; names are matched exactly (not a '*'
+# prefix) and ! -name '*.o' + -perm -111 keep object/module build
+# byproducts out of the harvest. No head cap -- de-dup by basename instead,
+# so a duplicate hit under both search roots still installs once.
+found_utils=$(find "build_fv3_${COMPILE_ID}" ../build -maxdepth 6 -type f -perm -111 \
+  \( -name 'combine_hotstart7' -o -name 'combine_output11' -o -name 'combine_output11_MPI' \) \
+  ! -name '*.o' 2>/dev/null | awk '{b=$0; sub(/.*\//, "", b); if (!seen[b]++) print}')
 if [ -n "${found_utils}" ]; then
   echo "${found_utils}" | while read -r u; do
-    install -m 0755 "${u}" "${EXECnos}/$(basename "${u}")"
-    echo "installed ${EXECnos}/$(basename "${u}")"
+    b="$(basename "${u}")"
+    # ush/nos_run.sh's OLDIO combine search looks for schism_combine_
+    # hotstart7.exe, not the build's own combine_hotstart7 basename --
+    # rename on install so the nowcast->forecast handoff finds it.
+    # combine_output11(_MPI) already match what nos_run.sh looks for, so
+    # those install under their own basename.
+    if [ "${b}" = "combine_hotstart7" ]; then
+      dest="${EXECnos}/schism_combine_hotstart7.exe"
+    else
+      dest="${EXECnos}/${b}"
+    fi
+    install -m 0755 "${u}" "${dest}"
+    echo "installed ${dest} (from ${u})"
   done
 else
-  echo "note: no combine utilities found under the build tree; locate them manually if the run needs schism_combine_hotstart7"
+  echo "note: no combine utilities found under the build tree; locate them manually if the run needs schism_combine_hotstart7.exe"
 fi

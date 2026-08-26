@@ -85,10 +85,18 @@ def manifest_gfs(pdy, cyc, nowcast_hours, forecast_hours, resolution="0p25", nws
         t -= dt.timedelta(hours=6)
 
     forecast_end = c0 + dt.timedelta(hours=forecast_hours) + dt.timedelta(hours=3)
+    # cycles.add(snap6(c0)) above already snapped the current cycle down to
+    # its own 6-hourly start; compare candidates against that same snapped
+    # value, not c0 itself -- for a cyc that isn't a multiple of 6, c0 sits
+    # strictly after snap6(c0), so comparing against c0 would make even the
+    # current (snapped) cycle look "older" and collapse it to the capped
+    # branch below.
+    _snap_date, _snap_hour = snap6(c0)
+    current_cycle_start = _snap_date + dt.timedelta(hours=_snap_hour)
     keys = []
     for date, hour in cycles:
         cycle_start = date + dt.timedelta(hours=hour)
-        if cycle_start < c0:
+        if cycle_start < current_cycle_start:
             # Older cycles only ever win a valid time up through c0 (the
             # keep-first dedup in gfs.py's _select_files_for_window prefers
             # any real forecast lead over the current cycle's own f000, so
@@ -419,7 +427,8 @@ def stage(manifest, jobs=8, retries=3, timeout=120):
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--pdy", required=True, help="YYYYMMDD")
-    p.add_argument("--cyc", required=True, type=int, help="cycle hour (0/6/12/18)")
+    p.add_argument("--cyc", required=True, type=int, choices=[0, 6, 12, 18],
+                    help="cycle hour (0/6/12/18)")
     p.add_argument("--comroot", required=True, help="root dir for the staged COMIN-shaped tree")
     p.add_argument("--sources", default="gfs,hrrr,rtofs,nwm",
                     help="comma-separated subset of gfs,hrrr,rtofs,nwm")

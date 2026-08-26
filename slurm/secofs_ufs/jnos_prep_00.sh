@@ -46,13 +46,19 @@ module load nos_hercules.intel
 
 module list
 
-# Preflight: front-load the two known-unverified env risks (wgrib2
-# IPOLATES support, py-scipy) before any data is touched, instead of
-# failing partway through the prep pipeline.
+# Preflight: front-load the known-unverified env risks (wgrib2 IPOLATES
+# support, python packages) before any data is touched, instead of failing
+# partway through the prep pipeline.
 command -v wgrib2 >/dev/null 2>&1 || { echo "FATAL: wgrib2 not found on PATH -- module spider wgrib2"; exit 1; }
-wgrib2 -config 2>/dev/null | grep -qi ipolates || { echo "FATAL: wgrib2 lacks IPOLATES (needed for HRRR -new_grid regridding); rebuild wgrib2 with IPOLATES or run GFS-only (drop hrrr from staging/forcing)"; exit 1; }
+if ! wgrib2 -config 2>/dev/null | grep -qi ipolates; then
+    # A token-presence grep against -config can false-fail on wording alone,
+    # so this is a warning, not a gate: dump the full config for a human to
+    # check, and only actually block if HRRR -new_grid regridding fails.
+    echo "WARNING: wgrib2 -config has no IPOLATES token -- needed for HRRR -new_grid regridding. This may be a false negative (differing -config wording); verify manually, or drop hrrr from staging/forcing (GFS-only) if regridding fails. Full wgrib2 -config below:"
+    wgrib2 -config 2>&1 | head -20
+fi
 command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH -- module spider python"; exit 1; }
-python3 -c 'import numpy, netCDF4, yaml, scipy' 2>/dev/null || { echo "FATAL: python3 is missing one of numpy/netCDF4/yaml/scipy -- module spider py-scipy (or the relevant py-* module)"; exit 1; }
+python3 -c 'import numpy, netCDF4, yaml, scipy, pandas, xarray' 2>/dev/null || { echo "FATAL: python3 is missing one of numpy/netCDF4/yaml/scipy/pandas/xarray -- module spider py-scipy/py-pandas/py-xarray (or the relevant py-* module)"; exit 1; }
 
 # EXPORT list
 set +x

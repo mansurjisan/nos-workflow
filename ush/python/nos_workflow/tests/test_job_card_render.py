@@ -44,8 +44,13 @@ def _card_directives(card: str) -> list:
     return [l.rstrip("\n") for l in path.read_text().splitlines() if l.startswith("#PBS")]
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture()
 def wcoss2():
+    # Function-scoped (not module-scoped): a module-scoped fixture would be
+    # built before the per-function autouse clean_env fixture ever runs
+    # (pytest instantiates higher-scoped fixtures first), so a NOS_ACCOUNT/
+    # NOS_QOS/NOS_MACHINE already exported in the caller's shell would leak
+    # into every parametrized case here instead of being stripped.
     return MachineProfile.load("wcoss2", machines_dir=REPO / "parm" / "machines")
 
 

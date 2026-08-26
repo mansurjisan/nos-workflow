@@ -65,6 +65,24 @@ def test_gfs_older_cycles_capped_current_cycle_full_depth():
     assert not any(k.endswith("f010") for k in keys if "t06z" in k)
 
 
+def test_gfs_off_cycle_cyc_keeps_full_depth_on_its_snapped_current_cycle():
+    # cyc=3 is not a multiple of 6 -- there is no real "03z" GFS cycle, so
+    # the current-cycle branch is the snapped-down 00z cycle added directly
+    # by cycles.add(snap6(c0)). The comparison that decides "older cycle,
+    # cap it" vs. "current cycle, full depth" must key off that same
+    # snapped start (00z), not off c0=03:00 itself: comparing against c0
+    # made this snapped-down entry look "older than c0" and collapsed it to
+    # the capped branch (old bug: max lead = hours-to-c0 + 3 = 6, i.e.
+    # valid time capped at c0+3h=06z). Fixed, it gets the full depth out to
+    # forecast_end (c0 + forecast_hours + 3h buffer) measured from its own
+    # (3h-earlier) cycle_start, i.e. 54h from 00z rather than 51h from c0.
+    keys = sc.manifest_gfs("20260825", 3, nowcast_hours=6, forecast_hours=48)
+    current = [k for k in keys if ".t00z." in k]
+    assert any(k.endswith("f010") for k in current)  # past the old 6h cap
+    assert any(k.endswith("f054") for k in current)  # full depth from 00z
+    assert not any(k.endswith("f055") for k in current)
+
+
 # ---------------------------------------------------------------------------
 # HRRR
 # ---------------------------------------------------------------------------

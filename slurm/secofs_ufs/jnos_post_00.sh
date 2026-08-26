@@ -12,10 +12,9 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
 #SBATCH --time=02:00:00
-# NOT /dev/null: Slurm writes its own epilogue here -- "TIME LIMIT" /
-# node-failure kills -- and that is the one message the in-script redirect
-# below cannot capture, because a SIGKILLed job never reaches any trap.
-# These files stay near-empty; the real logs are the redirect below.
+# No #SBATCH -o/-e above: Slurm's default slurm-%j.out catches its own
+# epilogue (TIME LIMIT / node-failure kills), while this script self-
+# redirects its own log below.
 
 PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.hercules.ver

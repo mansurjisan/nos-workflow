@@ -275,15 +275,19 @@ _schism_run_combine_fields() {
     echo "_schism_run_combine_fields: phase=${phase} stacks=${_b}..${_e} (${_n})"
     local rc=1
     if [ -n "$MPI_EXE" ]; then
-        local _mpi_launch
+        local _mpi_launch _mpi_attempted=0
         if _mpi_launch=$(_mpi_launch_prefix "${_n}"); then
             echo "  ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}"
             ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
             rc=$?
+            _mpi_attempted=1
         else
             echo "WARNING: MPI launch prefix unavailable; skipping MPI fields combine"
         fi
-        [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
+        # rc is pre-initialised to 1; only report it as a failure when an
+        # MPI attempt actually ran -- the skip case above already explains
+        # itself.
+        [ $_mpi_attempted -eq 1 ] && [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
     fi
     if [ $rc -ne 0 ] && [ -n "$SERIAL_EXE" ]; then
         echo "  ${SERIAL_EXE} -b ${_b} -e ${_e} (serial)"
