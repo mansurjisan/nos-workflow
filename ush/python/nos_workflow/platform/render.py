@@ -6,7 +6,7 @@ against the real cards.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from .profile import MachineProfile, ProfileError
@@ -120,10 +120,19 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
         lines.append(f"{p}--mem={spec.mem_per_node}")
 
     lines.append(f"{p}--time={spec.walltime}")
-    if spec.stdout is not None:
-        lines.append(f"{p}--output={spec.stdout}")
-    if spec.stderr is not None:
-        lines.append(f"{p}--error={spec.stderr}")
+    # Slurm writes its own epilogue (TIME LIMIT / node-failure kills) into
+    # whatever --output/--error name it during the job -- pointing that at
+    # /dev/null (the PBS convention spec.stdout/stderr default mirrors)
+    # discards exactly that message for a SIGKILLed job, which an in-script
+    # `exec > ... 2> ...` redirect can never see either. Only the pre-redirect
+    # Slurm-side file needs a real name; a suppressed directive (stdout/
+    # stderr is None, e.g. post) stays suppressed.
+    stdout = "%x.%j.out" if spec.stdout == "/dev/null" else spec.stdout
+    stderr = "%x.%j.err" if spec.stderr == "/dev/null" else spec.stderr
+    if stdout is not None:
+        lines.append(f"{p}--output={stdout}")
+    if stderr is not None:
+        lines.append(f"{p}--error={stderr}")
     return lines
 
 

@@ -41,9 +41,14 @@ install -m 0755 "fv3_${COMPILE_ID}.exe" "${EXECnos}/fv3_coastalS.exe"
 echo "installed ${EXECnos}/fv3_coastalS.exe (from fv3_${COMPILE_ID}.exe)"
 
 # BUILD_UTILS=ON drops the SCHISM utility binaries in the build tree; install
-# the combine tools the workflow invokes at runtime, if present.
-found_utils=$(find "build_${COMPILE_ID}" ../build "$PWD" -maxdepth 6 -type f \
-  -name 'combine_hotstart7*' -o -name 'combine_output11*' 2>/dev/null | head -5 || true)
+# the combine tools the workflow invokes at runtime, if present. compile.sh
+# (at the pinned SHA) sets BUILD_DIR=$(pwd)/build_fv3_${COMPILE_ID}, i.e.
+# tests/build_fv3_coastalS_V3 -- not build_${COMPILE_ID} -- and is invoked
+# above with clean_after=NO precisely so that directory survives for this
+# search. The -name group is parenthesized so -type f applies to both
+# alternatives, not just the first.
+found_utils=$(find "build_fv3_${COMPILE_ID}" ../build -maxdepth 6 -type f \
+  \( -name 'combine_hotstart7*' -o -name 'combine_output11*' \) 2>/dev/null | head -5 || true)
 if [ -n "${found_utils}" ]; then
   echo "${found_utils}" | while read -r u; do
     install -m 0755 "${u}" "${EXECnos}/$(basename "${u}")"

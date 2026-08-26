@@ -26,6 +26,7 @@ export nco_ver=5.2.4
 export libpng_ver=1.6.37
 export libtiff_ver=
 export netcdf_ver=4.9.2  # netcdf-c; netcdf-fortran is 4.6.1 (set inside nos_hercules.intel.lua)
+export esmf_ver=8.8.0  # must be pinned here: nos_hercules.intel.lua's module loop reads esmf_ver from env and falls back to this same 8.8.0 only when unset -- an unrelated stale shell value would otherwise silently swap ESMF under the exe
 export perl_ver=
 export wgrib2_ver=3.6.0
 export PrgEnv_intel_ver=

@@ -43,6 +43,28 @@ def test_gfs_resolution_is_configurable():
     assert all("pgrb2.0p50" in k for k in keys)
 
 
+def test_gfs_older_cycles_capped_current_cycle_full_depth():
+    # 3 cycles searched for pdy=20260825 cyc=12: 00z, 06z (older), 12z
+    # (current). Older cycles only ever win a valid time up to c0 (keep-
+    # first dedup in gfs.py prefers any real lead over the current cycle's
+    # f000), so they're capped at hours-to-c0 + 3h buffer instead of the
+    # full forecast depth: 00z -> 12h+3=15 (16 files), 06z -> 6h+3=9
+    # (10 files). 12z (current) keeps the full forecast_hours+3=51 (52
+    # files). Total = 16 + 10 + 52 = 78 (down from 174 pre-fix, when every
+    # cycle got the full 52-file depth: 3 * 58 = 174).
+    keys = sc.manifest_gfs("20260825", 12, nowcast_hours=6, forecast_hours=48)
+    assert len(keys) == 78
+
+    def depth(cyc_hour):
+        return len([k for k in keys if f".t{cyc_hour:02d}z." in k])
+
+    assert depth(0) == 16
+    assert depth(6) == 10
+    assert depth(12) == 52
+    assert not any(k.endswith("f016") for k in keys if "t00z" in k)
+    assert not any(k.endswith("f010") for k in keys if "t06z" in k)
+
+
 # ---------------------------------------------------------------------------
 # HRRR
 # ---------------------------------------------------------------------------
@@ -247,3 +269,35 @@ def test_build_manifest_url_uses_correct_bucket_per_source():
     manifest = sc.build_manifest(["hrrr", "nwm"], "20260825", 12, 6, 48, "/comroot")
     for url, _ in manifest:
         assert ("noaa-hrrr-bdp-pds" in url) or ("noaa-nwm-pds" in url)
+
+
+# ---------------------------------------------------------------------------
+# Download error handling
+# ---------------------------------------------------------------------------
+
+def test_download_one_non_404_head_error_no_crash_records_failed(monkeypatch, tmp_path):
+    # A 403/5xx HEAD response used to leave head_err unbound, raising
+    # UnboundLocalError at `last_err = head_err`. It must instead fall
+    # through to the retry loop and come back as a clean "failed" status.
+    def fake_urlopen(req, timeout=None):
+        raise sc.urllib.error.HTTPError(req.full_url, 503, "Service Unavailable", None, None)
+
+    monkeypatch.setattr(sc.urllib.request, "urlopen", fake_urlopen)
+    status, err = sc.download_one(
+        "https://example.com/f", str(tmp_path / "f"), retries=0, backoff=0,
+    )
+    assert status == "failed"
+    assert err is not None
+
+
+def test_stage_records_failure_when_future_raises_unexpectedly(monkeypatch):
+    # One file's unexpected exception (anything download_one itself doesn't
+    # catch) must record a per-file failure, not kill the whole stage() run.
+    def boom(url, local_path, retries=3, backoff=2.0, timeout=120):
+        raise RuntimeError("unexpected")
+
+    monkeypatch.setattr(sc, "download_one", boom)
+    results = sc.stage([("https://example.com/a", "/tmp/a")], jobs=1)
+    assert len(results["failed"]) == 1
+    _, _, err = results["failed"][0]
+    assert "unexpected" in err

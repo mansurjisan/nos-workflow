@@ -24,8 +24,10 @@ stack_intel_ver=os.getenv("stack_intel_ver") or "2024.2.1"
 load(pathJoin("stack-oneapi", stack_intel_ver))
 
 stack_impi_ver=os.getenv("stack_impi_ver") or "2021.13"
--- The MPI module lives under a compiler/MPI-specific Core subtree that only
--- appears once stack-oneapi is loaded (mirrors ufs_hercules.intel.lua).
+-- The MPI module lives under a compiler/MPI-specific Core subtree. This
+-- second, unconditional MODULEPATH prepend mirrors upstream
+-- ufs_hercules.intel.lua, which also prepends both Core paths statically
+-- up front rather than gating the second one on stack-oneapi being loaded.
 prepend_path("MODULEPATH", pathJoin(stack_base, "modulefiles/intel-oneapi-mpi", stack_impi_ver .. "-sqiixt7/gcc/13.3.0"))
 load(pathJoin("stack-intel-oneapi-mpi", stack_impi_ver))
 
@@ -59,9 +61,10 @@ for i = 1, #ufs_modules do
   end
 end
 
--- Prep-stage external binaries (NEEDS-ON-MACHINE: see NOTES.txt -- wgrib2 on
--- Hercules is unverified for IPOLATES, which nos_utils.io.grib_extract needs
--- for -new_grid regridding of HRRR's Lambert Conformal grid).
+-- Prep-stage external binaries. NEEDS-ON-MACHINE: this wgrib2 build's
+-- IPOLATES support is unverified on Hercules -- nos_utils.io.grib_extract
+-- needs IPOLATES for -new_grid regridding of HRRR's Lambert Conformal grid,
+-- and without it that regrid step fails at prep time, not here.
 nco_ver=os.getenv("nco_ver") or "5.2.4"
 load(pathJoin("nco", nco_ver))
 
@@ -69,8 +72,9 @@ wgrib2_ver=os.getenv("wgrib2_ver") or "3.6.0"
 load(pathJoin("wgrib2", wgrib2_ver))
 
 -- Python: nos-utils/nos_workflow runtime deps. numpy/netCDF4/pyyaml/pandas/
--- xarray are confirmed spack-stack packages in this env; scipy is NOT
--- confirmed (see NOTES.txt) so it is a soft try_load, not a hard load.
+-- xarray are confirmed spack-stack packages in this env; py-scipy is NOT
+-- confirmed to exist in this spack-stack env, so it is a soft try_load
+-- below, not a hard load that would abort module load if missing.
 stack_python_ver=os.getenv("stack_python_ver") or "3.11.7"
 load(pathJoin("stack-python", stack_python_ver))
 
@@ -89,9 +93,10 @@ load(pathJoin("py-pandas", py_pandas_ver))
 py_xarray_ver=os.getenv("py_xarray_ver") or "2024.7.0"
 load(pathJoin("py-xarray", py_xarray_ver))
 
--- UNVERIFIED: absent from every Hercules module list found during research.
--- nos_utils forcing/interp modules import scipy unconditionally -- if this
--- try_load is a no-op on your Hercules, prep will ImportError. See NOTES.txt.
+-- UNVERIFIED: py-scipy was absent from every Hercules module list found
+-- during research. nos_utils forcing/interp modules import scipy
+-- unconditionally, so if this try_load is a no-op on your Hercules (module
+-- not found), prep will fail with an ImportError, not here.
 py_scipy_ver=os.getenv("py_scipy_ver") or "1.11.3"
 try_load(pathJoin("py-scipy", py_scipy_ver))
 

@@ -235,9 +235,14 @@ class TestSystemConfigs:
         assert merged["model"]["executable"] == "fv3_coastalSW.exe"
         assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"
 
+        # Allocation is no longer authored here: PBS `select=` moved to
+        # parm/machines/ and the node count is derived as
+        # ceil(nprocs / ranks_per_node).
         det = merged["resources"]
         assert det["nprocs"] == ufs["total_tasks"]
-        assert det["select"] == "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
+        assert "select" not in det, (
+            "PBS syntax has moved to parm/machines/; resources.select is dead"
+        )
 
         assert merged["ensemble"]["enabled"] is False
 

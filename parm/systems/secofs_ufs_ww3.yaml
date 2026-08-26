@@ -94,8 +94,8 @@ model:
 resources:
   nprocs: 5520
   nscribes: 0
-  # 46 nodes x 120 mpiprocs = 5520 exactly, no idle slots.
-  select: "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
+  # Node count is derived: ceil(nprocs / ranks_per_node) from parm/machines/
+  # -- 46 nodes x 120 mpiprocs = 5520 exactly, no idle slots.
   # Documentation only -- no consumer in ush/, and PBS cards request no mem=.
   # Never sized against a real wave-coupled run.
   memory_gb: 4000

@@ -342,9 +342,10 @@ def get_standard_exports(
 
     # Ranks-per-node and the node count are machine facts, so they come from
     # parm/machines/<NOS_MACHINE>.yaml rather than from a PBS ``select=``
-    # string embedded in the system config. On a machine that suppresses the
-    # ranks-per-node flag (Hercules), PPN is deliberately not exported so the
-    # launcher cannot pass it.
+    # string embedded in the system config. PPN is exported whenever the
+    # profile's allocation.emit_ranks_per_node is true -- true for both
+    # WCOSS2 (PPN=120) and Hercules (PPN=80, via --ntasks-per-node) today;
+    # it is only suppressed for a machine profile that sets it false.
     profile = _machine_profile()
     if profile is not None:
         if profile.allocation.emit_ranks_per_node:

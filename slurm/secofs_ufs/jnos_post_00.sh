@@ -28,18 +28,20 @@ export NOS_MACHINE=hercules
 export OFS=${OFS:-secofs_ufs}
 RPTDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/work/${OFS}
-mkdir -p -m 755 $RPTDIR $WORKDIR
+mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
 
 # Per-job log files (Slurm jobid as suffix). #SBATCH -o/-e are omitted
 # above (see the epilogue note); this redirect is what populates post logs.
 _JOBID=${SLURM_JOB_ID}
 _LOG_PREFIX="$RPTDIR/secofs_ufs_post_00.${_JOBID}"
+touch "${_LOG_PREFIX}.out" "${_LOG_PREFIX}.err" || { echo "FATAL: cannot write to RPTDIR ($RPTDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_post_00 -- Slurm jobid ${SLURM_JOB_ID} on $(hostname) at $(date) ==="
-cd ${WORKDIR}
+cd ${WORKDIR} || exit 1
 
 # Module setup -- modulefiles/nos_hercules.intel.lua stands in for the
 # WCOSS2 post module chain (Python + NCO, not UFS hpc-stack).
+module purge
 module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load nos_hercules.intel
 
@@ -58,6 +60,9 @@ export KEEPDATA=YES
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
+
+# Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
+export PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
 
 # Data and COM paths
 export COMPATH=/work/PLACEHOLDER/prod/com/nos

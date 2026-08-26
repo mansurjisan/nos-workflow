@@ -13,8 +13,8 @@
 #SBATCH --ntasks-per-node=80
 #SBATCH --exclusive
 #SBATCH --time=01:30:00
-#SBATCH --output=/dev/null
-#SBATCH --error=/dev/null
+#SBATCH --output=%x.%j.out
+#SBATCH --error=%x.%j.err
 
 PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.hercules.ver
@@ -27,18 +27,22 @@ export NOS_MACHINE=hercules
 export OFS=${OFS:-secofs_ufs}
 RPTDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/rpt/${OFS}
 WORKDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/work/${OFS}
-mkdir -p -m 755 $RPTDIR $WORKDIR
+mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
 
-# Per-job log files (Slurm jobid as suffix). #SBATCH -o/-e are pointed at
-# /dev/null above; this redirect is what populates nowcast logs.
+# Per-job log files (Slurm jobid as suffix). The #SBATCH -o/-e above catch
+# only Slurm's own epilogue (TIME LIMIT / node-failure kills, which a
+# SIGKILLed job never lives long enough to redirect itself); this exec
+# redirect is what populates the real nowcast logs.
 _JOBID=${SLURM_JOB_ID}
 _LOG_PREFIX="$RPTDIR/secofs_ufs_nowcast_00.${_JOBID}"
+touch "${_LOG_PREFIX}.out" "${_LOG_PREFIX}.err" || { echo "FATAL: cannot write to RPTDIR ($RPTDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_nowcast_00 -- Slurm jobid ${SLURM_JOB_ID} on $(hostname) at $(date) ==="
-cd ${WORKDIR}
+cd ${WORKDIR} || exit 1
 
 # Module setup -- modulefiles/nos_hercules.intel.lua stands in for the
 # WCOSS2 hpc-stack chain (modules.fv3, cray-pals, ...).
+module purge
 module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load nos_hercules.intel
 
@@ -66,6 +70,9 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
+# Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
+export PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
+
 # Data and COM paths
 export COMPATH=/work/PLACEHOLDER/prod/com/nos
 export COMROOT=/work/PLACEHOLDER/ptmp/$LOGNAME/com
@@ -75,14 +82,11 @@ export COMIN=/work/PLACEHOLDER/prod/com
 
 # Input data, staged ahead of the run -- ${HOMEnos}/ush/stage_comin.py
 # populates this tree from the WCOSS2/NOMADS sources the pbs cards read
-# directly.
+# directly. secofs_ufs.yaml only names gfs/hrrr forcing sources -- nam/
+# rap/rtma/etss are never staged or read, so no COMIN exports for them.
 export COMROOT_STAGED=${COMROOT_STAGED:-/work/PLACEHOLDER/comin}
-export COMINnam=${COMINnam:-$COMROOT_STAGED/nam}
 export COMINhrrr=${COMINhrrr:-$COMROOT_STAGED/hrrr}
-export COMINrap=${COMINrap:-$COMROOT_STAGED/rap}
 export COMINgfs=${COMINgfs:-$COMROOT_STAGED/gfs}
-export COMINrtma=${COMINrtma:-$COMROOT_STAGED/rtma}
-export COMINetss=${COMINetss:-$COMROOT_STAGED/petss}
 export COMINrtofs_2d=${COMINrtofs_2d:-$COMROOT_STAGED/rtofs}
 export COMINrtofs_3d=${COMINrtofs_3d:-$COMROOT_STAGED/rtofs}
 export COMINnwm=${COMINnwm:-$COMROOT_STAGED/nwm}

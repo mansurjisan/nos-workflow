@@ -88,8 +88,20 @@ def manifest_gfs(pdy, cyc, nowcast_hours, forecast_hours, resolution="0p25", nws
     keys = []
     for date, hour in cycles:
         cycle_start = date + dt.timedelta(hours=hour)
-        max_fhr = int((forecast_end - cycle_start).total_seconds() / 3600)
-        max_fhr = max(max_fhr, forecast_hours + 3, 0)
+        if cycle_start < c0:
+            # Older cycles only ever win a valid time up through c0 (the
+            # keep-first dedup in gfs.py's _select_files_for_window prefers
+            # any real forecast lead over the current cycle's own f000, so
+            # an older cycle's file can win right up to valid_time=c0, but
+            # never past it -- the current cycle's own real leads take every
+            # later valid time). The nowcast-phase window end (c0 + 3h
+            # buffer, gfs.py _get_time_window) is the binding requirement,
+            # so cap at hours-to-c0 plus that same 3h buffer -- this also
+            # covers the older margin cycle's narrower lookback need.
+            max_fhr = int((c0 - cycle_start).total_seconds() / 3600) + 3
+        else:
+            max_fhr = int((forecast_end - cycle_start).total_seconds() / 3600)
+            max_fhr = max(max_fhr, forecast_hours + 3, 0)
         for fhr in range(0, max_fhr + 1):
             keys.append(
                 f"gfs.{date:%Y%m%d}/{hour:02d}/atmos/"
@@ -237,8 +249,11 @@ def manifest_nwm(pdy, cyc, nowcast_hours, forecast_hours, buffer_hours=3,
         globs all tm* it finds but keeps one file per hour downstream.
       - short_range/medium_range_mem1 are read from the model cycle itself
         (pdy/cyc), not from a multi-cycle frontier search. This is exact
-        for SECOFS/STOFS, whose cycles always land on 00/06/12/18Z, the
-        same hours NWM issues short_range and medium_range_mem1.
+        for SECOFS/STOFS: short_range is issued hourly (t00z..t23z, each
+        f001-f018), so it exists at any cycle hour; medium_range_mem1 is
+        6-hourly (00/06/12/18z, f001-f240), and SECOFS/STOFS cycles always
+        land on one of those four hours, so reading straight from pdy/cyc
+        is exact for both products, not just short_range.
       - short_range_max_lead=18 was confirmed against noaa-nwm-pds for a
         00/06/12/18Z cycle (2026-08-25 t12z: last short_range lead f018).
 
@@ -331,6 +346,7 @@ def download_one(url, local_path, retries=3, backoff=2.0, timeout=120):
         if e.code == 404:
             return "missing", f"404: {url}"
         remote_size = None
+        head_err = f"HTTP {e.code}: {url}"
     except (urllib.error.URLError, TimeoutError, OSError) as e:
         remote_size = None
         head_err = str(e)
@@ -387,7 +403,10 @@ def stage(manifest, jobs=8, retries=3, timeout=120):
         }
         for fut in concurrent.futures.as_completed(futures):
             url, local = futures[fut]
-            status, err = fut.result()
+            try:
+                status, err = fut.result()
+            except Exception as e:
+                status, err = "failed", f"{type(e).__name__}: {e}"
             results[status].append((url, local, err))
             print(f"[{status}] {url}", flush=True)
     return results

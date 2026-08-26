@@ -178,7 +178,9 @@ class TestHerculesRendering:
     def test_directive_order_matches_working_card(self):
         """Exact field order proven on a working ufs-coastal card on
         Hercules: job-name, account, qos, partition, nodes, ntasks-per-node,
-        exclusive, time, output, error."""
+        exclusive, time, output, error. output/error: the JobSpec default of
+        "/dev/null" (the PBS convention) is translated to %x.%j.{out,err} for
+        Slurm, so a SIGKILLed job's TIME LIMIT/OOM epilogue is not discarded."""
         p = _load("hercules", env={"NOS_ACCOUNT": "nos-surge", "NOS_QOS": "batch"})
         lines = render_directives(
             JobSpec(name="secofs_ufs_nc_00", walltime="01:30:00",
@@ -194,8 +196,8 @@ class TestHerculesRendering:
             "#SBATCH --ntasks-per-node=80",
             "#SBATCH --exclusive",
             "#SBATCH --time=01:30:00",
-            "#SBATCH --output=/dev/null",
-            "#SBATCH --error=/dev/null",
+            "#SBATCH --output=%x.%j.out",
+            "#SBATCH --error=%x.%j.err",
         ]
 
     def test_serial_job_is_single_node(self, herc):
