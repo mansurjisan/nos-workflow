@@ -15,6 +15,7 @@ for a job that finished three minutes later with Exit_status = 0.
 """
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 
@@ -212,3 +213,81 @@ class TestWarmLauncherTimeout:
         txt = self._WARM.read_text()
         assert "warmtest" in txt
         assert "COMOUT=$SCRATCH" in txt
+
+
+class TestWarmLauncherStagesInputsOnly:
+    """The warm launcher stages prep's inputs, not the run's outputs.
+
+    The nowcast reads its inputs from $COMOUT, so the scratch tree has to be
+    seeded from the operational one -- but only with what prep produced. A
+    plain `rsync -a` also copied the SCHISM restarts the run writes rather
+    than reads, this cycle's own wave restart archive, and every post
+    product: 86 GB against roughly 20 GB of real inputs, growing daily as
+    post writes more.
+
+    Both directions are pinned here. Asserting only that certain excludes
+    exist would let a new one that swallows the hotstart pass, and asserting
+    only that the hotstart survives would let an exclude quietly disappear.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+
+    # Every post product enabled in parm/systems/secofs_ufs.yaml, plus the
+    # run's own restarts. Keep in step with that file's `post.products`.
+    _REQUIRED_EXCLUDES = (
+        "*.rst.*.nc",              # SCHISM restarts the run writes, ~18 GB each
+        "*restart_outputs",        # SCHISM run output directory
+        "*wave_restart",           # this cycle's own wave restart, ~7 GB
+        "*stations*.nc",           # stations_nc, stations_mllw
+        "*station.profile*.nc",    # profiles
+        "*outputs.post.json",      # post manifest
+        "*.fields.*.nc",           # fields_nc
+        "*.field2d.*.nc",          # slab2d
+        "*.adcirc.*",              # adcirc
+        "*.gpkg",                  # geopkg, 54 files
+        "*maxele*",                # maxele
+    )
+
+    # Representative prep-produced inputs the nowcast stages. If any exclude
+    # glob matches one of these, staging fails.
+    _MUST_KEEP = (
+        "secofs_ufs_ww3.t12z.20260825.init.nowcast.nc",
+        "secofs_ufs_ww3.t12z.20260825.init.nowcast.nc.provenance.json",
+        "secofs_ufs_ww3.t12z.nest.ww3",
+        "secofs_ufs_ww3.t12z.ufs.configure",
+        "secofs_ufs_ww3.t12z.20260825.bctides.in.nowcast",
+        "secofs_ufs_ww3.t12z.20260825.bctides.in.forecast",
+        "secofs_ufs_ww3.t12z.20260825.river.th.tar",
+        "secofs_ufs_ww3.t12z.20260825.obc.nowcast.tar",
+        "secofs_ufs_ww3.t12z.20260825.nwm.source.sink.now.tar",
+        "secofs_ufs_ww3.t12z.20260825.inputs.nowcast.json",
+        "secofs_ufs_ww3.t12z.datm.streams",
+        "secofs_ufs_ww3.t12z.datm_in",
+        "secofs_ufs_ww3.t12z.model_configure",
+        "secofs_ufs_ww3.t12z.ww3_bound.inp",
+        "secofs_ufs_ww3.t12z.forecast_outputs",   # prep-produced; near restart_outputs
+        "secofs_ufs_ww3.source_sink.in",
+        "base_date.t12z",
+        "time_hotstart.t12z",
+        "time_nowcastend.t12z",
+    )
+
+    def _configured_excludes(self) -> list:
+        return re.findall(r"--exclude='([^']+)'", self._WARM.read_text())
+
+    def test_every_required_output_pattern_is_excluded(self) -> None:
+        configured = set(self._configured_excludes())
+        missing = [p for p in self._REQUIRED_EXCLUDES if p not in configured]
+        assert not missing, f"staging no longer excludes: {missing}"
+
+    def test_no_exclude_matches_a_prep_produced_input(self) -> None:
+        """The real contract: whatever the globs are, they must not eat an input.
+
+        A pattern such as `*.nc`, `*nowcast*.nc` or `*init.nowcast.nc` would
+        pass a list-of-strings check while dropping the hotstart and failing
+        the run at staging.
+        """
+        configured = self._configured_excludes()
+        for name in self._MUST_KEEP:
+            hit = [g for g in configured if fnmatch.fnmatch(name, g)]
+            assert not hit, f"exclude {hit} would drop required input {name}"
