@@ -25,6 +25,24 @@
 #    TOTAL_TASKS, PPN, NDATE, NHOUR
 ###############################################################################
 
+# _mpi_launch_prefix <ntasks> <ppn> - the launcher command line for
+#   $NOS_MACHINE ("mpiexec -n N -ppn P --cpu-bind core" on WCOSS2, "srun -n N
+#   --label" on Hercules), via the platform CLI so this never drifts from
+#   parm/machines/$NOS_MACHINE.yaml. Falls back to the historical WCOSS2
+#   mpiexec string (with a warning) if the CLI is unavailable, so a degraded
+#   PYTHONPATH degrades gracefully under set -e rather than aborting the run.
+_mpi_launch_prefix() {
+    local ntasks=$1
+    local ppn=${2:-120}
+    local line
+    line=$(python3 -m nos_workflow.platform mpi --ranks "${ntasks}" 2>/dev/null) || line=""
+    if [ -z "${line}" ]; then
+        echo "WARNING: nos_workflow.platform mpi CLI unavailable; falling back to the WCOSS2 mpiexec default" >&2
+        line="mpiexec -n ${ntasks} -ppn ${ppn} --cpu-bind core"
+    fi
+    echo "${line}"
+}
+
 # _schism_run_mpi <phase> - mpiexec wrapper for UFS-Coastal. Stays in shell
 #   because `module load` (cray-pals, intel-*, hpc-stack) does not survive a
 #   Python subprocess; callers from Python invoke this helper directly via
@@ -56,9 +74,10 @@ _schism_run_mpi() {
             done
         fi
         local NSCRIBES=${NSCRIBES:-6}
+        local _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}")
         echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"
-        echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}"
-        mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}
+        echo "  ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}"
+        ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}
         local rc=$?
         echo "_schism_run_mpi: mpiexec returned rc=${rc}"
         return ${rc}
@@ -103,9 +122,10 @@ _schism_run_mpi() {
         fi
     fi
 
+    local _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}")
     echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
-    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
-    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
+    echo "  ${_mpi_launch} ${UFS_EXEC}"
+    ${_mpi_launch} ${UFS_EXEC}
     local rc=$?
     echo "_schism_run_mpi: mpiexec returned rc=${rc}"
     return ${rc}

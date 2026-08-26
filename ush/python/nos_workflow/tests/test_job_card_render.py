@@ -8,6 +8,10 @@ Two guarantees, both required before PBS syntax leaves the system YAMLs:
 2. A frozen normalized snapshot of directives + launcher argv, so any later
    change is a visible diff rather than a discovery on WCOSS2.
 
+The (system, stage) -> JobSpec mapping lives in ``nos_workflow.platform.jobs``
+so the submit CLI (``python3 -m nos_workflow.platform card ...``) renders the
+exact same cards this test freezes, rather than a second hand-copy of them.
+
 Regenerate the snapshot deliberately:
 
     python3 ush/python/nos_workflow/tests/test_job_card_render.py --update
@@ -15,7 +19,6 @@ Regenerate the snapshot deliberately:
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -27,63 +30,11 @@ FIXTURE = Path(__file__).resolve().parent / "fixtures" / "job_cards_wcoss2.json"
 
 sys.path.insert(0, str(REPO / "ush" / "python"))
 from nos_workflow.platform import (  # noqa: E402
-    JobSpec, KIND_MODEL, KIND_SERIAL, MachineProfile,
-    render_directives, render_mpi_argv,
+    JobSpec, KIND_MODEL, MachineProfile, render_directives, render_mpi_argv,
 )
-from nos_workflow.utils import yaml_to_env  # noqa: E402
+from nos_workflow.platform import jobs  # noqa: E402
 
-# (card, system yaml, job name, kind, walltime, ompthreads, extra -l resources,
-#  mem, real_logs). real_logs=True means the job redirects its own stdout/
-# stderr in-script and PBS -o/-e must stay absent (see render.JobSpec.stdout).
-CARDS = [
-    ("pbs/jnos_prep_00.pbs", "secofs_ufs", "secofs_ufs_prep_00", KIND_SERIAL, "02:00:00", None, (), None, False),
-    ("pbs/jnos_nowcast_00.pbs", "secofs_ufs", "secofs_ufs_nc_00", KIND_MODEL, "01:30:00", None, (), None, False),
-    ("pbs/jnos_forecast_00.pbs", "secofs_ufs", "secofs_ufs_fc_00", KIND_MODEL, "05:30:00", None, (), None, False),
-    ("pbs/jnos_post_00.pbs", "secofs_ufs", "secofs_ufs_post_00", KIND_SERIAL, "02:00:00", None, (), None, True),
-    ("pbs/stofs_3d_atl_ufs/jnos_prep_00.pbs", "stofs_3d_atl_ufs", "stofs_3d_atl_ufs_prep_00", KIND_SERIAL, "02:00:00", None, (), None, False),
-    ("pbs/stofs_3d_atl_ufs/jnos_nowcast_00.pbs", "stofs_3d_atl_ufs", "stofs_3d_atl_ufs_nc_00", KIND_MODEL, "01:30:00", 1, (), None, False),
-    ("pbs/stofs_3d_atl_ufs/jnos_forecast_00.pbs", "stofs_3d_atl_ufs", "stofs_3d_atl_ufs_fc_00", KIND_MODEL, "05:30:00", 1, (), None, False),
-    ("pbs/stofs_3d_atl_ufs/jnos_post_00.pbs", "stofs_3d_atl_ufs", "stofs_3d_atl_ufs_post_00", KIND_SERIAL, "02:00:00", None, (), None, True),
-    ("pbs/stofs_3d_atl_ufs_standalone/jnos_prep_00.pbs", "stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs_sa_prep_00", KIND_SERIAL, "05:00:00", None, (), None, False),
-    ("pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs", "stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs_sa_nc_00", KIND_MODEL, "05:00:00", 1, (), None, False),
-    ("pbs/stofs_3d_atl_ufs_standalone/jnos_forecast_00.pbs", "stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs_sa_fc_00", KIND_MODEL, "05:00:00", 1, ("debug=true",), None, False),
-]
-
-
-def _nprocs(system: str) -> int:
-    """Total MPI ranks for ``system``, straight from the resolved YAML."""
-    saved = dict(os.environ)
-    try:
-        for var in ("PDY", "cyc"):
-            os.environ.pop(var, None)
-        os.environ["PDY"] = "20260724"
-        os.environ["cyc"] = "00"
-        exports = json.loads(
-            yaml_to_env.export_env(
-                REPO / "parm" / "systems" / f"{system}.yaml",
-                framework="comf", output_format="json",
-            )
-        )
-    finally:
-        os.environ.clear()
-        os.environ.update(saved)
-    return int(exports["NPROCS"])
-
-
-def _spec(entry) -> JobSpec:
-    _card, system, name, kind, walltime, omp, extras, mem, real_logs = entry
-    stdio = None if real_logs else "/dev/null"
-    return JobSpec(
-        name=name,
-        walltime=walltime,
-        kind=kind,
-        total_ranks=_nprocs(system) if kind == KIND_MODEL else 1,
-        threads_per_rank=omp,
-        mem_per_node=mem,
-        extra_resources=extras,
-        stdout=stdio,
-        stderr=stdio,
-    )
+CATALOG_KEYS = sorted(jobs.CATALOG.keys())
 
 
 def _card_directives(card: str) -> list:
@@ -98,16 +49,17 @@ def wcoss2():
     return MachineProfile.load("wcoss2", machines_dir=REPO / "parm" / "machines")
 
 
-@pytest.mark.parametrize("entry", CARDS, ids=[c[0] for c in CARDS])
-def test_rendered_card_matches_handwritten(entry, wcoss2):
+@pytest.mark.parametrize("key", CATALOG_KEYS, ids=[f"{s}/{g}" for s, g in CATALOG_KEYS])
+def test_rendered_card_matches_handwritten(key, wcoss2):
     """The whole point of P1: a generated WCOSS2 card must be indistinguishable
     from the card that is running in pre-ops today."""
-    card = entry[0]
+    system, stage = key
+    card = jobs.CATALOG[key].card
     expected = _card_directives(card)
     if not expected:
         pytest.skip(f"{card} not present in this checkout")
 
-    actual = render_directives(_spec(entry), wcoss2)
+    actual = render_directives(jobs.build_job_spec(system, stage, REPO), wcoss2)
     assert actual == expected, (
         f"{card} rendering drifted:\n"
         f"  rendered:\n    " + "\n    ".join(actual) + "\n"
@@ -118,34 +70,34 @@ def test_rendered_card_matches_handwritten(entry, wcoss2):
 def test_model_node_counts_are_derived_not_authored(wcoss2):
     """ceil(nprocs / ranks_per_node) must reproduce every hand-authored
     select= node count; that equality is what makes the move safe."""
-    for entry in CARDS:
-        card, system, _n, kind, *_ = entry
-        if kind != KIND_MODEL:
+    for system, stage in CATALOG_KEYS:
+        ss = jobs.CATALOG[(system, stage)]
+        if ss.kind != KIND_MODEL:
             continue
-        expected = _card_directives(card)
+        expected = _card_directives(ss.card)
         if not expected:
             continue
         authored = int(re.search(r"select=(\d+)", " ".join(expected)).group(1))
-        assert wcoss2.nodes(_nprocs(system)) == authored, (
-            f"{card}: derived {wcoss2.nodes(_nprocs(system))} nodes, "
-            f"card says {authored}"
+        derived = wcoss2.nodes(jobs.nprocs_for(system, REPO))
+        assert derived == authored, (
+            f"{ss.card}: derived {derived} nodes, card says {authored}"
         )
 
 
 def _normalized() -> dict:
     profile = MachineProfile.load("wcoss2", machines_dir=REPO / "parm" / "machines")
     out = {}
-    for entry in CARDS:
-        card, _system, name, kind, *_ = entry
-        spec = _spec(entry)
+    for system, stage in CATALOG_KEYS:
+        ss = jobs.CATALOG[(system, stage)]
+        spec = jobs.build_job_spec(system, stage, REPO)
         record = {
             "directives": render_directives(spec, profile),
-            "nodes": profile.nodes(spec.total_ranks) if kind == KIND_MODEL else 1,
+            "nodes": profile.nodes(spec.total_ranks) if ss.kind == KIND_MODEL else 1,
             "total_ranks": spec.total_ranks,
         }
-        if kind == KIND_MODEL:
+        if ss.kind == KIND_MODEL:
             record["mpi_argv"] = render_mpi_argv(spec, profile, "MODEL.exe")
-        out[card] = record
+        out[ss.card] = record
     return out
 
 

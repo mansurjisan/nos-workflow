@@ -44,7 +44,7 @@ class TestShippedProfiles:
         p = _load("hercules", env={"NOS_ACCOUNT": "nosofs"})
         assert (p.scheduler_type, p.partition, p.account) == ("slurm", "hercules", "nosofs")
         assert p.qos is None                      # site association picks
-        assert p.allocation.emit_ranks_per_node is False
+        assert p.allocation.emit_ranks_per_node is True
 
     def test_unknown_machine_lists_alternatives(self):
         with pytest.raises(ProfileError, match="Available:"):
@@ -144,24 +144,26 @@ class TestHerculesRendering:
     def herc(self):
         return _load("hercules", env={"NOS_ACCOUNT": "nosofs"})
 
-    def test_ranks_per_node_suppressed_in_directives(self, herc):
-        """emit_ranks_per_node: false must suppress --ntasks-per-node, which
-        NOAA guidance links to large-domain model crashes -- while the node
-        count is still derived from ranks_per_node."""
+    def test_ranks_per_node_emitted_in_directives(self, herc):
+        """emit_ranks_per_node: true emits --ntasks-per-node and omits a
+        redundant --ntasks -- the pattern a working ufs-coastal card on
+        Hercules submits with."""
         lines = render_directives(
             JobSpec(name="j", walltime="01:30:00", kind=KIND_MODEL, total_ranks=2914),
             herc,
         )
-        assert not any("ntasks-per-node" in l for l in lines)
         assert "#SBATCH --nodes=37" in lines
-        assert "#SBATCH --ntasks=2914" in lines
+        assert "#SBATCH --ntasks-per-node=80" in lines
+        assert not any(l.startswith("#SBATCH --ntasks=") for l in lines)
         assert "#SBATCH --exclusive" in lines
 
-    def test_ranks_per_node_suppressed_in_argv(self, herc):
+    def test_mpi_argv_uses_bare_ranks_flag(self, herc):
+        """srun receives total ranks only (-n); no ranks-per-node flag is
+        passed to the launcher even though the SBATCH header carries one."""
         argv = render_mpi_argv(
             JobSpec(name="j", walltime="01:30:00", total_ranks=2914), herc, "pschism",
         )
-        assert argv == ["srun", "--ntasks", "2914", "--label", "--export=ALL", "pschism"]
+        assert argv == ["srun", "-n", "2914", "--label", "pschism"]
         assert all(a != "" for a in argv)
 
     def test_qos_omitted_when_unset(self, herc):
@@ -172,6 +174,29 @@ class TestHerculesRendering:
         p = _load("hercules", env={"NOS_ACCOUNT": "a", "NOS_QOS": "batch"})
         lines = render_directives(JobSpec(name="j", walltime="01:00:00"), p)
         assert "#SBATCH --qos=batch" in lines
+
+    def test_directive_order_matches_working_card(self):
+        """Exact field order proven on a working ufs-coastal card on
+        Hercules: job-name, account, qos, partition, nodes, ntasks-per-node,
+        exclusive, time, output, error."""
+        p = _load("hercules", env={"NOS_ACCOUNT": "nos-surge", "NOS_QOS": "batch"})
+        lines = render_directives(
+            JobSpec(name="secofs_ufs_nc_00", walltime="01:30:00",
+                    kind=KIND_MODEL, total_ranks=2914),
+            p,
+        )
+        assert lines == [
+            "#SBATCH --job-name=secofs_ufs_nc_00",
+            "#SBATCH --account=nos-surge",
+            "#SBATCH --qos=batch",
+            "#SBATCH --partition=hercules",
+            "#SBATCH --nodes=37",
+            "#SBATCH --ntasks-per-node=80",
+            "#SBATCH --exclusive",
+            "#SBATCH --time=01:30:00",
+            "#SBATCH --output=/dev/null",
+            "#SBATCH --error=/dev/null",
+        ]
 
     def test_serial_job_is_single_node(self, herc):
         lines = render_directives(

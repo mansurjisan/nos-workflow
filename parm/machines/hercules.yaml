@@ -18,19 +18,18 @@ scheduler:
 allocation:
   cores_per_node: 80         # 2x Intel Xeon Ice Lake, 40 cores each
   ranks_per_node: 80         # used for nodes = ceil(total_ranks / ranks_per_node)
-  # Hercules guidance warns that --ntasks-per-node has caused large-domain
-  # model crashes, so the node count is still derived from ranks_per_node but
-  # neither the #SBATCH directive nor the launcher flag is emitted.
-  emit_ranks_per_node: false
+  # A working ufs-coastal card on Hercules submits with --ntasks-per-node=80
+  # (and no --ntasks) -- this profile matches that proven pattern; see
+  # render._render_slurm.
+  emit_ranks_per_node: true
   exclusive: true            # RDHPCS nodes are shared by default
 
 mpi:
   launcher: srun
-  total_ranks_flag: "--ntasks"
-  ranks_per_node_flag: null  # suppressed; see emit_ranks_per_node above
+  total_ranks_flag: "-n"
+  ranks_per_node_flag: null  # srun receives total ranks only, not per-node
   fixed_args:
     - "--label"
-    - "--export=ALL"
 
 modulefile: nos_hercules.intel
 versions: run.hercules.ver

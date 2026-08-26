@@ -93,23 +93,21 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
         f"{p}--job-name={spec.name}",
         f"{p}--account={profile.account}",
     ]
-    if profile.partition:
-        lines.append(f"{p}--partition={profile.partition}")
     if profile.qos:
         lines.append(f"{p}--qos={profile.qos}")
-    lines += [
-        f"{p}--output={spec.stdout}",
-        f"{p}--error={spec.stderr}",
-    ]
+    if profile.partition:
+        lines.append(f"{p}--partition={profile.partition}")
 
     alloc = profile.allocation
     if spec.kind == KIND_MODEL:
         lines.append(f"{p}--nodes={profile.nodes(spec.total_ranks)}")
-        lines.append(f"{p}--ntasks={spec.total_ranks}")
-        # Suppressed on machines where --ntasks-per-node is known to break
-        # large-domain runs; the node count above already used ranks_per_node.
         if alloc.emit_ranks_per_node:
+            # --nodes + --ntasks-per-node fully specify the allocation (a
+            # working ufs-coastal Hercules card uses exactly this pair);
+            # --ntasks alongside it would be redundant.
             lines.append(f"{p}--ntasks-per-node={alloc.ranks_per_node}")
+        else:
+            lines.append(f"{p}--ntasks={spec.total_ranks}")
         if alloc.exclusive:
             lines.append(f"{p}--exclusive")
     else:
@@ -122,6 +120,10 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
         lines.append(f"{p}--mem={spec.mem_per_node}")
 
     lines.append(f"{p}--time={spec.walltime}")
+    if spec.stdout is not None:
+        lines.append(f"{p}--output={spec.stdout}")
+    if spec.stderr is not None:
+        lines.append(f"{p}--error={spec.stderr}")
     return lines
 
 
