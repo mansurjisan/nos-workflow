@@ -1,0 +1,47 @@
+export nosofs_ver=v3.7.0
+
+# Variables below mirror versions/run.ver's names 1:1 for consuming-script
+# compatibility. Blank = no verified Hercules/spack-stack equivalent found
+# (WCOSS2 Cray-PE or NCO hpc-stack specific); see NOTES.txt before assuming
+# a blank means "not needed".
+export bufr_ver=12.1.0
+export cfp_ver=
+export cmake_ver=3.27.9
+export cray_mpich_ver=
+export cray_pals_ver=
+export craype_ver=
+
+export envvar_ver=
+export g2_ver=3.5.1
+export gempak_ver=
+export grib_util_ver=1.4.0
+export hdf5_ver=1.14.3
+export hpc_ver=
+export imagemagick_ver=
+export intel_ver=2024.2.1  # oneAPI stack-compiler version; no bare "intel" module on Hercules
+export jasper_ver=2.0.32
+export libgeotiff_ver=
+export libjpeg_ver=
+export nco_ver=5.2.4
+export libpng_ver=1.6.37
+export libtiff_ver=
+export netcdf_ver=4.9.2  # netcdf-c; netcdf-fortran is 4.6.1 (set inside nos_hercules.intel.lua)
+export perl_ver=
+export wgrib2_ver=3.6.0
+export PrgEnv_intel_ver=
+export udunits_ver=
+export w3emc_ver=2.10.0
+export w3nco_ver=
+export zlib_ver=1.2.13
+export python_ver=3.11.7
+export prod_envir_ver=
+export prod_util_ver=2.1.1
+export subversion_ver=
+export gsl_ver=
+
+export COLDSTART=YES
+
+export gfs_ver=v16.3
+export hrrr_ver=v4.1
+export rtofs_ver=v2.5
+export nwm_ver=v3.1

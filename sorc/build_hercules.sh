@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Build fv3_coastalS.exe (DATM+SCHISM) on Hercules and install it to EXECnos.
+# Mirrors the user's proven invocation (2026-08-26) from their working clone.
+set -euo pipefail
+
+# The fork lives IN the ufs-weather-model repo, not a separate "ufs-coastal"
+# repo -- oceanmodeling/ufs-coastal-app is an unrelated, much smaller docs repo.
+UFS_COASTAL_REPO=${UFS_COASTAL_REPO:-https://github.com/oceanmodeling/ufs-weather-model.git}
+# feature/coastal_app tip observed 2026-08-26; used only for a FRESH clone.
+UFS_COASTAL_REF=${UFS_COASTAL_REF:-d84244a30194e8a3ec181a65f91782aebbb9c0aa}
+# Default: the user's existing working clone. An existing clone is built AS-IS
+# (no fetch/checkout -- never disturb a tree the user works in); its HEAD is
+# recorded below for reproducibility.
+UFS_COASTAL_DIR=${UFS_COASTAL_DIR:-/work2/noaa/nos-surge/${USER}/ufs-weather-model}
+
+# Proven flag set. NO_PARMETIS=OFF: ParMETIS is enabled and stable in the
+# user's Hercules builds (unlike WCOSS2 at 2914 ranks -- nos-workflow #98).
+# OLDIO=ON: exe expects nscribes=0 and a post-run combine step -- the runtime
+# yaml must match. BUILD_UTILS=ON provides the schism combine executables.
+MAKE_OPT=${MAKE_OPT:-"-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=OFF -DOLDIO=ON -DBUILD_UTILS=ON"}
+COMPILE_ID=${COMPILE_ID:-coastalS_V3}
+
+: "${EXECnos:?set EXECnos to the exec/ install destination (e.g. \$HOMEnos/exec)}"
+
+if [ ! -d "${UFS_COASTAL_DIR}/.git" ]; then
+  git clone --recursive "${UFS_COASTAL_REPO}" "${UFS_COASTAL_DIR}"
+  cd "${UFS_COASTAL_DIR}"
+  git fetch origin "${UFS_COASTAL_REF}"
+  git checkout "${UFS_COASTAL_REF}"
+  git submodule update --init --recursive
+else
+  cd "${UFS_COASTAL_DIR}"
+fi
+echo "building from $(git rev-parse HEAD) in ${UFS_COASTAL_DIR}"
+
+cd tests
+./compile.sh hercules "${MAKE_OPT}" "${COMPILE_ID}" intel YES NO 2>&1 | tee build.log
+
+mkdir -p "${EXECnos}"
+install -m 0755 "fv3_${COMPILE_ID}.exe" "${EXECnos}/fv3_coastalS.exe"
+echo "installed ${EXECnos}/fv3_coastalS.exe (from fv3_${COMPILE_ID}.exe)"
+
+# BUILD_UTILS=ON drops the SCHISM utility binaries in the build tree; install
+# the combine tools the workflow invokes at runtime, if present.
+found_utils=$(find "build_${COMPILE_ID}" ../build "$PWD" -maxdepth 6 -type f \
+  -name 'combine_hotstart7*' -o -name 'combine_output11*' 2>/dev/null | head -5 || true)
+if [ -n "${found_utils}" ]; then
+  echo "${found_utils}" | while read -r u; do
+    install -m 0755 "${u}" "${EXECnos}/$(basename "${u}")"
+    echo "installed ${EXECnos}/$(basename "${u}")"
+  done
+else
+  echo "note: no combine utilities found under the build tree; locate them manually if the run needs schism_combine_hotstart7"
+fi

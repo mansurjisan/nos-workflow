@@ -38,8 +38,8 @@ exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_post_00 -- Slurm jobid ${SLURM_JOB_ID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
-# Module setup -- nos_hercules.intel (drafted by a parallel workstream)
-# stands in for the WCOSS2 post module chain (Python + NCO, not UFS hpc-stack).
+# Module setup -- modulefiles/nos_hercules.intel.lua stands in for the
+# WCOSS2 post module chain (Python + NCO, not UFS hpc-stack).
 module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load nos_hercules.intel
 

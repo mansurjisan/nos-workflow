@@ -35,8 +35,8 @@ exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_prep_00 -- Slurm jobid ${SLURM_JOB_ID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
-# Module setup -- nos_hercules.intel (drafted by a parallel workstream)
-# stands in for the whole WCOSS2 module chain (COMF/nosofs + ESMF).
+# Module setup -- modulefiles/nos_hercules.intel.lua stands in for the
+# whole WCOSS2 module chain (COMF/nosofs + ESMF).
 module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load nos_hercules.intel
 
@@ -63,8 +63,8 @@ export DCOMROOT=/work/PLACEHOLDER/prod/dcom
 export DATAROOT=/work/PLACEHOLDER/ptmp/$LOGNAME/work/${OFS}
 
 # Input data for DATM forcing generation, staged ahead of the run --
-# stage_comin.py (parallel workstream) populates this tree from the
-# WCOSS2/NOMADS sources the pbs cards read directly.
+# ${HOMEnos}/ush/stage_comin.py populates this tree from the WCOSS2/NOMADS
+# sources the pbs cards read directly.
 export COMROOT_STAGED=${COMROOT_STAGED:-/work/PLACEHOLDER/comin}
 export COMINgfs=${COMINgfs:-$COMROOT_STAGED/gfs}
 export COMINhrrr=${COMINhrrr:-$COMROOT_STAGED/hrrr}
