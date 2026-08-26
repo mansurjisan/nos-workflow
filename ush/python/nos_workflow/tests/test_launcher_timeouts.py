@@ -212,3 +212,35 @@ class TestWarmLauncherTimeout:
         txt = self._WARM.read_text()
         assert "warmtest" in txt
         assert "COMOUT=$SCRATCH" in txt
+
+
+class TestWarmLauncherStagesInputsOnly:
+    """The warm launcher stages prep's inputs, not the run's outputs.
+
+    The nowcast reads its inputs from $COMOUT, so the scratch tree has to be
+    seeded from the operational one -- but only with what prep produced. A
+    plain `rsync -a` also copied the SCHISM restarts the run writes rather
+    than reads, this cycle's own wave restart archive, and post's products:
+    86 GB against roughly 20 GB of real inputs, growing daily as post writes
+    more.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+
+    def test_outputs_are_excluded_from_staging(self) -> None:
+        txt = self._WARM.read_text()
+        for pat in ("*.rst.*.nc", "*restart_outputs", "*wave_restart",
+                    "*stations*.nc", "*station.profile*.nc"):
+            assert f"--exclude='{pat}'" in txt, f"staging must exclude {pat}"
+
+    def test_hotstart_is_not_excluded(self) -> None:
+        """init.nowcast.nc is prep's output and the run's input -- it must stay.
+
+        The exclude for the restarts the run writes is `*.rst.*.nc`; a broader
+        pattern such as `*.nc` or `*nowcast*.nc` would take the hotstart with
+        it and the run would fail at staging.
+        """
+        txt = self._WARM.read_text()
+        assert "--exclude='*.nc'" not in txt
+        assert "--exclude='*nowcast*.nc'" not in txt
+        assert "--exclude='*init*'" not in txt
