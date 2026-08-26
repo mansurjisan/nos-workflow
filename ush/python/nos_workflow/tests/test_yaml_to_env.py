@@ -546,16 +546,14 @@ class TestErrorHandling:
         assert "Traceback" not in result.stderr
 
 
-class TestPpnFromResourcesSelect:
-    """``PPN`` (mpiexec -ppn) is parsed from ``resources.select`` mpiprocs=.
+class TestPpnFromMachineProfile:
+    """``PPN`` and ``NNODES`` come from parm/machines/, not from PBS syntax.
 
-    Regression for the STOFS-3D-ATL-UFS nowcast MPI-launch failure: the
-    shell ``_schism_run_mpi`` defaulted ``${PPN:-120}`` (a SECOFS-tuned
-    constant); with the STOFS PBS sized for ``mpiprocs=128`` that under-
-    packed nodes ("Cannot place all ranks", rc=127). PPN must instead
-    track the YAML ``resources.select`` so it can never drift from the
-    PBS allocation, while staying byte-silent for SECOFS (whose YAML has
-    no ``resources.select`` -> the shell 120 default is preserved).
+    Originally PPN was reverse-parsed out of a ``resources.select`` string so
+    it could not drift from the PBS allocation. Ranks-per-node is a machine
+    fact, so it now comes from the machine profile and the node count is
+    derived as ceil(nprocs / ranks_per_node) -- which reproduces every
+    hand-authored select= (see test_job_card_render.py).
     """
 
     def _export(self, yaml_content: str) -> str:
@@ -569,22 +567,8 @@ class TestPpnFromResourcesSelect:
         finally:
             os.unlink(temp_path)
 
-    def test_ppn_derived_from_stofs_select(self) -> None:
-        """STOFS-style select=...:mpiprocs=128 -> export PPN=128."""
-        output = self._export(
-            """
-system:
-  name: stofs_3d_atl_ufs
-  framework: comf
-resources:
-  nprocs: 4436
-  select: "select=35:ncpus=128:mpiprocs=128"
-"""
-        )
-        assert "export PPN=128" in output
-
-    def test_ppn_absent_without_resources_select(self) -> None:
-        """SECOFS-style resources (no select) -> PPN unset (shell keeps 120)."""
+    def test_ppn_comes_from_the_machine_profile(self) -> None:
+        """No select= anywhere; PPN is the profile's ranks_per_node."""
         output = self._export(
             """
 system:
@@ -595,21 +579,49 @@ resources:
   nscribes: 0
 """
         )
-        assert "export PPN=" not in output
+        assert "export PPN=120" in output
 
-    def test_ppn_is_parsed_not_hardcoded(self) -> None:
-        """Arbitrary mpiprocs= flows through verbatim (parsed, not fixed)."""
+    def test_node_count_is_derived(self) -> None:
+        """ceil(2914 / 120) == 25 -- the value the hand-written card carried."""
         output = self._export(
             """
+system:
+  name: secofs_ufs
+  framework: comf
+resources:
+  nprocs: 2914
+  nscribes: 0
+"""
+        )
+        assert "export NNODES=25" in output
+
+    def test_leftover_select_is_ignored_and_flagged(self) -> None:
+        """A stale select= must not silently drive the allocation again."""
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False) as f:
+            f.write(
+                """
 system:
   name: demo_ufs
   framework: comf
 resources:
   nprocs: 600
-  select: "select=5:ncpus=128:mpiprocs=120"
+  select: "select=5:ncpus=128:mpiprocs=99"
 """
-        )
-        assert "export PPN=120" in output
+            )
+            temp_path = f.name
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "nos_workflow.utils.yaml_to_env",
+                 "--config", temp_path, "--framework", "comf"],
+                capture_output=True, text=True,
+                cwd=str(Path(__file__).parent.parent.parent),
+            )
+        finally:
+            os.unlink(temp_path)
+
+        assert "export PPN=120" in proc.stdout      # profile wins, not mpiprocs=99
+        assert "export PPN=99" not in proc.stdout
+        assert "resources.select is ignored" in proc.stderr
 
 
 class TestExecutionMode:

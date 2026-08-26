@@ -1,0 +1,36 @@
+# Hercules (MSU / NOAA RDHPCS) -- Intel Ice Lake, Slurm, spack-stack.
+#
+# Machine facts only. Deployment credentials (account, qos) are deliberately
+# null: on RDHPCS an account is mandatory but the valid value depends on the
+# user's project association, and QOS eligibility can depend on the
+# allocation. They must come from NOS_ACCOUNT / NOS_QOS or a deployment
+# overlay, and validation fails before submission if a required one is unset.
+# Ref: https://docs.rdhpcs.noaa.gov/systems/MSU-HPC_user_guide.html
+
+machine: hercules
+
+scheduler:
+  type: slurm
+  partition: hercules        # verified machine default; NOS_PARTITION overrides
+  account: null              # REQUIRED -- supply via NOS_ACCOUNT or overlay
+  qos: null                  # optional -- unset lets the site association pick
+
+allocation:
+  cores_per_node: 80         # 2x Intel Xeon Ice Lake, 40 cores each
+  ranks_per_node: 80         # used for nodes = ceil(total_ranks / ranks_per_node)
+  # Hercules guidance warns that --ntasks-per-node has caused large-domain
+  # model crashes, so the node count is still derived from ranks_per_node but
+  # neither the #SBATCH directive nor the launcher flag is emitted.
+  emit_ranks_per_node: false
+  exclusive: true            # RDHPCS nodes are shared by default
+
+mpi:
+  launcher: srun
+  total_ranks_flag: "--ntasks"
+  ranks_per_node_flag: null  # suppressed; see emit_ranks_per_node above
+  fixed_args:
+    - "--label"
+    - "--export=ALL"
+
+modulefile: nos_hercules.intel
+versions: run.hercules.ver

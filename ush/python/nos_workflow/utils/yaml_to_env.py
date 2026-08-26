@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -91,6 +90,25 @@ def _normalize_cyc(cyc: Any) -> Optional[str]:
     if not 0 <= n <= 23:
         return None
     return f"{n:02d}"
+
+
+def _machine_profile():
+    """Machine profile for ``$NOS_MACHINE`` (default wcoss2), or None.
+
+    Imported lazily and with a sys.path bootstrap because this module is also
+    run as a standalone script by ``nos_config.sh``, where ``ush/python`` is
+    not necessarily importable yet. Credentials are not validated here -- only
+    allocation facts are needed, and nothing is being submitted.
+    """
+    try:
+        if __package__ in (None, ""):
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from nos_workflow.platform.profile import MachineProfile
+
+        return MachineProfile.load(validate=False)
+    except Exception as exc:  # missing profile, bad schema, no PyYAML
+        print(f"WARNING: machine profile unavailable ({exc})", file=sys.stderr)
+        return None
 
 
 def compute_derived_values(
@@ -302,7 +320,7 @@ def get_standard_exports(
     if data.get("execution", {}).get("mode", "ufs") == "standalone":
         overlay = data.get("standalone", {})
         resources = {**resources, **{
-            k: overlay[k] for k in ("nprocs", "nscribes", "select")
+            k: overlay[k] for k in ("nprocs", "nscribes", "mem_per_node")
             if k in overlay
         }}
         if "executable" in overlay:
@@ -322,14 +340,27 @@ def get_standard_exports(
     exports["NCPU_PBS"] = exports["NPROCS"]
     exports["NSCRIBES"] = nscribes_val
 
-    # ``PPN`` (mpiexec ``-ppn``, ranks per node) is parsed from the
-    # ``mpiprocs=`` token of ``resources.select`` so it can never drift
-    # from the PBS node allocation. When ``resources.select`` is absent
-    # (SECOFS carries select= in its PBS header, not the YAML), PPN is
-    # left unset and the shell launcher keeps its historical default.
-    select_match = re.search(r"mpiprocs=(\d+)", str(resources.get("select", "") or ""))
-    if select_match:
-        exports["PPN"] = select_match.group(1)
+    # Ranks-per-node and the node count are machine facts, so they come from
+    # parm/machines/<NOS_MACHINE>.yaml rather than from a PBS ``select=``
+    # string embedded in the system config. On a machine that suppresses the
+    # ranks-per-node flag (Hercules), PPN is deliberately not exported so the
+    # launcher cannot pass it.
+    profile = _machine_profile()
+    if profile is not None:
+        if profile.allocation.emit_ranks_per_node:
+            exports["PPN"] = str(profile.allocation.ranks_per_node)
+        try:
+            exports["NNODES"] = str(profile.nodes(int(total)))
+        except (TypeError, ValueError):
+            pass
+
+    if resources.get("select"):
+        # Left behind by an older config; the allocation no longer comes from it.
+        print(
+            f"WARNING: resources.select is ignored (allocation now comes from "
+            f"parm/machines/); remove it from this config: {resources['select']!r}",
+            file=sys.stderr,
+        )
 
     exports.update(runtime_env)
 
