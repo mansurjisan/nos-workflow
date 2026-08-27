@@ -46,7 +46,11 @@ echo "  source init:  ${INIT_FILE}"
 echo "  dest:         ${DEST}"
 
 mkdir -p "${DEST}/init"
-rsync -a "${SRC_COMIN}/" "${DEST}/"
+if [ "${SRC_COMIN}" = "${DEST}" ]; then
+  echo "source is already the frozen dest; skipping comin copy"
+else
+  rsync -a "${SRC_COMIN}/" "${DEST}/"
+fi
 cp -p "${INIT_FILE}" "${DEST}/init/$(basename "${INIT_FILE}")"
 
 echo "=== frozen dataset sizes ==="

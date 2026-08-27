@@ -24,6 +24,7 @@ rsync -a --delete \
   --exclude='/comin' \
   --exclude='/ush/python/nos-utils' \
   --exclude='/*.out' \
+  --exclude='/*.err' \
   "${WORKSPACE}/" "${HOMEnos}/"
 
 echo "deploy PASS: $(date -u +%FT%TZ)"

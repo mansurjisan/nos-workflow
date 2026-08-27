@@ -83,7 +83,7 @@ pipeline {
                 if [ -s "${JIDFILE}" ]; then
                     JID=$(cat "${JIDFILE}")
                     echo "post/unsuccessful: scancel ${JID} (best-effort)"
-                    scancel "${JID}" 2>/dev/null || true
+                    bash -l -c "scancel ${JID}" || true
                 fi
             '''
         }
