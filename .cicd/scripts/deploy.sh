@@ -11,15 +11,19 @@ source "${SCRIPT_DIR}/common.sh"
 
 : "${WORKSPACE:?WORKSPACE not set (this script is meant to run under Jenkins)}"
 
+# Fresh logs every build, so verify.sh can never validate a stale log left
+# over from a previous run in a reused workspace.
+rm -rf "${WORKSPACE}/ci_logs"
 mkdir -p "${HOMEnos}" "${WORKSPACE}/ci_logs"
 
 echo "deploying ${WORKSPACE} -> ${HOMEnos}"
 rsync -a --delete \
   --exclude='.git/' \
-  --exclude='fix/' \
-  --exclude='exec/' \
-  --exclude='comin/' \
-  --exclude='ush/python/nos-utils/' \
+  --exclude='/fix' \
+  --exclude='/exec' \
+  --exclude='/comin' \
+  --exclude='/ush/python/nos-utils' \
+  --exclude='/*.out' \
   "${WORKSPACE}/" "${HOMEnos}/"
 
 echo "deploy PASS: $(date -u +%FT%TZ)"

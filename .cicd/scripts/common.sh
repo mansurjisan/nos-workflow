@@ -6,6 +6,10 @@
 expand_path() { eval "echo $1"; }
 
 PACKAGEROOT=$(expand_path "${PACKAGEROOT}")
+case "${PACKAGEROOT}" in
+  /*) ;;
+  *) echo "FATAL: PACKAGEROOT must be an absolute path (got '${PACKAGEROOT}')" >&2; exit 2 ;;
+esac
 export PACKAGEROOT
 export HOMEnos="${PACKAGEROOT}/nos-workflow"
 export OFS=secofs_ufs
@@ -25,9 +29,14 @@ setup_env() {
   module purge
   module use "${HOMEnos}/modulefiles"
   module load nos_hercules.intel
-  if [ -n "${VENV_PATH:-}" ]; then
+  # Unlike the cards (which silently skip activation if missing), CI must
+  # fail loudly here rather than run a stage against the wrong Python.
+  if [ -f "${VENV_PATH:-}/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "${VENV_PATH}/bin/activate"
+  else
+    echo "FATAL: no venv at ${VENV_PATH:-} -- create it or set VENV_PATH"
+    exit 1
   fi
 }
 

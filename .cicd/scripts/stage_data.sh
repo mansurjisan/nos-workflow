@@ -14,8 +14,9 @@ setup_env
 DATA_MODE=${DATA_MODE:-frozen}
 
 NOWCAST_CARD="${HOMEnos}/slurm/secofs_ufs/jnos_nowcast_00.sh"
+# Local only: run_stage.sh recomputes this same path for the batch-side
+# value (see its comment) since an export here dies with this sh step.
 COMROOT_STAGED="${RT_DATA_ROOT}/comin_${PDY}${CYC}"
-export COMROOT_STAGED
 
 case "${DATA_MODE}" in
   frozen)

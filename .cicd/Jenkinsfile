@@ -1,18 +1,19 @@
 pipeline {
-    agent { label params.NODE_LABEL }
+    // Hardcoded to this node's label; re-parameterize (NODE_LABEL string
+    // param) if EPIC's label differs.
+    agent { label 'hercules' }
 
     options {
         timestamps()
         disableConcurrentBuilds()
-        timeout(time: 8, unit: 'HOURS')
+        timeout(time: 16, unit: 'HOURS')
     }
 
     parameters {
-        string(name: 'NODE_LABEL', defaultValue: 'hercules', description: 'Jenkins node label to run this pipeline on')
         string(name: 'PACKAGEROOT', defaultValue: '/work2/noaa/nos-surge/mjisan', description: 'Root dir; runtime tree is deployed to ${PACKAGEROOT}/nos-workflow')
         string(name: 'VENV_PATH', defaultValue: '$HOME/nos-venv', description: 'Python venv activated in every stage shell (expanded on the node)')
         string(name: 'RT_DATA_ROOT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Root of frozen regression-test datasets (DATA_MODE=frozen)')
-        choice(name: 'DATA_MODE', choices: ['frozen', 'live'], description: 'frozen: use a pre-staged dataset. live: stage inputs from NODD for PDY/CYC')
+        choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
     }
@@ -73,6 +74,18 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
+        }
+        unsuccessful {
+            // run_stage.sh drops the currently-submitted jobid here; best-effort
+            // scancel whatever is still queued/running for this build.
+            sh '''
+                JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
+                if [ -s "${JIDFILE}" ]; then
+                    JID=$(cat "${JIDFILE}")
+                    echo "post/unsuccessful: scancel ${JID} (best-effort)"
+                    scancel "${JID}" 2>/dev/null || true
+                fi
+            '''
         }
     }
 }

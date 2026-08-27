@@ -212,3 +212,49 @@ class TestWarmLauncherTimeout:
         txt = self._WARM.read_text()
         assert "warmtest" in txt
         assert "COMOUT=$SCRATCH" in txt
+
+
+# ---------------------------------------------------------------------------
+# .cicd/scripts/run_stage.sh (Hercules Jenkins CI) vs the secofs_ufs Slurm
+# cards it submits: same invariant as the PBS launcher above -- run_stage.sh
+# polls sacct and does not scancel before its own TIMEOUT_S elapses, so a
+# TIMEOUT_S shorter than the card's own #SBATCH --time can only ever
+# mislabel a healthy CI stage as FAILED.
+# ---------------------------------------------------------------------------
+
+_CI_RUN_STAGE = _ROOT / ".cicd" / "scripts" / "run_stage.sh"
+_SLURM_CARDS = {
+    "prep": _ROOT / "slurm" / "secofs_ufs" / "jnos_prep_00.sh",
+    "nowcast": _ROOT / "slurm" / "secofs_ufs" / "jnos_nowcast_00.sh",
+    "forecast": _ROOT / "slurm" / "secofs_ufs" / "jnos_forecast_00.sh",
+    "post": _ROOT / "slurm" / "secofs_ufs" / "jnos_post_00.sh",
+}
+
+
+def _ci_stage_timeout(stage: str) -> int:
+    m = re.search(
+        rf"^\s*{stage}\)\s*TIMEOUT_S=(\d+)", _CI_RUN_STAGE.read_text(), re.M,
+    )
+    assert m, f"no TIMEOUT_S case for stage '{stage}' in {_CI_RUN_STAGE.name}"
+    return int(m.group(1))
+
+
+def _slurm_card_walltime_seconds(card: Path) -> int:
+    m = re.search(r"^#SBATCH\s+--time=(\d+):(\d+):(\d+)", card.read_text(), re.M)
+    assert m, f"no #SBATCH --time= in {card.name}"
+    h, mnt, s = (int(g) for g in m.groups())
+    return h * 3600 + mnt * 60 + s
+
+
+@pytest.mark.parametrize("stage", sorted(_SLURM_CARDS))
+def test_ci_run_stage_timeout_covers_slurm_card_walltime(stage):
+    card = _SLURM_CARDS[stage]
+    if not card.is_file():
+        pytest.skip(f"{card.name} not present")
+    timeout = _ci_stage_timeout(stage)
+    walltime = _slurm_card_walltime_seconds(card)
+    assert timeout >= walltime, (
+        f"CI TIMEOUT_S for stage '{stage}'={timeout}s is shorter than "
+        f"{card.name}'s walltime={walltime}s: run_stage.sh would report "
+        f"FAIL while the Slurm job is still legitimately running"
+    )
