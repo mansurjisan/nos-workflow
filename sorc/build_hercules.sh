@@ -13,11 +13,14 @@ UFS_COASTAL_REF=${UFS_COASTAL_REF:-d84244a30194e8a3ec181a65f91782aebbb9c0aa}
 # recorded below for reproducibility.
 UFS_COASTAL_DIR=${UFS_COASTAL_DIR:-/work2/noaa/nos-surge/${USER}/ufs-weather-model}
 
-# Proven flag set. NO_PARMETIS=OFF: ParMETIS is enabled and stable in the
-# user's Hercules builds (unlike WCOSS2 at 2914 ranks -- nos-workflow #98).
+# Proven flag set. NO_PARMETIS=ON: ParMETIS deadlocks SCHISM partitioning on
+# Hercules at 2794 ranks (2026-08-26 secofs run0; same pathology crashes
+# WCOSS2 at 2914 -- nos-workflow #98). The guard needs a matching
+# partition.prop staged in the run dir. Small-rank runs (<~1000) may set
+# NO_PARMETIS=OFF via env to partition at runtime instead.
 # OLDIO=ON: exe expects nscribes=0 and a post-run combine step -- the runtime
 # yaml must match. BUILD_UTILS=ON provides the schism combine executables.
-MAKE_OPT=${MAKE_OPT:-"-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=OFF -DOLDIO=ON -DBUILD_UTILS=ON"}
+MAKE_OPT=${MAKE_OPT:-"-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_UTILS=ON"}
 COMPILE_ID=${COMPILE_ID:-coastalS_V3}
 
 : "${EXECnos:?set EXECnos to the exec/ install destination (e.g. \$HOMEnos/exec)}"
