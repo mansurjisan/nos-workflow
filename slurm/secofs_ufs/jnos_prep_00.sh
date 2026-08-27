@@ -1,9 +1,11 @@
 #!/bin/bash
 # ============================================================================
-# EDIT BEFORE FIRST RUN -- every /work/PLACEHOLDER/... path below is a
-# stand-in for wherever this package, scratch, and the staged COMIN tree
-# actually live on Hercules (PACKAGEROOT, COMROOT_STAGED, RPTDIR/WORKDIR,
-# COMROOT/DCOMROOT/DATAROOT). Replace all of them before submitting.
+# PACKAGEROOT/RPTDIR/WORKDIR/COMROOT/DATAROOT default to the nos-surge
+# Hercules account (verified 2026-08-27); override via env/sbatch --export
+# for a different account. DCOMROOT/COMROOT_STAGED still say
+# /work/PLACEHOLDER -- unused by the secofs_ufs UFS prep/nowcast/forecast/
+# post path (COMROOT_STAGED is normally supplied by the caller); edit only
+# if a downstream script starts reading them.
 # ============================================================================
 #SBATCH --job-name=secofs_ufs_prep_00
 #SBATCH --account=nos-surge
@@ -15,7 +17,7 @@
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
-PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
+PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
 . ${PACKAGEROOT}/nos-workflow/versions/run.hercules.ver
 
 # Load-bearing: must be set before anything sources yaml_to_env, or the
@@ -23,9 +25,9 @@ PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
 export NOS_MACHINE=hercules
 
 # Working directory
-RPTDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/rpt/secofs_ufs
-WORKDIR=/work/PLACEHOLDER/ptmp/$LOGNAME/work/secofs_ufs
-mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
+RPTDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/rpt/secofs_ufs
+WORKDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/secofs_ufs
+mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR)"; exit 1; }
 
 # Per-job log files (Slurm jobid as suffix). The #SBATCH -o/-e above catch
 # only Slurm's own epilogue (TIME LIMIT / node-failure kills, which a
@@ -33,7 +35,7 @@ mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR 
 # redirect is what populates the real prep logs.
 _JOBID=${SLURM_JOB_ID}
 _LOG_PREFIX="$RPTDIR/secofs_ufs_prep_00.${_JOBID}"
-touch "${_LOG_PREFIX}.out" "${_LOG_PREFIX}.err" || { echo "FATAL: cannot write to RPTDIR ($RPTDIR) -- edit the /work/PLACEHOLDER paths above before submitting"; exit 1; }
+touch "${_LOG_PREFIX}.out" "${_LOG_PREFIX}.err" || { echo "FATAL: cannot write to RPTDIR ($RPTDIR)"; exit 1; }
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_prep_00 -- Slurm jobid ${SLURM_JOB_ID} on $(hostname) at $(date) ==="
 cd ${WORKDIR} || exit 1
@@ -76,12 +78,12 @@ export SENDDBN=NO
 export SENDSMS=NO
 
 # Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
-export PACKAGEROOT=${PACKAGEROOT:-/work/PLACEHOLDER/packages}
+export PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
 
 # Data and COM paths
-export COMROOT=/work/PLACEHOLDER/ptmp/$LOGNAME/com
+export COMROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/com
 export DCOMROOT=/work/PLACEHOLDER/prod/dcom
-export DATAROOT=/work/PLACEHOLDER/ptmp/$LOGNAME/work/${OFS}
+export DATAROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/${OFS}
 
 # Input data for DATM forcing generation, staged ahead of the run --
 # ${HOMEnos}/ush/stage_comin.py populates this tree from the WCOSS2/NOMADS

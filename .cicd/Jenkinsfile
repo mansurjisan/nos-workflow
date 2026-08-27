@@ -1,0 +1,78 @@
+pipeline {
+    agent { label params.NODE_LABEL }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 8, unit: 'HOURS')
+    }
+
+    parameters {
+        string(name: 'NODE_LABEL', defaultValue: 'hercules', description: 'Jenkins node label to run this pipeline on')
+        string(name: 'PACKAGEROOT', defaultValue: '/work2/noaa/nos-surge/mjisan', description: 'Root dir; runtime tree is deployed to ${PACKAGEROOT}/nos-workflow')
+        string(name: 'VENV_PATH', defaultValue: '$HOME/nos-venv', description: 'Python venv activated in every stage shell (expanded on the node)')
+        string(name: 'RT_DATA_ROOT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Root of frozen regression-test datasets (DATA_MODE=frozen)')
+        choice(name: 'DATA_MODE', choices: ['frozen', 'live'], description: 'frozen: use a pre-staged dataset. live: stage inputs from NODD for PDY/CYC')
+        string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
+        string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
+    }
+
+    environment {
+        PACKAGEROOT  = "${params.PACKAGEROOT}"
+        VENV_PATH    = "${params.VENV_PATH}"
+        RT_DATA_ROOT = "${params.RT_DATA_ROOT}"
+        DATA_MODE    = "${params.DATA_MODE}"
+        PDY          = "${params.PDY}"
+        CYC          = "${params.CYC}"
+    }
+
+    stages {
+        stage('Checkout + Deploy') {
+            steps {
+                checkout scm
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/deploy.sh"'
+            }
+        }
+        stage('Environment Check') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/env_check.sh"'
+            }
+        }
+        stage('Stage Data') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
+            }
+        }
+        stage('Prep') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Nowcast') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Forecast') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Post') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Verify') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
+        }
+    }
+}
