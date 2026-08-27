@@ -44,6 +44,9 @@ cd ${WORKDIR} || exit 1
 module purge
 module use ${PACKAGEROOT}/nos-workflow/modulefiles
 module load nos_hercules.intel
+# python venv overlay: scipy + editable nos-utils live outside the spack stack
+NOS_VENV=${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}
+if [ -f "${NOS_VENV}/bin/activate" ]; then . "${NOS_VENV}/bin/activate"; fi
 
 module list
 
