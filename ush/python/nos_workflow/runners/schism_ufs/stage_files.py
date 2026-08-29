@@ -575,7 +575,7 @@ def stage_wave_configs(ctx: SchismRunContext, phase: str) -> int:
     return staged
 
 
-_DEFAULT_NOWCAST_WARM_START_BACK_HOURS = 48
+_DEFAULT_NOWCAST_WARM_START_BACK_HOURS = 24
 _DEFAULT_WARM_START_MAX_HS = 25.0
 
 # A real WW3 use_restartnc restart (ufs.cpld.ww3.r.*.nc) stores the 2D
@@ -880,8 +880,24 @@ def _stage_wave_restarts_nowcast(ctx: SchismRunContext) -> bool:
     checked under ITS OWN natural stamp (its own nominal cycle time);
     a complete match found on any candidate OTHER than the immediate
     predecessor is a crash-recovery fallback and is therefore stale by
-    that many extra hours -- staged anyway (a stale warm start beats a
-    needless cold start), but logged loudly so it's visible.
+    that many extra hours.
+
+    The default window is one cycle interval, so in normal operation only
+    the immediate predecessor qualifies and anything staler cold-starts.
+    That default was 48h on the reasoning that a stale warm start beats a
+    needless cold start. A run on 2026-08-28 showed the opposite: with the
+    immediate predecessor's archive unreachable, the search fell back to a
+    48h-stale wave field, restaged it onto this leg's stamp, and SCHISM
+    aborted in bktrk_subs (backtracking overflow). The operational
+    cold-start run of the same cycle, same forcing, passed. A wave field
+    two days out of date drives radiation stress inconsistent with the
+    ocean state it is applied to, and cold start is a safe, known
+    fallback -- so the trade runs the other way.
+
+    Widen $WAV_NOWCAST_WARM_START_BACK_HOURS deliberately if a longer
+    reach is ever wanted; a fallback beyond the immediate predecessor is
+    still staged and still logged loudly, it is just no longer the
+    default.
 
     All-three-or-nothing per candidate, restaged (never verbatim) to
     THIS leg's own stamp -- the same destinations
