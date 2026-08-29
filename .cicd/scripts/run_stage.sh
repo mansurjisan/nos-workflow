@@ -36,7 +36,7 @@ mkdir -p "${RPTDIR}"
 mkdir -p "${WORKSPACE:-.}/ci_logs"
 
 echo "submitting ${CARD} (PDY=${PDY} CYC=${CYC})"
-SBATCH_OUT=$(sbatch --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}" "${CARD}")
+SBATCH_OUT=$(sbatch --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}" "${CARD}")
 echo "${SBATCH_OUT}"
 JOBID=$(awk '/Submitted batch job/{print $NF}' <<<"${SBATCH_OUT}")
 [ -n "${JOBID}" ] || { echo "FATAL: could not parse jobid from sbatch output"; exit 2; }

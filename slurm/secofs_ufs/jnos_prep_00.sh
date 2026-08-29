@@ -25,8 +25,9 @@ PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
 export NOS_MACHINE=hercules
 
 # Working directory
-RPTDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/rpt/secofs_ufs
-WORKDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/secofs_ufs
+NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
+RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/secofs_ufs}
+WORKDIR=${WORKDIR:-${NOS_PTMP}/$LOGNAME/work/secofs_ufs}
 mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR)"; exit 1; }
 
 # Per-job log files (Slurm jobid as suffix). The #SBATCH -o/-e above catch
@@ -84,9 +85,9 @@ export SENDSMS=NO
 export PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
 
 # Data and COM paths
-export COMROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/com
+export COMROOT=${COMROOT:-${NOS_PTMP}/$LOGNAME/com}
 export DCOMROOT=/work/PLACEHOLDER/prod/dcom
-export DATAROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/${OFS}
+export DATAROOT=${DATAROOT:-${NOS_PTMP}/$LOGNAME/work/${OFS}}
 
 # Input data for DATM forcing generation, staged ahead of the run --
 # ${HOMEnos}/ush/stage_comin.py populates this tree from the WCOSS2/NOMADS

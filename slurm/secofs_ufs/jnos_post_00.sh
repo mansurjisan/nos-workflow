@@ -26,8 +26,9 @@ export NOS_MACHINE=hercules
 
 # Working directory
 export OFS=${OFS:-secofs_ufs}
-RPTDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/rpt/${OFS}
-WORKDIR=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/${OFS}
+NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
+RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/${OFS}}
+WORKDIR=${WORKDIR:-${NOS_PTMP}/$LOGNAME/work/${OFS}}
 mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR)"; exit 1; }
 
 # Per-job log files (Slurm jobid as suffix). #SBATCH -o/-e are omitted
@@ -69,9 +70,9 @@ export PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
 
 # Data and COM paths
 export COMPATH=/work/PLACEHOLDER/prod/com/nos
-export COMROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/com
+export COMROOT=${COMROOT:-${NOS_PTMP}/$LOGNAME/com}
 export DCOMROOT=/work/PLACEHOLDER/prod/dcom
-export DATAROOT=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/$LOGNAME/work/${OFS}
+export DATAROOT=${DATAROOT:-${NOS_PTMP}/$LOGNAME/work/${OFS}}
 
 ################################################
 # CALL executable job script here

@@ -10,27 +10,39 @@ pipeline {
     }
 
     parameters {
-        string(name: 'PACKAGEROOT', defaultValue: '/work2/noaa/nos-surge/mjisan', description: 'Root dir; runtime tree is deployed to ${PACKAGEROOT}/nos-workflow')
-        string(name: 'VENV_PATH', defaultValue: '$HOME/nos-venv', description: 'Python venv activated in every stage shell (expanded on the node)')
-        string(name: 'RT_DATA_ROOT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Root of frozen regression-test datasets (DATA_MODE=frozen)')
+        string(name: 'NOS_CI_ROOT', defaultValue: '/work2/noaa/epic/role-epic/jenkins/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
+        string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
+        string(name: 'SEED_RT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Source of frozen regression-test datasets the Bootstrap stage copies from (DATA_MODE=frozen only; must be world-readable)')
         choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
     }
 
     environment {
-        PACKAGEROOT  = "${params.PACKAGEROOT}"
-        VENV_PATH    = "${params.VENV_PATH}"
-        RT_DATA_ROOT = "${params.RT_DATA_ROOT}"
+        PACKAGEROOT  = "${params.NOS_CI_ROOT}"
+        VENV_PATH    = "${params.NOS_CI_ROOT}/nos-venv"
+        RT_DATA_ROOT = "${params.NOS_CI_ROOT}/nos-workflow-rt"
+        NOS_PTMP     = "${params.NOS_CI_ROOT}/ptmp"
+        SEED_SRC     = "${params.SEED_SRC}"
+        SEED_RT      = "${params.SEED_RT}"
         DATA_MODE    = "${params.DATA_MODE}"
         PDY          = "${params.PDY}"
         CYC          = "${params.CYC}"
     }
 
     stages {
-        stage('Checkout + Deploy') {
+        stage('Checkout') {
             steps {
                 checkout scm
+            }
+        }
+        stage('Bootstrap') {
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/bootstrap.sh"'
+            }
+        }
+        stage('Deploy') {
+            steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/deploy.sh"'
             }
         }
