@@ -36,7 +36,12 @@ mkdir -p "${RPTDIR}"
 mkdir -p "${WORKSPACE:-.}/ci_logs"
 
 echo "submitting ${CARD} (PDY=${PDY} CYC=${CYC})"
-SBATCH_OUT=$(sbatch --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}" "${CARD}")
+# CLI --account/--qos override the card's #SBATCH directives (nos-surge) so a
+# service account (role-epic) charges an allocation it is authorized for.
+ACCT_ARGS=()
+[ -n "${SLURM_CI_ACCOUNT:-}" ] && ACCT_ARGS+=(--account="${SLURM_CI_ACCOUNT}")
+[ -n "${SLURM_CI_QOS:-}" ] && ACCT_ARGS+=(--qos="${SLURM_CI_QOS}")
+SBATCH_OUT=$(sbatch ${ACCT_ARGS[@]+"${ACCT_ARGS[@]}"} --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}" "${CARD}")
 echo "${SBATCH_OUT}"
 JOBID=$(awk '/Submitted batch job/{print $NF}' <<<"${SBATCH_OUT}")
 [ -n "${JOBID}" ] || { echo "FATAL: could not parse jobid from sbatch output"; exit 2; }

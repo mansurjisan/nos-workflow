@@ -14,6 +14,8 @@ pipeline {
         string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
         string(name: 'SEED_RT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Source of frozen regression-test datasets the Bootstrap stage copies from (DATA_MODE=frozen only; must be world-readable)')
         choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
+        string(name: 'SLURM_ACCOUNT', defaultValue: 'epic', description: 'Slurm account CI charges (CLI override of the cards\' nos-surge; must be valid for the agent account)')
+        string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
     }
@@ -25,6 +27,8 @@ pipeline {
         NOS_PTMP     = "${params.NOS_CI_ROOT}/ptmp"
         SEED_SRC     = "${params.SEED_SRC}"
         SEED_RT      = "${params.SEED_RT}"
+        SLURM_CI_ACCOUNT = "${params.SLURM_ACCOUNT}"
+        SLURM_CI_QOS     = "${params.SLURM_QOS}"
         DATA_MODE    = "${params.DATA_MODE}"
         PDY          = "${params.PDY}"
         CYC          = "${params.CYC}"
