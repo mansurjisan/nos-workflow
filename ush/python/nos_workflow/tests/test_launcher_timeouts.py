@@ -291,3 +291,35 @@ class TestWarmLauncherStagesInputsOnly:
         for name in self._MUST_KEEP:
             hit = [g for g in configured if fnmatch.fnmatch(name, g)]
             assert not hit, f"exclude {hit} would drop required input {name}"
+
+
+class TestWarmLauncherCronEnvironment:
+    """The warm launcher has to work under cron, not just interactively.
+
+    cron gives a minimal PATH with no PBS binaries. Three consecutive
+    nightly runs staged their scratch tree and then died with
+    `qsub: command not found`, having already spent the copy. The
+    operational launcher sets PATH explicitly for the same reason.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+    _OPS = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3.sh"
+
+    def test_pbs_bin_is_on_path(self) -> None:
+        txt = self._WARM.read_text()
+        assert "export PATH=" in txt
+        assert "/opt/pbs" in txt, "PBS bin must be prepended for cron"
+
+    def test_matches_the_operational_launcher(self) -> None:
+        """Same PATH line as its sibling, so the two cannot drift."""
+        def path_line(p):
+            return next((l.strip() for l in p.read_text().splitlines()
+                         if l.startswith("export PATH=")), None)
+        assert path_line(self._WARM) == path_line(self._OPS)
+
+    def test_qsub_is_checked_before_the_staging_copy(self) -> None:
+        """Fail in seconds, not after a multi-GB rsync."""
+        txt = self._WARM.read_text()
+        guard = txt.index("command -v qsub")
+        stage = txt.index("rsync -a")
+        assert guard < stage, "the qsub guard must come before staging"

@@ -25,6 +25,10 @@
 #   DRYRUN=1   stage everything, log the qsub, submit nothing
 set -u
 
+# cron gives a minimal PATH with no PBS binaries, so qsub is not found and the
+# run dies after staging. Same line, same reason, as launch_secofs_ufs_ww3.sh.
+export PATH=/opt/pbs/default/bin:/opt/pbs/bin:/usr/bin:/bin:${PATH:-}
+
 PDY=${PDY:-${1:-$(date -u +%Y%m%d)}}
 CYC=12                                  # the experiment is 12z only
 PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
@@ -45,6 +49,11 @@ KEEP_DAYS=${KEEP_DAYS:-4}               # each cycle's restarts are ~7.2 GB
 
 mkdir -p "$BASE" "$ROOT"
 log(){ echo "[$(date -u +%FT%TZ)] $*" | tee -a "$LOG" ; }
+
+# Check before the staging copy, not after it.
+if [ "${DRYRUN:-0}" != "1" ]; then
+  command -v qsub >/dev/null 2>&1 || { log "FATAL: qsub not on PATH ($PATH)"; exit 2; }
+fi
 
 # ---- 1. wait for the operational prep for THIS cycle -----------------------
 log "START $PDY 12z: waiting for operational prep (<= ${PREP_WAIT_MIN} min)"
