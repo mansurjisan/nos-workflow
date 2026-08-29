@@ -323,3 +323,37 @@ class TestWarmLauncherCronEnvironment:
         guard = txt.index("command -v qsub")
         stage = txt.index("rsync -a")
         assert guard < stage, "the qsub guard must come before staging"
+
+
+class TestWarmLauncherPredecessorLink:
+    """Seeding the chain must not be blocked by a leftover staged directory.
+
+    A run that stages and then fails leaves a real directory under the
+    scratch root with no wave_restart in it, because staging excludes the
+    archives. `ln -sfn` cannot replace a directory -- it drops the link
+    inside it -- so the predecessor stays invisible and the workflow's
+    back-search walks past it to a staler cycle. That is how the 20260828
+    run came to warm-start from a 48 h-stale wave field and abort in
+    bktrk_subs while the operational cold run of the same cycle passed.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+
+    def test_leftover_directory_is_cleared_before_linking(self) -> None:
+        txt = self._WARM.read_text()
+        clear = txt.find('rm -rf "$_stale"')
+        link = txt.find('ln -sfn "$P/com/nos/secofs_ufs_ww3.$PREV"')
+        assert clear != -1, "no leftover-directory cleanup before the predecessor link"
+        assert link != -1
+        assert clear < link, "the leftover must be cleared before ln -sfn, not after"
+
+    def test_removal_is_guarded(self) -> None:
+        """rm -rf is confined to $ROOT, to a real directory, holding no archive."""
+        txt = self._WARM.read_text()
+        assert 'case "$_stale" in' in txt and '"$ROOT"/*' in txt
+        assert '[ ! -L "$_stale" ]' in txt, "must not delete through a symlink"
+        assert 'wave_restart" ]; then' in txt, "must not delete a directory that holds restarts"
+
+    def test_link_result_is_verified(self) -> None:
+        """Linking can still fail to expose the archive; say so rather than assume."""
+        assert "still not visible at $ROOT" in self._WARM.read_text()

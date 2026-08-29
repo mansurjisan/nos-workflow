@@ -104,8 +104,30 @@ PREV=$(date -u -d "$PDY -1 day" +%Y%m%d)
 if [ -d "$ROOT/secofs_ufs_ww3.$PREV/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
   log "chain: $PREV warm restarts present"
 elif [ -d "$P/com/nos/secofs_ufs_ww3.$PREV/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
+  # A previous run that staged and then failed leaves a real directory here
+  # with no wave_restart in it, because staging excludes the archives. `ln
+  # -sfn` cannot replace a directory -- it drops the link inside it -- so the
+  # predecessor stays invisible, the workflow's back-search walks past it to
+  # a staler cycle, and the run warm-starts from a wave field days out of
+  # date. That is how 20260828 came to start from a 48h-stale field and
+  # abort in bktrk_subs while the operational cold run passed. Clear the
+  # leftover first, but only when it is inside $ROOT and has no archive.
+  _stale="$ROOT/secofs_ufs_ww3.$PREV"
+  case "$_stale" in
+    "$ROOT"/*)
+      if [ -d "$_stale" ] && [ ! -L "$_stale" ] && \
+         [ ! -d "$_stale/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
+        log "chain: clearing a leftover staged $PREV directory that holds no restarts"
+        rm -rf "$_stale"
+      fi
+      ;;
+  esac
   ln -sfn "$P/com/nos/secofs_ufs_ww3.$PREV" "$ROOT/secofs_ufs_ww3.$PREV"
-  log "chain: seeding from the operational $PREV restarts (chain starts here)"
+  if [ -d "$ROOT/secofs_ufs_ww3.$PREV/secofs_ufs_ww3.t${CYC}z.wave_restart" ]; then
+    log "chain: seeding from the operational $PREV restarts (chain starts here)"
+  else
+    log "chain: WARNING -- $PREV restarts still not visible at $ROOT; the run may reach further back or cold-start"
+  fi
 else
   log "chain: no $PREV restarts anywhere -- this cycle will cold-start"
 fi
