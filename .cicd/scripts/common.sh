@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 # Shared helpers for the secofs_ufs Hercules CI pipeline. Sourced, not run.
 
+# systemd-launched agents (e.g. the Jenkins agent service) don't set
+# LOGNAME the way an interactive login shell does, but RPTDIR/WORKDIR/
+# COMROOT/DATAROOT in the cards and card_value's own $LOGNAME expansion
+# both depend on it, so fall back to the real username here.
+export LOGNAME="${LOGNAME:-$(id -un)}"
+
 : "${PACKAGEROOT:?PACKAGEROOT not set}"
 
 expand_path() { eval "echo $1"; }

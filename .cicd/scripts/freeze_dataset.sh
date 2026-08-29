@@ -52,6 +52,7 @@ else
   rsync -a "${SRC_COMIN}/" "${DEST}/"
 fi
 cp -p "${INIT_FILE}" "${DEST}/init/$(basename "${INIT_FILE}")"
+touch "${DEST}/.seeded_ok"
 
 echo "=== frozen dataset sizes ==="
 du -sh "${DEST}"

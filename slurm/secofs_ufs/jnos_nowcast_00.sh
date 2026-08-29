@@ -31,6 +31,7 @@ NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/${OFS}}
 WORKDIR=${WORKDIR:-${NOS_PTMP}/$LOGNAME/work/${OFS}}
 mkdir -p -m 755 $RPTDIR $WORKDIR || { echo "FATAL: cannot create RPTDIR/WORKDIR ($RPTDIR, $WORKDIR)"; exit 1; }
+echo "paths: NOS_PTMP=${NOS_PTMP} RPTDIR=${RPTDIR} WORKDIR=${WORKDIR} COMROOT=${COMROOT} DATAROOT=${DATAROOT}"
 
 # Per-job log files (Slurm jobid as suffix). The #SBATCH -o/-e above catch
 # only Slurm's own epilogue (TIME LIMIT / node-failure kills, which a

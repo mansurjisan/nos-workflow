@@ -20,12 +20,12 @@ COMROOT_STAGED="${RT_DATA_ROOT}/comin_${PDY}${CYC}"
 
 case "${DATA_MODE}" in
   frozen)
-    [ -d "${COMROOT_STAGED}" ] || {
-      echo "FATAL: frozen dataset not found at ${COMROOT_STAGED}."
+    [ -f "${COMROOT_STAGED}/.seeded_ok" ] || {
+      echo "FATAL: no ${COMROOT_STAGED}/.seeded_ok sentinel -- dataset missing or an interrupted bootstrap.sh/freeze_dataset.sh copy."
       echo "Run freeze_dataset.sh for PDY=${PDY} CYC=${CYC}, or set DATA_MODE=live."
       exit 1
     }
-    echo "OK: frozen dataset present at ${COMROOT_STAGED}"
+    echo "OK: frozen dataset present at ${COMROOT_STAGED} (sentinel verified)"
     ;;
   live)
     mkdir -p "${COMROOT_STAGED}"
