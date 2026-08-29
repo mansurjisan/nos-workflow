@@ -1,7 +1,7 @@
 pipeline {
     // Hardcoded to this node's label; re-parameterize (NODE_LABEL string
     // param) if EPIC's label differs.
-    agent { label 'hercules' }
+    agent { label 'hercules-nos' }
 
     options {
         timestamps()
@@ -10,11 +10,11 @@ pipeline {
     }
 
     parameters {
-        string(name: 'NOS_CI_ROOT', defaultValue: '/work2/noaa/epic/role-epic/jenkins/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
+        string(name: 'NOS_CI_ROOT', defaultValue: '/work/noaa/nosofs/role-nosofs/jenkins/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
         string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
         string(name: 'SEED_RT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Source of frozen regression-test datasets the Bootstrap stage copies from (DATA_MODE=frozen only; must be world-readable)')
         choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
-        string(name: 'SLURM_ACCOUNT', defaultValue: 'epic', description: 'Slurm account CI charges (CLI override of the cards\' nos-surge; must be valid for the agent account)')
+        string(name: 'SLURM_ACCOUNT', defaultValue: 'nosofs', description: 'Slurm account CI charges (CLI override of the cards\' nos-surge; must be valid for the agent account)')
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
@@ -102,6 +102,18 @@ pipeline {
                     bash -l -c "scancel ${JID}" || true
                 fi
             '''
+        }
+        success {
+            slackSend(channel: '#nos-notifications', color: 'good',
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+        }
+        failure {
+            slackSend(channel: '#nos-notifications', color: 'danger',
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+        }
+        aborted {
+            slackSend(channel: '#nos-notifications', color: 'warning',
+                message: "*ABORTED: ${env.JOB_NAME} #${env.BUILD_NUMBER}* <${env.BUILD_URL}|Open Build>")
         }
     }
 }
