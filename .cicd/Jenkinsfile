@@ -10,7 +10,7 @@ pipeline {
     }
 
     parameters {
-        string(name: 'NOS_CI_ROOT', defaultValue: '/work/noaa/nosofs/role-nosofs/jenkins/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
+        string(name: 'NOS_CI_ROOT', defaultValue: '/work2/noaa/nosofs/role-nosofs/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
         string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
         string(name: 'SEED_RT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Source of frozen regression-test datasets the Bootstrap stage copies from (DATA_MODE=frozen only; must be world-readable)')
         choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
