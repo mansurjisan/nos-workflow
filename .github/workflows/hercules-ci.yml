@@ -1,0 +1,245 @@
+name: hercules-ci
+
+# Each run costs Hercules allocation node-hours, so this can be enabled later.
+# on:
+#   push:
+#     branches: [main]
+
+on:
+  workflow_dispatch:
+    inputs:
+      pdy:
+        description: "Cycle date YYYYMMDD"
+        required: true
+      cyc:
+        description: "Cycle hour"
+        required: false
+        default: "06"
+      data_mode:
+        description: "Forcing data mode"
+        type: choice
+        options:
+          - frozen
+          - live
+        default: frozen
+      wait:
+        description: "wait for the Jenkins build and report its result"
+        type: boolean
+        default: true
+
+permissions:
+  statuses: write
+
+env:
+  JENKINS_URL: https://jenkins.epic.oarcloud.noaa.gov
+  JENKINS_JOB_PATH: job/NOS/job/nos-workflow-secofs-hercules
+
+jobs:
+  trigger:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Trigger Jenkins
+        id: trigger
+        env:
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          PDY: ${{ inputs.pdy }}
+          CYC: ${{ inputs.cyc }}
+          DATA_MODE: ${{ inputs.data_mode }}
+        run: |
+          set -euo pipefail
+          headers_file="$(mktemp)"
+          status_code="$(curl -sS -i \
+            -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" \
+            -X POST \
+            "${JENKINS_URL}/${JENKINS_JOB_PATH}/buildWithParameters" \
+            --data-urlencode "DATA_MODE=${DATA_MODE}" \
+            --data-urlencode "PDY=${PDY}" \
+            --data-urlencode "CYC=${CYC}" \
+            -o /dev/null -D "${headers_file}" -w '%{http_code}')"
+
+          queue_url="$(tr -d '\r' < "${headers_file}" | awk -F': ' 'tolower($1)=="location"{print $2}' | tail -1)"
+
+          if [ -z "${queue_url}" ]; then
+            echo "No Location header in the Jenkins response (HTTP ${status_code})." >&2
+            echo "This usually means authentication failed (bad JENKINS_USER/JENKINS_API_TOKEN) or the job path is wrong." >&2
+            cat "${headers_file}" >&2
+            exit 1
+          fi
+
+          echo "Queued build at: ${queue_url}"
+          echo "queue_url=${queue_url}" >> "${GITHUB_OUTPUT}"
+
+      - name: Set pending status
+        if: ${{ inputs.wait }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          payload="$(python3 -c 'import json; print(json.dumps({"context": "hercules-ci", "state": "pending", "description": "Jenkins cycle running"}))')"
+          curl -fsS -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d "${payload}"
+
+      - name: Resolve build number
+        if: ${{ inputs.wait }}
+        id: resolve
+        env:
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          QUEUE_URL: ${{ steps.trigger.outputs.queue_url }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 900))
+          build_url=""
+
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            response="$(curl -fsS -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" "${QUEUE_URL}api/json" || true)"
+
+            if [ -n "${response}" ]; then
+              cancelled="$(echo "${response}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(bool(d.get("cancelled")))')"
+              if [ "${cancelled}" = "True" ]; then
+                echo "Jenkins queue item was cancelled." >&2
+                exit 1
+              fi
+
+              build_url="$(echo "${response}" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("executable"); print(e.get("url") if e else "")')"
+              build_number="$(echo "${response}" | python3 -c 'import json,sys; d=json.load(sys.stdin); e=d.get("executable"); print(e.get("number") if e else "")')"
+
+              if [ -n "${build_url}" ]; then
+                echo "Resolved build: ${build_url} (#${build_number})"
+                echo "build_url=${build_url}" >> "${GITHUB_OUTPUT}"
+                echo "build_number=${build_number}" >> "${GITHUB_OUTPUT}"
+                break
+              fi
+            fi
+
+            sleep 10
+          done
+
+          if [ -z "${build_url}" ]; then
+            echo "Timed out waiting for the queued item to turn into a build." >&2
+            exit 1
+          fi
+
+      - name: Wait for result
+        if: ${{ inputs.wait }}
+        id: wait
+        env:
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          BUILD_URL: ${{ steps.resolve.outputs.build_url }}
+        run: |
+          set -euo pipefail
+          deadline=$((SECONDS + 330 * 60))
+          result=""
+          duration_millis=""
+
+          while [ "${SECONDS}" -lt "${deadline}" ]; do
+            response="$(curl -fsS -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" "${BUILD_URL}api/json" || true)"
+
+            if [ -n "${response}" ]; then
+              result="$(echo "${response}" | python3 -c 'import json,sys; d=json.load(sys.stdin); r=d.get("result"); print(r if r else "")')"
+              if [ -n "${result}" ]; then
+                duration_millis="$(echo "${response}" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d.get("durationMillis",""))')"
+                break
+              fi
+            fi
+
+            sleep 60
+          done
+
+          if [ -z "${result}" ]; then
+            echo "Timed out after 330 minutes waiting for the Jenkins build to finish." >&2
+            echo "Jenkins may still be running the cycle. Check: ${BUILD_URL}" >&2
+            echo "result=TIMEOUT" >> "${GITHUB_OUTPUT}"
+          else
+            echo "Jenkins result: ${result}"
+            echo "result=${result}" >> "${GITHUB_OUTPUT}"
+          fi
+
+          echo "duration_millis=${duration_millis}" >> "${GITHUB_OUTPUT}"
+
+      - name: Report
+        if: ${{ inputs.wait }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JENKINS_USER: ${{ secrets.JENKINS_USER }}
+          JENKINS_API_TOKEN: ${{ secrets.JENKINS_API_TOKEN }}
+          BUILD_URL: ${{ steps.resolve.outputs.build_url }}
+          RESULT: ${{ steps.wait.outputs.result }}
+          DURATION_MILLIS: ${{ steps.wait.outputs.duration_millis }}
+          PDY: ${{ inputs.pdy }}
+          CYC: ${{ inputs.cyc }}
+          DATA_MODE: ${{ inputs.data_mode }}
+        run: |
+          set -euo pipefail
+
+          if [ "${RESULT}" = "SUCCESS" ]; then
+            state="success"
+          else
+            state="failure"
+          fi
+
+          payload="$(STATE="${state}" python3 -c 'import json, os; print(json.dumps({"context": "hercules-ci", "state": os.environ["STATE"], "description": ("Jenkins result: " + os.environ["RESULT"])[:140], "target_url": os.environ["BUILD_URL"]}))')"
+          curl -fsS -X POST \
+            -H "Authorization: token ${GITHUB_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/statuses/${GITHUB_SHA}" \
+            -d "${payload}"
+
+          {
+            echo "## hercules-ci"
+            echo ""
+            echo "- result: ${RESULT}"
+            echo "- cycle: pdy=${PDY} cyc=${CYC} data_mode=${DATA_MODE}"
+            if [ -n "${DURATION_MILLIS}" ]; then
+              duration_min=$((DURATION_MILLIS / 60000))
+              echo "- duration: ${duration_min} min"
+            fi
+            echo "- build: ${BUILD_URL}"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+          # Best-effort stage summary from the run's CI logs artifact.
+          # Tolerant of missing artifacts/log names - never fails the step.
+          {
+            stage_lines=""
+            for stage in prep nowcast forecast post; do
+              log="$(curl -fsS -u "${JENKINS_USER}:${JENKINS_API_TOKEN}" \
+                "${BUILD_URL}artifact/ci_logs/${stage}.log" 2>/dev/null || true)"
+              if [ -n "${log}" ]; then
+                lines="$(echo "${log}" | grep 'STAGE_SUMMARY' || true)"
+                if [ -n "${lines}" ]; then
+                  stage_lines="${stage_lines}${lines}"$'\n'
+                fi
+              fi
+            done
+
+            if [ -n "${stage_lines}" ]; then
+              echo ""
+              echo "### stage summary"
+              echo '```'
+              printf '%s' "${stage_lines}"
+              echo '```'
+            fi
+          } >> "${GITHUB_STEP_SUMMARY}" || true
+
+          if [ "${RESULT}" != "SUCCESS" ]; then
+            exit 1
+          fi
+
+      - name: Triggered without waiting
+        if: ${{ !inputs.wait }}
+        env:
+          QUEUE_URL: ${{ steps.trigger.outputs.queue_url }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## hercules-ci"
+            echo ""
+            echo "triggered; not waiting"
+            echo "queue: ${QUEUE_URL}"
+          } >> "${GITHUB_STEP_SUMMARY}"
