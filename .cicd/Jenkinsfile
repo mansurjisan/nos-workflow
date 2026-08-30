@@ -1,3 +1,37 @@
+// Label gate: on a PR build, adding the "hercules-nos-RT" label triggers the
+// cycle the next time this Jenkinsfile runs under a multibranch job with
+// periodic scan enabled (branch/manual/cron builds are unaffected and always
+// run). Plain (non-multibranch) pipeline jobs never see CHANGE_ID and so
+// always run too.
+
+// Best-effort GitHub commit-status post for the current build's HEAD SHA.
+// Must never affect the build result: any failure (missing credential, no
+// GIT_COMMIT, network error, non-2xx response) is caught and logged.
+def postStatus(String state, String description) {
+    try {
+        withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+            withEnv(["GH_STATE=${state}", "GH_DESC=${description}", "GH_COMMIT=${env.GIT_COMMIT ?: ''}", "GH_BUILD_URL=${env.BUILD_URL ?: ''}"]) {
+                sh '''
+                    if [ -z "${GH_COMMIT}" ]; then
+                        echo "postStatus: warning - GIT_COMMIT unset, skipping GitHub status post"
+                        exit 0
+                    fi
+                    PAYLOAD=$(printf '{"state":"%s","context":"hercules-ci","description":"%s","target_url":"%s"}' \
+                        "${GH_STATE}" "${GH_DESC}" "${GH_BUILD_URL}")
+                    curl --silent --show-error --fail \
+                        -X POST \
+                        -H "Accept: application/vnd.github+json" \
+                        -H "Authorization: Bearer ${GH_TOKEN}" \
+                        "https://api.github.com/repos/mansurjisan/nos-workflow/statuses/${GH_COMMIT}" \
+                        -d "${PAYLOAD}" >/dev/null
+                '''
+            }
+        }
+    } catch (err) {
+        echo "postStatus: warning - failed to post GitHub commit status '${state}' (${err})"
+    }
+}
+
 pipeline {
     // Hardcoded to this node's label; re-parameterize (NODE_LABEL string
     // param) if EPIC's label differs.
@@ -40,47 +74,100 @@ pipeline {
                 checkout scm
             }
         }
+        stage('Gate') {
+            steps {
+                script {
+                    if (!env.CHANGE_ID?.trim()) {
+                        env.RUN_CYCLE = 'true'
+                        echo "Gate: not a PR build (CHANGE_ID unset) - cycle will run"
+                    } else {
+                        def hasLabel = false
+                        def labelSource = 'pullRequest.labels'
+                        try {
+                            hasLabel = pullRequest.labels.contains('hercules-nos-RT')
+                        } catch (err) {
+                            echo "Gate: pullRequest.labels unavailable (${err}), falling back to GitHub API"
+                            labelSource = 'GitHub API'
+                            try {
+                                withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+                                    withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
+                                        def labelsJson = sh(
+                                            script: '''
+                                                curl --silent --show-error --fail \
+                                                    -H "Accept: application/vnd.github+json" \
+                                                    -H "Authorization: Bearer ${GH_TOKEN}" \
+                                                    "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels"
+                                            ''',
+                                            returnStdout: true
+                                        ).trim()
+                                        hasLabel = labelsJson.contains('"name":"hercules-nos-RT"') || labelsJson.contains('"name": "hercules-nos-RT"')
+                                    }
+                                }
+                            } catch (apiErr) {
+                                echo "Gate: warning - GitHub API label lookup also failed (${apiErr}), defaulting to no run"
+                                hasLabel = false
+                                labelSource = 'none (both lookups failed)'
+                            }
+                        }
+                        env.RUN_CYCLE = hasLabel ? 'true' : 'false'
+                        echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
+                    }
+                    if (env.RUN_CYCLE == 'true') {
+                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${params.CYC} ${params.DATA_MODE}")
+                    }
+                }
+            }
+        }
         stage('Bootstrap') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/bootstrap.sh"'
             }
         }
         stage('Deploy') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/deploy.sh"'
             }
         }
         stage('Environment Check') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/env_check.sh"'
             }
         }
         stage('Stage Data') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
             }
         }
         stage('Prep') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
             }
         }
         stage('Nowcast') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
             }
         }
         stage('Forecast') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
             }
         }
         stage('Post') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
             }
         }
         stage('Verify') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
             }
@@ -90,6 +177,25 @@ pipeline {
     post {
         always {
             archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
+            script {
+                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true') {
+                    try {
+                        withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+                            withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
+                                sh '''
+                                    curl --silent --show-error \
+                                        -X DELETE \
+                                        -H "Accept: application/vnd.github+json" \
+                                        -H "Authorization: Bearer ${GH_TOKEN}" \
+                                        "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels/hercules-nos-RT" >/dev/null
+                                '''
+                            }
+                        }
+                    } catch (err) {
+                        echo "post/always: warning - failed to remove hercules-nos-RT label from PR #${env.CHANGE_ID} (${err})"
+                    }
+                }
+            }
         }
         unsuccessful {
             // run_stage.sh drops the currently-submitted jobid here; best-effort
@@ -102,8 +208,18 @@ pipeline {
                     bash -l -c "scancel ${JID}" || true
                 fi
             '''
+            script {
+                if (env.RUN_CYCLE == 'true') {
+                    postStatus('failure', "cycle ${params.PDY}/${params.CYC} FAILED — see build log")
+                }
+            }
         }
         success {
+            script {
+                if (env.RUN_CYCLE == 'true') {
+                    postStatus('success', "cycle ${params.PDY}/${params.CYC} PASS")
+                }
+            }
             slackSend(channel: '#nos-notifications', color: 'good',
                 message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
         }
