@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
-# One-shot helper: freeze the currently-staged live comin tree + nowcast
-# init file for one cycle into RT_DATA_ROOT, for reuse by DATA_MODE=frozen
-# CI runs. Run this ONCE per cycle you want to pin as a regression dataset.
+# One-shot helper: freeze the currently-staged live comin tree + nowcast init file for one cycle into RT_DATA_ROOT, for reuse by DATA_MODE=frozen CI runs.
 # Usage: freeze_dataset.sh <PDY> <CYC>
-# Override SRC_COMIN to freeze from a comin tree other than the default
-# (the live-staged tree the pipeline itself used for this PDY/CYC).
+# Override SRC_COMIN to freeze from a tree other than the pipeline's live-staged default.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
@@ -16,12 +13,7 @@ CYC=${2:?usage: freeze_dataset.sh PDY CYC}
 
 NOWCAST_CARD="${HOMEnos}/slurm/${OFS}/jnos_nowcast_00.sh"
 
-# The prep/nowcast cards' own COMROOT_STAGED= line is a /work/PLACEHOLDER
-# default (COMROOT_STAGED is normally supplied by the caller at sbatch
-# time), so card_value would silently return that placeholder rather than
-# a real tree. Default instead to the live-staged tree this pipeline uses
-# (see run_stage.sh); if that is not set either, this must be told where
-# to freeze from.
+# card_value would return the cards' own COMROOT_STAGED=/work/PLACEHOLDER default, not a real tree, so default SRC_COMIN to the live-staged tree instead (see run_stage.sh).
 if [ -z "${SRC_COMIN:-}" ]; then
   if [ -n "${COMROOT_STAGED:-}" ]; then
     SRC_COMIN="${COMROOT_STAGED}"

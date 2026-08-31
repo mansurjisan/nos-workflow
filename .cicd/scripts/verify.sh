@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Verify stage: confirm every stage's STAGE_SUMMARY PASS landed in the
-# collected logs, and that $COMOUT holds non-trivial output. Prints a
-# one-screen cycle report.
+# Verify stage: confirm every stage's STAGE_SUMMARY PASS landed in the collected logs, and that $COMOUT holds non-trivial output.
 set -uo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091

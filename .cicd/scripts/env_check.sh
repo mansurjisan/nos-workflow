@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Environment Check stage: module load, python imports, exe presence,
-# wgrib2 -config. Fails fast, before any data staging or sbatch submit.
+# Environment Check stage: module load, python imports, exe presence, wgrib2 -config. Fails fast, before any data staging or sbatch submit.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091

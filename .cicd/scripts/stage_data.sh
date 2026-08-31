@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# Stage Data stage: frozen -> require a pre-staged dataset; live -> stage
-# it from NODD. Then ensure the first-cycle nowcast init file exists,
-# generating (live) or recovering (frozen) it if not.
+# Stage Data stage: frozen -> require a pre-staged dataset; live -> stage it from NODD. Then ensure the first-cycle nowcast init file exists, generating or recovering it if not.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
@@ -14,8 +12,7 @@ setup_env
 DATA_MODE=${DATA_MODE:-frozen}
 
 NOWCAST_CARD="${HOMEnos}/slurm/secofs_ufs/jnos_nowcast_00.sh"
-# Local only: run_stage.sh recomputes this same path for the batch-side
-# value (see its comment) since an export here dies with this sh step.
+# Local only: run_stage.sh recomputes this same path for the batch-side value, since an export here dies with this sh step.
 COMROOT_STAGED="${RT_DATA_ROOT}/comin_${PDY}${CYC}"
 
 case "${DATA_MODE}" in

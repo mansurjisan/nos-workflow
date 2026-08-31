@@ -1,10 +1,7 @@
 #!/usr/bin/env bash
 # Shared helpers for the secofs_ufs Hercules CI pipeline. Sourced, not run.
 
-# systemd-launched agents (e.g. the Jenkins agent service) don't set
-# LOGNAME the way an interactive login shell does, but RPTDIR/WORKDIR/
-# COMROOT/DATAROOT in the cards and card_value's own $LOGNAME expansion
-# both depend on it, so fall back to the real username here.
+# systemd-launched agents don't set LOGNAME the way a login shell does, but the cards' RPTDIR/WORKDIR/COMROOT/DATAROOT depend on it, so fall back to the real username here.
 export LOGNAME="${LOGNAME:-$(id -un)}"
 
 : "${PACKAGEROOT:?PACKAGEROOT not set}"
@@ -20,10 +17,7 @@ export PACKAGEROOT
 export HOMEnos="${PACKAGEROOT}/nos-workflow"
 export OFS=secofs_ufs
 
-# Same default the cards fall back to. Must be exported before any
-# card_value call: the cards' RPTDIR/WORKDIR/COMROOT/DATAROOT lines resolve
-# their own ${NOS_PTMP:-...} default against whatever is in this shell's
-# environment when card_value evals them.
+# Same default the cards fall back to; must be exported before any card_value call since the cards resolve their own ${NOS_PTMP:-...} default against this shell's environment.
 export NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 
 if [ -n "${VENV_PATH:-}" ]; then
@@ -35,15 +29,10 @@ if [ -n "${RT_DATA_ROOT:-}" ]; then
   export RT_DATA_ROOT
 fi
 
-# RDHPCS rule: never rely on login-shell module loading -- do it here,
-# explicitly, in every script that sources this file.
+# RDHPCS rule: never rely on login-shell module loading -- do it here, explicitly, in every script that sources this file.
 setup_modules() {
   local moddir="${HOMEnos}/modulefiles"
-  # Bootstrap builds the venv before Deploy has rsynced anything into
-  # HOMEnos, so that modulefiles dir doesn't exist yet on a fresh
-  # NOS_CI_ROOT. Fall back to the checkout's own copy (git-tracked,
-  # identical content) in that one case. Manual runs never set WORKSPACE,
-  # so this never engages outside CI.
+  # Bootstrap builds the venv before Deploy has rsynced anything into HOMEnos, so fall back to the checkout's own copy on a fresh NOS_CI_ROOT.
   if [ ! -d "${moddir}" ] && [ -n "${WORKSPACE:-}" ] && [ -d "${WORKSPACE}/modulefiles" ]; then
     moddir="${WORKSPACE}/modulefiles"
   fi
@@ -54,8 +43,7 @@ setup_modules() {
 
 setup_env() {
   setup_modules
-  # Unlike the cards (which silently skip activation if missing), CI must
-  # fail loudly here rather than run a stage against the wrong Python.
+  # Unlike the cards (which silently skip activation if missing), CI must fail loudly here rather than run a stage against the wrong Python.
   if [ -f "${VENV_PATH:-}/bin/activate" ]; then
     # shellcheck disable=SC1091
     source "${VENV_PATH}/bin/activate"
@@ -65,12 +53,7 @@ setup_env() {
   fi
 }
 
-# card_value <card_file> <VAR> -- read VAR's assigned value out of a Slurm
-# card by grepping the raw "[export ]VAR=..." line (never sourcing the
-# whole card, which has #SBATCH directives, mkdir/exit, and exec redirects)
-# and expanding any shell refs it contains ($LOGNAME, ${OFS}, ...) against
-# the current environment. This is how RPTDIR/COMROOT are derived at
-# runtime instead of being hardcoded in this script.
+# card_value <card_file> <VAR> -- greps the raw "[export ]VAR=..." line rather than sourcing the whole card, which has #SBATCH directives, mkdir/exit, and exec redirects.
 card_value() {
   local card="$1" var="$2" line
   [ -r "${card}" ] || { echo "FATAL: card not readable: ${card}" >&2; return 1; }

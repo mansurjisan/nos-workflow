@@ -1,24 +1,7 @@
-// Label gate: on a PR build, adding the "hercules-nos-RT" label triggers the
-// cycle the next time this Jenkinsfile runs under a multibranch job with
-// periodic scan enabled (branch/manual/cron builds are unaffected and always
-// run). Plain (non-multibranch) pipeline jobs never see CHANGE_ID and so
-// always run too.
-//
-// Note: adding a label does NOT create a new PR revision, so GitHub Branch
-// Source's periodic scan may not pick it up and rebuild on its own. After
-// labeling, either push a commit, click "Build Now" on the PR job, or
-// "Scan Repository Now" on the multibranch job (check how the Coastal-Test-WM
-// job's trigger is configured for the house pattern).
-//
-// GitHub commit statuses (see postStatus/resolveTargetSha below) always post
-// to the PR head SHA, never to env.GIT_COMMIT's PR-merge commit.
+// Note: adding a label does NOT create a new PR revision, so periodic scan
+// may not rebuild automatically -- push a commit, or click Build Now / Scan Repository Now.
 
-// Resolves the commit SHA that GitHub statuses should target. On a PR build
-// (CHANGE_ID set) this must be the PR head SHA - env.GIT_COMMIT on a
-// multibranch PR build is the ephemeral PR-merge commit, which 422s (or is
-// simply invisible on the PR) once the merge ref moves. Falls back to the
-// GitHub API if the pullRequest global is unavailable; gives up (returns
-// empty) if both fail, letting the caller skip the post.
+// On a PR build, statuses must target the PR head SHA -- env.GIT_COMMIT is the ephemeral PR-merge commit, which 422s once the merge ref moves.
 def resolveTargetSha() {
     if (!env.CHANGE_ID?.trim()) {
         return env.GIT_COMMIT ?: ''
@@ -55,9 +38,6 @@ def resolveTargetSha() {
     }
 }
 
-// Best-effort GitHub commit-status post for the resolved target SHA. Must
-// never affect the build result: any failure (missing credential, no
-// resolvable SHA, network error, non-2xx response) is caught and logged.
 def postStatus(String state, String description) {
     try {
         def targetSha = resolveTargetSha()
@@ -85,8 +65,7 @@ def postStatus(String state, String description) {
 }
 
 pipeline {
-    // Hardcoded to this node's label; re-parameterize (NODE_LABEL string
-    // param) if EPIC's label differs.
+    // Hardcoded to this node's label; re-parameterize (NODE_LABEL param) if EPIC's label differs.
     agent { label 'hercules-nos' }
 
     options {
@@ -170,10 +149,7 @@ pipeline {
                         echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
                     }
                     if (env.RUN_CYCLE == 'true') {
-                        // Filesystem lock: two concurrent cycles sharing NOS_CI_ROOT would
-                        // corrupt each other's PACKAGEROOT/venv/ptmp trees. mkdir (no -p) is
-                        // atomic, so it doubles as a mutex; the lockable-resources plugin is
-                        // avoided since we can't verify it's installed on this controller.
+                        // mkdir (no -p) is atomic, so it doubles as a mutex against concurrent cycles sharing NOS_CI_ROOT.
                         def lockResult
                         withEnv(["CI_LOCK_ROOT=${params.NOS_CI_ROOT}"]) {
                             lockResult = sh(
@@ -219,9 +195,6 @@ pipeline {
                         }
                         postStatus('pending', "SECOFS cycle running: ${params.PDY}/${params.CYC} ${params.DATA_MODE}")
                     } else if (gateLookupFailed) {
-                        // Both label lookups failed: RUN_CYCLE defaults to false, but say so
-                        // explicitly so a labeled PR with broken lookups doesn't read as a
-                        // plain unlabeled PR on GitHub.
                         postStatus('error', 'hercules-ci gate could not read PR labels')
                     }
                 }
@@ -323,8 +296,7 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh drops the currently-submitted jobid here; best-effort
-            // scancel whatever is still queued/running for this build.
+            // run_stage.sh writes the current jobid here; best-effort scancel it on failure.
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then

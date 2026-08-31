@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# Bootstrap stage: seed the CI-owned NOS_CI_ROOT tree (fix/, exec/, venv,
-# and -- in frozen mode -- the regression dataset) from the user's tree the
-# first time a build runs against a given root. role-epic cannot write (and,
-# pre-chmod, cannot even read) /work2/noaa/nos-surge/mjisan directly, so this
-# is a one-time, one-directional copy; idempotent, a fast no-op once
-# everything already exists under PACKAGEROOT/VENV_PATH/RT_DATA_ROOT.
+# Bootstrap stage: seed the CI-owned NOS_CI_ROOT tree (fix/, exec/, venv, and -- in frozen mode -- the regression dataset) from the user's tree; idempotent no-op once already seeded.
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
@@ -18,9 +13,7 @@ DATA_MODE=${DATA_MODE:-live}
 FIX_DEST="${HOMEnos}/fix/${OFS}"
 EXEC_DEST="${HOMEnos}/exec"
 
-# Sentinel-gated, not existence-of-directory: an interrupted rsync (killed
-# job, node failure mid-copy) can leave a partially-populated destination
-# that a plain [ -d ] / [ -x ] check would mistake for a complete seed.
+# Sentinel-gated, not existence-of-directory: an interrupted rsync could leave a partially-populated destination that [ -d ]/[ -x ] would mistake for a complete seed.
 need_fix=0
 [ -f "${FIX_DEST}/.seeded_ok" ] || need_fix=1
 need_exec=0
@@ -35,11 +28,7 @@ if [ "${DATA_MODE}" = "frozen" ]; then
   [ -f "${COMROOT_STAGED}/.seeded_ok" ] || need_rt=1
 fi
 
-# Readability preflight: fail with an actionable chmod before touching
-# rsync, rather than mid-copy. Tests exactly the leaf paths that get read
-# (o+, not g+, since role-epic is not a member of the nos-surge group) --
-# not ${SEED_SRC}/${SEED_RT} themselves, which correctly stay o+x-only
-# (traverse, no listing) even once fix/ and exec/ underneath are readable.
+# Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
 if [ "${need_fix}" -eq 1 ]; then
   ls "${SEED_SRC}/fix" >/dev/null 2>&1 || {
     echo "FATAL: ${SEED_SRC}/fix not readable as $(whoami)."
@@ -68,11 +57,9 @@ if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
   }
 fi
 
-# a. CI root
 mkdir -p "${PACKAGEROOT}"
 
-# b. fix/ -- deploy.sh's own --exclude='/fix' means it never touches this
-# dir once seeded, regardless of whether Bootstrap or Deploy runs first.
+# deploy.sh's own --exclude='/fix' means it never touches this dir once seeded, regardless of whether Bootstrap or Deploy runs first.
 if [ "${need_fix}" -eq 1 ]; then
   echo "bootstrap: seeding fix/ from ${SEED_SRC}/fix/"
   mkdir -p "${HOMEnos}/fix"
@@ -82,7 +69,7 @@ else
   echo "bootstrap: ${FIX_DEST}/.seeded_ok already present, skipping fix/ seed"
 fi
 
-# c. exec/ -- same anchored-exclude protection as fix/ above.
+# Same anchored-exclude protection as fix/ above.
 if [ "${need_exec}" -eq 1 ]; then
   echo "bootstrap: seeding exec/ from ${SEED_SRC}/exec/"
   mkdir -p "${EXEC_DEST}"
@@ -96,9 +83,7 @@ fi
   exit 1
 }
 
-# d. venv -- gated on the actual payload (scipy + editable nos-utils both
-# importable), not just bin/activate existing, which a half-built venv
-# (e.g. killed mid `pip install`) would also satisfy.
+# Gated on the actual payload (scipy + editable nos-utils importable), not just bin/activate existing, which a half-built venv would also satisfy.
 if [ -x "${VENV_PATH:-}/bin/python" ] && "${VENV_PATH}/bin/python" -c 'import scipy, nos_utils' >/dev/null 2>&1; then
   echo "bootstrap: venv already present at ${VENV_PATH} with scipy+nos_utils importable, skipping"
 else
@@ -117,12 +102,10 @@ else
   command -v python3 >/dev/null 2>&1 || { echo "FATAL: python3 not found on PATH after setup_modules -- check that modulefiles/nos_hercules.intel.lua loads a python module"; exit 1; }
   python3 -m venv --system-site-packages "${VENV_PATH}"
   "${VENV_PATH}/bin/pip" install scipy==1.17.1
-  # Editable install binds this venv to ${WORKSPACE}'s submodule checkout;
-  # fine for CI, since the workspace path is stable for the life of the job.
+  # Editable install binds this venv to ${WORKSPACE}'s submodule checkout; fine for CI, since the workspace path is stable for the life of the job.
   "${VENV_PATH}/bin/pip" install -e "${NOS_UTILS}"
 fi
 
-# e. frozen dataset
 if [ "${DATA_MODE}" = "frozen" ]; then
   if [ "${need_rt}" -eq 1 ]; then
     if [ -d "${SEED_RT}/comin_${PDY}${CYC}" ]; then
