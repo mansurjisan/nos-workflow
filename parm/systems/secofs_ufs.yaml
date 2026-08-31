@@ -1,13 +1,4 @@
-# SECOFS UFS-Coastal Configuration
 # Southeast Coastal Ocean Forecast System - UFS-Coastal (DATM+SCHISM coupled)
-#
-# Derived from secofs.yaml with UFS-Coastal DATM coupling additions.
-# Key differences from standalone secofs:
-#   - nws=4 (NUOPC coupling instead of sflux files)
-#   - Executable: fv3_coastalS.exe (coupled DATM+SCHISM binary)
-#   - Total tasks: 1200 (MED+ATM share PETs 0-119, OCN PETs 120-1199)
-#   - Additional UFS config files: model_configure, datm_in, datm.streams, ufs.configure
-#   - Atmospheric forcing via CDEPS DATM (blended HRRR+GFS on ESMF mesh)
 
 _base: schism
 
@@ -19,23 +10,18 @@ system:
   version: "3.7.0"
   prefix: secofs_ufs
 
-# Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
-# When present this block is authoritative and supersedes the is_stofs_like
-# heuristic for these two prep steps. SECOFS does NOT run St-Lawrence
-# climatology or OBC dynamic SSH adjust, so both are false here.
+# Authoritative when present: supersedes the is_stofs_like heuristic.
 prep:
   extras:
     st_lawrence: false
     obc_dynamic_adjust: false
 
-# Grid configuration - identical to standalone secofs
-# Values from secofs.ctl
 grid:
   type: unstructured
-  n_nodes: 1686665            # v3.9 mesh, was 1684786
-  n_elements: 3325055         # v3.9 mesh, was 3322329
+  n_nodes: 1686665
+  n_elements: 3325055
   n_sides: 5007180            # placeholder; SCHISM prints actual at startup
-  n_levels: 63                # unchanged in v3.9
+  n_levels: 63
   files:
     horizontal: secofs_ufs.hgrid.gr3
     vertical: secofs_ufs.vgrid.in
@@ -56,9 +42,6 @@ grid:
   igrd_met: 0
   igrd_obc: 1
 
-# Forcing configuration
-# Atmospheric forcing is handled by DATM (not sflux), but we keep the
-# config for the prep job's river/OBC/tidal forcing generation.
 forcing:
   atmospheric:
     met_num: 2
@@ -67,9 +50,7 @@ forcing:
     forecast_source: GFS
     forecast_source2: HRRR
     scale_hflux: 1.0
-    # GFS resolution: 0.25 for UFS-Coastal DATM (hourly cadence).
-    # 0.50 (default) gives 3-hourly cadence and was the cause of nx=51,
-    # ny=47, nt=19 output before the fix.
+    # 0.25 gives hourly cadence; 0.50 gives 3-hourly and truncates the DATM grid.
     gfs:
       resolution: "0.25"
     variables:
@@ -85,19 +66,11 @@ forcing:
   river:
     enabled: true
     primary: nwm
-    # Production COMF (nos_ofs_create_forcing_river.sh:86) anchors the NWM
-    # hourly grid at time_hotstart + 72h, so the NWM source/sink files extend
-    # 18h past the SECOFS forecast end (cyc + 6h nowcast + 48h forecast = 54h
-    # → 72h total). schism_*.th boundary forcing extends 1h past the forecast
-    # end. These match the V17a-passed reference; without them vsource/vsink/
-    # msource.th truncate at 54h and SCHISM aborts on long runs.
+    # Without these, vsource/vsink/msource.th truncate at 54h and SCHISM aborts.
     hourly_extra_hours: 18
     th_extra_hours: 1
     files:
-      # STOFS-style element-to-NWM-reach mapping (preferred by Python NWMProcessor).
-      # The legacy `ctl_file` only lists 6 USGS-fallback rivers; the actual NWM
-      # source/sink mapping for the v3.9 mesh lives in sources.json / sinks.json
-      # (symlinked from ../secofs/secofs.{sources,sinks}.json).
+      # ctl_file lists only 6 USGS-fallback rivers; the NWM mapping is in sources.json.
       sources_json: secofs_ufs.sources.json
       sinks_json: secofs_ufs.sinks.json
       ctl_file: secofs_ufs.river.ctl
@@ -138,9 +111,7 @@ forcing:
       harmonic_constants_ofs: secofs_ufs.bctides.in_template
       harmonic_nwlon: nosofs.HC_NWLON.nc
 
-# Model physics and runtime configuration
 model:
-  # UFS-Coastal coupled executable (DATM+SCHISM via NUOPC)
   executable: fv3_coastalS.exe
   ocean_model: SCHISM
   physics:
@@ -184,50 +155,30 @@ model:
     ctl_file: secofs_ufs.param.nml
     met_ctl_file: secofs_ufs.sflux_inputs.txt
 
-# UFS-Coastal coupling configuration
 ufs_coastal:
   enabled: true
-  # DATM domain label (used by blending scripts)
   datm_domain: ATLANTIC
   # Coupling interval in seconds (must match runSeq @120 in ufs.configure and dt in param.nml)
   coupling_interval: 120
-  # MED+ATM share PETs 0-119 (120 PETs)
   datm_tasks: 120
-  # OCN PETs 120-2913 (2794 PETs, v3.9 mesh — was 1080 for old mesh)
   schism_tasks: 2794
-  # Total MPI tasks (MED+ATM overlap, so total = 120 + 2794 = 2914)
   total_tasks: 2914
-  # SCHISM I/O scribes (set to 0 for UFS-Coastal; output handled by CMEPS)
   nscribes: 0
-  # Source for DATM atmospheric forcing:
-  #   grib2: Extract from raw GRIB2 files (default, wgrib2+Python blend pipeline)
-  #   sflux: Run COMF sflux generation first, then convert to DATM format
-  #          (strict validation — identical forcing as standalone SCHISM)
   datm_forcing_source: grib2
-  # Blended HRRR+GFS atmospheric forcing
   blend_hrrr_gfs: true
-  # Blended grid resolution in degrees (~3km, matches HRRR native resolution)
   blend_resolution: 0.025
-  # Transition zone width in degrees at HRRR boundary
   blend_buffer_deg: 0.5
-  # Forecast length (hours) for model_configure
   nhours_fcst: 48
-  # Atmospheric coupling timestep (seconds) — matches actual run
   dt_atmos: 720
-  # DATM grid dimensions — fallback values only.
-  # The orchestrator reads actual dims from the forcing file after blending,
-  # so these are only used if the dimension extraction fails.
-  # ATLANTIC domain: (-98,-55,10,53) at 0.025° → 1721x1721
+  # Fallback only: the orchestrator reads actual dims from the blended forcing file.
   nx_global: 1721
   ny_global: 1721
-  # Template files (in FIXofs)
   templates:
     model_configure: model_configure.template
     datm_in: datm_in.template
     datm_streams: datm.streams.template
     ufs_configure: ufs.configure
 
-# Output configuration - same as standalone secofs
 output:
   format: netcdf
   prefix: secofs_ufs
@@ -249,8 +200,6 @@ output:
   restart:
     interval: 21600
 
-# Computational resources (DATM + SCHISM)
-# v3.9 mesh: schism_tasks=2794 + datm_tasks=120 = total_tasks=2914 (was 1200)
 resources:
   nprocs: 2914
   nscribes: 0
@@ -259,57 +208,39 @@ resources:
 
 # Post-stage products (nos_workflow.post registry; override with NOS_POST_PRODUCTS)
 post:
-  archive_fields: true   # run stages normalize + stage global field stacks
+  archive_fields: true
   products:
     - stations_nc
-    # MLLW water level for the 58 gauges CO-OPS publishes a datum factor
-    # for, read from secofs_ufs.mllw_datum.csv in $FIXofs. Kept separate
-    # from stations_nc so that file stays schema-identical to the ops
-    # product; runs after it and re-reads what it wrote.
+    # Separate from stations_nc so that file stays schema-identical to the ops product.
     - stations_mllw
     - fields_nc
     - bias_correct
-    # Enabled after a full coupled cycle (20260728 00z) published every one
-    # of these from real 1.69M-node output. Counts from that run in comments.
-    - maxele                        # 1 file
-    - slab2d                        # 9 field2d
-    - adcirc                        # 3, ops 24 h grouping
-    - name: profiles                # 2
+    - maxele
+    - slab2d
+    - adcirc
+    - name: profiles
       options:
-        # Station 335 of 430 sits 0.27 m outside the mesh and its own name
-        # in station.in says "out of domain". The default (ops parity) is
-        # to abort, which would cost the other 429 every cycle; "nearest"
-        # would publish another node's column under that station's name.
-        # Revisit if the station.in coordinate is ever corrected.
+        # Station 335 sits 0.27 m outside the mesh; the default abort would cost the other 429.
         outside: drop
-    - name: geopkg                  # 54 GeoPackages, ~13 min of the post job
+    - name: geopkg
       options:
-        # Serial contouring of this mesh does not finish inside the
-        # walltime; unset this and it falls back to the job's $NCPUS.
+        # Serial contouring does not finish inside the walltime.
         max_workers: 8
 
-# Workflow stages
 stages:
   - prep
   - nowcast
   - forecast
   - post
 
-# Environment variable mappings
 shell_mappings:
   framework: comf
   env_prefix: nos
-  # Only env vars that are actually read by downstream code remain here.
-  # Removed 42 unused entries (2026-05): physics constants are hardcoded in
-  # the param.nml template, UFS-Coastal knobs are read directly by
-  # nos_utils.config.OFSConfig from YAML, not via env vars.
   variables:
-    # Model identification
     RUN: system.name
     PREFIXNOS: system.prefix
     OCEAN_MODEL: model.ocean_model
 
-    # Grid files
     GRIDFILE: grid.files.horizontal
     GRIDFILE_LL: grid.files.horizontal_ll
     VGRID_CTL: grid.files.vertical
@@ -318,14 +249,12 @@ shell_mappings:
     STA_OUT_CTL: grid.files.station
     Nudging_weight: forcing.ocean.nudging.files.nudge_weight
 
-    # Grid dimensions
     np_global: grid.n_nodes
     ne_global: grid.n_elements
     ns_global: grid.n_sides
     nvrt: grid.n_levels
     KBm: grid.n_levels
 
-    # Domain bounds
     MINLON: grid.domain.lon_min
     MAXLON: grid.domain.lon_max
     MINLAT: grid.domain.lat_min
@@ -333,20 +262,17 @@ shell_mappings:
     IGRD_MET: grid.igrd_met
     IGRD_OBC: grid.igrd_obc
 
-    # Atmospheric forcing
     MET_NUM: forcing.atmospheric.met_num
     DBASE_MET_NOW: forcing.atmospheric.primary
     DBASE_MET_FOR: forcing.atmospheric.forecast_source
     DBASE_MET_NOW2: forcing.atmospheric.secondary
     DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
 
-    # Ocean forcing
     DBASE_WL_NOW: forcing.ocean.obc.wl_source
     DBASE_WL_FOR: forcing.ocean.obc.wl_source
     DBASE_TS_NOW: forcing.ocean.obc.ts_source
     DBASE_TS_FOR: forcing.ocean.obc.ts_source
 
-    # Control files
     RIVER_CTL_FILE: forcing.river.files.ctl_file
     NWM_REACHID_FILE: forcing.river.files.nwm_reach
     OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
@@ -354,10 +280,8 @@ shell_mappings:
     HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
     HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
 
-    # Tidal
     CREATE_TIDEFORCING: forcing.tidal.create_forcing
 
-    # Runtime control
     RUNTIME_CTL: model.runtime.ctl_file
     RUNTIME_MET_CTL: model.runtime.met_ctl_file
     DELT_MODEL: model.physics.dt
@@ -365,13 +289,11 @@ shell_mappings:
     BASE_DATE: model.run.base_date
     TIDE_START: model.physics.tide_start
 
-    # Run length
     LEN_NOWCAST: _computed.len_nowcast_hours
     LEN_FORECAST: _computed.len_forecast_hours
     RNDAY_NOWCAST: _computed.rnday_nowcast
     RNDAY_FORECAST: _computed.rnday_forecast
 
-    # Output intervals
     NSTA: output.stations.interval
     NHIS: output.fields.interval
     NDEFHIS: output.fields.def_interval
@@ -381,33 +303,19 @@ shell_mappings:
     NFLT: output.float.interval
     NRST: output.restart.interval
 
-    # Resources
     TOTAL_TASKS: resources.nprocs
 
-    # UFS-Coastal-specific env vars actually consumed downstream.
-    # (datm_tasks, schism_tasks, blend_*, coupling_interval, datm_domain,
-    # nhours_fcst, datm_forcing_source are read by nos_utils.config directly
-    # from the YAML, so no env var mapping is needed for those.)
     USE_DATM: ufs_coastal.enabled
     NSCRIBES: ufs_coastal.nscribes
     DT_ATMOS: ufs_coastal.dt_atmos
     NX_GLOBAL: ufs_coastal.nx_global
     NY_GLOBAL: ufs_coastal.ny_global
 
-# GEFS atmospheric ensemble for UFS-Coastal (DATM forcing)
-# 7-member atmospheric-only ensemble (no physics perturbation).
-# Member 000 is the control run (GFS+HRRR blended DATM forcing + default params)
-# Members 001-005 use GEFS perturbation members (GEFS-only DATM, no HRRR blend)
-# Member 006 uses RRFS (3km regridded to regular lat/lon)
 ensemble:
   enabled: true
   n_members: 7
   method: gefs
-  seed: 42                          # Reproducible sampling
-  # GEFS (Global Ensemble Forecast System) atmospheric forcing configuration
-  # Uses 0.25 deg pgrb2sp25 product (has all 8 sflux variables)
-  # Control member uses GFS deterministic (0.25 deg) + HRRR coastal blending
-  # Perturbed members use GEFS-only (no HRRR) to preserve ensemble spread at coast
+  seed: 42
   gefs:
     enabled: true
     n_gefs_members: 5
@@ -451,22 +359,16 @@ ensemble:
       - GEFS_04
       - GEFS_05
       - RRFS
-  # RRFS (Rapid Refresh Forecast System) atmospheric forcing configuration
-  # 3km resolution, North America domain, available on WCOSS2 at para status
-  # Path: /lfs/h1/ops/para/com/rrfs/v1.0/rrfs.YYYYMMDD/HH/rrfs.tHHz.prslev.3km.fFFF.na.grib2
-  # Note: RRFS does NOT have PRMSL — uses MSLET instead (forcing script handles this)
-  # SECOFS forecast is 48h — RRFS covers 84h at main cycles, no fallback needed.
+  # RRFS has no PRMSL; the forcing script substitutes MSLET.
   rrfs:
     enabled: true
     resolution: "3km"
-    domain: "na"                    # North America
-    max_forecast_hours: 84          # At main cycles (00/06/12/18Z)
+    domain: "na"
+    max_forecast_hours: 84
     fallback_source: null           # 48h forecast fits within RRFS 84h coverage
     version: "v1.0"
-    status: "para"                  # Not yet in prod
-  # No physics perturbation — atmospheric forcing differences only
+    status: "para"
   perturb_physics: false
-  # Member 000 (control) always uses default physics values
   parameters:
     rdrg2:
       min: 0.001
@@ -486,16 +388,13 @@ ensemble:
       default: 5.0e-6
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
-  # Ensemble-specific resources (per member)
   resources:
     select: "select=25:ncpus=128:mpiprocs=120"   # v3.9: 25*120=3000 ≥ total_tasks 2914 (was select=10)
     walltime: "05:30:00"
-  # Ensemble post-processing resources
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"
     walltime: "01:00:00"
 
-# Legacy mode
 legacy:
   enabled: false
   ush_dir: ""
