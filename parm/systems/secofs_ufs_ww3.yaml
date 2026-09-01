@@ -61,11 +61,10 @@ forcing:
     # Additional 6 h GFS-Wave cycles to walk back when the newest cycle's
     # tarball is not yet posted. Governs boundary spectra only, not restarts.
     max_cycle_fallback: 2
-    # Opt-in warm start of the NOWCAST leg's WW3+mediator state from the
-    # previous cycle, instead of cold-starting WW3 each nowcast. Do NOT enable
-    # while the PR/USVI wave artifact is unresolved -- the daily cold start
-    # currently keeps it from accumulating across cycles.
-    nowcast_warm_start: false
+    # Cold starting costs ~37% buoy Hs RMSE over the nowcast leg; the field
+    # takes 8-16 h to spin up from zero. Measured not to carry the marginal-node
+    # artifact forward: water level moves under 1 mm across a handoff.
+    nowcast_warm_start: true
     # Rejects a poisoned candidate restart (non-finite/negative spectra, or a
     # spectral density beyond an order-of-magnitude ceiling derived from this
     # value) and falls back to a cold start. Meters.
