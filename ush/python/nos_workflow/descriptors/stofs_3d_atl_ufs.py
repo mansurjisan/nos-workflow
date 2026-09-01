@@ -15,7 +15,7 @@ DESC = OFSDescriptor(
     runner_module="nos_workflow.runners.ufs_coastal",
     notes=(
         "STOFS-3D-ATL on UFS-Coastal: SCHISM + CDEPS DATM via NUOPC; "
-        "~4312 OCN ranks + 120 ATM/MED; v3.1.1 partition.prop."
+        "~4312 OCN ranks + 120 ATM/MED; v3.1 partition.prop."
     ),
 )
 

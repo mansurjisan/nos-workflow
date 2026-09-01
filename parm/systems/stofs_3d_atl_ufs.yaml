@@ -28,18 +28,19 @@
 # partition.prop REQUIRED (NO_PARMETIS build path)
 # ------------------------------------------------
 # fv3_coastalS.exe is built with -DNO_PARMETIS=ON to bypass the in-memory
-# ParMETIS partitioning that OOMs at v2.1 mesh scale. The NO_PARMETIS path
-# reads a pre-generated partition.prop from disk, so partition.prop MUST be
-# regenerated for 2794 ranks against the v2.1 hgrid before running. Use the
-# tools/gen_stofs_partition_prop.sh helper (wraps SCHISM's partition_offline.pl)
-# and stage the result at $PKG/fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.partition.prop.
+# ParMETIS partitioning that OOMs at STOFS-3D-ATL mesh scale. The NO_PARMETIS
+# path reads a pre-generated partition.prop from disk, so partition.prop MUST
+# be regenerated for 2794 ranks against the v3.1 hgrid (3,052,121 nodes /
+# 5,872,610 elements) before running. Use the tools/gen_stofs_partition_prop.sh
+# helper (wraps SCHISM's partition_offline.pl) and stage the result at
+# $PKG/fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.partition.prop.
 #
 # Resource layout vs SECOFS-UFS
 # -----------------------------
 #   SECOFS-UFS: 2914 total (2794 SCHISM + 120 DATM) on a 1.69M-node mesh.
-#   STOFS-UFS:  2914 total (2794 SCHISM + 120 DATM) on the 2.93M-node
-#               v2.1 mesh. Same SCHISM compute rank count as SECOFS — same per-rank
-#               density tradeoffs, just on the bigger mesh (~2024 elem/rank here vs
+#   STOFS-UFS:  2914 total (2794 SCHISM + 120 DATM) on the 3.05M-node
+#               v3.1 mesh. Same SCHISM compute rank count as SECOFS — same per-rank
+#               density tradeoffs, just on the bigger mesh (~2102 elem/rank here vs
 #               SECOFS's ~1191). Fits in 25 PBS nodes instead of 37.
 
 _base: schism
@@ -49,7 +50,7 @@ system:
   description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
   region: atlantic
   framework: stofs_ufs
-  version: "3.1.1"
+  version: "3.1"
   prefix: stofs_3d_atl_ufs
 
 # Execution mode: drives both UFS-Coastal (default) and classic standalone
@@ -59,8 +60,8 @@ execution:
   mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
 
 # Standalone-SCHISM overlay (consumed only when execution.mode == standalone).
-# 4314 v2.1 compute ranks + 6 scribes = 4320; PBS 36x120 = 4320 (parity packing).
-# Mesh/grid is the shared v2.1 block below and is intentionally NOT duplicated.
+# 4314 compute ranks (v3.1 mesh) + 6 scribes = 4320; PBS 36x120 = 4320 (parity packing).
+# Mesh/grid is the shared v3.1 grid block below and is intentionally NOT duplicated.
 standalone:
   nws: 2
   executable: pschism_WCOSS2
@@ -77,17 +78,24 @@ prep:
     st_lawrence: true
     obc_dynamic_adjust: true
 
-# Grid configuration — v2.1 operational STOFS-3D-ATL mesh (extracted from
-# /lfs/h1/ops/prod/com/stofs/v2.1/stofs_3d_atl.YYYYMMDD/rerun/*.restart.nc on
-# 2026-05-11; partition.prop in IT-stofs.v2.1.0/fix/stofs_3d_atl/ has 5654161
-# lines and max rank index 4313 → 4314 OCN ranks).
-# Earlier YAML revisions assumed v3.1.1 (n_nodes=1813443, n_levels=51) but
-# that mesh isn't deployed; v2.1 is what's on disk operationally.
+# Grid configuration — v3.1 operational STOFS-3D-ATL mesh. NOAA ops moved
+# v2.1 -> v3.1; n_nodes/n_elements below are the v3.1 mesh counts (nvrt=49
+# is unchanged from v2.1). The v2.1-era partition.prop this yaml previously
+# documented (5654161 lines, max rank index 4313 -> 4314 OCN ranks) is STALE
+# and not carried forward — partition.prop MUST be regenerated against the
+# v3.1 hgrid before running (see the NO_PARMETIS note above).
+# FLAGGED, not guessed: n_sides below (8580540) was derived from the v2.1
+# mesh topology and has NOT been recomputed for v3.1 — it is not a simple
+# function of n_nodes/n_elements alone (SCHISM meshes mix tri/quad elements),
+# so verify it against the actual v3.1 hgrid before relying on it.
+# (Earlier YAML revisions had also assumed an unrelated, never-deployed
+# "v3.1.1" mesh with n_nodes=1813443, n_levels=51 — not to be confused with
+# the real v3.1 operational mesh used here.)
 grid:
   type: unstructured
-  n_nodes: 2926236
-  n_elements: 5654157
-  n_sides: 8580540
+  n_nodes: 3052121
+  n_elements: 5872610
+  n_sides: 8580540  # STALE: v2.1-derived, not yet recomputed for v3.1 (see comment above)
   n_levels: 49
   files:
     horizontal: stofs_3d_atl_ufs.hgrid.gr3
@@ -156,7 +164,9 @@ forcing:
     primary: rtofs
     obc:
       # iettype-4/5 elevation segments; excludes the iettype-0 St-Lawrence flow
-      # segment so OBC *.th.nc nOpenBndNodes=778 (not 781). Read by nos-utils from_yaml.
+      # segment so OBC *.th.nc nOpenBndNodes=778 (not 781). Read by nos-utils
+      # from_yaml. FLAGGED: these node counts are v2.1-mesh-derived and have
+      # NOT been reverified against the v3.1 mesh's boundary segments.
       elev_segments: [0, 1]
       wl_source: RTOFS
       ts_source: RTOFS
@@ -303,7 +313,7 @@ ufs_coastal:
 output:
   format: netcdf
   prefix: stofs_3d_atl_ufs
-  nstation: 184
+  nstation: 166
   stations:
     enabled: true
     interval: 300
@@ -323,7 +333,7 @@ output:
 
 # Computational resources (DATM + SCHISM)
 # SECOFS-equivalent layout: 2794 SCHISM compute ranks + 120 DATM = 2914 (matches SECOFS-UFS).
-# partition.prop must be regenerated for 2794 ranks against the v2.1 hgrid (the build
+# partition.prop must be regenerated for 2794 ranks against the v3.1 hgrid (the build
 # is -DNO_PARMETIS=ON) via tools/gen_stofs_partition_prop.sh and staged at
 # $PKG/fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.partition.prop.
 # PBS select: select=25:ncpus=128:mpiprocs=120:ompthreads=1 → 3000 slots (>= 2914).
