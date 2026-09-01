@@ -13,10 +13,11 @@ Ops parity notes (from the nos-utils review ledger):
     variable definition (ATL: staout_1 elev, 5 temp, 6 salt, 7 u, 8 v);
   * ops publishes one combined ``points.cwl.temp.salt.vel.nc`` per
     cycle, this runs per phase (see ``naming.points_cwl_name``);
-  * ops then shifts ``zeta`` from xGEOID20B to NAVD88 with ncap2,
-    *subtracting* the per-station constants of
-    ``*_sta_cwl_xgeoid_to_navd.nco``. ``--datum-offsets`` takes that
-    .nco verbatim and negates it, because the writer adds.
+  * ops then shifts ``zeta`` from xGEOID20B to its target vertical datum
+    with ncap2, *subtracting* the per-station constants of the
+    ``*_sta_cwl_xgeoid_to_<datum>.nco`` file (``_navd`` pre-v3.1,
+    ``_msl`` from v3.1 on). ``--datum-offsets`` takes whichever .nco is
+    staged verbatim and negates it, because the writer adds.
 
 Exit codes: 2 staging dir missing, 3 staout files absent (the phase has
 no station output -- skip), 4 nos-utils unavailable, 5 unusable
@@ -33,8 +34,9 @@ from typing import Dict, List, Optional, Tuple
 
 from ..naming import points_cwl_name
 
-# One ncap2 statement of the ops xGEOID20B -> NAVD88 shift, e.g.
-# ``zeta(:,17)=zeta(:,17)-float(-0.32794);``.
+# One ncap2 statement of the ops xGEOID20B -> target-datum shift
+# (NAVD88 pre-v3.1, MSL from v3.1 on -- the .nco format is unchanged
+# either way), e.g. ``zeta(:,17)=zeta(:,17)-float(-0.32794);``.
 _NCO_RE = re.compile(
     r"zeta\(:,(\d+)\)\s*=\s*zeta\(:,\1\)\s*-\s*float\(\s*([-+0-9.eE]+)\s*\)"
 )
@@ -199,8 +201,9 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     )
     p.add_argument(
         "--datum-offsets", default="",
-        help="ops xGEOID20B->NAVD88 .nco; its constants are negated and "
-             "added to the elevation variable",
+        help="ops xGEOID20B->target-datum .nco (NAVD88 pre-v3.1, MSL "
+             "from v3.1 on); its constants are negated and added to "
+             "the elevation variable",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)
@@ -238,7 +241,8 @@ def _nco_offsets(path: Path) -> Optional[List[float]]:
 
     Returns None when the file holds no ``zeta`` statement; a gap in the
     1..N station numbering raises, since a partial datum shift would
-    silently mislabel the product's NAVD88 metadata.
+    silently mislabel the product's target-datum metadata (NAVD88
+    pre-v3.1, MSL from v3.1 on).
     """
     consts = {
         int(m.group(1)): float(m.group(2))

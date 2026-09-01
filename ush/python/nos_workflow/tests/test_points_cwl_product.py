@@ -424,6 +424,31 @@ def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
     assert args[args.index("--base-date") + 1] == "2026-07-22 06:00:00"
 
 
+def test_product_prefers_msl_nco_when_staged(tmp_path):
+    """v3.1 ships ``*_sta_cwl_xgeoid_to_msl.nco`` in place of the older
+    ``_to_navd.nco``. ``PointsCwlProduct.worker_args`` (post.py) tries the
+    ``_msl`` stem before ``_navd`` -- exercise that branch explicitly
+    rather than only the pre-v3.1 ``_navd`` fixture above.
+    """
+    fixofs = tmp_path / "fix"
+    _write_fix_pair(fixofs)
+    _write_nco(fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco")
+    ctx = _ctx(tmp_path, fixofs)
+    for suffix in ("restart_outputs", "forecast_outputs"):
+        _stage_staout(ctx.comout / f"stofs_3d_atl_ufs.t12z.{suffix}")
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        result = post_stage.PointsCwlProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert calls[0][calls[0].index("--datum-offsets") + 1] == str(
+        fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco"
+    )
+
+
 def test_product_skips_a_phase_without_staout(tmp_path, caplog):
     fixofs = tmp_path / "fix"
     _write_fix_pair(fixofs)

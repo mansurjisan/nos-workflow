@@ -31,7 +31,10 @@ Ops parity notes:
   *_sta_cwl_xgeoid_to_msl.nco`` AFTER the extractor. The nos-utils
   writer has no hook for that (unlike ``points_cwl``'s
   ``--datum-offsets``), so the published ``zeta`` carries the model's own
-  datum while its attributes keep the ops NAVD88 wording.
+  datum while its attributes keep the ops wording -- MSL as of v3.1
+  (nos-utils commit ``d9d324f`` updated the hardcoded ``long_name``/
+  ``standard_name`` from the retired NAVD88 wording to
+  "water surface elevation above msl" / "sea_surface_height_above_msl").
 
 Exit codes: 2 staging dir missing, 3 no complete stack in the staging
 dir (the phase has no 3D output -- skip), 4 nos-utils unavailable,

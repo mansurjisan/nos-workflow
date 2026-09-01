@@ -50,7 +50,7 @@ system:
   description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
   region: atlantic
   framework: stofs_ufs
-  version: "3.1"
+  version: "3.1.5"
   prefix: stofs_3d_atl_ufs
 
 # Execution mode: drives both UFS-Coastal (default) and classic standalone
@@ -84,10 +84,10 @@ prep:
 # documented (5654161 lines, max rank index 4313 -> 4314 OCN ranks) is STALE
 # and not carried forward — partition.prop MUST be regenerated against the
 # v3.1 hgrid before running (see the NO_PARMETIS note above).
-# FLAGGED, not guessed: n_sides below (8580540) was derived from the v2.1
-# mesh topology and has NOT been recomputed for v3.1 — it is not a simple
-# function of n_nodes/n_elements alone (SCHISM meshes mix tri/quad elements),
-# so verify it against the actual v3.1 hgrid before relying on it.
+# n_sides is left null (see grid block below) rather than carrying forward
+# the stale v2.1 value (8580540) -- it is not a simple function of
+# n_nodes/n_elements alone (SCHISM meshes mix tri/quad elements), so it
+# cannot be derived here and must be measured from the real v3.1 hgrid.
 # (Earlier YAML revisions had also assumed an unrelated, never-deployed
 # "v3.1.1" mesh with n_nodes=1813443, n_levels=51 — not to be confused with
 # the real v3.1 operational mesh used here.)
@@ -95,7 +95,7 @@ grid:
   type: unstructured
   n_nodes: 3052121
   n_elements: 5872610
-  n_sides: 8580540  # STALE: v2.1-derived, not yet recomputed for v3.1 (see comment above)
+  n_sides: null  # ns_global computed by SCHISM at runtime; real v3.1 value to be measured from the fetched hgrid
   n_levels: 49
   files:
     horizontal: stofs_3d_atl_ufs.hgrid.gr3
