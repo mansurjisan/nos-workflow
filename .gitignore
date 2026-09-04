@@ -94,6 +94,27 @@ fix/secofs_ufs_ww3/*.msh
 !fix/secofs_ufs_ww3/ww3_grid.nml
 !fix/secofs_ufs_ww3/secofs_ufs_ww3.namelists_pdlib.nml
 
+# STOFS-3D-AK-UFS-WW3 (DATM+SCHISM+WW3) statics. Same convention as
+# fix/secofs_ufs_ww3/: keep only the small config/template files reviewable
+# in git. The shared SCHISM mesh/grid/forcing statics are deployed WCOSS2-side
+# from fix/stofs_3d_ak_ufs/ (system.prefix is unchanged, "stofs_3d_ak_ufs", so
+# the filenames match); the WW3-specific binaries (mod_def.ww3, the WAV ESMF
+# mesh, the .msh grid file) are also WCOSS2-side, too large for git.
+fix/stofs_3d_ak_ufs_ww3/*.gr3
+fix/stofs_3d_ak_ufs_ww3/*.ll
+fix/stofs_3d_ak_ufs_ww3/*.in
+fix/stofs_3d_ak_ufs_ww3/*.dat
+fix/stofs_3d_ak_ufs_ww3/*.json
+fix/stofs_3d_ak_ufs_ww3/*.csv
+fix/stofs_3d_ak_ufs_ww3/*.txt
+fix/stofs_3d_ak_ufs_ww3/*.ww3
+fix/stofs_3d_ak_ufs_ww3/*.msh
+!fix/stofs_3d_ak_ufs_ww3/*.template
+!fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.param.nml
+!fix/stofs_3d_ak_ufs_ww3/ufs.configure
+!fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.ww3_shel.nml
+!fix/stofs_3d_ak_ufs_ww3/stofs_3d_ak_ufs.ww3_points.list
+
 # Shell pgmout artifacts. Both spellings occur and neither covers the other:
 # the J-jobs `export pgmout="OUTPUT.$$"` in bash, where $$ expands to the pid,
 # so a real run leaves OUTPUT.<pid>; the Python default (env.py, stages/post.py)
