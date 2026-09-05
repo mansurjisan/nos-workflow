@@ -35,6 +35,11 @@ level 4 -- only out2d arrives uncompressed:
 so roughly 7% off the cycle for ~26 s of post CPU. Levels above 1 are
 not worth it here (level 4 buys another 1% for 5x the time), and
 already-compressed variables are passed through untouched.
+
+``--split-only`` runs the combined-schout split above and stops there,
+publishing nothing to $COMOUT. It exists for systems that read the split
+stacks in the staging dir (slab2d and the other field2d/maxele-style
+products) but do not want the full per-variable field archive published.
 """
 from __future__ import annotations
 
@@ -88,6 +93,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         rc = _split_combined_schout(args.combine_script)
         if rc != 0:
             return rc
+
+    if args.split_only:
+        if args.result_json:
+            Path(args.result_json).write_text(
+                json.dumps({"created": []}, indent=2)
+            )
+        print("fields: split only, nothing published")
+        return 0
 
     phase_start = _phase_start_hours(
         Dataset, staging, args.phase, args.nowcast_hours
@@ -169,6 +182,11 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     )
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")
+    p.add_argument(
+        "--split-only", action="store_true",
+        help="split combined schout stacks (if present) and stop; "
+             "publish nothing to $COMOUT",
+    )
     return p.parse_args(argv)
 
 

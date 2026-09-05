@@ -213,19 +213,13 @@ post:
     - stations_nc
     # Separate from stations_nc so that file stays schema-identical to the ops product.
     - stations_mllw
-    - fields_nc
-    - bias_correct
-    - maxele
+    # Split-only: on the coupled (OLDIO) path fields_nc is what splits the
+    # staged schout stacks that slab2d reads; nothing is published from it.
+    - name: fields_nc
+      options:
+        publish: false
+    # field2d
     - slab2d
-    - adcirc
-    - name: profiles
-      options:
-        # Station 335 sits 0.27 m outside the mesh; the default abort would cost the other 429.
-        outside: drop
-    - name: geopkg
-      options:
-        # Serial contouring does not finish inside the walltime.
-        max_workers: 8
 
 stages:
   - prep
