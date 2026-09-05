@@ -159,6 +159,34 @@ def test_combined_schout_is_split_then_published(tmp_path):
     assert (staging / "out2d_1.nc").is_file()
 
 
+def test_split_only_splits_without_publishing(tmp_path):
+    """--split-only still materialises the split stacks (what slab2d
+    reads) but publishes nothing to COMOUT."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_combined_schout(staging / "schout_1.nc", hours=[1, 2, 3])
+
+    result_json = tmp_path / "result.json"
+    rc = fields.main([
+        "--staging", str(staging),
+        "--comout", str(comout),
+        "--prefix", "secofs",
+        "--cyc", "00",
+        "--pdy", "20260710",
+        "--phase", "forecast",
+        "--combine-script", str(_COMBINE_SCRIPT),
+        "--result-json", str(result_json),
+        "--split-only",
+    ])
+
+    assert rc == 0
+    assert (staging / "out2d_1.nc").is_file()
+    assert not list(comout.glob("*.fields.*.nc"))
+    assert json.loads(result_json.read_text()) == {"created": []}
+
+
 def test_combined_schout_vector_variables_split(tmp_path):
     """OLDIO vector/3D variables (hvel, wind_speed, zcor, temp) publish
     as the scribe-named families instead of being silently dropped."""

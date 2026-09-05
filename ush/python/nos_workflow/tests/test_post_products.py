@@ -518,6 +518,80 @@ def test_fields_nc_runs_worker_per_staged_phase(tmp_path, fake_env):
     )
 
 
+def _fake_fields_subprocess_split_only():
+    """Fake subprocess.run for a --split-only fields_nc call: writes the
+    empty result json the real worker would, publishes nothing."""
+    import subprocess as _sp
+
+    calls: list = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        args = {cmd[i]: cmd[i + 1] for i in range(len(cmd) - 1)}
+        result_json = args.get("--result-json")
+        if result_json:
+            Path(result_json).write_text(json.dumps({"created": []}))
+        return _sp.CompletedProcess(args=cmd, returncode=0)
+
+    return fake_run, calls
+
+
+def test_fields_nc_publish_false_runs_split_only(tmp_path, fake_env):
+    """``options: {publish: false}`` in yaml keeps the split step (what
+    slab2d reads) but tells the worker to publish nothing."""
+    env = _post_env(tmp_path)
+    yml = tmp_path / "system.yaml"
+    yml.write_text(
+        "post:\n"
+        "  products:\n"
+        "    - name: fields_nc\n"
+        "      options:\n"
+        "        publish: false\n"
+    )
+    env["OFS_CONFIG"] = str(yml)
+    comout = Path(env["COMOUT"])
+    _seed_field_staging(comout, env["RUN"], env["cycle"], "nowcast")
+
+    fake_run, calls = _fake_fields_subprocess_split_only()
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=fake_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    assert len(calls) == 1
+    assert "--split-only" in calls[0]
+
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    assert by_name["fields_nc"]["status"] == "ok"
+    assert by_name["fields_nc"]["count"] == 0
+    assert by_name["fields_nc"]["detail"] == "split only, nothing published"
+
+
+def test_fields_nc_publish_env_beats_yaml_silence(tmp_path, fake_env):
+    """``POST_FIELDS_PUBLISH=no`` forces split-only even when yaml says
+    nothing about publish -- same env-over-yaml precedence as selection."""
+    env = _post_env(tmp_path)
+    env["NOS_POST_PRODUCTS"] = "fields_nc"
+    env["POST_FIELDS_PUBLISH"] = "no"
+    comout = Path(env["COMOUT"])
+    _seed_field_staging(comout, env["RUN"], env["cycle"], "nowcast")
+
+    fake_run, calls = _fake_fields_subprocess_split_only()
+    with patch.dict(os.environ, env, clear=False):
+        with patch.object(post_stage.subprocess, "run", side_effect=fake_run):
+            rc = post_stage.run(_secofs_ufs_desc(), fake_env)
+
+    assert rc == 0
+    assert "--split-only" in calls[0]
+
+    data = _load_outputs_manifest(env)
+    by_name = {p["name"]: p for p in data["products"]}
+    assert by_name["fields_nc"]["status"] == "ok"
+    assert by_name["fields_nc"]["count"] == 0
+    assert by_name["fields_nc"]["detail"] == "split only, nothing published"
+
+
 def test_fields_nc_worker_failure_warns_not_fatal(tmp_path, fake_env, caplog):
     import subprocess as _sp
 
@@ -687,15 +761,22 @@ def test_malformed_options_are_ignored_not_fatal(tmp_path):
 
 
 def test_shipped_yaml_enables_only_what_has_been_validated():
-    """SECOFS ran every one of these on a real coupled cycle. ATL has not,
-    so it stays narrower."""
+    """SECOFS's coupled (OLDIO) path ships a lean set -- stations plus
+    field2d -- with fields_nc split-only so slab2d has its inputs but
+    the full per-variable field archive is not published. ATL enables
+    the fuller set it has validated separately."""
     from nos_workflow.post.registry import (
         _read_yaml_post_products, resolve_product_options,
     )
 
     secofs = _read_yaml_post_products(_PARM / "secofs_ufs.yaml")
-    for name in ("maxele", "slab2d", "adcirc", "profiles", "geopkg"):
-        assert name in secofs, name
+    assert "slab2d" in secofs
+    assert "fields_nc" in secofs
+    assert resolve_product_options(
+        {"OFS_CONFIG": str(_PARM / "secofs_ufs.yaml")}
+    )["fields_nc"] == {"publish": False}
+    for name in ("maxele", "adcirc", "profiles", "geopkg"):
+        assert name not in secofs, name
 
     for name in ("stofs_3d_atl_ufs.yaml", "stofs_3d_atl_ufs_standalone.yaml"):
         atl = _read_yaml_post_products(_PARM / name)
@@ -724,4 +805,5 @@ def test_no_system_enables_profiles_without_an_outside_setting():
         assert opts.get("profiles", {}).get("outside"), (
             f"{yml.name} enables profiles with no options.outside"
         )
-    assert checked, "no system enables profiles -- guard would be vacuous"
+    if not checked:
+        pytest.skip("no shipped system currently enables profiles")
