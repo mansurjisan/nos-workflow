@@ -1,8 +1,4 @@
 # NGOFS2 Configuration
-# Northern Gulf of Mexico Operational Forecast System (version 2)
-#
-# Inherits from the base FVCOM configuration (parm/base/fvcom.yaml) and
-# overrides per-OFS values. COMF framework, standalone (non-UFS) execution.
 
 _base: fvcom
 
@@ -14,14 +10,11 @@ system:
   version: "3.7.0"
   prefix: ngofs2
 
-# Execution mode: classic standalone FVCOM (not UFS-Coastal coupled).
 execution:
   mode: standalone
 
-# Grid configuration - FVCOM unstructured grid
 grid:
   type: unstructured
-  # NGOFS2 grid dimensions
   n_nodes: 85000
   n_elements: 160000
   n_levels: 41
@@ -29,19 +22,16 @@ grid:
     horizontal: ngofs2_grd.dat
     depth: ngofs2_dep.dat
     obc: ngofs2_obc.dat
-  # Northern Gulf of Mexico domain bounds
   domain:
     lon_min: -98.0
     lon_max: -81.0
     lat_min: 24.0
     lat_max: 31.0
 
-# Forcing configuration
 forcing:
   atmospheric:
     primary: gfs
     fallback: nam
-    # Gulf region benefits from NAM
     blend_enabled: false
     variables:
       - PRMSL
@@ -56,7 +46,6 @@ forcing:
   river:
     enabled: true
     primary: nwm
-    # Major Gulf rivers
     sources:
       - name: mississippi_river
         usgs_id: "07374000"
@@ -87,77 +76,66 @@ forcing:
       - P1
       - Q1
 
-# Model physics and runtime configuration - FVCOM specific
 model:
   executable: fvcom_ngofs2
   ocean_model: FVCOM
   physics:
-    dt: 0.5                   # External time step (seconds)
-    dti: 10.0                 # Internal time step (seconds)
+    dt: 0.5
+    dti: 10.0
     bottom_roughness: 0.001
     horizontal_mixing: smagorinsky
     vertical_mixing: mellor_yamada25
   run:
-    hindcast_days: 0.25       # 6-hour nowcast
-    forecast_days: 3.0        # 3-day forecast (longer for Gulf)
+    hindcast_days: 0.25
+    forecast_days: 3.0
 
-# Output configuration
 output:
   format: netcdf
   prefix: ngofs2
   stations:
     enabled: true
-    interval: 360             # 6 minutes
+    interval: 360
   fields:
-    interval: 3600            # 1 hour
+    interval: 3600
     variables:
-      - zeta                  # Water level
-      - ua                    # Depth-averaged velocity
+      - zeta
+      - ua
       - va
-      - temp                  # Temperature
+      - temp
       - salinity
   restart:
-    interval: 21600           # 6 hours
+    interval: 21600
 
-# Computational resources
 resources:
   nprocs: 360
   memory_gb: 600
   walltime_hours: 2
 
-# COMF workflow stages
 stages:
   - prep
   - nowcast
   - forecast
   - post
 
-# Environment variable mappings
 shell_mappings:
   framework: comf
   env_prefix: nos
   variables:
-    # Model identification
     RUN: system.name
     PREFIXNOS: system.prefix
     OCEAN_MODEL: model.ocean_model
 
-    # Domain bounds
     MINLON: grid.domain.lon_min
     MAXLON: grid.domain.lon_max
     MINLAT: grid.domain.lat_min
     MAXLAT: grid.domain.lat_max
 
-    # Atmospheric forcing
     DBASE_MET_NOW: forcing.atmospheric.primary
     DBASE_MET_FOR: forcing.atmospheric.primary
 
-    # Ocean forcing
     DBASE_TS_NOW: forcing.ocean.obc.ts_source
     DBASE_TS_FOR: forcing.ocean.obc.ts_source
 
-    # Runtime control
     DELT_MODEL: model.physics.dt
 
-    # Resources
     TOTAL_TASKS: resources.nprocs
