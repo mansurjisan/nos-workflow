@@ -37,7 +37,7 @@ not worth it here (level 4 buys another 1% for 5x the time), and
 already-compressed variables are passed through untouched.
 
 ``--split-only`` stops after the schout split and publishes nothing; the
-split stacks stay in staging for slab2d and the other field products.
+split stacks stay in staging for slab2d and the other field products. MJ (09/05/26)
 """
 from __future__ import annotations
 

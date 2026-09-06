@@ -1008,7 +1008,7 @@ class FieldsNcProduct(PostProduct):
     LD_PRELOAD rationale as the stations combine). Skips cleanly when
     the run stages did not stage field files (``post.archive_fields``
     off).
-    ``publish: false`` runs the split only and publishes nothing.
+    ``publish: false`` runs the split only and publishes nothing. MJ (09/05/26)
     """
 
     name = "fields_nc"

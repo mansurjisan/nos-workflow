@@ -213,7 +213,7 @@ post:
     - stations_nc
     # Separate from stations_nc so that file stays schema-identical to the ops product.
     - stations_mllw
-    # Split-only: slab2d reads the per-variable stacks fields_nc splits from schout.
+    # Split-only: slab2d reads the per-variable stacks fields_nc splits from schout. MJ (09/05/26)
     - name: fields_nc
       options:
         publish: false
