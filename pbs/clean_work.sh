@@ -1,8 +1,8 @@
 #!/bin/bash
 ################################################################################
-# clean_work.sh — prune PBS work dirs, keeping only the newest prep/nc/fc/post
+# clean_work.sh: prune PBS work dirs, keeping only the newest prep/nc/fc/post
 # per run (= the last cycle). Dirs whose job PBS still tracks (queued/running/
-# held) are never removed, so it is safe to run at any point in a cycle.
+# held) are never removed, so it is safe to run at any point in a cycle. MJ (09/05/26)
 #
 # Expected layout (jobid = ${job}.${PBS_JOBID}, see pbs/jnos_*_00.pbs):
 #   $WORK/<run>/<run>_<stage>_<cyc>_<envir>.<jobnum>.<server>
@@ -26,7 +26,7 @@ STAGES="prep nc fc post"
 RUNS=${*:-secofs_ufs secofs_ufs_ww3}
 
 # Job numbers PBS still tracks: their dirs are off-limits. Fail closed if the
-# scheduler cannot be queried rather than risk deleting under a live job.
+# scheduler cannot be queried rather than risk deleting under a live job. MJ (09/05/26)
 command -v qselect >/dev/null 2>&1 || { echo "FATAL: qselect not on PATH"; exit 2; }
 active=$(qselect -u "$USER" 2>&1) || { echo "FATAL: qselect failed: $active"; exit 2; }
 active=" $(echo "$active" | cut -d. -f1 | tr '\n' ' ') "
