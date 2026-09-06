@@ -213,12 +213,10 @@ post:
     - stations_nc
     # Separate from stations_nc so that file stays schema-identical to the ops product.
     - stations_mllw
-    # Split-only: on the coupled (OLDIO) path fields_nc is what splits the
-    # staged schout stacks that slab2d reads; nothing is published from it.
+    # Split-only: slab2d reads the per-variable stacks fields_nc splits from schout.
     - name: fields_nc
       options:
         publish: false
-    # field2d
     - slab2d
 
 stages:

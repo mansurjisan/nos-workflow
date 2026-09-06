@@ -160,8 +160,7 @@ def test_combined_schout_is_split_then_published(tmp_path):
 
 
 def test_split_only_splits_without_publishing(tmp_path):
-    """--split-only still materialises the split stacks (what slab2d
-    reads) but publishes nothing to COMOUT."""
+    """--split-only leaves the split stacks in staging and publishes nothing."""
     staging = tmp_path / "staging"
     comout = tmp_path / "comout"
     staging.mkdir()

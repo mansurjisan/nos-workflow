@@ -519,8 +519,7 @@ def test_fields_nc_runs_worker_per_staged_phase(tmp_path, fake_env):
 
 
 def _fake_fields_subprocess_split_only():
-    """Fake subprocess.run for a --split-only fields_nc call: writes the
-    empty result json the real worker would, publishes nothing."""
+    """subprocess.run stand-in for a --split-only fields worker."""
     import subprocess as _sp
 
     calls: list = []
@@ -537,8 +536,7 @@ def _fake_fields_subprocess_split_only():
 
 
 def test_fields_nc_publish_false_runs_split_only(tmp_path, fake_env):
-    """``options: {publish: false}`` in yaml keeps the split step (what
-    slab2d reads) but tells the worker to publish nothing."""
+    """yaml ``options: {publish: false}`` runs the worker split-only."""
     env = _post_env(tmp_path)
     yml = tmp_path / "system.yaml"
     yml.write_text(
@@ -569,8 +567,7 @@ def test_fields_nc_publish_false_runs_split_only(tmp_path, fake_env):
 
 
 def test_fields_nc_publish_env_beats_yaml_silence(tmp_path, fake_env):
-    """``POST_FIELDS_PUBLISH=no`` forces split-only even when yaml says
-    nothing about publish -- same env-over-yaml precedence as selection."""
+    """``POST_FIELDS_PUBLISH=no`` wins over an unset yaml option."""
     env = _post_env(tmp_path)
     env["NOS_POST_PRODUCTS"] = "fields_nc"
     env["POST_FIELDS_PUBLISH"] = "no"
@@ -761,10 +758,8 @@ def test_malformed_options_are_ignored_not_fatal(tmp_path):
 
 
 def test_shipped_yaml_enables_only_what_has_been_validated():
-    """SECOFS's coupled (OLDIO) path ships a lean set -- stations plus
-    field2d -- with fields_nc split-only so slab2d has its inputs but
-    the full per-variable field archive is not published. ATL enables
-    the fuller set it has validated separately."""
+    """SECOFS ships stations plus field2d with fields_nc split-only; ATL
+    keeps the fuller set it validated separately."""
     from nos_workflow.post.registry import (
         _read_yaml_post_products, resolve_product_options,
     )

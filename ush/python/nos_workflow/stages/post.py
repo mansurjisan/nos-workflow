@@ -978,8 +978,7 @@ def _fields_deflate(raw: object) -> str:
 
 
 def _option_bool(raw: object, default: bool) -> bool:
-    """A yes/true/1 vs no/false/0 option that may arrive as a yaml bool
-    (native) or a string (env override, or yaml quoted as text)."""
+    """yes/true/1 vs no/false/0, as a yaml bool or a string."""
     if isinstance(raw, bool):
         return raw
     text = str(raw).strip().lower()
@@ -1009,9 +1008,7 @@ class FieldsNcProduct(PostProduct):
     LD_PRELOAD rationale as the stations combine). Skips cleanly when
     the run stages did not stage field files (``post.archive_fields``
     off).
-
-    ``publish: false`` keeps the split step (what slab2d/maxele/etc.
-    read on the coupled OLDIO path) but publishes nothing to COMOUT.
+    ``publish: false`` runs the split only and publishes nothing.
     """
 
     name = "fields_nc"
