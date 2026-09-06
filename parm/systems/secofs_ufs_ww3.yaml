@@ -1,14 +1,9 @@
 # SECOFS with wave coupling -- DATM+SCHISM+WW3 (UFS-Coastal, 4-component).
 #
-# Inherits secofs_ufs wholesale and overrides only what the wave component
-# adds. system.prefix stays "secofs_ufs" so the SCHISM-side fix filenames are
-# reused unchanged; only $FIXofs differs (fix/secofs_ufs_ww3/, keyed off
-# system.name), so deployment must populate that directory with the same
-# secofs_ufs.* statics alongside the wave-only files tracked here.
-#
-# Cycling is hybrid: SCHISM continues via its own hotstart (ihot=1); WW3 and
-# the mediator cycle via CMEPS netCDF restarts written at the end of each
-# nowcast leg and read by that cycle's forecast leg (start_type=continue).
+# $FIXofs is fix/secofs_ufs_ww3/ but system.prefix stays secofs_ufs, so that directory
+# must carry the secofs_ufs.* statics as well as the wave-only files below. MJ (09/05/26)
+# Cycling: SCHISM via its own hotstart (ihot=1); WW3 and the mediator via CMEPS
+# restarts written each nowcast and read by that cycle's forecast. MJ (09/05/26)
 
 _base: secofs_ufs
 
@@ -17,9 +12,7 @@ system:
   description: "Southeast Coastal Ocean Forecast System (UFS-Coastal, DATM+SCHISM+WW3)"
 
 ufs_coastal:
-  # WAV PETs 2914-5519. Extrapolated from the one validated data point
-  # (Alaska: 274 wave-mesh nodes/PET) for the 676,342-node e0m mesh, rounded
-  # up to 46 nodes; re-tune after a WCOSS2 profiling pass.
+  # Extrapolated from Alaska (274 nodes/PET); re-tune after a WCOSS2 profiling pass. MJ (09/05/26)
   wav_tasks: 2606
   total_tasks: 5520
   # Must be an integer multiple of model.physics.dt (120 s); enforced by
@@ -30,16 +23,12 @@ ufs_coastal:
   # fix/secofs_ufs_ww3/ufs.configure.
   wav_mesh: secofs_ufs.mesh_wav.nc
   wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
-  # Precomputed regrid weights for both OCN<->WAV directions. They exist to
-  # keep ESMF from building an internal dual mesh at runtime, which aborts at
-  # this mesh size. wav2ocn additionally requires the CMEPS wav2ocn_smapname
-  # patch; without it CMEPS never reads the attribute and this value is inert.
+  # Precomputed so ESMF does not build a dual mesh at runtime (aborts at this mesh size);
+  # wav2ocn also needs the CMEPS wav2ocn_smapname patch or the value is inert. MJ (09/05/26)
   ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
   wav2ocn_weights: secofs_ufs.wav2ocn_weights.nc
 
-# GFS-Wave boundary spectra (nos-utils WaveBoundaryProcessor): builds nest.ww3
-# per cycle from the operational gfswave IBP tarball. Deep-merges onto
-# secofs_ufs's forcing block; every other forcing source is inherited.
+# GFS-Wave boundary spectra: nest.ww3 is built each cycle from the gfswave IBP tarball. MJ (09/05/26)
 forcing:
   waves:
     enabled: true
@@ -50,40 +39,25 @@ forcing:
       lon_max: -61.0
       lat_min: 16.0
       lat_max: 40.0
-    # wave_gfs.buoys-format point list, resolved against $FIXofs. The operator
-    # must stage it before the first wave-enabled prep; until then
-    # WaveBoundaryProcessor warns and produces no nest.ww3.
+    # Must be staged in $FIXofs before the first wave-enabled prep. MJ (09/05/26)
     points_file: secofs_ufs.ww3_bound_points.list
-    # ww3_bound reads mod_def.ww3 from its CWD. Explicit because RUN
-    # (secofs_ufs_ww3) != the fix-file prefix (secofs_ufs), so the RUN-derived
-    # default would name a file that does not exist.
+    # Explicit: RUN differs from the fix-file prefix, so the derived default does not exist. MJ (09/05/26)
     mod_def: secofs_ufs.mod_def.ww3
     # Additional 6 h GFS-Wave cycles to walk back when the newest cycle's
     # tarball is not yet posted. Governs boundary spectra only, not restarts.
     max_cycle_fallback: 2
-    # Cold starting costs ~37% buoy Hs RMSE over the nowcast leg; the field
-    # takes 8-16 h to spin up from zero. Measured not to carry the marginal-node
-    # artifact forward: water level moves under 1 mm across a handoff.
+    # Cold start costs ~37% buoy Hs RMSE (8-16 h spin-up from zero). MJ (09/05/26)
     nowcast_warm_start: true
-    # Rejects a poisoned candidate restart (non-finite/negative spectra, or a
-    # spectral density beyond an order-of-magnitude ceiling derived from this
-    # value) and falls back to a cold start. Meters.
+    # Ceiling for rejecting a poisoned restart (falls back to cold start). Meters. MJ (09/05/26)
     warm_start_max_hs: 25.0
 
-# Wave BC is deliberately absent from prep.critical_sources: a missing or
-# failed nest.ww3 degrades prep rather than failing it, matching WW3's own
-# behavior (boundary OPEN failure sets FLBPI=.FALSE. and the run continues
-# wind-sea-only with a warning). Make it critical once the pipeline is proven.
+# Deliberately absent from prep.critical_sources: a failed nest.ww3 degrades prep to
+# wind-sea only rather than failing it. Make it critical once the pipeline is proven. MJ (09/05/26)
 
 model:
   executable: fv3_coastalSW.exe
   run:
-    # Daily 12z cadence: 24 h nowcast + 48 h forecast. These two keys MUST stay
-    # in lockstep (nowcast_hours/24 == hindcast_days): hindcast_days drives
-    # LEN_NOWCAST on the run side, while nos_utils.config reads nowcast_hours
-    # directly for the prep-side time_hotstart anchor and only falls back to
-    # hindcast_days*24 when it is absent. The _base sets nowcast_hours
-    # explicitly, so overriding just one leaves prep and run on different legs.
+    # Keep nowcast_hours/24 == hindcast_days: run reads one, prep reads the other. MJ (09/05/26)
     hindcast_days: 1.0
     nowcast_hours: 24
   runtime:
@@ -93,7 +67,6 @@ model:
 resources:
   nprocs: 5520
   nscribes: 0
-  # 46 nodes x 120 mpiprocs = 5520 exactly, no idle slots.
   select: "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
   # Documentation only -- no consumer in ush/, and PBS cards request no mem=.
   # Never sized against a real wave-coupled run.

@@ -206,7 +206,6 @@ resources:
   memory_gb: 1500
   walltime_hours: 2
 
-# Post-stage products (nos_workflow.post registry; override with NOS_POST_PRODUCTS)
 post:
   archive_fields: true
   products:
@@ -381,7 +380,7 @@ ensemble:
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
   resources:
-    select: "select=25:ncpus=128:mpiprocs=120"   # v3.9: 25*120=3000 ≥ total_tasks 2914 (was select=10)
+    select: "select=25:ncpus=128:mpiprocs=120"   # must cover total_tasks (2914) MJ (09/05/26)
     walltime: "05:30:00"
   post_resources:
     select: "select=1:ncpus=8:mpiprocs=8"
