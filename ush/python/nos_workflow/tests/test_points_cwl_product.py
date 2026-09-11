@@ -425,14 +425,20 @@ def test_product_runs_both_phases_with_ops_prefixed_fix(tmp_path):
 
 
 def test_product_prefers_msl_nco_when_staged(tmp_path):
-    """v3.1 ships ``*_sta_cwl_xgeoid_to_msl.nco`` in place of the older
-    ``_to_navd.nco``. ``PointsCwlProduct.worker_args`` (post.py) tries the
-    ``_msl`` stem before ``_navd`` -- exercise that branch explicitly
-    rather than only the pre-v3.1 ``_navd`` fixture above.
+    """v3.1 ships ``*_sta_cwl_xgeoid_to_msl.nco`` alongside the older
+    ``_to_navd.nco`` (both may be staged during the v3.1 transition).
+    ``PointsCwlProduct.worker_args`` (post.py) tries the ``_msl`` stem
+    before ``_navd`` -- stage both, with different offsets, to prove
+    precedence rather than merely exercising the ``_msl`` branch in
+    isolation.
     """
     fixofs = tmp_path / "fix"
     _write_fix_pair(fixofs)
     _write_nco(fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco")
+    _write_nco(
+        fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_navd.nco",
+        constants=(-0.11111, -0.22222, 0.33333),
+    )
     ctx = _ctx(tmp_path, fixofs)
     for suffix in ("restart_outputs", "forecast_outputs"):
         _stage_staout(ctx.comout / f"stofs_3d_atl_ufs.t12z.{suffix}")
