@@ -28,17 +28,25 @@ Ops parity notes:
   is corrected.
 
 * Ops shifts ``zeta`` off xGEOID20B with ``ncap2 -S
-  *_sta_cwl_xgeoid_to_msl.nco`` AFTER the extractor. The nos-utils
-  writer has no hook for that (unlike ``points_cwl``'s
-  ``--datum-offsets``), so the published ``zeta`` carries the model's own
-  datum while its attributes keep the ops wording -- MSL as of v3.1
-  (nos-utils commit ``d9d324f`` updated the hardcoded ``long_name``/
-  ``standard_name`` from the retired NAVD88 wording to
-  "water surface elevation above msl" / "sea_surface_height_above_msl").
+  *_sta_cwl_xgeoid_to_msl.nco`` AFTER the extractor. This worker's
+  ``--datum-offsets`` folds that shift in, the same as ``points_cwl``'s
+  flag of the same name and parsed by the same helper
+  (``worker_base.nco_offsets``): the staged .nco is negated (ops
+  subtracts) and added to ``zeta`` inside
+  :func:`nos_utils.post.profiles.write_station_profiles`. The nos-utils
+  writer's ``zeta`` attributes now depend on whether an offset was
+  actually applied -- MSL wording ("water surface elevation above msl" /
+  "sea_surface_height_above_msl") when ``--datum-offsets`` is given, an
+  honest model-datum label (plus ``datum=xGEOID20B``) when it is not --
+  so a system with no .nco staged publishes a correctly-labeled product
+  instead of a mislabeled one.
 
 Exit codes: 2 staging dir missing, 3 no complete stack in the staging
 dir (the phase has no 3D output -- skip), 4 nos-utils unavailable,
-5 a required fix input (hgrid / vgrid / station.in) is not readable.
+5 a required fix input (hgrid / vgrid / station.in) is not readable,
+6 every station is outside the mesh (``--outside error``/``drop``),
+7 ``--datum-offsets`` file has no zeta statements, 8 ``--datum-offsets``
+count does not match the station.in count.
 """
 from __future__ import annotations
 
@@ -50,7 +58,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..naming import station_profile_name
-from ..worker_base import atomic_publish, base_date_from_staging
+from ..worker_base import atomic_publish, base_date_from_staging, nco_offsets
 
 _STACK_RE = re.compile(r"^out2d_(\d+)\.nc$")
 
@@ -90,12 +98,29 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         from nos_utils.post.profiles import (
+            read_station_in,
             stack_inputs,
             write_station_profiles,
         )
     except ImportError as exc:
         print(f"profiles: nos_utils.post unavailable: {exc}")
         return 4
+
+    offsets = None
+    if args.datum_offsets:
+        offsets = nco_offsets(Path(args.datum_offsets))
+        if offsets is None:
+            print(f"profiles: no zeta statements in {args.datum_offsets}")
+            return 7
+        total_lons, _total_lats, _total_names = read_station_in(
+            Path(args.station_in)
+        )
+        if len(offsets) != total_lons.size:
+            print(
+                f"profiles: --datum-offsets has {len(offsets)} station(s), "
+                f"{args.station_in} has {total_lons.size}"
+            )
+            return 8
 
     stacks, skipped = _complete_stacks(staging, stack_inputs)
     if skipped:
@@ -120,7 +145,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         kept = _keep_in_mesh_stations(args)
         if kept is None:
             return 6
-        lons, lats, names = kept
+        lons, lats, names, keep_mask = kept
         if not len(lons):
             print("profiles: no stations left inside the mesh")
             return 6
@@ -128,6 +153,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         # surprise and should stop us rather than pass silently.
         station_kwargs = {"lons": lons, "lats": lats, "names": names}
         outside = "error"
+        # Offsets are in station.in order; a dropped station's offset
+        # must drop with it or every offset past the gap would land on
+        # the wrong station.
+        if offsets is not None:
+            import numpy as np
+
+            offsets = list(np.asarray(offsets)[keep_mask])
 
     try:
         with atomic_publish(out_path) as tmp:
@@ -138,6 +170,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 tmp,
                 base_date=base_date,
                 outside=outside,
+                datum_offsets=offsets,
                 **station_kwargs,
             )
     except ValueError as exc:
@@ -154,7 +187,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         Path(args.result_json).write_text(
             json.dumps({"created": [str(out_path)]}, indent=2)
         )
-    print(f"profiles: wrote {out_path.name} (zeta on the model datum)")
+    datum_note = (
+        "zeta shifted to the ops datum" if offsets is not None
+        else "zeta on the model datum"
+    )
+    print(f"profiles: wrote {out_path.name} ({datum_note})")
     return 0
 
 
@@ -184,6 +221,10 @@ def _keep_in_mesh_stations(args: argparse.Namespace):
     option that neither discards good data nor invents any -- the
     station is simply absent, and the log says which and why.
 
+    Returns ``(lons, lats, names, keep_mask)`` -- ``keep_mask`` is over
+    the original, unfiltered station.in order, so a caller with a
+    second per-station array (e.g. ``--datum-offsets``) can apply the
+    identical mask to stay aligned with the filtered station list.
     Returns None when the station list or mesh cannot be read.
     """
     try:
@@ -196,7 +237,7 @@ def _keep_in_mesh_stations(args: argparse.Namespace):
 
     bad = np.nonzero(ie == -1)[0]
     if not bad.size:
-        return lons, lats, names
+        return lons, lats, names, np.ones(lons.size, dtype=bool)
     print(
         f"profiles: dropping {bad.size} of {lons.size} station(s) outside "
         f"{Path(args.hgrid).name}:"
@@ -209,7 +250,7 @@ def _keep_in_mesh_stations(args: argparse.Namespace):
             f"nearest node at {d.min() * 111000:.2f} m"
         )
     keep = ie != -1
-    return lons[keep], lats[keep], np.asarray(names)[keep]
+    return lons[keep], lats[keep], np.asarray(names)[keep], keep
 
 
 def _diagnose_outside(args: argparse.Namespace) -> None:
@@ -275,6 +316,14 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
              "'drop' excludes it and publishes the rest, naming what went -- "
              "the only choice that neither loses good stations to one bad "
              "entry nor invents data for it.",
+    )
+    p.add_argument(
+        "--datum-offsets", default="",
+        help="ops xGEOID20B->target-datum .nco (NAVD88 pre-v3.1, MSL "
+             "from v3.1 on); its constants are negated and added to "
+             "zeta, in station.in order (filtered the same as "
+             "'--outside drop'). Omit to publish zeta on the model "
+             "datum, honestly labeled as such.",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)

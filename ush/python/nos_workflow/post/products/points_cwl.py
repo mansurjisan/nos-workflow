@@ -27,19 +27,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from ..naming import points_cwl_name
-
-# One ncap2 statement of the ops xGEOID20B -> target-datum shift
-# (NAVD88 pre-v3.1, MSL from v3.1 on -- the .nco format is unchanged
-# either way), e.g. ``zeta(:,17)=zeta(:,17)-float(-0.32794);``.
-_NCO_RE = re.compile(
-    r"zeta\(:,(\d+)\)\s*=\s*zeta\(:,\1\)\s*-\s*float\(\s*([-+0-9.eE]+)\s*\)"
-)
+from ..worker_base import nco_offsets as _nco_offsets
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -234,29 +227,6 @@ def _staout_files(
         else:
             missing.append(fname)
     return files, sorted(set(missing))
-
-
-def _nco_offsets(path: Path) -> Optional[List[float]]:
-    """Per-station shifts from the ops .nco, negated (ops subtracts).
-
-    Returns None when the file holds no ``zeta`` statement; a gap in the
-    1..N station numbering raises, since a partial datum shift would
-    silently mislabel the product's target-datum metadata (NAVD88
-    pre-v3.1, MSL from v3.1 on).
-    """
-    consts = {
-        int(m.group(1)): float(m.group(2))
-        for m in _NCO_RE.finditer(path.read_text())
-    }
-    if not consts:
-        return None
-    expected = set(range(1, max(consts) + 1))
-    if set(consts) != expected:
-        raise ValueError(
-            f"{path}: datum shift missing for station(s) "
-            f"{sorted(expected - set(consts))}"
-        )
-    return [-consts[i] for i in sorted(consts)]
 
 
 if __name__ == "__main__":

@@ -410,6 +410,103 @@ def test_a_failed_write_leaves_comout_clean(tmp_path):
     assert direct.is_file()
 
 
+def _write_nco(path: Path, constants) -> Path:
+    """Ops-flavour .nco: one ``zeta(:,N)=zeta(:,N)-float(c);`` per station,
+    1-based, station.in order -- same fixture shape as points_cwl's."""
+    path.write_text(
+        "\n".join(
+            f"zeta(:,{i + 1})=zeta(:,{i + 1})-float({c});"
+            for i, c in enumerate(constants)
+        )
+        + "\n"
+    )
+    return path
+
+
+def test_datum_offsets_applied_and_label_switches_to_msl(tmp_path):
+    """--datum-offsets adds the negated .nco constants to zeta (ops
+    subtracts what the .nco carries; the writer adds what it is given)
+    and switches the published label from the honest model-datum
+    wording to MSL."""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+    nco = _write_nco(tmp_path / "xgeoid_to_msl.nco", (0.5, -0.25))
+
+    rc, result_json = _run(
+        staging, comout, tmp_path, extra=("--datum-offsets", str(nco)),
+    )
+    assert rc == 0
+
+    with netCDF4.Dataset(
+        json.loads(result_json.read_text())["created"][0]
+    ) as ds:
+        # The .nco carries "zeta = zeta - float(c)"; the writer is given
+        # the negated constants and adds them, so the applied shift is
+        # -0.5 / +0.25 here.
+        expect = [[FACTOR[0] + 0.01 - 0.5, FACTOR[1] + 0.01 + 0.25]]
+        np.testing.assert_allclose(ds["zeta"][:], expect, rtol=1e-6)
+        assert ds["zeta"].long_name == "water surface elevation above msl"
+        assert ds["zeta"].standard_name == "sea_surface_height_above_msl"
+
+
+def test_datum_offsets_filtered_by_the_same_drop_mask(tmp_path):
+    """--outside drop filters the station list; --datum-offsets (in the
+    same station.in order) must be filtered by the identical mask, so
+    offset N still lands on the same surviving station and the dropped
+    station's offset does not leak onto anything else."""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+    stations = STATIONS + (OUTSIDE_STATION,)
+    # station.in order: STA_NODE, STA_CENTROID, STA_OFFSHORE.
+    nco = _write_nco(tmp_path / "xgeoid_to_msl.nco", (0.5, -0.25, 9.99))
+
+    rc, result_json = _run(
+        staging, comout, tmp_path,
+        extra=("--outside", "drop", "--datum-offsets", str(nco)),
+        stations=stations,
+    )
+    assert rc == 0
+
+    with netCDF4.Dataset(
+        json.loads(result_json.read_text())["created"][0]
+    ) as ds:
+        assert ds.dimensions["station"].size == 2
+        # Same negated-and-added shift as above; the dropped station's
+        # 9.99 constant must not appear anywhere in the result.
+        expect = [[FACTOR[0] + 0.01 - 0.5, FACTOR[1] + 0.01 + 0.25]]
+        np.testing.assert_allclose(ds["zeta"][:], expect, rtol=1e-6)
+
+
+def test_datum_offsets_length_mismatch_fails_loudly(tmp_path, capsys):
+    """A .nco covering fewer stations than station.in must stop the
+    product rather than silently misalign the shift."""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+    nco = _write_nco(tmp_path / "xgeoid_to_msl.nco", (0.5,))  # 1 of 2
+
+    rc, _result_json = _run(
+        staging, comout, tmp_path, extra=("--datum-offsets", str(nco)),
+    )
+    assert rc == 8
+    assert list(comout.iterdir()) == []
+    out = capsys.readouterr().out
+    assert "--datum-offsets has 1 station" in out
+
+
+def test_datum_offsets_with_no_zeta_statements_fails(tmp_path):
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+    empty_nco = tmp_path / "empty.nco"
+    empty_nco.write_text("// nothing here\n")
+
+    rc, _result_json = _run(
+        staging, comout, tmp_path,
+        extra=("--datum-offsets", str(empty_nco)),
+    )
+    assert rc == 7
+    assert list(comout.iterdir()) == []
+
+
 # ---------------------------------------------------------------------------
 # Product wiring
 # ---------------------------------------------------------------------------
@@ -567,6 +664,64 @@ def test_outside_override_is_reachable_from_the_environment(tmp_path):
         assert post_stage.ProfilesProduct().produce(ctx).status == "ok"
 
     assert calls[0][calls[0].index("--outside") + 1] == "nearest"
+
+
+def test_product_passes_datum_offsets_when_msl_nco_staged(tmp_path):
+    """Resolution mirrors PointsCwlProduct's: msl stem first, under
+    either the ops-prefixed or PREFIXNOS-dotted spelling."""
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir()
+    for name in ("stofs_3d_atl_hgrid.gr3", "stofs_3d_atl_vgrid.in",
+                 "stofs_3d_atl_station.in"):
+        (fixofs / name).write_text("stub\n")
+    nco = _write_nco(
+        fixofs / "stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco", (0.1, 0.2)
+    )
+    ctx = _ctx(tmp_path, fixofs, "stofs_3d_atl_ufs")
+    _stage_stacks(ctx, "restart_outputs", "forecast_outputs")
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        result = post_stage.ProfilesProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert len(calls) == 2
+    for args in calls:
+        assert args[args.index("--datum-offsets") + 1] == str(nco)
+
+
+def test_product_omits_datum_offsets_and_logs_info_when_none_staged(
+    tmp_path, caplog
+):
+    """No .nco staged -> the flag is omitted and the worker publishes an
+    honest model-datum label, so this is an INFO note, not a WARNING
+    (points_cwl's ~0.3 m bias alarm does not apply here: the profiles
+    writer only claims MSL when an offset was actually given)."""
+    fixofs = tmp_path / "fix"
+    fixofs.mkdir()
+    for name in ("stofs_3d_atl_hgrid.gr3", "stofs_3d_atl_vgrid.in",
+                 "stofs_3d_atl_station.in"):
+        (fixofs / name).write_text("stub\n")
+    ctx = _ctx(tmp_path, fixofs, "stofs_3d_atl_ufs")
+    _stage_stacks(ctx, "restart_outputs", "forecast_outputs")
+
+    calls: list = []
+    with patch.object(
+        post_stage, "_run_subprocess_appending", _fake_worker(calls)
+    ):
+        with caplog.at_level("INFO"):
+            result = post_stage.ProfilesProduct().produce(ctx)
+
+    assert result.status == "ok"
+    assert len(calls) == 2
+    for args in calls:
+        assert "--datum-offsets" not in args
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings == []
+    infos = [r for r in caplog.records if r.levelname == "INFO"]
+    assert any("no xgeoid->datum .nco staged" in r.message for r in infos)
 
 
 # ---------------------------------------------------------------------------
