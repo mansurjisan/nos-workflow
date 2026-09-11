@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence
@@ -24,6 +25,15 @@ from typing import Dict, List, Optional, Sequence
 from .base import PostProduct, ProductContext, ProductResult
 
 logger = logging.getLogger(__name__)
+
+# One ncap2 statement of the ops xGEOID20B -> target-datum shift
+# (NAVD88 pre-v3.1, MSL from v3.1 on -- the .nco format is unchanged
+# either way), e.g. ``zeta(:,17)=zeta(:,17)-float(-0.32794);``. Shared
+# by the points_cwl and profiles workers, whose ``--datum-offsets``
+# both point at the same staged .nco file.
+_NCO_RE = re.compile(
+    r"zeta\(:,(\d+)\)\s*=\s*zeta\(:,\1\)\s*-\s*float\(\s*([-+0-9.eE]+)\s*\)"
+)
 
 # Staged model output lives in these per-phase COMOUT subdirectories,
 # written by runners/schism_ufs/archive.py.
@@ -227,6 +237,31 @@ class NosUtilsProduct(PostProduct):
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
 
+def nco_offsets(path: Path) -> Optional[List[float]]:
+    """Per-station shifts from the ops ``.nco``, negated (ops subtracts).
+
+    Parses the same ``zeta(:,N)=zeta(:,N)-float(c);`` statements the
+    points_cwl and profiles ``--datum-offsets`` flags both consume, in
+    1-based station.in order. Returns None when the file holds no
+    ``zeta`` statement; a gap in the 1..N numbering raises, since a
+    partial datum shift would silently mislabel the product's
+    target-datum metadata (NAVD88 pre-v3.1, MSL from v3.1 on).
+    """
+    consts = {
+        int(m.group(1)): float(m.group(2))
+        for m in _NCO_RE.finditer(path.read_text())
+    }
+    if not consts:
+        return None
+    expected = set(range(1, max(consts) + 1))
+    if set(consts) != expected:
+        raise ValueError(
+            f"{path}: datum shift missing for station(s) "
+            f"{sorted(expected - set(consts))}"
+        )
+    return [-consts[i] for i in sorted(consts)]
+
+
 def fix_file(ctx: ProductContext, *names: str) -> Optional[Path]:
     """First existing candidate under $FIXofs, trying each name in turn.
 
@@ -254,6 +289,7 @@ __all__ = [
     "has_3d_stacks",
     "has_field_stacks",
     "has_staout",
+    "nco_offsets",
     "read_created",
     "staging_dir",
 ]

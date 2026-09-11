@@ -139,15 +139,16 @@ class TestSystemConfigs:
         """STOFS-3D-ATL on UFS-Coastal — SCHISM + CDEPS DATM via NUOPC.
 
         Locks the production-vintage values: framework label, total/per-component
-        rank counts, v2.1 operational grid dimensions, and the PBS ``select=``
+        rank counts, v3.1 operational grid dimensions, and the PBS ``select=``
         line. These are pinned because the runtime dispatcher and the PBS
         jobcard generator both depend on them — drifting any of these silently
         is the kind of bug that only surfaces inside a 4434-rank allocation.
 
-        Grid dimensions match the v2.1 operational STOFS-3D-ATL mesh extracted
-        from /lfs/h1/ops/prod/com/stofs/v2.1/.../rerun/*.restart.nc on
-        2026-05-11. The UFS rank layout uses the operational 4314 SCHISM OCN
-        ranks (+120 DATM = 4434 total), sharing the standalone 4314 partition.prop.
+        Grid dimensions match the v3.1 operational STOFS-3D-ATL mesh (NOAA ops
+        cut over v2.1 -> v3.1; nvrt=49 is unchanged). The UFS rank layout uses
+        the operational 4314 SCHISM OCN ranks (+120 DATM = 4434 total), sharing
+        the standalone 4314 partition.prop (which must be regenerated against
+        the v3.1 hgrid -- rank *count* is unaffected by the mesh-size bump).
         """
         if "stofs_3d_atl_ufs" not in system_configs:
             pytest.skip("stofs_3d_atl_ufs.yaml not found")
@@ -161,18 +162,25 @@ class TestSystemConfigs:
         assert data["system"]["name"] == "stofs_3d_atl_ufs"
         assert data["system"]["framework"] == "stofs_ufs"
 
-        # Resources / UFS-Coastal task split (v2.1 operational partition.prop)
+        # Resources / UFS-Coastal task split (operational partition.prop;
+        # rank count unchanged across the v2.1 -> v3.1 mesh cutover)
         ufs = data.get("ufs_coastal", {})
         assert ufs.get("total_tasks") == 4434
         assert ufs.get("schism_tasks") == 4314
         assert ufs.get("datm_tasks") == 120
         assert ufs.get("nscribes") == 0
 
-        # Grid dimensions (v2.1 operational mesh)
+        # Grid dimensions (v3.1 operational mesh). n_sides is left null --
+        # the v2.1-derived value (8580540) is stale and not a simple
+        # function of n_nodes/n_elements, so it is measured from the real
+        # v3.1 hgrid rather than guessed (same convention as
+        # stofs_3d_ak_ufs.yaml). ns_global is a SCHISM-runtime-computed
+        # quantity; a null here is exported as an unset shell var, not
+        # a broken one (see yaml_to_env.get_standard_exports).
         grid = data.get("grid", {})
-        assert grid.get("n_nodes") == 2926236
-        assert grid.get("n_elements") == 5654157
-        assert grid.get("n_sides") == 8580540
+        assert grid.get("n_nodes") == 3052121
+        assert grid.get("n_elements") == 5872610
+        assert grid.get("n_sides") is None
         assert grid.get("n_levels") == 49
 
         # PBS select — operational ppn=120 + ompthreads=1 packing (37 nodes, 4440 >= 4434)
