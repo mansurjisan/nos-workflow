@@ -1825,3 +1825,35 @@ def test_run_python_returns_rc_and_collector(tmp_path, monkeypatch):
     assert keyed[("ocean", "OBC")]["count"] == len(_OBC_PAYLOAD_NAMES)
     # standalone -> met sflux, not DATM.
     assert keyed[("atmospheric", "MET")]["count"] == 3
+
+
+class TestWarmStartStalenessWindow:
+    """How far back the nowcast warm start may reach for restarts.
+
+    The window was 48 h, on the reasoning that a stale warm start beats a
+    needless cold start. On 2026-08-28 the immediate predecessor's archive
+    was unreachable, the search fell back to a 48 h-stale wave field, and
+    SCHISM aborted in bktrk_subs. The operational cold-start run of the
+    same cycle, same forcing, passed. Cold start is a safe known fallback;
+    a two-day-old wave field driving radiation stress is not.
+    """
+
+    def test_default_window_is_one_cycle(self) -> None:
+        from nos_workflow.runners.schism_ufs import stage_files
+        assert stage_files._DEFAULT_NOWCAST_WARM_START_BACK_HOURS == 24
+
+    def test_default_used_when_env_unset(self, monkeypatch) -> None:
+        from nos_workflow.runners.schism_ufs import stage_files
+        monkeypatch.delenv("WAV_NOWCAST_WARM_START_BACK_HOURS", raising=False)
+        assert stage_files._nowcast_warm_start_back_hours() == 24
+
+    def test_env_can_widen_it_deliberately(self, monkeypatch) -> None:
+        """Reaching further stays possible, it is just no longer the default."""
+        from nos_workflow.runners.schism_ufs import stage_files
+        monkeypatch.setenv("WAV_NOWCAST_WARM_START_BACK_HOURS", "48")
+        assert stage_files._nowcast_warm_start_back_hours() == 48
+
+    def test_junk_env_falls_back_to_the_default(self, monkeypatch) -> None:
+        from nos_workflow.runners.schism_ufs import stage_files
+        monkeypatch.setenv("WAV_NOWCAST_WARM_START_BACK_HOURS", "not-a-number")
+        assert stage_files._nowcast_warm_start_back_hours() == 24

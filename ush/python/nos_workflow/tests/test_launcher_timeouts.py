@@ -15,6 +15,7 @@ for a job that finished three minutes later with Exit_status = 0.
 """
 from __future__ import annotations
 
+import fnmatch
 import re
 from pathlib import Path
 
@@ -258,3 +259,145 @@ def test_ci_run_stage_timeout_covers_slurm_card_walltime(stage):
         f"{card.name}'s walltime={walltime}s: run_stage.sh would report "
         f"FAIL while the Slurm job is still legitimately running"
     )
+class TestWarmLauncherStagesInputsOnly:
+    """The warm launcher stages prep's inputs, not the run's outputs.
+
+    The nowcast reads its inputs from $COMOUT, so the scratch tree has to be
+    seeded from the operational one -- but only with what prep produced. A
+    plain `rsync -a` also copied the SCHISM restarts the run writes rather
+    than reads, this cycle's own wave restart archive, and every post
+    product: 86 GB against roughly 20 GB of real inputs, growing daily as
+    post writes more.
+
+    Both directions are pinned here. Asserting only that certain excludes
+    exist would let a new one that swallows the hotstart pass, and asserting
+    only that the hotstart survives would let an exclude quietly disappear.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+
+    # Every post product enabled in parm/systems/secofs_ufs.yaml, plus the
+    # run's own restarts. Keep in step with that file's `post.products`.
+    _REQUIRED_EXCLUDES = (
+        "*.rst.*.nc",              # SCHISM restarts the run writes, ~18 GB each
+        "*restart_outputs",        # SCHISM run output directory
+        "*wave_restart",           # this cycle's own wave restart, ~7 GB
+        "*stations*.nc",           # stations_nc, stations_mllw
+        "*station.profile*.nc",    # profiles
+        "*outputs.post.json",      # post manifest
+        "*.fields.*.nc",           # fields_nc
+        "*.field2d.*.nc",          # slab2d
+        "*.adcirc.*",              # adcirc
+        "*.gpkg",                  # geopkg, 54 files
+        "*maxele*",                # maxele
+    )
+
+    # Representative prep-produced inputs the nowcast stages. If any exclude
+    # glob matches one of these, staging fails.
+    _MUST_KEEP = (
+        "secofs_ufs_ww3.t12z.20260825.init.nowcast.nc",
+        "secofs_ufs_ww3.t12z.20260825.init.nowcast.nc.provenance.json",
+        "secofs_ufs_ww3.t12z.nest.ww3",
+        "secofs_ufs_ww3.t12z.ufs.configure",
+        "secofs_ufs_ww3.t12z.20260825.bctides.in.nowcast",
+        "secofs_ufs_ww3.t12z.20260825.bctides.in.forecast",
+        "secofs_ufs_ww3.t12z.20260825.river.th.tar",
+        "secofs_ufs_ww3.t12z.20260825.obc.nowcast.tar",
+        "secofs_ufs_ww3.t12z.20260825.nwm.source.sink.now.tar",
+        "secofs_ufs_ww3.t12z.20260825.inputs.nowcast.json",
+        "secofs_ufs_ww3.t12z.datm.streams",
+        "secofs_ufs_ww3.t12z.datm_in",
+        "secofs_ufs_ww3.t12z.model_configure",
+        "secofs_ufs_ww3.t12z.ww3_bound.inp",
+        "secofs_ufs_ww3.t12z.forecast_outputs",   # prep-produced; near restart_outputs
+        "secofs_ufs_ww3.source_sink.in",
+        "base_date.t12z",
+        "time_hotstart.t12z",
+        "time_nowcastend.t12z",
+    )
+
+    def _configured_excludes(self) -> list:
+        return re.findall(r"--exclude='([^']+)'", self._WARM.read_text())
+
+    def test_every_required_output_pattern_is_excluded(self) -> None:
+        configured = set(self._configured_excludes())
+        missing = [p for p in self._REQUIRED_EXCLUDES if p not in configured]
+        assert not missing, f"staging no longer excludes: {missing}"
+
+    def test_no_exclude_matches_a_prep_produced_input(self) -> None:
+        """The real contract: whatever the globs are, they must not eat an input.
+
+        A pattern such as `*.nc`, `*nowcast*.nc` or `*init.nowcast.nc` would
+        pass a list-of-strings check while dropping the hotstart and failing
+        the run at staging.
+        """
+        configured = self._configured_excludes()
+        for name in self._MUST_KEEP:
+            hit = [g for g in configured if fnmatch.fnmatch(name, g)]
+            assert not hit, f"exclude {hit} would drop required input {name}"
+
+
+class TestWarmLauncherCronEnvironment:
+    """The warm launcher has to work under cron, not just interactively.
+
+    cron gives a minimal PATH with no PBS binaries. Three consecutive
+    nightly runs staged their scratch tree and then died with
+    `qsub: command not found`, having already spent the copy. The
+    operational launcher sets PATH explicitly for the same reason.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+    _OPS = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3.sh"
+
+    def test_pbs_bin_is_on_path(self) -> None:
+        txt = self._WARM.read_text()
+        assert "export PATH=" in txt
+        assert "/opt/pbs" in txt, "PBS bin must be prepended for cron"
+
+    def test_matches_the_operational_launcher(self) -> None:
+        """Same PATH line as its sibling, so the two cannot drift."""
+        def path_line(p):
+            return next((l.strip() for l in p.read_text().splitlines()
+                         if l.startswith("export PATH=")), None)
+        assert path_line(self._WARM) == path_line(self._OPS)
+
+    def test_qsub_is_checked_before_the_staging_copy(self) -> None:
+        """Fail in seconds, not after a multi-GB rsync."""
+        txt = self._WARM.read_text()
+        guard = txt.index("command -v qsub")
+        stage = txt.index("rsync -a")
+        assert guard < stage, "the qsub guard must come before staging"
+
+
+class TestWarmLauncherPredecessorLink:
+    """Seeding the chain must not be blocked by a leftover staged directory.
+
+    A run that stages and then fails leaves a real directory under the
+    scratch root with no wave_restart in it, because staging excludes the
+    archives. `ln -sfn` cannot replace a directory -- it drops the link
+    inside it -- so the predecessor stays invisible and the workflow's
+    back-search walks past it to a staler cycle. That is how the 20260828
+    run came to warm-start from a 48 h-stale wave field and abort in
+    bktrk_subs while the operational cold run of the same cycle passed.
+    """
+
+    _WARM = _ROOT / "pbs" / "secofs_ufs_ww3" / "launch_secofs_ufs_ww3_warm.sh"
+
+    def test_leftover_directory_is_cleared_before_linking(self) -> None:
+        txt = self._WARM.read_text()
+        clear = txt.find('rm -rf "$_stale"')
+        link = txt.find('ln -sfn "$P/com/nos/secofs_ufs_ww3.$PREV"')
+        assert clear != -1, "no leftover-directory cleanup before the predecessor link"
+        assert link != -1
+        assert clear < link, "the leftover must be cleared before ln -sfn, not after"
+
+    def test_removal_is_guarded(self) -> None:
+        """rm -rf is confined to $ROOT, to a real directory, holding no archive."""
+        txt = self._WARM.read_text()
+        assert 'case "$_stale" in' in txt and '"$ROOT"/*' in txt
+        assert '[ ! -L "$_stale" ]' in txt, "must not delete through a symlink"
+        assert 'wave_restart" ]; then' in txt, "must not delete a directory that holds restarts"
+
+    def test_link_result_is_verified(self) -> None:
+        """Linking can still fail to expose the archive; say so rather than assume."""
+        assert "still not visible at $ROOT" in self._WARM.read_text()

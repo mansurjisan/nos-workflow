@@ -977,6 +977,18 @@ def _fields_deflate(raw: object) -> str:
     return str(level) if 0 <= level <= 9 else "0"
 
 
+def _option_bool(raw: object, default: bool) -> bool:
+    """yes/true/1 vs no/false/0, as a yaml bool or a string."""
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in ("yes", "true", "1"):
+        return True
+    if text in ("no", "false", "0"):
+        return False
+    return default
+
+
 def _read_fields_result(result_json: Path) -> List[str]:
     """Created-file list from the fields worker's result json."""
     try:
@@ -996,11 +1008,16 @@ class FieldsNcProduct(PostProduct):
     LD_PRELOAD rationale as the stations combine). Skips cleanly when
     the run stages did not stage field files (``post.archive_fields``
     off).
+    ``publish: false`` runs the split only and publishes nothing. MJ (09/05/26)
     """
 
     name = "fields_nc"
 
     def produce(self, ctx: ProductContext) -> ProductResult:
+        publish = _option_bool(
+            self.option(ctx, "publish", default=True, env_key="POST_FIELDS_PUBLISH"),
+            default=True,
+        )
         outputs: List[str] = []
         staged_any = False
         failed_phases: List[str] = []
@@ -1019,25 +1036,28 @@ class FieldsNcProduct(PostProduct):
             work = ctx.data / f"post_fields_{phase}"
             work.mkdir(parents=True, exist_ok=True)
             result_json = work / "fields_result.json"
+            argv = [
+                "python3", "-m", "nos_workflow.post.products.fields",
+                "--staging", str(staging),
+                "--comout", str(ctx.comout),
+                "--prefix", ctx.prefix_nos,
+                "--cyc", ctx.cyc,
+                "--pdy", ctx.pdy,
+                "--phase", phase,
+                "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
+                "--deflate", _fields_deflate(
+                    self.option(
+                        ctx, "deflate", default="0",
+                        env_key="POST_FIELDS_DEFLATE",
+                    )
+                ),
+                "--combine-script", str(ctx.combine_script),
+                "--result-json", str(result_json),
+            ]
+            if not publish:
+                argv.append("--split-only")
             rc = _run_subprocess_appending(
-                [
-                    "python3", "-m", "nos_workflow.post.products.fields",
-                    "--staging", str(staging),
-                    "--comout", str(ctx.comout),
-                    "--prefix", ctx.prefix_nos,
-                    "--cyc", ctx.cyc,
-                    "--pdy", ctx.pdy,
-                    "--phase", phase,
-                    "--nowcast-hours", _len_nowcast_hours(ctx.shell_env),
-                    "--deflate", _fields_deflate(
-                        self.option(
-                            ctx, "deflate", default="0",
-                            env_key="POST_FIELDS_DEFLATE",
-                        )
-                    ),
-                    "--combine-script", str(ctx.combine_script),
-                    "--result-json", str(result_json),
-                ],
+                argv,
                 cwd=work,
                 log_path=ctx.pgmout,
                 scrub_ld_preload=True,
@@ -1063,6 +1083,13 @@ class FieldsNcProduct(PostProduct):
                 status="failed",
                 outputs=outputs,
                 detail="worker failed for: " + ", ".join(failed_phases),
+            )
+        if not publish:
+            return ProductResult(
+                name=self.name,
+                status="ok",
+                outputs=outputs,
+                detail="split only, nothing published",
             )
         return ProductResult(name=self.name, status="ok", outputs=outputs)
 
