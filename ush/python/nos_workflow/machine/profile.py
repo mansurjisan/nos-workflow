@@ -3,7 +3,7 @@
 A profile owns machine facts (cores per node, scheduler dialect, launcher
 syntax). System YAMLs own science (nprocs, nscribes, walltime). Nothing in a
 profile is scheduler syntax the caller has to assemble by hand -- see
-``nos_workflow.platform.render``.
+``nos_workflow.machine.render``.
 
 Deployment credentials (account, qos, partition) resolve through:
 

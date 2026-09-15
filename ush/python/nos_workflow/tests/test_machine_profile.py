@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[4]
 MACHINES = REPO / "parm" / "machines"
 
 sys.path.insert(0, str(REPO / "ush" / "python"))
-from nos_workflow.platform import (  # noqa: E402
+from nos_workflow.machine import (  # noqa: E402
     JobSpec, KIND_MODEL, KIND_SERIAL, MachineProfile, ProfileError,
     available_machines, render_directives, render_mpi_argv,
 )

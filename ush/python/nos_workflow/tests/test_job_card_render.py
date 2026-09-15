@@ -8,8 +8,8 @@ Two guarantees, both required before PBS syntax leaves the system YAMLs:
 2. A frozen normalized snapshot of directives + launcher argv, so any later
    change is a visible diff rather than a discovery on WCOSS2.
 
-The (system, stage) -> JobSpec mapping lives in ``nos_workflow.platform.jobs``
-so the submit CLI (``python3 -m nos_workflow.platform card ...``) renders the
+The (system, stage) -> JobSpec mapping lives in ``nos_workflow.machine.jobs``
+so the submit CLI (``python3 -m nos_workflow.machine card ...``) renders the
 exact same cards this test freezes, rather than a second hand-copy of them.
 
 Regenerate the snapshot deliberately:
@@ -29,10 +29,10 @@ REPO = Path(__file__).resolve().parents[4]
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "job_cards_wcoss2.json"
 
 sys.path.insert(0, str(REPO / "ush" / "python"))
-from nos_workflow.platform import (  # noqa: E402
+from nos_workflow.machine import (  # noqa: E402
     JobSpec, KIND_MODEL, MachineProfile, render_directives, render_mpi_argv,
 )
-from nos_workflow.platform import jobs  # noqa: E402
+from nos_workflow.machine import jobs  # noqa: E402
 
 CATALOG_KEYS = sorted(jobs.CATALOG.keys())
 

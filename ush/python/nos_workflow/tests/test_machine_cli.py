@@ -1,4 +1,4 @@
-"""``python3 -m nos_workflow.platform`` -- the submit-side CLI end to end.
+"""``python3 -m nos_workflow.machine`` -- the submit-side CLI end to end.
 
 Runs the module as a real subprocess (not an in-process import) so this
 proves what ``ush/nos_run.sh`` and generated job cards actually invoke.
@@ -17,7 +17,7 @@ USH_PYTHON = REPO / "ush" / "python"
 
 def _run(args, env=None):
     return subprocess.run(
-        [sys.executable, "-m", "nos_workflow.platform", *args],
+        [sys.executable, "-m", "nos_workflow.machine", *args],
         capture_output=True, text=True, cwd=str(USH_PYTHON), env=env,
     )
 
@@ -60,8 +60,8 @@ def test_card_matches_render_directives_directly():
     """The CLI is a thin wrapper: card output must equal calling
     render_directives/build_job_spec in-process for the same (system, stage)."""
     sys.path.insert(0, str(USH_PYTHON))
-    from nos_workflow.platform import MachineProfile, render_directives
-    from nos_workflow.platform import jobs
+    from nos_workflow.machine import MachineProfile, render_directives
+    from nos_workflow.machine import jobs
 
     profile = MachineProfile.load("wcoss2", machines_dir=REPO / "parm" / "machines")
     expected = render_directives(jobs.build_job_spec("secofs_ufs", "prep", REPO), profile)

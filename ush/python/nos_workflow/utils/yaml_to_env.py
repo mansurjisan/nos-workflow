@@ -103,7 +103,7 @@ def _machine_profile():
     try:
         if __package__ in (None, ""):
             sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-        from nos_workflow.platform.profile import MachineProfile
+        from nos_workflow.machine.profile import MachineProfile
 
         return MachineProfile.load(validate=False)
     except Exception as exc:  # missing profile, bad schema, no PyYAML

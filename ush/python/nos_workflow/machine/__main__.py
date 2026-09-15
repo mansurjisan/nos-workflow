@@ -1,4 +1,4 @@
-"""Submit-side CLI: ``python3 -m nos_workflow.platform <card|mpi> ...``.
+"""Submit-side CLI: ``python3 -m nos_workflow.machine <card|mpi> ...``.
 
 The one caller ``render_directives``/``render_mpi_argv`` were missing: shell
 job cards print a scheduler header with ``card``, and ``ush/nos_run.sh``
@@ -54,7 +54,7 @@ def _mpi(args: argparse.Namespace) -> int:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="python3 -m nos_workflow.platform",
+        prog="python3 -m nos_workflow.machine",
         description="Machine-aware scheduler headers and MPI launch lines.",
     )
     sub = parser.add_subparsers(dest="command", required=True)
