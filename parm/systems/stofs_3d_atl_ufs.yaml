@@ -7,14 +7,15 @@ system:
   description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
   region: atlantic
   framework: stofs_ufs  # coupled path; keeps STOFS legacy river/OBC/tidal prep. MJ (09/05/26)
-  version: "3.1.1"
+  version: "3.1.5"
   prefix: stofs_3d_atl_ufs
 
 execution:
   mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
 
-# The standalone overlay below holds only the keys that differ in that mode. MJ (09/05/26)
-# Mesh/grid is the shared v2.1 block below and is intentionally NOT duplicated.
+# Standalone-SCHISM overlay (consumed only when execution.mode == standalone).
+# 4314 compute ranks (v3.1 mesh) + 6 scribes = 4320; PBS 36x120 = 4320 (parity packing).
+# Mesh/grid is the shared v3.1 grid block below and is intentionally NOT duplicated.
 standalone:
   nws: 2
   executable: pschism_WCOSS2
@@ -27,12 +28,24 @@ prep:
     st_lawrence: true
     obc_dynamic_adjust: true
 
-# Mesh is v2.1; the v3.1.1 mesh implied by system.version is not deployed. MJ (09/05/26)
+# Grid configuration — v3.1 operational STOFS-3D-ATL mesh. NOAA ops moved
+# v2.1 -> v3.1; n_nodes/n_elements below are the v3.1 mesh counts (nvrt=49
+# is unchanged from v2.1). The v2.1-era partition.prop this yaml previously
+# documented (5654161 lines, max rank index 4313 -> 4314 OCN ranks) is STALE
+# and not carried forward — partition.prop MUST be regenerated against the
+# v3.1 hgrid before running (see the NO_PARMETIS note above).
+# n_sides is left null (see grid block below) rather than carrying forward
+# the stale v2.1 value (8580540) -- it is not a simple function of
+# n_nodes/n_elements alone (SCHISM meshes mix tri/quad elements), so it
+# cannot be derived here and must be measured from the real v3.1 hgrid.
+# (Earlier YAML revisions had also assumed an unrelated, never-deployed
+# "v3.1.1" mesh with n_nodes=1813443, n_levels=51 — not to be confused with
+# the real v3.1 operational mesh used here.)
 grid:
   type: unstructured
-  n_nodes: 2926236
-  n_elements: 5654157
-  n_sides: 8580540
+  n_nodes: 3052121
+  n_elements: 5872610
+  n_sides: null  # ns_global computed by SCHISM at runtime; real v3.1 value to be measured from the fetched hgrid
   n_levels: 49
   files:
     horizontal: stofs_3d_atl_ufs.hgrid.gr3
@@ -97,7 +110,10 @@ forcing:
     enabled: true
     primary: rtofs
     obc:
-      # Excludes the St-Lawrence flow segment (iettype 0): 778 nodes, not 781. MJ (09/05/26)
+      # iettype-4/5 elevation segments; excludes the iettype-0 St-Lawrence flow
+      # segment so OBC *.th.nc nOpenBndNodes=778 (not 781). Read by nos-utils
+      # from_yaml. FLAGGED: these node counts are v2.1-mesh-derived and have
+      # NOT been reverified against the v3.1 mesh's boundary segments.
       elev_segments: [0, 1]
       wl_source: RTOFS
       ts_source: RTOFS
@@ -227,7 +243,7 @@ ufs_coastal:
 output:
   format: netcdf
   prefix: stofs_3d_atl_ufs
-  nstation: 184
+  nstation: 166
   stations:
     enabled: true
     interval: 300
@@ -494,7 +510,7 @@ ensemble:
   # Same PBS select as deterministic; longer walltime for combined nowcast+forecast.
   resources:
     walltime: "08:00:00"
-    total_tasks: 2914
+    total_tasks: 4434
     nscribes: 0
   post_resources:
     walltime: "01:00:00"

@@ -1174,6 +1174,21 @@ class AdcircProduct(NosUtilsProduct):
         return args
 
 
+def _resolve_datum_nco(ctx: ProductContext, ops: str) -> Optional[Path]:
+    """The staged xGEOID20B->target-datum .nco, msl stem first.
+
+    Shared by points_cwl and profiles, whose ``--datum-offsets`` both
+    point at the same staged file. Current ops publishes the ``_msl``
+    file (v3.1); the older lineage used ``_navd`` -- try both, newest
+    first. Returns None when neither is staged.
+    """
+    for stem in ("sta_cwl_xgeoid_to_msl.nco", "sta_cwl_xgeoid_to_navd.nco"):
+        nco = fix_file(ctx, stem, f"{ops}_{stem}")
+        if nco is not None:
+            return nco
+    return None
+
+
 def _elev_metadata_claims_a_datum(var_defs_path: Path) -> bool:
     """True when the staout-nc JSON's first (elevation) entry names a
     vertical datum (NAVD88/MSL) in its long_name/standard_name.
@@ -1230,13 +1245,7 @@ class PointsCwlProduct(NosUtilsProduct):
         # The station JSON labels zeta with a datum (NAVD88 on the ATL
         # fix set) that is only true AFTER the ops ncap2 shift, so the
         # .nco must be applied whenever the metadata claims one.
-        # Current ops uses the _msl file; the older lineage used _navd --
-        # try both, newest first.
-        nco = None
-        for stem in ("sta_cwl_xgeoid_to_msl.nco", "sta_cwl_xgeoid_to_navd.nco"):
-            nco = fix_file(ctx, stem, f"{ops}_{stem}")
-            if nco is not None:
-                break
+        nco = _resolve_datum_nco(ctx, ops)
         if nco is not None:
             args += ["--datum-offsets", str(nco)]
         elif _elev_metadata_claims_a_datum(var_defs):
@@ -1379,6 +1388,12 @@ class ProfilesProduct(NosUtilsProduct):
     A station outside the mesh fails the phase, as the ops driver does;
     ``NOS_PROFILES_OUTSIDE=nearest`` opts into pylib's nearest-node
     fallback instead (see the worker).
+
+    Also resolves the xGEOID20B->MSL ``.nco`` the same way
+    ``PointsCwlProduct`` does (msl stem first, navd fallback) and
+    passes it as ``--datum-offsets``; with none staged, zeta publishes
+    on the model datum with an honest label rather than a false MSL
+    claim.
     """
 
     name = "profiles"
@@ -1396,7 +1411,7 @@ class ProfilesProduct(NosUtilsProduct):
         # that has no vertical output is noise, not a signal.
         if not has_3d_stacks(staging) or None in (hgrid, vgrid, station):
             return None
-        return [
+        args = [
             "--staging", str(staging),
             "--comout", str(ctx.comout),
             "--prefix", ctx.prefix_nos,
@@ -1414,6 +1429,22 @@ class ProfilesProduct(NosUtilsProduct):
                 )
             ),
         ]
+        # zeta is labeled MSL only when this .nco is actually applied
+        # (see nos_utils.post.profiles); with none staged the worker
+        # falls back to an honest model-datum label, so this is
+        # advisory, not the ops-parity "expect a bias" warning
+        # points_cwl raises when its metadata falsely claims a datum.
+        nco = _resolve_datum_nco(ctx, ops)
+        if nco is not None:
+            args += ["--datum-offsets", str(nco)]
+        else:
+            logger.info(
+                "profiles: no xgeoid->datum .nco staged under %s; "
+                "publishing zeta on the model datum (stage the .nco for "
+                "MSL-labeled output).",
+                ctx.fixofs,
+            )
+        return args
 
 
 @register
