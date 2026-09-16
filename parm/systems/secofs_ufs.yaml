@@ -380,10 +380,8 @@ ensemble:
       distribution: log_uniform
       description: "Background tracer diffusivity (m2/s)"
   resources:
-    select: "select=25:ncpus=128:mpiprocs=120"   # must cover total_tasks (2914) MJ (09/05/26)
     walltime: "05:30:00"
   post_resources:
-    select: "select=1:ncpus=8:mpiprocs=8"
     walltime: "01:00:00"
 
 legacy:

@@ -67,7 +67,6 @@ model:
 resources:
   nprocs: 5520
   nscribes: 0
-  select: "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
   # Documentation only -- no consumer in ush/, and PBS cards request no mem=.
   # Never sized against a real wave-coupled run.
   memory_gb: 4000
