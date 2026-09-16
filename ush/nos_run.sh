@@ -25,6 +25,33 @@
 #    TOTAL_TASKS, PPN, NDATE, NHOUR
 ###############################################################################
 
+# _mpi_launch_prefix <ntasks> <ppn> - the launcher command line for
+#   $NOS_MACHINE ("mpiexec -n N -ppn P --cpu-bind core" on WCOSS2, "srun -n N
+#   --label" on Hercules), via the machine CLI so this never drifts from
+#   parm/machines/$NOS_MACHINE.yaml. On WCOSS2, falls back to the historical
+#   WCOSS2 mpiexec string (with a warning) if the CLI is unavailable, so a
+#   degraded PYTHONPATH degrades gracefully under set -e rather than
+#   aborting the run. On any other machine there is no safe fallback string
+#   (the WCOSS2 mpiexec form is wrong under Slurm) -- print FATAL and return
+#   1 so the caller aborts instead of launching the model with a bogus or
+#   empty launch prefix.
+_mpi_launch_prefix() {
+    local ntasks=$1
+    local ppn=${2:-120}
+    local line
+    line=$(python3 -m nos_workflow.machine mpi --ranks "${ntasks}" 2>/dev/null) || line=""
+    if [ -z "${line}" ]; then
+        if [ "${NOS_MACHINE:-wcoss2}" = "wcoss2" ]; then
+            echo "WARNING: nos_workflow.machine mpi CLI unavailable; falling back to the WCOSS2 mpiexec default" >&2
+            line="mpiexec -n ${ntasks} -ppn ${ppn} --cpu-bind core"
+        else
+            echo "FATAL: nos_workflow.machine mpi CLI unavailable and no safe fallback for machine '${NOS_MACHINE}'" >&2
+            return 1
+        fi
+    fi
+    echo "${line}"
+}
+
 # _schism_run_mpi <phase> - mpiexec wrapper for UFS-Coastal. Stays in shell
 #   because `module load` (cray-pals, intel-*, hpc-stack) does not survive a
 #   Python subprocess; callers from Python invoke this helper directly via
@@ -56,9 +83,11 @@ _schism_run_mpi() {
             done
         fi
         local NSCRIBES=${NSCRIBES:-6}
+        local _mpi_launch
+        _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}") || return 1
         echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"
-        echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}"
-        mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${SCHISM_EXEC} ${NSCRIBES}
+        echo "  ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}"
+        ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}
         local rc=$?
         echo "_schism_run_mpi: mpiexec returned rc=${rc}"
         return ${rc}
@@ -103,9 +132,11 @@ _schism_run_mpi() {
         fi
     fi
 
+    local _mpi_launch
+    _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}") || return 1
     echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
-    echo "  mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}"
-    mpiexec -n ${NTASKS} -ppn ${PPN} --cpu-bind core ${UFS_EXEC}
+    echo "  ${_mpi_launch} ${UFS_EXEC}"
+    ${_mpi_launch} ${UFS_EXEC}
     local rc=$?
     echo "_schism_run_mpi: mpiexec returned rc=${rc}"
     return ${rc}
@@ -244,10 +275,19 @@ _schism_run_combine_fields() {
     echo "_schism_run_combine_fields: phase=${phase} stacks=${_b}..${_e} (${_n})"
     local rc=1
     if [ -n "$MPI_EXE" ]; then
-        echo "  mpiexec -n ${_n} ${MPI_EXE} -b ${_b} -e ${_e}"
-        mpiexec -n ${_n} ${MPI_EXE} -b ${_b} -e ${_e}
-        rc=$?
-        [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
+        local _mpi_launch _mpi_attempted=0
+        if _mpi_launch=$(_mpi_launch_prefix "${_n}"); then
+            echo "  ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}"
+            ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
+            rc=$?
+            _mpi_attempted=1
+        else
+            echo "WARNING: MPI launch prefix unavailable; skipping MPI fields combine"
+        fi
+        # rc is pre-initialised to 1; only report it as a failure when an
+        # MPI attempt actually ran -- the skip case above already explains
+        # itself.
+        [ $_mpi_attempted -eq 1 ] && [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
     fi
     if [ $rc -ne 0 ] && [ -n "$SERIAL_EXE" ]; then
         echo "  ${SERIAL_EXE} -b ${_b} -e ${_e} (serial)"

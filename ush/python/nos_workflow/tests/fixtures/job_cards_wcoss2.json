@@ -1,0 +1,207 @@
+{
+  "pbs/jnos_forecast_00.pbs": {
+    "directives": [
+      "#PBS  -N secofs_ufs_fc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120",
+      "#PBS  -l walltime=05:30:00"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "2914",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 25,
+    "total_ranks": 2914
+  },
+  "pbs/jnos_nowcast_00.pbs": {
+    "directives": [
+      "#PBS  -N secofs_ufs_nc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=25:ncpus=128:mpiprocs=120",
+      "#PBS  -l walltime=01:30:00"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "2914",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 25,
+    "total_ranks": 2914
+  },
+  "pbs/jnos_post_00.pbs": {
+    "directives": [
+      "#PBS  -N secofs_ufs_post_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -l select=1:ncpus=8:mpiprocs=8",
+      "#PBS  -l place=vscatter",
+      "#PBS  -l walltime=02:00:00"
+    ],
+    "nodes": 1,
+    "total_ranks": 1
+  },
+  "pbs/jnos_prep_00.pbs": {
+    "directives": [
+      "#PBS  -N secofs_ufs_prep_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l select=1:ncpus=8:mpiprocs=8",
+      "#PBS  -l place=vscatter",
+      "#PBS  -l walltime=02:00:00"
+    ],
+    "nodes": 1,
+    "total_ranks": 1
+  },
+  "pbs/stofs_3d_atl_ufs/jnos_forecast_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_fc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l walltime=05:30:00"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "4434",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 37,
+    "total_ranks": 4434
+  },
+  "pbs/stofs_3d_atl_ufs/jnos_nowcast_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_nc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l walltime=01:30:00"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "4434",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 37,
+    "total_ranks": 4434
+  },
+  "pbs/stofs_3d_atl_ufs/jnos_post_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_post_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -l select=1:ncpus=8:mpiprocs=8",
+      "#PBS  -l place=vscatter",
+      "#PBS  -l walltime=02:00:00"
+    ],
+    "nodes": 1,
+    "total_ranks": 1
+  },
+  "pbs/stofs_3d_atl_ufs/jnos_prep_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_prep_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l select=1:ncpus=8:mpiprocs=8",
+      "#PBS  -l place=vscatter",
+      "#PBS  -l walltime=02:00:00"
+    ],
+    "nodes": 1,
+    "total_ranks": 1
+  },
+  "pbs/stofs_3d_atl_ufs_standalone/jnos_forecast_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_sa_fc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l walltime=05:00:00",
+      "#PBS  -l debug=true"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "4320",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 36,
+    "total_ranks": 4320
+  },
+  "pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_sa_nc_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l walltime=05:00:00"
+    ],
+    "mpi_argv": [
+      "mpiexec",
+      "-n",
+      "4320",
+      "-ppn",
+      "120",
+      "--cpu-bind",
+      "core",
+      "MODEL.exe"
+    ],
+    "nodes": 36,
+    "total_ranks": 4320
+  },
+  "pbs/stofs_3d_atl_ufs_standalone/jnos_prep_00.pbs": {
+    "directives": [
+      "#PBS  -N stofs_3d_atl_ufs_sa_prep_00",
+      "#PBS  -A ESTOFS-DEV",
+      "#PBS  -q dev",
+      "#PBS  -o /dev/null",
+      "#PBS  -e /dev/null",
+      "#PBS  -l select=1:ncpus=8:mpiprocs=8",
+      "#PBS  -l place=vscatter",
+      "#PBS  -l walltime=05:00:00"
+    ],
+    "nodes": 1,
+    "total_ranks": 1
+  }
+}

@@ -1,0 +1,332 @@
+// Note: adding a label does NOT create a new PR revision, so periodic scan
+// may not rebuild automatically -- push a commit, or click Build Now / Scan Repository Now.
+
+// On a PR build, statuses must target the PR head SHA -- env.GIT_COMMIT is the ephemeral PR-merge commit, which 422s once the merge ref moves.
+def resolveTargetSha() {
+    if (!env.CHANGE_ID?.trim()) {
+        return env.GIT_COMMIT ?: ''
+    }
+    try {
+        return pullRequest.head
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+        throw fie
+    } catch (err) {
+        echo "resolveTargetSha: warning - pullRequest.head unavailable (${err}), falling back to GitHub API"
+    }
+    try {
+        def sha = ''
+        withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+            withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
+                sha = sh(
+                    script: '''
+                        set -e
+                        BODY=$(printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
+                            -H "Accept: application/vnd.github+json" \
+                            "https://api.github.com/repos/mansurjisan/nos-workflow/pulls/${GH_CHANGE_ID}")
+                        printf '%s' "${BODY}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head"]["sha"])'
+                    ''',
+                    returnStdout: true
+                ).trim()
+            }
+        }
+        return sha
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+        throw fie
+    } catch (apiErr) {
+        echo "resolveTargetSha: warning - GitHub API PR lookup also failed (${apiErr}), no target SHA available"
+        return ''
+    }
+}
+
+def postStatus(String state, String description) {
+    try {
+        def targetSha = resolveTargetSha()
+        if (!targetSha?.trim()) {
+            echo "postStatus: warning - no target SHA resolved, skipping GitHub status post"
+            return
+        }
+        withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+            withEnv(["GH_STATE=${state}", "GH_DESC=${description}", "GH_COMMIT=${targetSha}", "GH_BUILD_URL=${env.BUILD_URL ?: ''}"]) {
+                sh '''
+                    payload=$(python3 -c 'import json,os; print(json.dumps({"state":os.environ["GH_STATE"],"context":"hercules-ci/cycle","description":os.environ["GH_DESC"][:140],"target_url":os.environ["GH_BUILD_URL"]}))')
+                    printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
+                        -X POST \
+                        -H "Accept: application/vnd.github+json" \
+                        "https://api.github.com/repos/mansurjisan/nos-workflow/statuses/${GH_COMMIT}" \
+                        --data "${payload}" >/dev/null
+                '''
+            }
+        }
+    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+        throw fie
+    } catch (err) {
+        echo "postStatus: warning - failed to post GitHub commit status '${state}' (${err})"
+    }
+}
+
+pipeline {
+    // Hardcoded to this node's label; re-parameterize (NODE_LABEL param) if EPIC's label differs.
+    agent { label 'hercules-nos' }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+        timeout(time: 16, unit: 'HOURS')
+    }
+
+    parameters {
+        string(name: 'NOS_CI_ROOT', defaultValue: '/work2/noaa/nosofs/role-nosofs/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
+        string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
+        string(name: 'SEED_RT', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow-rt', description: 'Source of frozen regression-test datasets the Bootstrap stage copies from (DATA_MODE=frozen only; must be world-readable)')
+        choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
+        string(name: 'SLURM_ACCOUNT', defaultValue: 'nosofs', description: 'Slurm account CI charges (CLI override of the cards\' nos-surge; must be valid for the agent account)')
+        string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
+        string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
+        string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
+    }
+
+    environment {
+        PACKAGEROOT  = "${params.NOS_CI_ROOT}"
+        VENV_PATH    = "${params.NOS_CI_ROOT}/nos-venv"
+        RT_DATA_ROOT = "${params.NOS_CI_ROOT}/nos-workflow-rt"
+        NOS_PTMP     = "${params.NOS_CI_ROOT}/ptmp"
+        SEED_SRC     = "${params.SEED_SRC}"
+        SEED_RT      = "${params.SEED_RT}"
+        SLURM_CI_ACCOUNT = "${params.SLURM_ACCOUNT}"
+        SLURM_CI_QOS     = "${params.SLURM_QOS}"
+        DATA_MODE    = "${params.DATA_MODE}"
+        PDY          = "${params.PDY}"
+        CYC          = "${params.CYC}"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+        stage('Gate') {
+            steps {
+                script {
+                    def gateLookupFailed = false
+                    if (!env.CHANGE_ID?.trim()) {
+                        env.RUN_CYCLE = 'true'
+                        echo "Gate: not a PR build (CHANGE_ID unset) - cycle will run"
+                    } else {
+                        def hasLabel = false
+                        def labelSource = 'pullRequest.labels'
+                        try {
+                            hasLabel = pullRequest.labels.contains('hercules-nos-RT')
+                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+                            throw fie
+                        } catch (err) {
+                            echo "Gate: pullRequest.labels unavailable (${err}), falling back to GitHub API"
+                            labelSource = 'GitHub API'
+                            try {
+                                withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+                                    withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
+                                        def labelsJson = sh(
+                                            script: '''
+                                                printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
+                                                    -H "Accept: application/vnd.github+json" \
+                                                    "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels"
+                                            ''',
+                                            returnStdout: true
+                                        ).trim()
+                                        hasLabel = labelsJson.contains('"name":"hercules-nos-RT"') || labelsJson.contains('"name": "hercules-nos-RT"')
+                                    }
+                                }
+                            } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+                                throw fie
+                            } catch (apiErr) {
+                                echo "Gate: warning - GitHub API label lookup also failed (${apiErr}), defaulting to no run"
+                                hasLabel = false
+                                labelSource = 'none (both lookups failed)'
+                                gateLookupFailed = true
+                            }
+                        }
+                        env.RUN_CYCLE = hasLabel ? 'true' : 'false'
+                        echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
+                    }
+                    if (env.RUN_CYCLE == 'true') {
+                        // mkdir (no -p) is atomic, so it doubles as a mutex against concurrent cycles sharing NOS_CI_ROOT.
+                        def lockResult
+                        withEnv(["CI_LOCK_ROOT=${params.NOS_CI_ROOT}"]) {
+                            lockResult = sh(
+                                script: '''
+                                    mkdir -p "${CI_LOCK_ROOT}"
+                                    LOCK_DIR="${CI_LOCK_ROOT}/.ci-lock"
+                                    NOW=$(date +%s)
+                                    try_acquire() {
+                                        if mkdir "${LOCK_DIR}" 2>/dev/null; then
+                                            printf '%s %s' "${BUILD_URL}" "${NOW}" > "${LOCK_DIR}/info"
+                                            return 0
+                                        fi
+                                        return 1
+                                    }
+                                    if try_acquire; then
+                                        echo "ACQUIRED"
+                                        exit 0
+                                    fi
+                                    INFO=$(cat "${LOCK_DIR}/info" 2>/dev/null)
+                                    LOCK_EPOCH=$(printf '%s' "${INFO}" | awk '{print $NF}')
+                                    AGE=$((NOW - ${LOCK_EPOCH:-0}))
+                                    if [ "${AGE}" -gt 64800 ]; then
+                                        echo "reclaiming stale CI lock (age ${AGE}s): ${INFO}" >&2
+                                        rm -rf "${LOCK_DIR}"
+                                        if try_acquire; then
+                                            echo "ACQUIRED"
+                                            exit 0
+                                        fi
+                                        echo "HELD:$(cat "${LOCK_DIR}/info" 2>/dev/null)"
+                                        exit 0
+                                    fi
+                                    echo "HELD:${INFO}"
+                                    exit 0
+                                ''',
+                                returnStdout: true
+                            ).trim()
+                        }
+                        if (lockResult == 'ACQUIRED') {
+                            env.CI_LOCK_HELD = 'true'
+                            echo "Gate: acquired CI lock at ${params.NOS_CI_ROOT}/.ci-lock"
+                        } else {
+                            error("another CI cycle holds the lock: ${lockResult.replaceFirst('^HELD:', '')}")
+                        }
+                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${params.CYC} ${params.DATA_MODE}")
+                    } else if (gateLookupFailed) {
+                        postStatus('error', 'hercules-ci gate could not read PR labels')
+                    }
+                }
+            }
+        }
+        stage('Bootstrap') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/bootstrap.sh"'
+            }
+        }
+        stage('Deploy') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/deploy.sh"'
+            }
+        }
+        stage('Environment Check') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/env_check.sh"'
+            }
+        }
+        stage('Stage Data') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
+            }
+        }
+        stage('Prep') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Nowcast') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Forecast') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Post') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
+            }
+        }
+        stage('Verify') {
+            when { environment name: 'RUN_CYCLE', value: 'true' }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
+            script {
+                if (env.CI_LOCK_HELD == 'true') {
+                    try {
+                        withEnv(["CI_LOCK_ROOT=${params.NOS_CI_ROOT}"]) {
+                            sh '''
+                                rm -rf "${CI_LOCK_ROOT}/.ci-lock" || true
+                            '''
+                        }
+                    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+                        throw fie
+                    } catch (err) {
+                        echo "post/always: warning - failed to release CI lock at ${params.NOS_CI_ROOT}/.ci-lock (${err})"
+                    }
+                }
+            }
+            script {
+                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true') {
+                    try {
+                        withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
+                            withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
+                                sh '''
+                                    printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
+                                        -X DELETE \
+                                        -H "Accept: application/vnd.github+json" \
+                                        "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels/hercules-nos-RT" >/dev/null
+                                '''
+                            }
+                        }
+                    } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException fie) {
+                        throw fie
+                    } catch (err) {
+                        echo "post/always: warning - failed to remove hercules-nos-RT label from PR #${env.CHANGE_ID} (${err})"
+                    }
+                }
+            }
+        }
+        unsuccessful {
+            // run_stage.sh writes the current jobid here; best-effort scancel it on failure.
+            sh '''
+                JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
+                if [ -s "${JIDFILE}" ]; then
+                    JID=$(cat "${JIDFILE}")
+                    echo "post/unsuccessful: scancel ${JID} (best-effort)"
+                    bash -l -c "scancel ${JID}" || true
+                fi
+            '''
+            script {
+                if (env.RUN_CYCLE == 'true') {
+                    postStatus('failure', "cycle ${params.PDY}/${params.CYC} FAILED — see build log")
+                }
+            }
+        }
+        success {
+            script {
+                if (env.RUN_CYCLE == 'true') {
+                    postStatus('success', "cycle ${params.PDY}/${params.CYC} PASS")
+                }
+            }
+            slackSend(channel: '#nos-notifications', color: 'good',
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+        }
+        failure {
+            slackSend(channel: '#nos-notifications', color: 'danger',
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+        }
+        aborted {
+            slackSend(channel: '#nos-notifications', color: 'warning',
+                message: "*ABORTED: ${env.JOB_NAME} #${env.BUILD_NUMBER}* <${env.BUILD_URL}|Open Build>")
+        }
+    }
+}

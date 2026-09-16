@@ -183,10 +183,15 @@ class TestSystemConfigs:
         assert grid.get("n_sides") is None
         assert grid.get("n_levels") == 49
 
-        # PBS select — operational ppn=120 + ompthreads=1 packing (37 nodes, 4440 >= 4434)
+        # Allocation is no longer authored here: PBS `select=` moved to
+        # parm/machines/ and the node count is derived as
+        # ceil(nprocs / ranks_per_node). test_job_card_render.py proves the
+        # derived value still reproduces the operational 37-node card.
         det = data.get("resources", {})
-        select_str = det.get("select")
-        assert select_str == "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
+        assert "select" not in det, (
+            "PBS syntax has moved to parm/machines/; resources.select is dead"
+        )
+        assert det.get("nprocs") == 4434
 
     def test_secofs_ufs_ww3_config(self, system_configs: Dict[str, Path]) -> None:
         """SECOFS-UFS-WW3 -- DATM+SCHISM+WW3 4-component coupled variant.
@@ -238,9 +243,14 @@ class TestSystemConfigs:
         assert merged["model"]["executable"] == "fv3_coastalSW.exe"
         assert merged["model"]["runtime"]["ctl_file"] == "secofs_ufs_ww3.param.nml"
 
+        # Allocation is no longer authored here: PBS `select=` moved to
+        # parm/machines/ and the node count is derived as
+        # ceil(nprocs / ranks_per_node).
         det = merged["resources"]
         assert det["nprocs"] == ufs["total_tasks"]
-        assert det["select"] == "select=46:ncpus=128:mpiprocs=120:ompthreads=1"
+        assert "select" not in det, (
+            "PBS syntax has moved to parm/machines/; resources.select is dead"
+        )
 
         assert merged["ensemble"]["enabled"] is False
 

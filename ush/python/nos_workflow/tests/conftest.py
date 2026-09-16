@@ -37,6 +37,13 @@ _TRACKED_ENV_VARS = (
     "SENDDBN",
     "KEEPDATA",
     "LD_PRELOAD",
+    # Machine-profile selection: a NOS_MACHINE=hercules (or NOS_ACCOUNT/
+    # NOS_QOS) already exported in the caller's shell otherwise leaks into
+    # every test that resolves a machine profile or renders a card, silently
+    # switching it off the wcoss2 default those tests assume.
+    "NOS_MACHINE",
+    "NOS_ACCOUNT",
+    "NOS_QOS",
 )
 
 

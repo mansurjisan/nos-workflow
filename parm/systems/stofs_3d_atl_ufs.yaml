@@ -18,7 +18,7 @@
 #   datm_tasks:    120    # MED+ATM share PETs 0-119
 #   nscribes:        0    # output handled by CMEPS, not SCHISM scribes
 #   total_tasks:  4434    # = 4314 + 120 (MED+ATM share PETs)
-# PBS select: select=37:ncpus=128:mpiprocs=120:ompthreads=1 → 4440 slots (>= 4434).
+# Node count is derived: ceil(nprocs / ranks_per_node) from parm/machines/.
 # ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
 # mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
 # mpiprocs= token, so per-node packing tracks the PBS allocation.
@@ -71,7 +71,6 @@ standalone:
   executable: pschism_WCOSS2
   nscribes: 6
   nprocs: 4320
-  select: "select=36:ncpus=128:mpiprocs=120:ompthreads=1"
 
 # Declarative prep optionals (consumed by nos_utils ForcingConfig.from_yaml).
 # When present this block is authoritative and supersedes the is_stofs_like
@@ -343,7 +342,7 @@ output:
 # count after fetching (max rank index + 1 == 4314); regenerate via
 # tools/gen_stofs_partition_prop.sh ONLY if schism_tasks changes, then keep
 # schism_tasks/total_tasks/select/the standalone nprocs in step. MJ (09/11/26)
-# PBS select: select=37:ncpus=128:mpiprocs=120:ompthreads=1 → 4440 slots (>= 4434).
+# Node count is derived: ceil(nprocs / ranks_per_node) from parm/machines/.
 # ppn=120 + ompthreads=1 = STOFS-3D-ATL operational-dev parity (operational runs
 # mpiprocs=120, 8 cores/node headroom). _schism_run_mpi derives -ppn from this
 # mpiprocs= token, so per-node packing tracks the PBS allocation.
@@ -352,7 +351,6 @@ resources:
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
-  select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
   walltime_nowcast: "01:30:00"
   walltime_forecast: "05:30:00"
 
@@ -636,12 +634,10 @@ ensemble:
   # Same PBS select and task count as deterministic (members reuse the same
   # exe and 4314-rank partition.prop); longer walltime for combined nowcast+forecast.
   resources:
-    select: "select=37:ncpus=128:mpiprocs=120:ompthreads=1"
     walltime: "08:00:00"
     total_tasks: 4434
     nscribes: 0
   post_resources:
-    select: "select=1:ncpus=8:mpiprocs=8"
     walltime: "01:00:00"
 
 # Legacy shell script execution configuration

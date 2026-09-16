@@ -1,0 +1,35 @@
+# WCOSS2 (Cactus / Dogwood) -- Cray EX, PBS Pro, Cray MPICH + PALS.
+#
+# Machine facts only. Scientific task counts (nprocs, nscribes, schism_tasks)
+# stay in parm/systems/<ofs>.yaml; this file owns how those become an
+# allocation and a launcher command line.
+
+machine: wcoss2
+
+scheduler:
+  type: pbs
+  # Retained as compatibility defaults so the frozen WCOSS2 baseline stays
+  # byte-identical. These are deployment credentials, not machine facts --
+  # move them to a deployment overlay once one exists.
+  queue: dev
+  account: ESTOFS-DEV
+  qos: null
+
+allocation:
+  cores_per_node: 128        # AMD Milan
+  ranks_per_node: 120        # operational layout; 8 cores/node left to the OS
+  emit_ranks_per_node: true  # PBS mpiprocs= and mpiexec -ppn are both wanted
+  exclusive: true
+
+mpi:
+  launcher: mpiexec
+  total_ranks_flag: "-n"
+  ranks_per_node_flag: "-ppn"
+  # A list, never a shell string: the launcher builds an argv array so nothing
+  # is word-split or eval'd.
+  fixed_args:
+    - "--cpu-bind"
+    - "core"
+
+modulefile: nos_wcoss2.intel
+versions: run.ver
