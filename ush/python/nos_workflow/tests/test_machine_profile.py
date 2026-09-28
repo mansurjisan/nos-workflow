@@ -129,6 +129,8 @@ class TestNodeMath:
         (4434, 37, 56),
         (4320, 36, 54),
         (3960, 33, 50),
+        (5032, 42, 63),  # stofs_3d_atl_ufs coupled, ops v3.1 4912+120. MJ (09/28/26)
+        (4918, 41, 62),  # stofs_3d_atl_ufs standalone, 4912+6 scribes. MJ (09/28/26)
     ])
     def test_node_counts(self, ranks, wcoss2_nodes, hercules_nodes):
         assert _load("wcoss2").nodes(ranks) == wcoss2_nodes

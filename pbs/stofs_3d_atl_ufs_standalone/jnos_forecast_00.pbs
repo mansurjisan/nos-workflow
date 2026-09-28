@@ -4,15 +4,15 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS  -l place=vscatter:excl,select=41:ncpus=128:mpiprocs=120:ompthreads=1
 #PBS  -l walltime=05:00:00
 #PBS  -l debug=true
 
 # STOFS-3D-ATL STANDALONE forecast (pschism, nws=2, 6 scribes) — operational parity.
 # Same nos_workflow prep/stages as the UFS-coupled jnos; only the engine differs
 # (execution.mode=standalone in stofs_3d_atl_ufs_standalone.yaml -> the resolver emits
-# USE_DATM=false + pschism_WCOSS2 + 4320 ranks/36 nodes, and _schism_run_mpi runs
-# `mpiexec -n 4320 -ppn 120 pschism_WCOSS2 6`). The forecast hotstarts from the nowcast
+# USE_DATM=false + pschism_WCOSS2 + 4918 ranks/41 nodes, and _schism_run_mpi runs
+# `mpiexec -n 4918 -ppn 120 pschism_WCOSS2 6`). The forecast hotstarts from the nowcast
 # rst (rank-independent global hotstart). Resources/module set/MPI tuning mirror
 # operational IT-STOFS (jstofs_3d_atl_now_forecast_v2.ecf).
 
@@ -105,11 +105,11 @@ export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINnwm=${COMINnwm:-/lfs/h1/ops/prod/com/nwm/${nwm_ver}}
 
-# Standalone: 4314 SCHISM compute + 6 I/O scribes = 4320 ranks on 36 nodes (operational
+# Standalone: 4912 SCHISM compute + 6 I/O scribes = 4918 ranks on 41 nodes (operational
 # parity). The standalone overlay's TOTAL_TASKS/NSCRIBES are also emitted by the resolver
 # at stage time; this default just covers a direct/manual submit. partition.prop must be
-# staged for 4314 compute ranks (NO_PARMETIS pschism build).
-export TOTAL_TASKS=${TOTAL_TASKS:-4320}
+# staged for 4912 compute ranks (NO_PARMETIS pschism build).
+export TOTAL_TASKS=${TOTAL_TASKS:-4918}
 
 ################################################
 # CALL executable job script here

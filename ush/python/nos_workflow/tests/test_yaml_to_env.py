@@ -719,8 +719,8 @@ class TestExecutionMode:
 
         assert "export USE_DATM=false" in lines
         assert "export NWS_VALUE=2" in lines
-        assert "export TOTAL_TASKS=4320" in lines
-        assert "export NPROCS=4320" in lines
+        assert "export TOTAL_TASKS=4918" in lines
+        assert "export NPROCS=4918" in lines
         assert "export NSCRIBES=6" in lines
         assert "export UFS_EXEC_NAME=pschism_WCOSS2" in lines
         # PPN parsed from the standalone select (mpiprocs=120), not the

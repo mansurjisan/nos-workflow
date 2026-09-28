@@ -78,21 +78,21 @@
       "#PBS  -q dev",
       "#PBS  -o /dev/null",
       "#PBS  -e /dev/null",
-      "#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l place=vscatter:excl,select=42:ncpus=128:mpiprocs=120:ompthreads=1",
       "#PBS  -l walltime=05:30:00"
     ],
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4434",
+      "5032",
       "-ppn",
       "120",
       "--cpu-bind",
       "core",
       "MODEL.exe"
     ],
-    "nodes": 37,
-    "total_ranks": 4434
+    "nodes": 42,
+    "total_ranks": 5032
   },
   "pbs/stofs_3d_atl_ufs/jnos_nowcast_00.pbs": {
     "directives": [
@@ -101,21 +101,21 @@
       "#PBS  -q dev",
       "#PBS  -o /dev/null",
       "#PBS  -e /dev/null",
-      "#PBS  -l place=vscatter:excl,select=37:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l place=vscatter:excl,select=42:ncpus=128:mpiprocs=120:ompthreads=1",
       "#PBS  -l walltime=01:30:00"
     ],
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4434",
+      "5032",
       "-ppn",
       "120",
       "--cpu-bind",
       "core",
       "MODEL.exe"
     ],
-    "nodes": 37,
-    "total_ranks": 4434
+    "nodes": 42,
+    "total_ranks": 5032
   },
   "pbs/stofs_3d_atl_ufs/jnos_post_00.pbs": {
     "directives": [
@@ -150,22 +150,22 @@
       "#PBS  -q dev",
       "#PBS  -o /dev/null",
       "#PBS  -e /dev/null",
-      "#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l place=vscatter:excl,select=41:ncpus=128:mpiprocs=120:ompthreads=1",
       "#PBS  -l walltime=05:00:00",
       "#PBS  -l debug=true"
     ],
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4320",
+      "4918",
       "-ppn",
       "120",
       "--cpu-bind",
       "core",
       "MODEL.exe"
     ],
-    "nodes": 36,
-    "total_ranks": 4320
+    "nodes": 41,
+    "total_ranks": 4918
   },
   "pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs": {
     "directives": [
@@ -174,21 +174,21 @@
       "#PBS  -q dev",
       "#PBS  -o /dev/null",
       "#PBS  -e /dev/null",
-      "#PBS  -l place=vscatter:excl,select=36:ncpus=128:mpiprocs=120:ompthreads=1",
+      "#PBS  -l place=vscatter:excl,select=41:ncpus=128:mpiprocs=120:ompthreads=1",
       "#PBS  -l walltime=05:00:00"
     ],
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4320",
+      "4918",
       "-ppn",
       "120",
       "--cpu-bind",
       "core",
       "MODEL.exe"
     ],
-    "nodes": 36,
-    "total_ranks": 4320
+    "nodes": 41,
+    "total_ranks": 4918
   },
   "pbs/stofs_3d_atl_ufs_standalone/jnos_prep_00.pbs": {
     "directives": [
