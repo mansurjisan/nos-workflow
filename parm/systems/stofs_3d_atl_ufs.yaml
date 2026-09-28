@@ -14,13 +14,13 @@ execution:
   mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
 
 # Standalone-SCHISM overlay (consumed only when execution.mode == standalone).
-# 4314 compute ranks (v3.1 mesh) + 6 scribes = 4320; PBS 36x120 = 4320 (parity packing).
+# 4912 compute ranks (ops v3.1 partition.prop) + 6 scribes = 4918; PBS 41x120 = 4920 (parity packing).
 # Mesh/grid is the shared v3.1 grid block below and is intentionally NOT duplicated.
 standalone:
   nws: 2
   executable: pschism_WCOSS2
   nscribes: 6
-  nprocs: 4320
+  nprocs: 4918
 
 # Explicit so the is_stofs_like heuristic is not relied on. MJ (09/05/26)
 prep:
@@ -30,10 +30,10 @@ prep:
 
 # Grid configuration — v3.1 operational STOFS-3D-ATL mesh. NOAA ops moved
 # v2.1 -> v3.1; n_nodes/n_elements below are the v3.1 mesh counts (nvrt=49
-# is unchanged from v2.1). The v2.1-era partition.prop this yaml previously
-# documented (5654161 lines, max rank index 4313 -> 4314 OCN ranks) is STALE
-# and not carried forward — partition.prop MUST be regenerated against the
-# v3.1 hgrid before running (see the NO_PARMETIS note above).
+# is unchanged from v2.1). Ops' v3.1 partition.prop (4912 ranks) is staged
+# as-is by tools/fetch_stofs_3d_atl_fix.sh, which checks the rank count;
+# regenerate with tools/gen_stofs_partition_prop.sh only if schism_tasks is
+# changed. Density: 5,872,610 / 4912 ~ 1196 elem/rank (SECOFS ~1191).
 # n_sides is left null (see grid block below) rather than carrying forward
 # the stale v2.1 value (8580540) -- it is not a simple function of
 # n_nodes/n_elements alone (SCHISM meshes mix tri/quad elements), so it
@@ -219,8 +219,8 @@ ufs_coastal:
   coupling_interval: 150
   datm_tasks: 120
   # Matches the standalone rank count so the same partition.prop is reused. MJ (09/05/26)
-  schism_tasks: 4314
-  total_tasks: 4434
+  schism_tasks: 4912
+  total_tasks: 5032
   nscribes: 0                # output handled by CMEPS
   # grib2 = GRIB2+blend pipeline; sflux = COMF sflux generation converted to DATM. MJ (09/05/26)
   datm_forcing_source: grib2
@@ -265,7 +265,7 @@ output:
 # and be staged in $FIXofs. MJ (09/05/26)
 # mpiprocs in select is parsed to derive -ppn; keep them in sync. MJ (09/05/26)
 resources:
-  nprocs: 4434
+  nprocs: 5032
   nscribes: 0
   memory_gb: 5000
   walltime_hours: 6
@@ -510,7 +510,7 @@ ensemble:
   # Same PBS select as deterministic; longer walltime for combined nowcast+forecast.
   resources:
     walltime: "08:00:00"
-    total_tasks: 4434
+    total_tasks: 5032
     nscribes: 0
   post_resources:
     walltime: "01:00:00"

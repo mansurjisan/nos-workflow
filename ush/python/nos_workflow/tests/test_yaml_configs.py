@@ -142,13 +142,13 @@ class TestSystemConfigs:
         rank counts, v3.1 operational grid dimensions, and the PBS ``select=``
         line. These are pinned because the runtime dispatcher and the PBS
         jobcard generator both depend on them — drifting any of these silently
-        is the kind of bug that only surfaces inside a 4434-rank allocation.
+        is the kind of bug that only surfaces inside a 5032-rank allocation.
 
         Grid dimensions match the v3.1 operational STOFS-3D-ATL mesh (NOAA ops
         cut over v2.1 -> v3.1; nvrt=49 is unchanged). The UFS rank layout uses
-        the operational 4314 SCHISM OCN ranks (+120 DATM = 4434 total), sharing
-        the standalone 4314 partition.prop (which must be regenerated against
-        the v3.1 hgrid -- rank *count* is unaffected by the mesh-size bump).
+        the operational 4912 SCHISM OCN ranks (+120 DATM = 5032 total), sharing
+        the standalone 4912 partition.prop -- ops' own v3.1 partition.prop is
+        staged as-is (rank count matches without regeneration).
         """
         if "stofs_3d_atl_ufs" not in system_configs:
             pytest.skip("stofs_3d_atl_ufs.yaml not found")
@@ -165,8 +165,8 @@ class TestSystemConfigs:
         # Resources / UFS-Coastal task split (operational partition.prop;
         # rank count unchanged across the v2.1 -> v3.1 mesh cutover)
         ufs = data.get("ufs_coastal", {})
-        assert ufs.get("total_tasks") == 4434
-        assert ufs.get("schism_tasks") == 4314
+        assert ufs.get("total_tasks") == 5032
+        assert ufs.get("schism_tasks") == 4912
         assert ufs.get("datm_tasks") == 120
         assert ufs.get("nscribes") == 0
 
@@ -191,7 +191,7 @@ class TestSystemConfigs:
         assert "select" not in det, (
             "PBS syntax has moved to parm/machines/; resources.select is dead"
         )
-        assert det.get("nprocs") == 4434
+        assert det.get("nprocs") == 5032
 
     def test_secofs_ufs_ww3_config(self, system_configs: Dict[str, Path]) -> None:
         """SECOFS-UFS-WW3 -- DATM+SCHISM+WW3 4-component coupled variant.

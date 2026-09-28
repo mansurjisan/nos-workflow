@@ -14,7 +14,7 @@
 # the resolver force nws=2, so prep writes sflux_*.nc and tars them to
 # {prefix}.{cycle}.{pdy}.met.{phase}.nc.tar -- what the standalone nowcast/forecast's
 # untar_met_sflux consumes (vs the UFS DATM atmo). Same Python forcing stack; prep does
-# not run the model, so no pschism/4320-rank/module.fv3 changes are needed here.
+# not run the model, so no pschism/4918-rank/module.fv3 changes are needed here.
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
