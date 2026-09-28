@@ -85,9 +85,10 @@ export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINnwm=${COMINnwm:-/lfs/h1/ops/prod/com/nwm/${nwm_ver}}
 
-# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-2913 (SECOFS-equivalent 2794 ranks)
-# 25 nodes x 120 mpiprocs = 3000 slots (>= 2916 tasks); ppn=120 + ompthreads=1 = STOFS operational parity
-export TOTAL_TASKS=${TOTAL_TASKS:-2916}
+# UFS-Coastal: MED+ATM share PETs 0-119, OCN PETs 120-5031 (4912 SCHISM ranks, ops v3.1 partition.prop)
+# 42 nodes x 120 mpiprocs = 5040 slots (>= 5032 tasks); ppn=120 + ompthreads=1 = STOFS operational parity
+# The yaml export sets TOTAL_TASKS from resources.nprocs and overrides this default. MJ (09/28/26)
+export TOTAL_TASKS=${TOTAL_TASKS:-5032}
 
 ################################################
 # CALL executable job script here
