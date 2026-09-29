@@ -102,9 +102,11 @@ forcing:
     st_lawrence:
       enabled: true
       source: DCOMROOT
-      clim_file: stofs_3d_atl_st_lawrence_river_clim.nc
-      csv_name: QC_02OA016_hourly_hydrometric.csv
-      subdir: canadian_water
+      # v3.1 ops layout: $COMINlaw/<pdy>/can_streamgauge/, climatology fallback
+      # from the fix dir. MJ (09/28/26)
+      clim_name: stofs_3d_atl_StLawrence_clim.txt
+      csv_name: 02OA016_hydrometric.csv
+      subdir: can_streamgauge
 
   ocean:
     enabled: true
