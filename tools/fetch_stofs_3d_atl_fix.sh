@@ -15,7 +15,7 @@
 #
 # Re-running is cheap: a file whose size already matches the source is
 # skipped, and every copy lands under a .partial name first. The set is
-# ~5.5 GB (hgrid/vgrid/tvd.prop dominate). Ops ships 55 files; the 27
+# ~5.5 GB (hgrid/vgrid/tvd.prop dominate). Ops ships 55 files; the 28
 # below are the ones this port reads. graphinfo.txt (1.3 GB) is left out
 # because the NO_PARMETIS build reads partition.prop instead. MJ (09/28/26)
 # ======================================================================
@@ -58,6 +58,7 @@ stofs_3d_atl_staout_nc.csv             stofs_3d_atl_staout_nc.csv
 stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco stofs_3d_atl_sta_cwl_xgeoid_to_msl.nco
 stofs_3d_atl_node_id_city_poly_adcirc.txt stofs_3d_atl_node_id_city_poly_adcirc.txt
 stofs_3d_atl_obc_adjust_station.bp     stofs_3d_atl_obc_adjust_station.bp
+stofs_3d_atl_StLawrence_clim.txt       stofs_3d_atl_StLawrence_clim.txt
 stofs_3d_atl_obc_adjust_msl_geoid.bp   stofs_3d_atl_obc_adjust_msl_geoid.bp
 "
 
