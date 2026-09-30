@@ -430,10 +430,10 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     Also gated on the ``NOS_ARCHIVE_MANIFEST`` opt-in flag for symmetry
     with the prep side.
 
-    Standalone forecast (ihot=1, clock reset): the archived files have
-    time 0 at the nowcast start, so they are rebased to time 0 at the
-    forecast start (see :func:`_rebase_th_to_forecast`). Nowcast and the
-    coupled path copy verbatim. MJ (09/30/26)
+    Forecast (ihot=1, clock reset, standalone and coupled alike): the
+    archived files have time 0 at the nowcast start, so they are rebased to
+    time 0 at the forecast start (see :func:`_rebase_th_to_forecast`).
+    Nowcast copies verbatim. MJ (09/30/26)
 
     Returns the number of files staged (0..2).
     """
@@ -445,7 +445,7 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     for src_suffix, dst_name in _ST_LAWRENCE_RESTAGE:
         src = ctx.comout / f"{prefix}.{src_suffix}"
         if src.is_file() and src.stat().st_size > 0:
-            if phase == "forecast" and not _is_ufs():
+            if phase == "forecast":
                 _rebase_th_to_forecast(
                     src, ctx.data / dst_name, _nowcast_seconds(ctx),
                 )

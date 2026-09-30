@@ -526,7 +526,7 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 21600.  ! zy; Fei's original: 86400. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
+  step_nu_tr = 10800.  ! zy; Fei's original: 86400. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2); ops 21600 was for its own nudge files, nos-utils writes 3-hourly. MJ (09/30/26)
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients
