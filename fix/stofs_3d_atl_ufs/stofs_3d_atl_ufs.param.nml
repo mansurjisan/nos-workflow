@@ -13,13 +13,17 @@
 ! are STOFS-specific (source: parm/systems/stofs_3d_atl_ufs.yaml first;
 ! IT-STOFS operational param.nml for values the yaml does not carry).
 !
-! 09/30/26 alignment to ops v3.1 (stofs.v3.1.5 stofs_3d_atl_param.nml_8globaloutput): every
-! key shared with the ops file now carries the ops value except run control
-! (rnday, start_*, ihot are runner-patched) and nws=4 (DATM via NUOPC). Ops-only keys
-! were added only where the pinned SCHISM namelist (oceanmodeling/schism 0391dc2)
-! declares them: coricoef, hmin_man, rlatitude, shapiro0, iof_ana, vclose_surf_frac0
-! (ops vclose_surf_frac). Ops isav/isconsv/meth_sink are not namelist keys there and are
-! omitted (isav -> iveg=0, isconsv follows the PREC_EVAP build flag). MJ (09/30/26)
+! 09/30/26 alignment: every key shared with the operational STOFS-3D-ATL param
+! used by the standalone path (fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.standalone.param.nml,
+! the ops v2.1-era file) carries its value, except run control (rnday, start_*,
+! ihot are runner-patched), nws=4 (DATM via NUOPC) and step_nu_tr=10800 (the
+! nos-utils nudge files are 3-hourly). Ops-only keys were added only where the
+! pinned SCHISM namelist (oceanmodeling/schism 0391dc2) declares them: coricoef,
+! hmin_man, rlatitude, shapiro0, vclose_surf_frac0 (ops vclose_surf_frac). Ops
+! isav/isconsv/meth_sink are not namelist keys there (isav -> iveg=0, isconsv
+! follows the PREC_EVAP build flag). relax_2_airt=0 turns off this SCHISM's
+! shallow-water relaxation of T toward air temperature, which the ops SCHISM
+! does not have. MJ (09/30/26)
 
 &CORE
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -486,6 +490,9 @@
 ! Min total water depth for applying heat/salt exchange (i.e. off if the local water depth <hmin_airsea_ex)
   i_hmin_airsea_ex = 2
   hmin_airsea_ex = 0.5 ![m]
+! No relaxation of T toward air temperature in cells shallower than
+! hmin_airsea_ex; the ops SCHISM has none. MJ (09/30/26)
+  relax_2_airt = 0.
   vclose_surf_frac0 = 1.0 !ops vclose_surf_frac=1.0 (renamed in this SCHISM; also the default). MJ (09/30/26)
 
 !-----------------------------------------------------------------------
@@ -535,7 +542,7 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 21600. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
+  step_nu_tr = 10800. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2); nos-utils writes 3-hourly. MJ (09/30/26)
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients
@@ -722,20 +729,5 @@
   iof_hydro(29) = 0 !S @prism centers [PSU] {salt_elem}
   iof_hydro(30) = 0 !Barotropic pressure gradient force vector (m.s-2) @side centers  {pressure_gradient}
 
-! Analysis module outputs (only active if fv3_coastalS.exe is built with USE_ANALYSIS). Ops v3.1 values. MJ (09/30/26)
-  iof_ana(1) = 0
-  iof_ana(2) = 0
-  iof_ana(3) = 0
-  iof_ana(4) = 0
-  iof_ana(5) = 0
-  iof_ana(6) = 0
-  iof_ana(7) = 0
-  iof_ana(8) = 0
-  iof_ana(9) = 0
-  iof_ana(10) = 0
-  iof_ana(11) = 0
-  iof_ana(12) = 0
-  iof_ana(13) = 0
-  iof_ana(14) = 1
 
 /

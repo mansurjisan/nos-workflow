@@ -1,4 +1,4 @@
-"""STOFS-3D-ATL coupled param.nml stays aligned with the ops v3.1 values."""
+"""STOFS-3D-ATL coupled param.nml stays aligned with the ops param the standalone path uses."""
 from __future__ import annotations
 
 import re
@@ -9,16 +9,19 @@ FIX = REPO / "fix" / "stofs_3d_atl_ufs"
 COUPLED = FIX / "stofs_3d_atl_ufs.param.nml"
 OPS = FIX / "stofs_3d_atl_ufs.standalone.param.nml"
 
-# Runner-patched or coupling-specific; everything else must match ops.
+# Runner-patched or coupling-specific; everything else must match ops. MJ (09/30/26)
 _MAY_DIFFER = {
     "rnday", "nws", "ihot",
     "start_year", "start_month", "start_day", "start_hour",
 }
-# Ops keys the pinned coupled SCHISM does not declare (renamed or CPP-derived).
-_OPS_ONLY_OK = {"isav", "isconsv", "meth_sink", "vclose_surf_frac"}
+# Ops keys the pinned coupled SCHISM does not declare (renamed or CPP-derived),
+# plus the analysis outputs ops v3.1 does not write. MJ (09/30/26)
+_OPS_ONLY_OK = {"isav", "isconsv", "meth_sink", "vclose_surf_frac"} | {
+    f"iof_ana({i})" for i in range(1, 15)
+}
 _COUPLED_ONLY_OK = {
     "i_hmin_airsea_ex", "iveg", "nbins_veg_vert", "nmarsh_types",
-    "vclose_surf_frac0",
+    "vclose_surf_frac0", "relax_2_airt",
 }
 
 
@@ -59,10 +62,21 @@ def test_restart_cadence_consistent():
     nowcast_steps = 24 * 3600 // 150
     assert nhot_write % int(c["ihfskip"]) == 0
     assert nhot_write % int(c["nspool_sta"]) == 0
-    assert nowcast_steps % nhot_write == 0  # restart lands at nowcast end
-    assert ihfskip == 288  # 12 h stacks, as in ops post
+    assert nowcast_steps % nhot_write == 0  # restart lands at nowcast end MJ (09/30/26)
+    assert ihfskip == 288  # 12 h stacks, as in ops post MJ (09/30/26)
 
 
 def test_coupled_prep_walltime():
     pbs = (REPO / "pbs" / "stofs_3d_atl_ufs" / "jnos_prep_00.pbs").read_text()
     assert "walltime=03:00:00" in pbs
+
+
+def test_nudge_step_matches_nos_utils_files():
+    """nos-utils writes TEM_nu/SAL_nu every 3 h (nudging.py target_dt); SCHISM
+    picks records by time/step_nu_tr without checking the file's time axis."""
+    for path in (COUPLED, OPS):
+        assert _parse(path)["step_nu_tr"] == "10800."
+
+
+def test_coupled_turns_off_air_temperature_relaxation():
+    assert _parse(COUPLED)["relax_2_airt"] == "0."
