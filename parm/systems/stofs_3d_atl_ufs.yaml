@@ -43,7 +43,7 @@ grid:
     lat_min: 7.347
     lat_max: 52.5904
 
-# DATM supplies the atmosphere; the atmospheric block feeds only legacy prep. MJ (09/05/26)
+# Feeds the standalone path's sflux prep; the coupled run gets its atmosphere from DATM. MJ (09/30/26)
 forcing:
   atmospheric:
     met_num: 2
@@ -74,8 +74,8 @@ forcing:
   ocean:
     obc:
       # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
-      # flow segment so *.th.nc nOpenBndNodes=778 (not 781). Counts are
-      # v2.1-mesh-derived and not reverified on the v3.1 mesh.
+      # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
+      # mesh: 756 + 22 elevation, 3 flow). MJ (09/30/26)
       elev_segments: [0, 1]
       wl_source: RTOFS
       ssh_offset: 0.04
