@@ -430,10 +430,13 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     Also gated on the ``NOS_ARCHIVE_MANIFEST`` opt-in flag for symmetry
     with the prep side.
 
+    Standalone forecast (ihot=1, clock reset): the archived files have
+    time 0 at the nowcast start, so they are rebased to time 0 at the
+    forecast start (see :func:`_rebase_th_to_forecast`). Nowcast and the
+    coupled path copy verbatim. MJ (09/30/26)
+
     Returns the number of files staged (0..2).
     """
-    del phase
-
     if not _archive_manifest_enabled():
         return 0
 
@@ -442,12 +445,59 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     for src_suffix, dst_name in _ST_LAWRENCE_RESTAGE:
         src = ctx.comout / f"{prefix}.{src_suffix}"
         if src.is_file() and src.stat().st_size > 0:
-            shutil.copy2(src, ctx.data / dst_name)
+            if phase == "forecast" and not _is_ufs():
+                _rebase_th_to_forecast(
+                    src, ctx.data / dst_name, _nowcast_seconds(ctx),
+                )
+            else:
+                shutil.copy2(src, ctx.data / dst_name)
             logger.info(
                 "  Staged St. Lawrence %s -> %s", src.name, dst_name,
             )
             staged += 1
     return staged
+
+
+def _nowcast_seconds(ctx: SchismRunContext) -> float:
+    """Nowcast length in seconds (LEN_NOWCAST hours, default 24)."""
+    try:
+        return float(ctx.len_nowcast or 24) * 3600.0
+    except (TypeError, ValueError):
+        return 24.0 * 3600.0
+
+
+def _rebase_th_to_forecast(src: Path, dst: Path, offset_s: float) -> None:
+    """Write ``src`` to ``dst`` with time 0 moved forward by ``offset_s``.
+
+    SCHISM reads an ASCII ``.th`` as a series starting at 0 with a fixed
+    step taken from the first two rows, so the rebased file must keep
+    that grid: the offset has to be a whole number of steps and at least
+    two rows must remain. Anything else raises instead of staging a file
+    SCHISM would misread. MJ (09/30/26)
+    """
+    rows = [[float(x) for x in line.split()]
+            for line in src.read_text().splitlines() if line.split()]
+    if len(rows) < 2 or rows[0][0] != 0.0:
+        raise ValueError(f"{src.name}: expected a .th series starting at 0")
+    step = rows[1][0] - rows[0][0]
+    if step <= 0 or any(abs((b[0] - a[0]) - step) > 1e-6
+                        for a, b in zip(rows, rows[1:])):
+        raise ValueError(f"{src.name}: .th time step is not uniform")
+    n_skip = offset_s / step
+    if abs(n_skip - round(n_skip)) > 1e-6:
+        raise ValueError(
+            f"{src.name}: forecast start ({offset_s:.0f} s) is not on the "
+            f"file's {step:.0f} s grid"
+        )
+    kept = rows[int(round(n_skip)):]
+    if len(kept) < 2:
+        raise ValueError(
+            f"{src.name}: ends at {rows[-1][0]:.0f} s, too short to cover a "
+            f"forecast starting at {offset_s:.0f} s"
+        )
+    out = [f"{r[0] - offset_s:.0f} " + " ".join(f"{v:.3f}" for v in r[1:])
+           for r in kept]
+    dst.write_text("\n".join(out) + "\n")
 
 
 def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:

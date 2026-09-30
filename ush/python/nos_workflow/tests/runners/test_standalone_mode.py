@@ -394,17 +394,22 @@ def test_patch_param_nml_standalone_nowcast_sets_nws_and_ihot1(
     assert "nws = 2" in text
 
 
-def test_patch_param_nml_standalone_forecast_sets_nws_and_ihot2(
+def test_patch_param_nml_standalone_forecast_resets_clock_ihot1(
     tmp_path, monkeypatch,
 ):
-    """Standalone forecast: ihot=2 (continues from nowcast hotstart)."""
+    """Standalone forecast: ihot=1 (clock reset) so the phase-relative
+    forcing prep builds lines up; rnday=LEN_FORECAST/24, start=forecast
+    start. ihot=2 would run 24 h short and read th files 24 h late."""
     monkeypatch.setenv("USE_DATM", "false")
     ctx = _make_ctx(tmp_path, phase="forecast")
     seen = _capture_simple_patch_dicts(_PARAM_NML_LIVE, ctx, "forecast")
-    assert seen[-1] == {"ihot": 2, "nws": 2}
+    assert seen[-1] == {"ihot": 1, "nws": 2}
     text = (ctx.data / "param.nml").read_text()
-    assert "ihot = 2" in text
+    assert "ihot = 1" in text
     assert "nws = 2" in text
+    assert "rnday = 2.0" in text
+    assert "start_day = 12" in text
+    assert "start_hour = 6" in text
 
 
 # ---------------------------------------------------------------------------

@@ -123,15 +123,17 @@ def patch_param_nml(ctx: SchismRunContext, phase: str) -> int:
         },
     )
 
-    # UFS: ihot=1 forces hotstart with clock reset; required for the
-    # UFS-Coastal NUOPC clock to drive the SCHISM cap correctly.
-    # Standalone (no NUOPC clock): mirror operational pschism --
-    # nowcast ihot=1, forecast ihot=2 (continues from nowcast hotstart
-    # without resetting the clock); also force nws=2 (sflux, not DATM).
+    # ihot=1 (clock reset) for both phases and both modes. UFS needs it for
+    # the NUOPC clock. Standalone needs it because prep builds forecast
+    # forcing (sflux, bctides phase, *.th, elev2D) on a clock that starts at
+    # the forecast start; ihot=2 would keep time=nowcast length, shortening
+    # the run by that much and skipping that much of each th file. Ops runs
+    # both legs as one rnday=5.5 run, which the split port cannot mirror.
+    # Standalone also forces nws=2 (sflux, not DATM). MJ (09/30/26)
     if _is_ufs():
         simple = {"ihot": 1}
     else:
-        simple = {"ihot": 1 if phase == "nowcast" else 2, "nws": 2}
+        simple = {"ihot": 1, "nws": 2}
     n_total += patches.patch_fortran_namelist_simple(target, simple)
 
     logger.info(

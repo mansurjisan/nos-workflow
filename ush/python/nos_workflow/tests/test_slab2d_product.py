@@ -384,9 +384,9 @@ def test_base_date_nowcast_rolls_the_date_back_over_midnight(tmp_path):
         shell_env = {"LEN_NOWCAST": "6"}
 
     assert _product_base_date(Ctx(), "nowcast") == "2026-05-06 18:00:00"
-    # Standalone forecast continues the nowcast clock -> same origin.
+    # Standalone forecast also restarts the clock (ihot=1) -> cycle time.
     Ctx.shell_env = {"LEN_NOWCAST": "6", "USE_DATM": "false"}
-    assert _product_base_date(Ctx(), "forecast") == "2026-05-06 18:00:00"
+    assert _product_base_date(Ctx(), "forecast") == "2026-05-07 00:00:00"
     # Coupled forecast restarts it -> cycle time.
     Ctx.shell_env = {"LEN_NOWCAST": "6", "USE_DATM": "true"}
     assert _product_base_date(Ctx(), "forecast") == "2026-05-07 00:00:00"

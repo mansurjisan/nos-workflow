@@ -546,29 +546,6 @@ def test_write_station_latlon_skips_headers_and_short_rows(tmp_path):
     assert rows == ["1 -76.5 38.5", "3 -75.5 37.5", "5 -74.5 36.5"]
 
 
-@pytest.mark.parametrize(
-    "use_datm,restarts",
-    [
-        (None, True),      # unset means coupled, repo-wide
-        ("true", True),
-        ("TRUE", True),
-        ("false", False),  # only standalone ever sets it, and to this
-        (" False ", False),
-        ("0", True),       # NOT standalone: the run side reads only "false"
-        ("no", True),
-    ],
-)
-def test_forecast_clock_restart_matches_the_repo_use_datm_convention(
-    use_datm, restarts
-):
-    """Accepting extra falsey spellings here while the run side accepts
-    only "false" would route one value coupled and its timestamps
-    standalone -- a silent six-hour offset."""
-    env = {} if use_datm is None else {"USE_DATM": use_datm}
-    ctx = type("C", (), {"shell_env": env})()
-    assert post_stage._forecast_clock_restarts(ctx) is restarts
-
-
 def test_worker_output_reaches_the_stage_log(tmp_path, fake_env, caplog):
     """A killed post job used to lose every product's output at once,
     because $pgmout is only surfaced by the J-job's closing cat. Each
