@@ -21,18 +21,34 @@ _OPS_ONLY_OK = {"isav", "isconsv", "meth_sink", "vclose_surf_frac"} | {
 }
 _COUPLED_ONLY_OK = {
     "i_hmin_airsea_ex", "iveg", "nbins_veg_vert", "nmarsh_types",
-    "vclose_surf_frac0", "relax_2_airt",
+    "relax_2_airt",
 }
 
 
+def _groups(path: Path) -> dict:
+    """{group: {key: value}} per namelist group; fails on a duplicate key or a
+    key outside a group. MJ (09/30/26)"""
+    groups, current = {}, None
+    for raw in path.read_text().splitlines():
+        line = raw.split("!")[0].strip()
+        if not line:
+            continue
+        if line.startswith("&"):
+            current = line[1:].strip().upper()
+            groups[current] = {}
+        elif line == "/":
+            current = None
+        else:
+            m = re.match(r"([\w()]+)\s*=\s*(\S+)", line)
+            if m:
+                assert current is not None, f"{path.name}: {line!r} outside a group"
+                assert m.group(1) not in groups[current], f"{path.name}: duplicate {m.group(1)}"
+                groups[current][m.group(1)] = m.group(2)
+    return groups
+
+
 def _parse(path: Path) -> dict:
-    out = {}
-    for line in path.read_text().splitlines():
-        line = line.split("!")[0].strip()
-        m = re.match(r"([\w()]+)\s*=\s*(\S+)", line)
-        if m:
-            out[m.group(1)] = m.group(2)
-    return out
+    return {k: v for g in _groups(path).values() for k, v in g.items()}
 
 
 def test_shared_keys_match_ops():
@@ -79,4 +95,14 @@ def test_nudge_step_matches_nos_utils_files():
 
 
 def test_coupled_turns_off_air_temperature_relaxation():
-    assert _parse(COUPLED)["relax_2_airt"] == "0."
+    assert _groups(COUPLED)["OPT"]["relax_2_airt"] == "0."
+
+
+def test_coupled_groups_match_ops_groups():
+    """Each shared key sits in the same namelist group as in the ops file."""
+    c, o = _groups(COUPLED), _groups(OPS)
+    assert set(c) == {"CORE", "OPT", "SCHOUT"}
+    where = {k: g for g, keys in o.items() for k in keys}
+    moved = {k: (g, where[k]) for g, keys in c.items() for k in keys
+             if k in where and where[k] != g}
+    assert moved == {}

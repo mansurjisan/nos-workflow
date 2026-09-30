@@ -19,7 +19,7 @@
 ! ihot are runner-patched), nws=4 (DATM via NUOPC) and step_nu_tr=10800 (the
 ! nos-utils nudge files are 3-hourly). Ops-only keys were added only where the
 ! pinned SCHISM namelist (oceanmodeling/schism 0391dc2) declares them: coricoef,
-! hmin_man, rlatitude, shapiro0, vclose_surf_frac0 (ops vclose_surf_frac). Ops
+! hmin_man, rlatitude, shapiro0 (ops vclose_surf_frac is left at this SCHISM's default). Ops
 ! isav/isconsv/meth_sink are not namelist keys there (isav -> iveg=0, isconsv
 ! follows the PREC_EVAP build flag). relax_2_airt=0 turns off this SCHISM's
 ! shallow-water relaxation of T toward air temperature, which the ops SCHISM
@@ -493,7 +493,6 @@
 ! No relaxation of T toward air temperature in cells shallower than
 ! hmin_airsea_ex; the ops SCHISM has none. MJ (09/30/26)
   relax_2_airt = 0.
-  vclose_surf_frac0 = 1.0 !ops vclose_surf_frac=1.0 (renamed in this SCHISM; also the default). MJ (09/30/26)
 
 !-----------------------------------------------------------------------
 ! Turbulence closure.
@@ -728,6 +727,5 @@
   iof_hydro(28) = 0 !T @prism centers [C] {temp_elem}
   iof_hydro(29) = 0 !S @prism centers [PSU] {salt_elem}
   iof_hydro(30) = 0 !Barotropic pressure gradient force vector (m.s-2) @side centers  {pressure_gradient}
-
 
 /
