@@ -879,13 +879,8 @@ def _product_base_date(ctx, phase: str) -> str:
     too, or every timestamp lands exactly one day late.
 
     Phase anchors follow the engine: the nowcast leg starts at
-    cycle - LEN_NOWCAST; a forecast leg that restarts its clock (coupled,
-    ihot=1) starts at the cycle time, while one that continues the
-    nowcast clock (standalone, ihot=2) keeps the nowcast origin. With
-    USE_DATM unset the coupled anchor is used, which is the repo-wide
-    reading of that variable (see ``runners/schism_ufs/stage_files.py``:
-    standalone is the only thing that ever sets it, and it sets it to
-    false).
+    cycle - LEN_NOWCAST; the forecast leg hot-starts with ihot=1 (clock
+    reset, coupled and standalone alike) and starts at the cycle time.
     """
     from datetime import datetime, timedelta
 
@@ -900,27 +895,10 @@ def _product_base_date(ctx, phase: str) -> str:
         len_nowcast = 6.0
 
     origin = cycle_dt - timedelta(hours=len_nowcast)
-    if phase == "forecast" and _forecast_clock_restarts(ctx):
+    if phase == "forecast":
         origin = cycle_dt
     # ops units format: whitespace-separated, seconds present.
     return origin.strftime("%Y-%m-%d %H:%M:%S")
-
-
-def _forecast_clock_restarts(ctx) -> bool:
-    """True when the forecast leg starts its model clock afresh.
-
-    The coupled build hot-starts with ihot=1 (clock reset); the
-    standalone build uses ihot=2 and continues the nowcast clock. USE_DATM
-    is the resolver's coupled/standalone switch, and only standalone ever
-    sets it -- so unset means coupled.
-
-    Tested exactly as the rest of the repo tests it (``!= "false"``, cf.
-    ``stage_files.py`` and ``nos_run.sh``) rather than against a wider
-    set of falsey spellings: accepting "0"/"no" here while the run side
-    accepts only "false" would let one value route the run coupled and
-    the timestamps standalone, which is a silent six-hour offset.
-    """
-    return str(ctx.shell_env.get("USE_DATM", "true")).strip().lower() != "false"
 
 
 def _len_nowcast_hours(env) -> str:

@@ -16,8 +16,8 @@ post stage.
 
 Hour labels come from ``products.fields``: the same phase-relative
 detection, so ``field2d`` and ``fields`` stacks of one cycle carry
-matching ``{n|f}{HHH}_{HHH}`` ranges on every system (STOFS-3D-ATL
-standalone continues the nowcast clock, SECOFS restarts it).
+matching ``{n|f}{HHH}_{HHH}`` ranges on every system (both
+standalone and coupled forecasts restart the model clock).
 """
 from __future__ import annotations
 

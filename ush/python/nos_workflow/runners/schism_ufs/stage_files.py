@@ -430,10 +430,13 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     Also gated on the ``NOS_ARCHIVE_MANIFEST`` opt-in flag for symmetry
     with the prep side.
 
+    Standalone forecast (ihot=1, clock reset): the archived files have
+    time 0 at the nowcast start, so they are rebased to time 0 at the
+    forecast start (see :func:`_rebase_th_to_forecast`). Nowcast and the
+    coupled path copy verbatim.
+
     Returns the number of files staged (0..2).
     """
-    del phase
-
     if not _archive_manifest_enabled():
         return 0
 
@@ -442,12 +445,60 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     for src_suffix, dst_name in _ST_LAWRENCE_RESTAGE:
         src = ctx.comout / f"{prefix}.{src_suffix}"
         if src.is_file() and src.stat().st_size > 0:
-            shutil.copy2(src, ctx.data / dst_name)
+            if phase == "forecast" and not _is_ufs():
+                _rebase_th_to_forecast(
+                    src, ctx.data / dst_name, _nowcast_seconds(ctx),
+                )
+            else:
+                shutil.copy2(src, ctx.data / dst_name)
             logger.info(
                 "  Staged St. Lawrence %s -> %s", src.name, dst_name,
             )
             staged += 1
     return staged
+
+
+def _nowcast_seconds(ctx: SchismRunContext) -> float:
+    """Nowcast length in seconds (LEN_NOWCAST hours, default 24)."""
+    try:
+        return float(ctx.len_nowcast or 24) * 3600.0
+    except (TypeError, ValueError):
+        return 24.0 * 3600.0
+
+
+def _rebase_th_to_forecast(src: Path, dst: Path, offset_s: float) -> None:
+    """Write ``src`` to ``dst`` with time 0 moved forward by ``offset_s``.
+
+    Rows before the offset are dropped and the offset subtracted from the
+    time column; if no row sits exactly at the offset, one is linearly
+    interpolated so the file still starts at time 0. Extra columns are
+    handled like the value column. A file that ends before the offset is
+    copied unchanged with a warning. MJ (09/30/26)
+    """
+    rows = []
+    for line in src.read_text().splitlines():
+        parts = line.split()
+        if parts:
+            rows.append([float(x) for x in parts])
+    times = [r[0] for r in rows]
+    if not rows or times[-1] < offset_s:
+        logger.warning(
+            "  %s does not reach the forecast start (%.0f s); copied as-is",
+            src.name, offset_s,
+        )
+        shutil.copy2(src, dst)
+        return
+    kept = [r for r in rows if r[0] >= offset_s]
+    if kept[0][0] > offset_s:
+        prev = rows[len(rows) - len(kept) - 1] if len(kept) < len(rows) else None
+        if prev is not None:
+            w = (offset_s - prev[0]) / (kept[0][0] - prev[0])
+            kept.insert(
+                0,
+                [offset_s] + [a + w * (b - a) for a, b in zip(prev[1:], kept[0][1:])],
+            )
+    out = [f"{r[0] - offset_s:.0f} " + " ".join(f"{v:.3f}" for v in r[1:]) for r in kept]
+    dst.write_text("\n".join(out) + "\n")
 
 
 def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:

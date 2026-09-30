@@ -98,9 +98,8 @@ def base_date_from_staging(staging: Path) -> Optional[str]:
     through rather than recomputing them (e.g. maxele reads them back
     from param.nml, slab2d off the input file). Inheriting the source
     string is both simpler and safer: it cannot drift from the data, it
-    is automatically correct per phase and per engine (a coupled
-    forecast resets its clock, a standalone one continues the nowcast
-    clock), and it preserves the ops units format.
+    is automatically correct per phase and per engine (both
+    coupled and standalone forecasts reset their clock), and it preserves the ops units format.
 
     Returns the text after "seconds since", or None when no stack is
     readable -- callers then fall back to a computed value.

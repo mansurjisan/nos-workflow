@@ -505,3 +505,28 @@ def test_deflate_accepts_the_range_bounds(level):
         "--deflate", level,
     ])
     assert args.deflate == int(level)
+
+
+def test_standalone_forecast_reset_clock_stacks_from_one(tmp_path):
+    """STOFS-3D-ATL standalone forecast with ihot=1: stacks restart at 1 and
+    the clock at hour 1, so labels are f001_012.. with no shift even though
+    --nowcast-hours 24 is passed."""
+    staging = tmp_path / "staging"
+    comout = tmp_path / "comout"
+    staging.mkdir()
+    comout.mkdir()
+    _write_split_stack(staging / "out2d_1.nc", hours=list(range(1, 13)))
+    _write_split_stack(staging / "out2d_2.nc", hours=list(range(13, 25)))
+
+    result = fields.main([
+        "--staging", str(staging), "--comout", str(comout),
+        "--prefix", "stofs_3d_atl_ufs", "--cyc", "12", "--pdy", "20260927",
+        "--phase", "forecast", "--nowcast-hours", "24",
+        "--result-json", str(tmp_path / "r.json"),
+    ])
+    assert result == 0
+    names = sorted(p.name for p in comout.glob("*.nc"))
+    assert names == [
+        "stofs_3d_atl_ufs.t12z.20260927.fields.out2d.f001_012.nc",
+        "stofs_3d_atl_ufs.t12z.20260927.fields.out2d.f013_024.nc",
+    ]

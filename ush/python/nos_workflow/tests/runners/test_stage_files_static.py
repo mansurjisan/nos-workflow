@@ -17,6 +17,7 @@ expected source contents).
 """
 from __future__ import annotations
 
+import dataclasses
 import os
 from pathlib import Path
 from typing import Optional
@@ -893,6 +894,77 @@ def test_stage_st_lawrence_river_stofs_stages_files(
     assert n == 2
     assert (ctx.data / "flux.th").read_text() == "0 -1.0\n"
     assert (ctx.data / "TEM_1.th").read_text() == "0 4.0\n"
+
+
+def _seed_daily_flux(ctx, n=7):
+    prefix = f"{ctx.run}.{ctx.cycle}"
+    rows = "".join(f"{86400 * i} {-100.0 - i:.3f}\n" for i in range(n))
+    (ctx.comout / f"{prefix}.riv.obs.flux.th").write_text(rows)
+    (ctx.comout / f"{prefix}.riv.obs.tem_1.th").write_text(
+        "".join(f"{86400 * i} {4.0 + i:.3f}\n" for i in range(n)))
+
+
+def test_stage_st_lawrence_river_standalone_forecast_rebased(
+        tmp_path, monkeypatch):
+    """Standalone forecast (ihot=1): time 0 moves from the nowcast start to
+    the forecast start; still covers 108 h."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="24")
+    _seed_daily_flux(ctx)
+
+    assert stage_st_lawrence_river(ctx, "forecast") == 2
+
+    rows = [l.split() for l in (ctx.data / "flux.th").read_text().splitlines()]
+    assert rows[0] == ["0", "-101.000"]
+    assert rows[-1] == ["432000", "-106.000"]
+    assert float(rows[-1][0]) >= 108 * 3600
+    tem = (ctx.data / "TEM_1.th").read_text().splitlines()
+    assert tem[0] == "0 5.000"
+
+
+def test_stage_st_lawrence_river_standalone_nowcast_unchanged(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="24")
+    _seed_daily_flux(ctx)
+    stage_st_lawrence_river(ctx, "nowcast")
+    src = ctx.comout / f"{ctx.run}.{ctx.cycle}.riv.obs.flux.th"
+    assert (ctx.data / "flux.th").read_text() == src.read_text()
+
+
+def test_stage_st_lawrence_river_ufs_forecast_unchanged(
+        tmp_path, monkeypatch):
+    """Coupled path stays a verbatim copy."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.delenv("USE_DATM", raising=False)
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="24")
+    _seed_daily_flux(ctx)
+    stage_st_lawrence_river(ctx, "forecast")
+    src = ctx.comout / f"{ctx.run}.{ctx.cycle}.riv.obs.flux.th"
+    assert (ctx.data / "flux.th").read_text() == src.read_text()
+
+
+def test_stage_st_lawrence_river_rebase_interpolates_off_grid(
+        tmp_path, monkeypatch):
+    """Nowcast length not on a record: a row at time 0 is interpolated."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="12")
+    _seed_daily_flux(ctx)
+    stage_st_lawrence_river(ctx, "forecast")
+    rows = [l.split() for l in (ctx.data / "flux.th").read_text().splitlines()]
+    assert rows[0] == ["0", "-100.500"]
+    assert rows[1] == ["43200", "-101.000"]
 
 
 def test_stage_st_lawrence_river_wins_over_river_rename(
