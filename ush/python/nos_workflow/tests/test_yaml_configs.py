@@ -168,19 +168,14 @@ class TestSystemConfigs:
         assert ufs.get("total_tasks") == 5032
         assert ufs.get("schism_tasks") == 4912
         assert ufs.get("datm_tasks") == 120
-        assert ufs.get("nscribes") == 0
+        assert data["resources"]["nscribes"] == 0
 
-        # Grid dimensions (v3.1 operational mesh). n_sides is left null --
-        # the v2.1-derived value (8580540) is stale and not a simple
-        # function of n_nodes/n_elements, so it is measured from the real
-        # v3.1 hgrid rather than guessed (same convention as
-        # stofs_3d_ak_ufs.yaml). ns_global is a SCHISM-runtime-computed
-        # quantity; a null here is exported as an unset shell var, not
-        # a broken one (see yaml_to_env.get_standard_exports).
+        # Grid dimensions (v3.1 operational mesh). n_sides is not authored:
+        # SCHISM computes ns_global at runtime.
         grid = data.get("grid", {})
         assert grid.get("n_nodes") == 3052121
         assert grid.get("n_elements") == 5872610
-        assert grid.get("n_sides") is None
+        assert "n_sides" not in grid
         assert grid.get("n_levels") == 49
 
         # Allocation is no longer authored here: PBS `select=` moved to

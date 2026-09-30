@@ -1,5 +1,4 @@
-# STOFS-3D-ATL standalone (pschism) — operational-parity execution within nos_workflow.
-# Skips the mediator regrid (the 5.65M-node bottleneck); runs at IT-STOFS speed. MJ (09/05/26)
+# STOFS-3D-ATL standalone (pschism): skips the mediator regrid, the 5.65M-node bottleneck. MJ (09/05/26)
 _base: stofs_3d_atl_ufs
 execution:
   mode: standalone
