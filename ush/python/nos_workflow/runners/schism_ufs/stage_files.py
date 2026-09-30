@@ -433,7 +433,7 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     Standalone forecast (ihot=1, clock reset): the archived files have
     time 0 at the nowcast start, so they are rebased to time 0 at the
     forecast start (see :func:`_rebase_th_to_forecast`). Nowcast and the
-    coupled path copy verbatim.
+    coupled path copy verbatim. MJ (09/30/26)
 
     Returns the number of files staged (0..2).
     """
@@ -469,35 +469,34 @@ def _nowcast_seconds(ctx: SchismRunContext) -> float:
 def _rebase_th_to_forecast(src: Path, dst: Path, offset_s: float) -> None:
     """Write ``src`` to ``dst`` with time 0 moved forward by ``offset_s``.
 
-    Rows before the offset are dropped and the offset subtracted from the
-    time column; if no row sits exactly at the offset, one is linearly
-    interpolated so the file still starts at time 0. Extra columns are
-    handled like the value column. A file that ends before the offset is
-    copied unchanged with a warning. MJ (09/30/26)
+    SCHISM reads an ASCII ``.th`` as a series starting at 0 with a fixed
+    step taken from the first two rows, so the rebased file must keep
+    that grid: the offset has to be a whole number of steps and at least
+    two rows must remain. Anything else raises instead of staging a file
+    SCHISM would misread. MJ (09/30/26)
     """
-    rows = []
-    for line in src.read_text().splitlines():
-        parts = line.split()
-        if parts:
-            rows.append([float(x) for x in parts])
-    times = [r[0] for r in rows]
-    if not rows or times[-1] < offset_s:
-        logger.warning(
-            "  %s does not reach the forecast start (%.0f s); copied as-is",
-            src.name, offset_s,
+    rows = [[float(x) for x in line.split()]
+            for line in src.read_text().splitlines() if line.split()]
+    if len(rows) < 2 or rows[0][0] != 0.0:
+        raise ValueError(f"{src.name}: expected a .th series starting at 0")
+    step = rows[1][0] - rows[0][0]
+    if step <= 0 or any(abs((b[0] - a[0]) - step) > 1e-6
+                        for a, b in zip(rows, rows[1:])):
+        raise ValueError(f"{src.name}: .th time step is not uniform")
+    n_skip = offset_s / step
+    if abs(n_skip - round(n_skip)) > 1e-6:
+        raise ValueError(
+            f"{src.name}: forecast start ({offset_s:.0f} s) is not on the "
+            f"file's {step:.0f} s grid"
         )
-        shutil.copy2(src, dst)
-        return
-    kept = [r for r in rows if r[0] >= offset_s]
-    if kept[0][0] > offset_s:
-        prev = rows[len(rows) - len(kept) - 1] if len(kept) < len(rows) else None
-        if prev is not None:
-            w = (offset_s - prev[0]) / (kept[0][0] - prev[0])
-            kept.insert(
-                0,
-                [offset_s] + [a + w * (b - a) for a, b in zip(prev[1:], kept[0][1:])],
-            )
-    out = [f"{r[0] - offset_s:.0f} " + " ".join(f"{v:.3f}" for v in r[1:]) for r in kept]
+    kept = rows[int(round(n_skip)):]
+    if len(kept) < 2:
+        raise ValueError(
+            f"{src.name}: ends at {rows[-1][0]:.0f} s, too short to cover a "
+            f"forecast starting at {offset_s:.0f} s"
+        )
+    out = [f"{r[0] - offset_s:.0f} " + " ".join(f"{v:.3f}" for v in r[1:])
+           for r in kept]
     dst.write_text("\n".join(out) + "\n")
 
 

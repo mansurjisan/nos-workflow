@@ -952,19 +952,31 @@ def test_stage_st_lawrence_river_ufs_forecast_unchanged(
     assert (ctx.data / "flux.th").read_text() == src.read_text()
 
 
-def test_stage_st_lawrence_river_rebase_interpolates_off_grid(
+def test_stage_st_lawrence_river_rebase_rejects_off_grid(
         tmp_path, monkeypatch):
-    """Nowcast length not on a record: a row at time 0 is interpolated."""
+    """Nowcast length not on the file's grid: refuse rather than stage a
+    series SCHISM would read at the wrong step."""
     monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
     monkeypatch.setenv("USE_DATM", "false")
     ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
                     prefixnos="nos.stofs_3d_atl")
     ctx = dataclasses.replace(ctx, len_nowcast="12")
     _seed_daily_flux(ctx)
-    stage_st_lawrence_river(ctx, "forecast")
-    rows = [l.split() for l in (ctx.data / "flux.th").read_text().splitlines()]
-    assert rows[0] == ["0", "-100.500"]
-    assert rows[1] == ["43200", "-101.000"]
+    with pytest.raises(ValueError, match="grid"):
+        stage_st_lawrence_river(ctx, "forecast")
+
+
+def test_stage_st_lawrence_river_rebase_rejects_short_file(
+        tmp_path, monkeypatch):
+    """A file that leaves fewer than two rows after the shift is refused."""
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="24")
+    _seed_daily_flux(ctx, n=2)
+    with pytest.raises(ValueError, match="too short"):
+        stage_st_lawrence_river(ctx, "forecast")
 
 
 def test_stage_st_lawrence_river_wins_over_river_rename(

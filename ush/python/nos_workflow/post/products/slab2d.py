@@ -142,8 +142,7 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument(
         "--nowcast-hours", type=float, default=0.0,
         help="length of the nowcast leg; see products.fields (phase-relative "
-             "hour labels on systems whose forecast continues the nowcast "
-             "clock)",
+             "hour labels for outputs on a continued nowcast clock)",
     )
     p.add_argument(
         "--depths", default=OPS_DEPTHS,

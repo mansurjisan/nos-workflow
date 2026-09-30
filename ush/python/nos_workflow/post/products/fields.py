@@ -167,9 +167,9 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument(
         "--nowcast-hours", type=float, default=0.0,
         help="length of the nowcast leg. Used only for the forecast phase, "
-             "to detect whether this system's forecast continues the nowcast "
-             "clock (STOFS-3D-ATL standalone) or restarts it (SECOFS), so "
-             "hour labels come out phase-relative either way.",
+             "to detect outputs on a continued nowcast clock (older "
+             "standalone runs) so hour labels stay phase-relative; current "
+             "runs restart the forecast clock and need no shift.",
     )
     p.add_argument(
         "--deflate", type=_zlib_level, default=0,
@@ -228,10 +228,11 @@ def _phase_start_hours(
     """Hours to subtract so this phase's labels start near 1.
 
     Detected from the data rather than configured: a forecast leg whose
-    earliest record already sits at/after the nowcast length is running
-    on a continued nowcast clock (STOFS-3D-ATL standalone), so the
-    nowcast length is subtracted; one that restarts near zero (SECOFS)
-    needs no shift. Nowcast legs are always already phase-relative.
+    earliest record already sits at/after the nowcast length is on a
+    continued nowcast clock (standalone runs before the forecast moved to
+    ihot=1), so the nowcast length is subtracted; one that restarts near
+    zero, as every current forecast does, needs no shift. Nowcast legs
+    are always already phase-relative. MJ (09/30/26)
     """
     if phase != "forecast" or nowcast_hours <= 0:
         return 0.0
@@ -261,9 +262,10 @@ def _hour_range(
     """(start, end) hours **relative to the phase start**; None when empty.
 
     A stack's ``time`` axis is anchored to the model clock, and systems
-    differ in where that clock starts for the forecast leg: SECOFS
-    restarts it near zero, while STOFS-3D-ATL standalone continues the
-    nowcast clock (so its first forecast stack begins at hour 25, not 1).
+    can differ in where that clock starts for the forecast leg: current
+    runs restart it near zero, while older STOFS-3D-ATL standalone
+    outputs continued the nowcast clock (first forecast stack at hour 25,
+    not 1). MJ (09/30/26)
     Labelling straight off the raw axis therefore made the same product
     name mean different things per system -- and diverge from ops, which
     numbers forecast stacks from f001. Subtracting the phase start makes
