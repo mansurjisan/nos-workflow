@@ -12,6 +12,14 @@
 ! (SCHISM via NUOPC, nws=4 DATM coupling). Only physics/grid/run/output VALUES
 ! are STOFS-specific (source: parm/systems/stofs_3d_atl_ufs.yaml first;
 ! IT-STOFS operational param.nml for values the yaml does not carry).
+!
+! 09/30/26 alignment to ops v3.1 (stofs.v3.1.5 stofs_3d_atl_param.nml_8globaloutput): every
+! key shared with the ops file now carries the ops value except run control
+! (rnday, start_*, ihot are runner-patched) and nws=4 (DATM via NUOPC). Ops-only keys
+! were added only where the pinned SCHISM namelist (oceanmodeling/schism 0391dc2)
+! declares them: coricoef, hmin_man, rlatitude, shapiro0, iof_ana, vclose_surf_frac0
+! (ops vclose_surf_frac). Ops isav/isconsv/meth_sink are not namelist keys there and are
+! omitted (isav -> iveg=0, isconsv follows the PREC_EVAP build flag). MJ (09/30/26)
 
 &CORE
 !+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -22,7 +30,7 @@
 
 ! Baroclinic/barotropic option. If ibc=0 (baroclinic model), ibtp is not used.
   ibc = 0 !Baroclinic option
-  ibtp = 1
+  ibtp = 0
 
   rnday = rnday_value  !total run time in days
   dt = 150. !Time step in sec
@@ -39,7 +47,7 @@
 
 ! Global output controls
   nspool = 24 !output step spool
-  ihfskip = 576 !stack spool; every ihfskip steps will be put into 1_*, 2_*, etc...
+  ihfskip = 288 !stack spool; every ihfskip steps will be put into 1_*, 2_*, etc...
 
   nbins_veg_vert = 1
   nmarsh_types = 1
@@ -129,6 +137,7 @@
   ishapiro = 2 !on/off flag. Default: 0
 !  shapiro0 = 0.5 !Shapiro filter strength, needed only if ishapiro=1; max is 0.5
   niter_shap = 1 !needed of ishapiro/=0 - # of iterations with Shapiro filter. Suggested: 1
+  shapiro0 = 1.e2 !only range-checked (<=0.5) when ishapiro=1; ishapiro=2 reads shapiro.gr3. MJ (09/30/26)
 
 !-----------------------------------------------------------------------
 ! Implicitness factor (0.5<thetai<=1).
@@ -154,7 +163,7 @@
            !1-modified Grant-Madsen formulation; 2-Soulsby (1997)
   hmin_radstress = 1. !min. total water depth used only in radiation stress calculation [m]
 !  nrampwafo = 0       !ramp-up option for the wave forces (1: on; 0: off)
-  drampwafo = 0.      !needed if nrampwafo=1; ramp-up period in days
+  drampwafo = 1.      !needed if nrampwafo=1; ramp-up period in days
   turbinj = 0.15      !% of depth-induced wave breaking energy injected in turbulence (default: 0.15 (15%), as proposed by Feddersen, 2012)
   fwvor_advxy_stokes = 1 !  --> Stokes drift advection (xy), Coriolis
   fwvor_advz_stokes = 1  !  --> Stokes drift advection (z) , Coriolis
@@ -180,8 +189,8 @@
 !-----------------------------------------------------------------------
 ! Reference latitude for beta-plane approximation when ncor=1 (not used if ics=2)
 !-----------------------------------------------------------------------
-  slam0 = -77.0  !lon - not really used
-  sfea0 = 35.0 !lat
+  slam0 = -77.07  !lon - not really used
+  sfea0 = 24 !lat
 
 !-----------------------------------------------------------------------
 ! Option to deal with under resolution near steep slopes in deeper depths
@@ -256,6 +265,8 @@
 ! Coriolis is calculated from local latitude, and 'sfea0' is not used.
 !-----------------------------------------------------------------------
   ncor = 1 !should usually be 1 if ics=2
+  rlatitude = 46 !only used if ncor=-1. MJ (09/30/26)
+  coricoef = 0 !only used if ncor=0. MJ (09/30/26)
 !  rlatitude = 46 !if ncor=-1
 !  coricoef = 0 !1.e-4 !if ncor=0
 
@@ -288,8 +299,8 @@
 ! If ihot = 2 && flag_ic(1:2)=2 || ibcc_mean=1, ts.ic is used for removing mean density profile.
 ! flag_ic(1) must =flag_ic(2)
 !-----------------------------------------------------------------------
-  flag_ic(1) = 1 !T
-  flag_ic(2) = 1 !S
+  flag_ic(1) = 0 !T
+  flag_ic(2) = 0 !S
 
 ! initial conditions for other tracers.
 ! 1: needs inputs [MOD]_hvar_[1,2,...].ic ('1...' is tracer id); format of each file is similar to salt.ic;
@@ -331,7 +342,7 @@
 ! Max. horizontal velocity magnitude, used mainly to prevent problem in
 ! bulk aerodynamic module
 !-----------------------------------------------------------------------
-  rmaxvel = 5.
+  rmaxvel = 4.0
 
 !-----------------------------------------------------------------------
 !  Following parameters control backtracking
@@ -365,7 +376,7 @@
 !-----------------------------------------------------------------------
   ihhat = 1
   inunfl = 0
-  h0 = 0.01     !min. water depth for wetting/drying [m]
+  h0 = 1.e-4     !min. water depth for wetting/drying [m]
   shorewafo = 0 !Matters only if USE_WWM
 
 !-----------------------------------------------------------------------
@@ -398,7 +409,7 @@
 ! (depth=0: no kriging; depth=1: with kriging).
 !-----------------------------------------------------------------------
   inter_mom = 0
-  kr_co = 1 !not used if inter_mom=0
+  kr_co = 2 !not used if inter_mom=0
 
 !-----------------------------------------------------------------------
 ! Transport method.
@@ -430,7 +441,7 @@
   nquad = 2  !number of quad points on each side, nquad= 1 or 2
   ntd_weno = 1 !order of temporal discretization: (1) Euler (default); (3): 3rd-order Runge-Kutta (only for benchmarking)
   epsilon1 = 1.e-15   !coefficient for 2nd order weno smoother
-  epsilon2 = 1.e-10  !1st coefficient for 3rd order weno smoother (larger values are more prone to numerical dispersion
+  epsilon2 = 1.e-6  !1st coefficient for 3rd order weno smoother (larger values are more prone to numerical dispersion
                      !, 1.e-10 should be fairly safe, recommended values: 1.e-8 ~ 1.e-6 (from the real applications so far)
   i_prtnftl_weno = 0 !option for writing nonfatal errors on invalid temp. or salinity for density: (0) off; (1) on.
 
@@ -462,18 +473,20 @@
   wtiminc = 3600. !time step for atmos. forcing. Default: same as dt
   drampwind = 0. !needed if nrampwind/=0; ramp-up period in days
   !iwindoff = 0 !needed only if nws/=0; '1': needs windfactor.gr3
-  iwind_form = 1 !needed if nws/=0
+  iwind_form = -1 !needed if nws/=0
 
 !-----------------------------------------------------------------------
 ! Heat and salt exchange. isconsv=1 needs ihconsv=1; ihconsv=1 needs nws=2.
 ! If isconsv=1, need to compile with precip/evap module turned on.
 !-----------------------------------------------------------------------
   ihconsv = 1 !heat exchange option
+  hmin_man = 1. !min. depth in Manning formulation, needed if nchi=-1. MJ (09/30/26)
 !  isconsv = 1 !evaporation/precipitation model
 
 ! Min total water depth for applying heat/salt exchange (i.e. off if the local water depth <hmin_airsea_ex)
   i_hmin_airsea_ex = 2
-  hmin_airsea_ex = 0.01 ![m]
+  hmin_airsea_ex = 0.5 ![m]
+  vclose_surf_frac0 = 1.0 !ops vclose_surf_frac=1.0 (renamed in this SCHISM; also the default). MJ (09/30/26)
 
 !-----------------------------------------------------------------------
 ! Turbulence closure.
@@ -522,7 +535,7 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 86400. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
+  step_nu_tr = 21600. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2)
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients
@@ -539,8 +552,8 @@
 ! If error occurs like 'bktrk_subs: overflow' or 'MAIN: nbtrk > mxnbt'
 ! gradually increasing these will solve the problem
 !-----------------------------------------------------------------------
-  s1_mxnbt = 5.0
-  s2_mxnbt = 15.0
+  s1_mxnbt = 0.5
+  s2_mxnbt = 3.5
 
 !-----------------------------------------------------------------------
 ! Flag for harmonic analysis for elevation. If used , need to turn on cpp flags
@@ -664,7 +677,7 @@
 ! Option for hotstart outputs
 !-----------------------------------------------------------------------
   nhot = 1 !1: output *_hotstart every 'hotout_write' steps
-  nhot_write = 576 !must be a multiple of ihfskip if nhot=1
+  nhot_write = 288 !must be a multiple of ihfskip if nhot=1
 
 !-----------------------------------------------------------------------
 ! Station output option. If iout_sta/=0, need output skip (nspool_sta) and
@@ -672,7 +685,7 @@
 ! and z (positive upward; not used for 2D variables).
 !-----------------------------------------------------------------------
   iout_sta = 1
-  nspool_sta = 24 !needed if iout_sta/=0; mod(nhot_write,nspool_sta) must=0
+  nspool_sta = 2 !needed if iout_sta/=0; mod(nhot_write,nspool_sta) must=0
 
 !-----------------------------------------------------------------------
 ! Global output options
@@ -688,12 +701,12 @@
   iof_hydro(8) = 0 !upward longwave radiation (positive upward) [W/m/m] {upward_longwave}
   iof_hydro(9) = 0 !downward longwave radiation (positive downward) [W/m/m] {downward_longwave}
   iof_hydro(10) = 0 !total flux=-flsu-fllu-(radu-radd) [W/m/m] {total_heat_flux}
-  iof_hydro(11) = 0 !evaporation rate [kg/m/m/s] {evaporation}
-  iof_hydro(12) = 0 !precipitation rate [kg/m/m/s] {precipitation}
+  iof_hydro(11) = 1 !evaporation rate [kg/m/m/s] {evaporation}
+  iof_hydro(12) = 1 !precipitation rate [kg/m/m/s] {precipitation}
   iof_hydro(13) = 0 !Bottom stress vector [kg/m/s^2(Pa)] {bottom_stress}
   iof_hydro(14) = 1 !wind velocity vector [m/s] {wind_speed}
-  iof_hydro(15) = 0 !wind stress vector [m^2/s/s] {wind_stress}
-  iof_hydro(16) = 0 !depth-averaged vel vector [m/s] {dahv}
+  iof_hydro(15) = 1 !wind stress vector [m^2/s/s] {wind_stress}
+  iof_hydro(16) = 1 !depth-averaged vel vector [m/s] {dahv}
   iof_hydro(17) = 0 !vertical velocity [m/s] {vertical_velocity}
   iof_hydro(18) = 1 !water temperature [C] {temp}
   iof_hydro(19) = 1 !water salinity [PSU] {salt}
@@ -708,5 +721,21 @@
   iof_hydro(28) = 0 !T @prism centers [C] {temp_elem}
   iof_hydro(29) = 0 !S @prism centers [PSU] {salt_elem}
   iof_hydro(30) = 0 !Barotropic pressure gradient force vector (m.s-2) @side centers  {pressure_gradient}
+
+! Analysis module outputs (only active if fv3_coastalS.exe is built with USE_ANALYSIS). Ops v3.1 values. MJ (09/30/26)
+  iof_ana(1) = 0
+  iof_ana(2) = 0
+  iof_ana(3) = 0
+  iof_ana(4) = 0
+  iof_ana(5) = 0
+  iof_ana(6) = 0
+  iof_ana(7) = 0
+  iof_ana(8) = 0
+  iof_ana(9) = 0
+  iof_ana(10) = 0
+  iof_ana(11) = 0
+  iof_ana(12) = 0
+  iof_ana(13) = 0
+  iof_ana(14) = 1
 
 /

@@ -938,16 +938,30 @@ def test_stage_st_lawrence_river_standalone_nowcast_unchanged(
     assert (ctx.data / "flux.th").read_text() == src.read_text()
 
 
-def test_stage_st_lawrence_river_ufs_forecast_unchanged(
+def test_stage_st_lawrence_river_ufs_forecast_rebased(
         tmp_path, monkeypatch):
-    """Coupled path stays a verbatim copy."""
+    """Coupled forecast also resets its clock (ihot=1): rebased like standalone."""
     monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
     monkeypatch.delenv("USE_DATM", raising=False)
     ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
                     prefixnos="nos.stofs_3d_atl")
     ctx = dataclasses.replace(ctx, len_nowcast="24")
     _seed_daily_flux(ctx)
-    stage_st_lawrence_river(ctx, "forecast")
+    assert stage_st_lawrence_river(ctx, "forecast") == 2
+    rows = [l.split() for l in (ctx.data / "flux.th").read_text().splitlines()]
+    assert rows[0] == ["0", "-101.000"]
+    assert float(rows[-1][0]) >= 108 * 3600
+
+
+def test_stage_st_lawrence_river_ufs_nowcast_unchanged(
+        tmp_path, monkeypatch):
+    monkeypatch.setenv("NOS_ARCHIVE_MANIFEST", "1")
+    monkeypatch.delenv("USE_DATM", raising=False)
+    ctx = _make_ctx(tmp_path, run="nos.stofs_3d_atl",
+                    prefixnos="nos.stofs_3d_atl")
+    ctx = dataclasses.replace(ctx, len_nowcast="24")
+    _seed_daily_flux(ctx)
+    stage_st_lawrence_river(ctx, "nowcast")
     src = ctx.comout / f"{ctx.run}.{ctx.cycle}.riv.obs.flux.th"
     assert (ctx.data / "flux.th").read_text() == src.read_text()
 
