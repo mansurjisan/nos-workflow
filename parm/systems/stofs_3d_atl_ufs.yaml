@@ -105,7 +105,7 @@ forcing:
     create_forcing: 1
     files:
       harmonic_constants_obc: stofs_3d_atl.tidal_hc.nc
-      harmonic_constants_ofs: bctides.in_template
+      harmonic_constants_ofs: stofs_3d_atl_ufs.bctides.in_template  # FIX name; a bare name resolves to the forecast work copy. MJ (10/01/26)
 
 model:
   physics:
