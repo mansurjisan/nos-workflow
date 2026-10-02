@@ -275,10 +275,22 @@ _schism_run_combine_fields() {
     echo "_schism_run_combine_fields: phase=${phase} stacks=${_b}..${_e} (${_n})"
     local rc=1
     if [ -n "$MPI_EXE" ]; then
+        # The MPI combiner links the cray-mpich (parallel) netcdf, which needs
+        # the parallel hdf5; the serial libs above make every rank die with
+        # "undefined symbol: H5Pset_all_coll_metadata_ops". Put the hdf5 that
+        # sits next to the netcdf the exe links first, for this launch only. MJ (10/01/26)
+        local _mpi_ld="${LD_LIBRARY_PATH:-}" _nc_lib _nc_root
+        _nc_lib=$(ldd "$MPI_EXE" 2>/dev/null | awk '/libnetcdf\.so/ {print $3; exit}')
+        if [ -n "$_nc_lib" ]; then
+            _nc_root=${_nc_lib%/netcdf/*}
+            for _lib in "${_nc_root}"/hdf5/*/lib "${_nc_lib%/*}"; do
+                [ -d "$_lib" ] && _mpi_ld="${_lib}:${_mpi_ld}"
+            done
+        fi
         local _mpi_launch _mpi_attempted=0
         if _mpi_launch=$(_mpi_launch_prefix "${_n}"); then
             echo "  ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}"
-            ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
+            LD_LIBRARY_PATH="${_mpi_ld}" ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
             rc=$?
             _mpi_attempted=1
         else
