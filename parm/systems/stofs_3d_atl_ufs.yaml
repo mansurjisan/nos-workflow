@@ -113,7 +113,7 @@ forcing:
     nodal_reference: cycle  # nodal factors over the whole nowcast+forecast, as ops tide_fac. MJ (10/02/26)
     files:
       harmonic_constants_obc: stofs_3d_atl.tidal_hc.nc
-      harmonic_constants_ofs: bctides.in_template
+      harmonic_constants_ofs: stofs_3d_atl_ufs.bctides.in_template  # FIX name; a bare name resolves to the forecast work copy. MJ (10/01/26)
 
 model:
   physics:
@@ -121,9 +121,9 @@ model:
     nws: 4  # NUOPC atmospheric coupling (nws=2 is sflux files)
   run:
     hindcast_days: 1.0
-    forecast_days: 4.5
+    forecast_days: 4.0  # ops v3.1: rnday 5.0 = 24 h nowcast + 96 h forecast. MJ (10/02/26)
     nowcast_hours: 24
-    forecast_hours: 108
+    forecast_hours: 96
     base_date: "2011010100"
   runtime:
     ctl_file: stofs_3d_atl_ufs.param.nml
@@ -136,7 +136,7 @@ ufs_coastal:
   schism_tasks: 4912  # same rank count as standalone, so the same partition.prop is reused
   total_tasks: 5032
   blend_resolution: 0.025
-  nhours_fcst: 108
+  nhours_fcst: 96
   dt_atmos: 900
 
 resources:

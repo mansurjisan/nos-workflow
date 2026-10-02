@@ -178,7 +178,7 @@ _load_stofs_defaults() {
     export LATMIN=${LATMIN:-7.347}
     export LATMAX=${LATMAX:-52.5904}
 
-    export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.5}
+    export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
     export DELT_MODEL=${DELT_MODEL:-150.0}
     export OCEAN_MODEL=${OCEAN_MODEL:-SCHISM}
 
