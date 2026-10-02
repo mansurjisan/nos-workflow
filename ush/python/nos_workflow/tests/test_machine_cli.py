@@ -49,6 +49,30 @@ def test_hercules_mpi_launch_order(monkeypatch):
     assert proc.stdout == "srun -n 2914 --label\n"
 
 
+def test_wcoss2_ranks_per_node_override(monkeypatch):
+    """One rank per node for the field combine; the model launch above is
+    unaffected because it never passes the flag."""
+    monkeypatch.delenv("NOS_MACHINE", raising=False)
+    proc = _run(["mpi", "--ranks", "10", "--ranks-per-node", "1"])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "mpiexec -n 10 -ppn 1 --cpu-bind core\n"
+
+
+def test_hercules_ignores_ranks_per_node_override(monkeypatch):
+    """srun has no per-node flag in the profile, so the line is unchanged."""
+    monkeypatch.setenv("NOS_MACHINE", "hercules")
+    proc = _run(["mpi", "--ranks", "10", "--ranks-per-node", "1"])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout == "srun -n 10 --label\n"
+
+
+def test_ranks_per_node_must_be_positive(monkeypatch):
+    monkeypatch.delenv("NOS_MACHINE", raising=False)
+    proc = _run(["mpi", "--ranks", "10", "--ranks-per-node", "0"])
+    assert proc.returncode != 0
+    assert "ranks_per_node must be >= 1" in proc.stderr
+
+
 def test_machine_flag_beats_nos_machine_env(monkeypatch):
     monkeypatch.setenv("NOS_MACHINE", "hercules")
     proc = _run(["mpi", "--ranks", "2914", "--machine", "wcoss2"])
