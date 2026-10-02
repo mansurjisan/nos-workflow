@@ -16,8 +16,8 @@
 ! 09/30/26 alignment: every key shared with the operational STOFS-3D-ATL param
 ! used by the standalone path (fix/stofs_3d_atl_ufs/stofs_3d_atl_ufs.standalone.param.nml,
 ! the ops v2.1-era file) carries its value, except run control (rnday, start_*,
-! ihot are runner-patched), nws=4 (DATM via NUOPC) and step_nu_tr=10800 (the
-! nos-utils nudge files are 3-hourly). Ops-only keys were added only where the
+! ihot are runner-patched), nws=4 (DATM via NUOPC) and step_nu_tr=21600 (the
+! nos-utils nudge files are 6-hourly phase files of ops' effective nudging). Ops-only keys were added only where the
 ! pinned SCHISM namelist (oceanmodeling/schism 0391dc2) declares them: coricoef,
 ! hmin_man, rlatitude, shapiro0 (ops vclose_surf_frac is left at this SCHISM's default). Ops
 ! isav/isconsv/meth_sink are not namelist keys there (isav -> iveg=0, isconsv
@@ -541,7 +541,7 @@
   vnh2 = 500 !vertical nudging depth 2 (must >vnh1)
   vnf2 = 0. !vertical relax
 
-  step_nu_tr = 10800. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2); nos-utils writes 3-hourly. MJ (09/30/26)
+  step_nu_tr = 21600. !time step [sec] in all [MOD]_nu.nc (for inu_[MOD]=2); nos-utils writes 6-hourly phase files of ops' effective nudging (ops: 216000 on raw 6-hourly records). MJ (10/02/26)
 
 !-----------------------------------------------------------------------
 ! Cut-off depth for cubic spline interpolation near bottom when computing horizontal gradients

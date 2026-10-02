@@ -88,10 +88,10 @@ def test_coupled_prep_walltime():
 
 
 def test_nudge_step_matches_nos_utils_files():
-    """nos-utils writes TEM_nu/SAL_nu every 3 h (nudging.py target_dt); SCHISM
-    picks records by time/step_nu_tr without checking the file's time axis."""
+    """nos-utils writes 6-hourly TEM_nu/SAL_nu phase files (ops-effective nudging);
+    SCHISM picks records by time/step_nu_tr without checking the file's time axis."""
     for path in (COUPLED, OPS):
-        assert _parse(path)["step_nu_tr"] == "10800."
+        assert _parse(path)["step_nu_tr"] == "21600."
 
 
 def test_coupled_turns_off_air_temperature_relaxation():
