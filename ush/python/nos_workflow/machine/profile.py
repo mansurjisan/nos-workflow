@@ -231,14 +231,23 @@ class MachineProfile:
         total_ranks: int,
         executable: str,
         exe_args: Optional[List[str]] = None,
+        ranks_per_node: Optional[int] = None,
     ) -> List[str]:
-        """Full launcher argv. A list, so callers never word-split or eval."""
+        """Full launcher argv. A list, so callers never word-split or eval.
+
+        ``ranks_per_node`` overrides the profile's packing for one launch
+        (e.g. one combine rank per node); it only takes effect where the
+        launcher has a per-node flag. MJ (10/01/26)
+        """
         if total_ranks < 1:
             raise ProfileError(f"total_ranks must be >= 1, got {total_ranks}")
+        if ranks_per_node is not None and ranks_per_node < 1:
+            raise ProfileError(f"ranks_per_node must be >= 1, got {ranks_per_node}")
 
         argv = [self.mpi.launcher, self.mpi.total_ranks_flag, str(total_ranks)]
         if self.allocation.emit_ranks_per_node and self.mpi.ranks_per_node_flag:
-            argv += [self.mpi.ranks_per_node_flag, str(self.allocation.ranks_per_node)]
+            rpn = ranks_per_node or self.allocation.ranks_per_node
+            argv += [self.mpi.ranks_per_node_flag, str(rpn)]
         argv += list(self.mpi.fixed_args)
         argv.append(str(executable))
         argv += [str(a) for a in (exe_args or [])]

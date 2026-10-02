@@ -25,7 +25,7 @@
 #    TOTAL_TASKS, PPN, NDATE, NHOUR
 ###############################################################################
 
-# _mpi_launch_prefix <ntasks> <ppn> - the launcher command line for
+# _mpi_launch_prefix <ntasks> <ppn> [<ranks_per_node>] - the launcher command line for
 #   $NOS_MACHINE ("mpiexec -n N -ppn P --cpu-bind core" on WCOSS2, "srun -n N
 #   --label" on Hercules), via the machine CLI so this never drifts from
 #   parm/machines/$NOS_MACHINE.yaml. On WCOSS2, falls back to the historical
@@ -34,16 +34,19 @@
 #   aborting the run. On any other machine there is no safe fallback string
 #   (the WCOSS2 mpiexec form is wrong under Slurm) -- print FATAL and return
 #   1 so the caller aborts instead of launching the model with a bogus or
-#   empty launch prefix.
+#   empty launch prefix. The optional third argument overrides the per-node
+#   packing for this launch only (model launches leave it unset). MJ (10/01/26)
 _mpi_launch_prefix() {
     local ntasks=$1
     local ppn=${2:-120}
+    local rpn=${3:-}
     local line
-    line=$(python3 -m nos_workflow.machine mpi --ranks "${ntasks}" 2>/dev/null) || line=""
+    line=$(python3 -m nos_workflow.machine mpi --ranks "${ntasks}" \
+        ${rpn:+--ranks-per-node "${rpn}"} 2>/dev/null) || line=""
     if [ -z "${line}" ]; then
         if [ "${NOS_MACHINE:-wcoss2}" = "wcoss2" ]; then
             echo "WARNING: nos_workflow.machine mpi CLI unavailable; falling back to the WCOSS2 mpiexec default" >&2
-            line="mpiexec -n ${ntasks} -ppn ${ppn} --cpu-bind core"
+            line="mpiexec -n ${ntasks} -ppn ${rpn:-${ppn}} --cpu-bind core"
         else
             echo "FATAL: nos_workflow.machine mpi CLI unavailable and no safe fallback for machine '${NOS_MACHINE}'" >&2
             return 1
@@ -287,8 +290,16 @@ _schism_run_combine_fields() {
                 [ -d "$_lib" ] && _mpi_ld="${_lib}:${_mpi_ld}"
             done
         fi
+        # One combine rank per node where the job has enough nodes: packing
+        # them onto the first node made each stack ~1.8x slower (memory and
+        # I/O contention). ceil(stacks / nodes), so a 1-node job still works. MJ (10/01/26)
+        local _rpn="" _nnodes
+        if [ -r "${PBS_NODEFILE:-}" ]; then
+            _nnodes=$(sort -u "${PBS_NODEFILE}" | wc -l)
+            [ "${_nnodes}" -gt 0 ] && _rpn=$(( (_n + _nnodes - 1) / _nnodes ))
+        fi
         local _mpi_launch _mpi_attempted=0
-        if _mpi_launch=$(_mpi_launch_prefix "${_n}"); then
+        if _mpi_launch=$(_mpi_launch_prefix "${_n}" "" "${_rpn}"); then
             echo "  ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}"
             LD_LIBRARY_PATH="${_mpi_ld}" ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
             rc=$?

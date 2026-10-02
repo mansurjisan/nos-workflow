@@ -43,7 +43,7 @@ def _mpi(args: argparse.Namespace) -> int:
         spec = JobSpec(name="mpi", walltime="00:00:01", total_ranks=args.ranks)
         # executable="" so the argv can be trimmed to the bare launcher line;
         # render_mpi_argv always appends str(executable), even when empty.
-        argv = render_mpi_argv(spec, profile, "")[:-1]
+        argv = render_mpi_argv(spec, profile, "", ranks_per_node=args.ranks_per_node)[:-1]
     except ProfileError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -67,6 +67,9 @@ def _build_parser() -> argparse.ArgumentParser:
 
     mpi = sub.add_parser("mpi", help="print the MPI launch argv for N ranks")
     mpi.add_argument("--ranks", required=True, type=int)
+    mpi.add_argument("--ranks-per-node", type=int, default=None,
+                     help="override the profile packing for this launch "
+                          "(launchers without a per-node flag ignore it)")
     mpi.add_argument("--machine", default=None, help="default: $NOS_MACHINE or wcoss2")
     mpi.set_defaults(func=_mpi)
 

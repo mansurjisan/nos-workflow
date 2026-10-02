@@ -137,8 +137,9 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
 
 
 def render_mpi_argv(spec: JobSpec, profile: MachineProfile, executable: str,
-                    exe_args: Optional[List[str]] = None) -> List[str]:
-    return profile.mpi_argv(spec.total_ranks, executable, exe_args)
+                    exe_args: Optional[List[str]] = None,
+                    ranks_per_node: Optional[int] = None) -> List[str]:
+    return profile.mpi_argv(spec.total_ranks, executable, exe_args, ranks_per_node)
 
 
 __all__ = [
