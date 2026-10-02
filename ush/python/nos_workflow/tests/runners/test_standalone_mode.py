@@ -246,7 +246,7 @@ def test_run_python_standalone_prefers_legacy_param_nml(
     )
     # Legacy-schema standalone variant available in $FIXofs.
     (ctx.fixofs / "stofs_3d_atl_ufs.standalone.param.nml").write_text(
-        "&CORE\n  isav = 0\n/\n"
+        "&CORE\n  iof_ugrid = 1\n/\n"
     )
 
     with patch.object(stage_files, "stage_executable", return_value=1), \
@@ -256,9 +256,9 @@ def test_run_python_standalone_prefers_legacy_param_nml(
          patch.object(stage_files, "stage_hotstart", return_value=1):
         stage_files.run_python(ctx, "nowcast")
 
-    # The legacy-schema file must have overwritten the staged UFS one,
+    # The ops-schema file must have overwritten the staged UFS one,
     # so the bare param.nml comes from the standalone variant.
-    assert (ctx.data / "param.nml").read_text() == "&CORE\n  isav = 0\n/\n"
+    assert (ctx.data / "param.nml").read_text() == "&CORE\n  iof_ugrid = 1\n/\n"
 
 
 def test_run_python_standalone_warns_when_legacy_param_nml_absent(

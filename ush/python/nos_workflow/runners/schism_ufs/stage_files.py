@@ -148,7 +148,7 @@ def stage_executable(ctx: SchismRunContext, phase: str) -> int:
     """Stage the model executable from $EXECnos (mode-common).
 
     UFS: $UFS_EXEC_NAME=fv3_coastalS.exe. Standalone: Phase-1's resolver
-    sets $UFS_EXEC_NAME=pschism_WCOSS2 (same env var, different binary).
+    sets $UFS_EXEC_NAME (stofs_3d_atl_pschism_v3.1.5; same env var, different binary).
     """
     del phase
 
@@ -1284,15 +1284,16 @@ def stage_forecast_restart_outputs(ctx: SchismRunContext, phase: str) -> int:
 
 
 def _stage_standalone_param_nml(ctx: SchismRunContext) -> bool:
-    """Prefer the legacy-schema standalone param.nml when present.
+    """Prefer the ops-template standalone param.nml when present.
 
     The staged $RUNTIME_CTL ($DATA/<prefix>.param.nml) is authored for the
     UFS-Coastal SCHISM schema (has &CORE nbins_veg_vert/nmarsh_types); the
-    operational standalone pschism uses the legacy schema (isav, no veg
-    keys) and SCHISM's nml_read ABORTS on unrecognized keys. If
-    $FIXofs/<prefix>.standalone.param.nml exists, copy it to $DATA so the
-    downstream bare-name rename picks it up; otherwise fall back to the
-    UFS file with a loud WARNING (parent must author the legacy file).
+    standalone pschism is the ops v3.1.5 binary (SCHISM 5.14.0) and reads the
+    ops param.nml schema, and SCHISM's nml_read ABORTS on unrecognized keys.
+    If $FIXofs/<prefix>.standalone.param.nml exists (the ops v3.1.5 template,
+    step_nu_tr aside), copy it to $DATA so the downstream bare-name rename
+    picks it up; otherwise fall back to the UFS file with a loud WARNING
+    (parent must author the ops-schema file).
     Returns True if the standalone variant was staged.
     """
     if ctx.fixofs is None or not ctx.prefixnos:
@@ -1302,8 +1303,8 @@ def _stage_standalone_param_nml(ctx: SchismRunContext) -> bool:
         logger.warning(
             "standalone: %s not found; falling back to the UFS-schema "
             "param.nml. pschism will ABORT in nml_read if its &CORE "
-            "schema differs (nbins_veg_vert/nmarsh_types vs isav). "
-            "Author a legacy-schema %s.standalone.param.nml in $FIXofs.",
+            "schema differs (nbins_veg_vert/nmarsh_types vs the ops keys). "
+            "Stage the ops v3.1.5 template as %s.standalone.param.nml in $FIXofs.",
             src, ctx.prefixnos,
         )
         return False

@@ -719,10 +719,10 @@ class TestExecutionMode:
 
         assert "export USE_DATM=false" in lines
         assert "export NWS_VALUE=2" in lines
-        assert "export TOTAL_TASKS=4918" in lines
-        assert "export NPROCS=4918" in lines
-        assert "export NSCRIBES=6" in lines
-        assert "export UFS_EXEC_NAME=pschism_WCOSS2" in lines
+        assert "export TOTAL_TASKS=4920" in lines
+        assert "export NPROCS=4920" in lines
+        assert "export NSCRIBES=8" in lines
+        assert "export UFS_EXEC_NAME=stofs_3d_atl_pschism_v3.1.5" in lines
         # PPN parsed from the standalone select (mpiprocs=120), not the
         # UFS one (also 120 here, but it must come from the overlay).
         assert "export PPN=120" in lines

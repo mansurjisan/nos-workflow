@@ -71,7 +71,7 @@ _schism_run_mpi() {
     local PPN=${PPN:-120}
 
     # Standalone SCHISM: Phase-1's resolver emits USE_DATM=false and stages
-    # the scribed pschism binary under $UFS_EXEC_NAME (pschism_WCOSS2). It
+    # the scribed pschism binary under $UFS_EXEC_NAME (e.g. stofs_3d_atl_pschism_v3.1.5). It
     # takes nscribes as argv[1]; there is no DATM/NUOPC layer to bind.
     if [ "${USE_DATM:-true}" = "false" ]; then
         local SCHISM_EXEC=${SCHISM_EXEC:-}
@@ -85,7 +85,7 @@ _schism_run_mpi() {
                 if [ -x "$_cand" ]; then SCHISM_EXEC="$_cand"; break; fi
             done
         fi
-        local NSCRIBES=${NSCRIBES:-6}
+        local NSCRIBES=${NSCRIBES:-8}
         local _mpi_launch
         _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}") || return 1
         echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"

@@ -157,7 +157,7 @@
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4918",
+      "4920",
       "-ppn",
       "120",
       "--cpu-bind",
@@ -165,7 +165,7 @@
       "MODEL.exe"
     ],
     "nodes": 41,
-    "total_ranks": 4918
+    "total_ranks": 4920
   },
   "pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs": {
     "directives": [
@@ -180,7 +180,7 @@
     "mpi_argv": [
       "mpiexec",
       "-n",
-      "4918",
+      "4920",
       "-ppn",
       "120",
       "--cpu-bind",
@@ -188,7 +188,7 @@
       "MODEL.exe"
     ],
     "nodes": 41,
-    "total_ranks": 4918
+    "total_ranks": 4920
   },
   "pbs/stofs_3d_atl_ufs_standalone/jnos_prep_00.pbs": {
     "directives": [
