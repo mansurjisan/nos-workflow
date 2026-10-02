@@ -70,6 +70,7 @@ def test_ranks_per_node_must_be_positive(monkeypatch):
     monkeypatch.delenv("NOS_MACHINE", raising=False)
     proc = _run(["mpi", "--ranks", "10", "--ranks-per-node", "0"])
     assert proc.returncode != 0
+    assert "ranks_per_node must be >= 1" in proc.stderr
 
 
 def test_machine_flag_beats_nos_machine_env(monkeypatch):

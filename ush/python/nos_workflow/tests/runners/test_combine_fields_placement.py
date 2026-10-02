@@ -42,7 +42,7 @@ def _setup(tmp_path: Path, n_stacks: int, n_nodes: int):
     for s in range(1, n_stacks + 1):
         (outputs / f"schout_000000_{s}.nc").write_text("")
     nodefile = tmp_path / "nodefile"
-    nodefile.write_text("".join(f"node{i:03d}\n" * 120 for i in range(n_nodes)))
+    nodefile.write_text("".join(f"node{i:03d}\n" * 120 for i in range(n_nodes)) + "\n")
     env = dict(os.environ,
                PATH=f"{bindir}:{os.environ['PATH']}",
                PYTHONPATH=str(USH_PYTHON),
@@ -68,6 +68,7 @@ def test_one_rank_per_node_when_the_job_has_the_nodes(tmp_path, n_stacks, n_node
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert launch[:5] == ["-n", str(n_stacks), "-ppn", ppn, "--cpu-bind"]
     assert "MPI fields combine failed" not in proc.stdout
+    assert "CLI unavailable" not in proc.stderr  # line came from the machine CLI
 
 
 def test_mpi_combine_gets_parallel_libraries_first(tmp_path):

@@ -295,7 +295,7 @@ _schism_run_combine_fields() {
         # I/O contention). ceil(stacks / nodes), so a 1-node job still works. MJ (10/01/26)
         local _rpn="" _nnodes
         if [ -r "${PBS_NODEFILE:-}" ]; then
-            _nnodes=$(sort -u "${PBS_NODEFILE}" | wc -l)
+            _nnodes=$(awk 'NF && !seen[$1]++' "${PBS_NODEFILE}" | wc -l)
             [ "${_nnodes}" -gt 0 ] && _rpn=$(( (_n + _nnodes - 1) / _nnodes ))
         fi
         local _mpi_launch _mpi_attempted=0
