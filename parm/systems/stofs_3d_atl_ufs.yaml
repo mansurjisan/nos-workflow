@@ -72,6 +72,7 @@ forcing:
       subdir: can_streamgauge
 
   ocean:
+    rtofs_3d_region: US_east  # 3dz tile; without it any region file can fill a slot. MJ (10/02/26)
     obc:
       # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
       # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
@@ -80,6 +81,11 @@ forcing:
       wl_source: RTOFS
       ssh_offset: 0.04
       obc_mode: dynamic_adjust
+      # Ops gen_3Dth chain (non_adjust.sh): same-day RTOFS, 6-hourly records from the
+      # nowcast start, triangle interp (mode 1), elev2D held at record 0. MJ (10/02/26)
+      ops_timeline: true
+      interp_mode: 1
+      ssh_hold_first_record: true
       roi_2ds:
         x1: 2805
         x2: 2923
@@ -100,9 +106,11 @@ forcing:
         y2: 835
     adt:
       enabled: true
+      weight_file: stofs_3d_atl_adt_weight.nc  # ops ESMF (nearest) map, staged by the fetch tool. MJ (10/02/26)
 
   tidal:
     create_forcing: 1
+    nodal_reference: cycle  # nodal factors over the whole nowcast+forecast, as ops tide_fac. MJ (10/02/26)
     files:
       harmonic_constants_obc: stofs_3d_atl.tidal_hc.nc
       harmonic_constants_ofs: stofs_3d_atl_ufs.bctides.in_template  # FIX name; a bare name resolves to the forecast work copy. MJ (10/01/26)
