@@ -15,6 +15,9 @@ execution:
 # + 8 scribes = 4920, as ops v3.1.5 (stofs_3d_atl_pschism, SCHISM 5.14.0, copied from ops
 # to $EXECnos under a new name; the existing stofs_3d_atl_pschism there is an old build).
 # Grid/forcing blocks below are shared. MJ (10/02/26)
+# executable is the single setting for the binary name (resolver -> UFS_EXEC_NAME ->
+# stage_executable + nos_run.sh); to run a copy of the ops module binary (pschism_WCOSS2_VL)
+# instead, change this value and stage that file in $EXECnos. MJ (10/03/26)
 standalone:
   nws: 2
   executable: stofs_3d_atl_pschism_v3.1.5
