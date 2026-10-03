@@ -32,6 +32,7 @@ from nos_workflow.runners.schism_ufs.forcing import (
 )
 from nos_workflow.runners.schism_ufs.stage_files import (
     _NWM_FALLBACK_FILES,
+    check_atl_river_inputs,
     _RIVER_RENAMES,
     _SCHISM_PARTITION_FILES,
     _SCHISM_PROPERTY_FILES,
@@ -793,6 +794,85 @@ def test_nwm_fallback_no_prefix_is_noop(tmp_path):
     n = fallback_nwm_files_from_fixofs(ctx, "nowcast")
 
     assert n == 0
+
+
+# ---------------------------------------------------------------------------
+# check_atl_river_inputs
+# ---------------------------------------------------------------------------
+
+
+def _seed_atl_river(ctx, n_src=3, n_sink=4, **cols):
+    """Write a consistent ATL river set into $DATA; ``cols`` overrides column counts."""
+    ids = "\n".join(str(300 - i) for i in range(n_src))
+    (ctx.data / "source_sink.in").write_text(
+        f"{n_src}\n{ids}\n\n{n_sink}\n" + "\n".join(str(i + 1) for i in range(n_sink)) + "\n")
+    n = {"vsource.th": n_src, "msource.th": 2 * n_src, "vsink.th": n_sink}
+    n.update(cols)
+    for name, count in n.items():
+        row = " ".join(["1.0"] * count)
+        (ctx.data / name).write_text(f"0 {row}\n3600 {row}\n")
+
+
+def _atl_ctx(tmp_path, phase="nowcast"):
+    return _make_ctx(
+        tmp_path, phase=phase, run="stofs_3d_atl_ufs", cycle="t12z",
+        prefixnos="stofs_3d_atl_ufs",
+    )
+
+
+def test_atl_river_check_passes_consistent_set(tmp_path):
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx)
+    check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_lists_missing_files(tmp_path):
+    ctx = _atl_ctx(tmp_path, phase="forecast")
+    _seed_atl_river(ctx)
+    (ctx.data / "vsink.th").unlink()
+    (ctx.data / "msource.th").write_text("")
+    with pytest.raises(FileNotFoundError) as exc:
+        check_atl_river_inputs(ctx, "forecast")
+    assert "msource.th" in str(exc.value) and "vsink.th" in str(exc.value)
+    assert "vsource.th" not in str(exc.value)
+
+
+@pytest.mark.parametrize("bad", ["vsource.th", "msource.th", "vsink.th"])
+def test_atl_river_check_column_mismatch(tmp_path, bad):
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, **{bad: 5})
+    with pytest.raises(ValueError, match=bad.replace(".", r"\.")):
+        check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_zero_sinks_skips_vsink_columns(tmp_path):
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, n_sink=0, **{"vsink.th": 7})
+    check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_zero_sinks_needs_no_vsink_file(tmp_path):
+    """Coupled ATL: no sinks declared, no vsink.th staged. MJ (10/03/26)"""
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, n_sink=0)
+    (ctx.data / "vsink.th").unlink()
+    check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_sinks_still_need_vsink_file(tmp_path):
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, n_sink=4)
+    (ctx.data / "vsink.th").unlink()
+    with pytest.raises(FileNotFoundError, match="vsink.th"):
+        check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_ignores_other_systems(tmp_path):
+    """SECOFS-UFS stages whatever it staged: no files, no error."""
+    ctx = _make_ctx(tmp_path)
+    check_atl_river_inputs(ctx, "nowcast")
+    _seed_atl_river(ctx, **{"vsource.th": 9})
+    check_atl_river_inputs(ctx, "nowcast")
 
 
 # ---------------------------------------------------------------------------
