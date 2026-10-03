@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import List
 
 from ...post.registry import resolve_archive_fields
+from ...tools import build_staout_1
 from .context import SchismRunContext
 
 logger = logging.getLogger(__name__)
@@ -78,7 +79,31 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
         "archive_outputs: copied %d files from %s to %s",
         copied, source, target,
     )
+
+    # Ops' next-cycle dynamic SSH adjust reads $COMOUT/staout_1 of the run; never fail the model job. MJ (10/03/26)
+    if build_staout_1.is_atl_run(ctx.run):
+        try:
+            if phase == "forecast":
+                build_staout_1.build_staout_1(
+                    ctx.comout, ctx.run, ctx.cyc or ctx.cycle[1:3],
+                    nowcast_hours=int(ctx.len_nowcast) if (ctx.len_nowcast or "").isdigit() else 24,
+                )
+            elif phase == "nowcast":
+                _archive_run_param_nml(ctx)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("archive_outputs: ATL previous-cycle files skipped: %s", exc)
     return 0
+
+
+def _archive_run_param_nml(ctx: SchismRunContext) -> None:
+    """Nowcast param.nml to $COMOUT/rerun/<run>.<cycle>.param.nml, where ops archives the run's. MJ (10/03/26)"""
+    src = ctx.data / "param.nml"
+    if not src.is_file():
+        logger.warning("archive_outputs: %s missing; rerun param.nml not archived", src)
+        return
+    dst = ctx.comout / "rerun" / f"{ctx.run}.{ctx.cycle}.param.nml"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
 
 
 def _global_field_files(source: Path) -> List[Path]:
