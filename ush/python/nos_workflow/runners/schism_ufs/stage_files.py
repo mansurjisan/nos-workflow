@@ -72,6 +72,9 @@ _SCHISM_PARTITION_FILES: tuple = (
     "fluxflag.prop",
 )
 
+# Standalone (ops param.nml) cannot start without these. MJ (10/03/26)
+_STANDALONE_REQUIRED_PROPS: tuple = ("partition.prop", "tvd.prop")
+
 
 def _copy_if_exists(src: Path, dst: Path, *, label: str = "") -> bool:
     """Copy ``src`` to ``dst`` if ``src`` exists and is non-empty."""
@@ -148,21 +151,35 @@ def stage_executable(ctx: SchismRunContext, phase: str) -> int:
     """Stage the model executable from $EXECnos (mode-common).
 
     UFS: $UFS_EXEC_NAME=fv3_coastalS.exe. Standalone: Phase-1's resolver
-    sets $UFS_EXEC_NAME (stofs_3d_atl_pschism_v3.1.5; same env var, different binary).
+    sets $UFS_EXEC_NAME (``standalone.executable`` in the system yaml; same
+    env var, different binary). Standalone also searches $HOMEnos/exec like
+    nos_run.sh and raises when the binary is nowhere to be found, instead of
+    letting mpiexec launch an empty command. MJ (10/03/26)
     """
     del phase
 
+    standalone = not _is_ufs()
     exec_name = os.environ.get("UFS_EXEC_NAME") or "fv3_coastalS.exe"
     dst_exec = ctx.data / exec_name
     if dst_exec.is_file() and os.access(dst_exec, os.X_OK):
         return 0
-    if ctx.execnos is None:
-        return 0
-    src_exec = ctx.execnos / exec_name
-    if src_exec.is_file() and os.access(src_exec, os.X_OK):
-        shutil.copy2(src_exec, dst_exec)
-        logger.info("  Staged executable: %s", exec_name)
-        return 1
+    search = [ctx.execnos] if ctx.execnos is not None else []
+    if standalone and ctx.homenos is not None:
+        search.append(ctx.homenos / "exec")
+    for src_dir in search:
+        src_exec = src_dir / exec_name
+        if src_exec.is_file() and os.access(src_exec, os.X_OK):
+            shutil.copy2(src_exec, dst_exec)
+            logger.info("  Staged executable: %s", exec_name)
+            return 1
+    if standalone:
+        searched = "\n".join(f"      {d / exec_name}" for d in [ctx.data, *search])
+        raise FileNotFoundError(
+            f"stage_executable: standalone SCHISM executable {exec_name!r} "
+            f"not found (or not executable).\n  Searched:\n{searched}\n"
+            f"  Fix: copy the binary into $EXECnos, or change "
+            f"standalone.executable in the system yaml."
+        )
     return 0
 
 
@@ -268,10 +285,23 @@ def stage_hotstart(ctx: SchismRunContext, phase: str) -> int:
 
 
 def stage_partition_props(ctx: SchismRunContext, phase: str) -> int:
-    """Stage SCHISM partition.prop, tvd.prop, and fluxflag.prop from $FIXofs."""
+    """Stage SCHISM partition.prop, tvd.prop, and fluxflag.prop from $FIXofs.
+
+    Standalone SCHISM raises when partition.prop or tvd.prop ends up missing:
+    without the first pschism falls back to ParMETIS instead of the ops
+    partition, and the ops param.nml (itr_met=4) aborts without the second.
+    MJ (10/03/26)
+    """
     del phase
 
+    standalone = not _is_ufs()
     if ctx.fixofs is None or not ctx.prefixnos:
+        if standalone:
+            raise FileNotFoundError(
+                "stage_partition_props: standalone SCHISM needs "
+                f"{' and '.join(_STANDALONE_REQUIRED_PROPS)} but FIXofs or "
+                "PREFIXNOS is unset."
+            )
         return 0
 
     staged = 0
@@ -284,6 +314,22 @@ def stage_partition_props(ctx: SchismRunContext, phase: str) -> int:
                     "  Staged partition.prop "
                     "(pre-computed, bypasses ParMETIS at runtime)"
                 )
+
+    if standalone:
+        missing = [
+            ctx.fixofs / f"{ctx.prefixnos}.{prop}"
+            for prop in _STANDALONE_REQUIRED_PROPS
+            if not (ctx.data / prop).is_file()
+            or (ctx.data / prop).stat().st_size == 0
+        ]
+        if missing:
+            listed = "\n".join(f"      {m}" for m in missing)
+            raise FileNotFoundError(
+                f"stage_partition_props: standalone SCHISM needs these "
+                f"(missing or empty):\n{listed}\n"
+                f"  Fix: stage the ops files "
+                f"(tools/fetch_stofs_3d_atl_fix.sh)."
+            )
 
     return staged
 
@@ -504,15 +550,29 @@ def stage_sflux_inputs_txt(ctx: SchismRunContext, phase: str) -> int:
     """Stage $DATA/sflux/sflux_inputs.txt from $FIXofs if present.
 
     DATM drives forcing for UFS-Coastal, but SCHISM probes for this file
-    in its sflux initialization.
+    in its sflux initialization. Standalone SCHISM (nws=2) reads it for real
+    and halts without it, so a missing source raises there. MJ (10/03/26)
     """
     del phase
 
+    standalone = not _is_ufs()
     if ctx.fixofs is None or not ctx.prefixnos:
+        if standalone:
+            raise FileNotFoundError(
+                "stage_sflux_inputs_txt: standalone SCHISM needs "
+                "sflux_inputs.txt but FIXofs or PREFIXNOS is unset."
+            )
         return 0
 
     src = ctx.fixofs / f"{ctx.prefixnos}.sflux_inputs.txt"
     if not src.is_file() or src.stat().st_size == 0:
+        if standalone:
+            raise FileNotFoundError(
+                f"stage_sflux_inputs_txt: standalone SCHISM needs "
+                f"sflux_inputs.txt.\n  Expected: {src} (missing or empty)\n"
+                f"  Fix: stage it in $FIXofs "
+                f"(tools/fetch_stofs_3d_atl_fix.sh)."
+            )
         return 0
 
     sflux_dir = _data_subdir(ctx, "sflux")
@@ -1414,7 +1474,8 @@ def collect_staged_inputs(
     else:
         sflux_dir = ctx.data / "sflux"
         sflux_files = (
-            [str(p) for p in sorted(sflux_dir.glob("sflux_*.nc"))]
+            [str(p) for p in sorted(sflux_dir.glob("sflux_*.nc"))
+             if not p.is_symlink()]
             if sflux_dir.is_dir() else []
         )
         collector.add("atmospheric", "MET", sflux_files)

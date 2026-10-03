@@ -71,8 +71,9 @@ _schism_run_mpi() {
     local PPN=${PPN:-120}
 
     # Standalone SCHISM: Phase-1's resolver emits USE_DATM=false and stages
-    # the scribed pschism binary under $UFS_EXEC_NAME (e.g. stofs_3d_atl_pschism_v3.1.5). It
-    # takes nscribes as argv[1]; there is no DATM/NUOPC layer to bind.
+    # the scribed pschism binary under $UFS_EXEC_NAME (standalone.executable
+    # in the system yaml). It takes nscribes as argv[1]; there is no
+    # DATM/NUOPC layer to bind. MJ (10/03/26)
     if [ "${USE_DATM:-true}" = "false" ]; then
         local SCHISM_EXEC=${SCHISM_EXEC:-}
         local _exe_name=${UFS_EXEC_NAME:-pschism_WCOSS2}
@@ -84,6 +85,13 @@ _schism_run_mpi() {
                 "${HOMEnos:-}/exec/${_exe_name}"; do
                 if [ -x "$_cand" ]; then SCHISM_EXEC="$_cand"; break; fi
             done
+        fi
+        if [ -z "${SCHISM_EXEC}" ] || [ ! -x "${SCHISM_EXEC}" ]; then
+            echo "FATAL: standalone SCHISM executable ${_exe_name} not found (or not executable) in:"
+            echo "  ${DATA}/${_exe_name}"
+            echo "  ${EXECnos:-<unset>}/${_exe_name}"
+            echo "  ${HOMEnos:-<unset>}/exec/${_exe_name}"
+            return 127
         fi
         local NSCRIBES=${NSCRIBES:-8}
         local _mpi_launch

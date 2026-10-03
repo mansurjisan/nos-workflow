@@ -16,6 +16,8 @@ Covered:
 """
 from __future__ import annotations
 
+import dataclasses
+import os
 import shutil
 import tarfile
 from pathlib import Path
@@ -89,6 +91,12 @@ def _build_tar(tar_path: Path, files: dict) -> None:
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
             tf.addfile(info, io.BytesIO(data))
+
+
+def _seed_standalone_fix(ctx: SchismRunContext) -> None:
+    """Seed the $FIXofs files the standalone preflight requires."""
+    for name in ("partition.prop", "tvd.prop", "sflux_inputs.txt"):
+        (ctx.fixofs / f"{ctx.prefixnos}.{name}").write_text(f"{name}\n")
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +213,7 @@ def test_run_python_standalone_skips_ufs_configs_and_mesh(
     untar_met_sflux IS called. patch_param_nml + exe-copy still run."""
     monkeypatch.setenv("USE_DATM", "false")
     ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
 
     with patch.object(stage_files, "stage_ufs_configs") as suc, \
          patch.object(stage_files, "stage_executable", return_value=1) as sx, \
@@ -240,6 +249,7 @@ def test_run_python_standalone_prefers_legacy_param_nml(
     monkeypatch.setenv("USE_DATM", "false")
     monkeypatch.setenv("RUNTIME_CTL", "stofs_3d_atl_ufs.param.nml")
     ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
     # UFS-schema file already staged in $DATA (would crash legacy pschism).
     (ctx.data / "stofs_3d_atl_ufs.param.nml").write_text(
         "&CORE\n  nbins_veg_vert = 1\n/\n"
@@ -270,6 +280,7 @@ def test_run_python_standalone_warns_when_legacy_param_nml_absent(
     monkeypatch.setenv("USE_DATM", "false")
     monkeypatch.setenv("RUNTIME_CTL", "stofs_3d_atl_ufs.param.nml")
     ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
     (ctx.data / "stofs_3d_atl_ufs.param.nml").write_text("&CORE\n/\n")
     caplog.set_level(
         logging.WARNING, logger="nos_workflow.runners.schism_ufs.stage_files",
@@ -491,3 +502,273 @@ def test_untar_met_sflux_hrrr_name_derivation(tmp_path):
     gfs, hrrr = _met_sflux_tar_names(ctx, "nowcast")
     assert gfs == "nos.stofs_3d_atl_ufs.t00z.20260512.met.nowcast.nc.tar"
     assert hrrr == "nos.stofs_3d_atl_ufs.t00z.20260512.met.nowcast.nc.2.tar"
+
+
+@pytest.mark.skipif(_TAR_PATH is None, reason="tar not on PATH")
+def test_untar_met_sflux_links_unpadded_names(tmp_path):
+    """nos-utils writes .0001.nc; the SCHISM 5.14 binary opens .1.nc, so
+    both names must resolve (relative symlink, count excludes links)."""
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    _build_tar(
+        ctx.comout / ctx.met_netcdf_nowcast,
+        {"sflux_air_1.0001.nc": b"a", "sflux_rad_1.0001.nc": b"r",
+         "sflux_prc_1.0001.nc": b"p"},
+    )
+    hrrr_name = ctx.met_netcdf_nowcast[:-7] + ".nc.2.tar"
+    _build_tar(
+        ctx.comout / hrrr_name,
+        {"sflux_air_2.0001.nc": b"a2", "sflux_rad_2.0001.nc": b"r2",
+         "sflux_prc_2.0001.nc": b"p2"},
+    )
+
+    n = untar_met_sflux(ctx, "nowcast")
+
+    assert n == 6
+    sflux = ctx.data / "sflux"
+    for kind in ("air", "rad", "prc"):
+        for stack in (1, 2):
+            padded = sflux / f"sflux_{kind}_{stack}.0001.nc"
+            link = sflux / f"sflux_{kind}_{stack}.1.nc"
+            assert padded.is_file() and not padded.is_symlink()
+            assert link.is_symlink()
+            assert os.readlink(link) == padded.name
+            assert link.read_bytes() == padded.read_bytes()
+
+
+@pytest.mark.skipif(_TAR_PATH is None, reason="tar not on PATH")
+def test_untar_met_sflux_links_every_day_file(tmp_path):
+    """Multi-file mode (one file per day): .0002 -> .2, .0010 -> .10."""
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    members = {}
+    for num in ("0001", "0002", "0010"):
+        members[f"sflux_air_1.{num}.nc"] = b"a" + num.encode()
+    _build_tar(ctx.comout / ctx.met_netcdf_nowcast, members)
+
+    n = untar_met_sflux(ctx, "nowcast")
+
+    assert n == 3
+    sflux = ctx.data / "sflux"
+    assert (sflux / "sflux_air_1.2.nc").read_bytes() == b"a0002"
+    assert (sflux / "sflux_air_1.10.nc").read_bytes() == b"a0010"
+
+
+@pytest.mark.skipif(_TAR_PATH is None, reason="tar not on PATH")
+def test_untar_met_sflux_unpadded_members_get_no_link(tmp_path):
+    """Ops-style .1.nc members are left alone (no self-link, no clobber)."""
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    _build_tar(
+        ctx.comout / ctx.met_netcdf_nowcast,
+        {"sflux_air_1.1.nc": b"a", "sflux_rad_1.1.nc": b"r",
+         "sflux_prc_1.1.nc": b"p"},
+    )
+
+    n = untar_met_sflux(ctx, "nowcast")
+
+    assert n == 3
+    assert not any(p.is_symlink() for p in (ctx.data / "sflux").iterdir())
+
+
+def test_link_unpadded_sflux_names_keeps_existing_file(tmp_path):
+    """A real .1.nc already present is never replaced by a link."""
+    from nos_workflow.runners.schism_ufs.forcing import _link_unpadded_sflux_names
+    sflux = tmp_path / "sflux"
+    sflux.mkdir()
+    (sflux / "sflux_air_1.0001.nc").write_bytes(b"padded")
+    (sflux / "sflux_air_1.1.nc").write_bytes(b"real")
+
+    assert _link_unpadded_sflux_names(sflux) == 0
+    assert not (sflux / "sflux_air_1.1.nc").is_symlink()
+    assert (sflux / "sflux_air_1.1.nc").read_bytes() == b"real"
+
+
+@pytest.mark.skipif(_TAR_PATH is None, reason="tar not on PATH")
+def test_collect_staged_inputs_lists_sflux_once(tmp_path, monkeypatch):
+    """The unpadded symlinks must not double-list sflux in the manifest."""
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path, phase="nowcast")
+    _build_tar(
+        ctx.comout / ctx.met_netcdf_nowcast,
+        {"sflux_air_1.0001.nc": b"a", "sflux_rad_1.0001.nc": b"r",
+         "sflux_prc_1.0001.nc": b"p"},
+    )
+    untar_met_sflux(ctx, "nowcast")
+
+    collector = stage_files.collect_staged_inputs(ctx, "nowcast", ufs=False)
+
+    met = [g for g in collector.groups() if g["category"] == "atmospheric"]
+    assert len(met) == 1
+    assert met[0]["count"] == 3
+    assert not any(f.endswith(".1.nc") for f in met[0]["files"])
+
+
+# ---------------------------------------------------------------------------
+# standalone preflight: missing exe / partition.prop / sflux_inputs.txt
+# ---------------------------------------------------------------------------
+
+
+def _fake_exe(path: Path, mode: int = 0o755) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"#!fake\n")
+    os.chmod(path, mode)
+    return path
+
+
+def test_stage_executable_standalone_missing_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = _make_ctx(tmp_path)
+    with pytest.raises(FileNotFoundError, match="pschism_x"):
+        stage_files.stage_executable(ctx, "nowcast")
+
+
+def test_stage_executable_standalone_not_executable_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = _make_ctx(tmp_path)
+    _fake_exe(ctx.execnos / "pschism_x", mode=0o644)
+    with pytest.raises(FileNotFoundError, match="not executable"):
+        stage_files.stage_executable(ctx, "nowcast")
+
+
+def test_stage_executable_standalone_copies_from_execnos(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = _make_ctx(tmp_path)
+    _fake_exe(ctx.execnos / "pschism_x")
+    assert stage_files.stage_executable(ctx, "nowcast") == 1
+    assert os.access(ctx.data / "pschism_x", os.X_OK)
+
+
+def test_stage_executable_standalone_falls_back_to_homenos_exec(
+    tmp_path, monkeypatch,
+):
+    """Same search order as nos_run.sh: $EXECnos then $HOMEnos/exec."""
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = dataclasses.replace(_make_ctx(tmp_path), homenos=tmp_path / "home")
+    _fake_exe(ctx.homenos / "exec" / "pschism_x")
+    assert stage_files.stage_executable(ctx, "nowcast") == 1
+    assert (ctx.data / "pschism_x").is_file()
+
+
+def test_stage_executable_standalone_already_staged_ok(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = _make_ctx(tmp_path)
+    _fake_exe(ctx.data / "pschism_x")
+    assert stage_files.stage_executable(ctx, "nowcast") == 0
+
+
+def test_stage_executable_ufs_missing_stays_silent(tmp_path, monkeypatch):
+    """UFS behaviour is unchanged: a missing binary is not an error here."""
+    monkeypatch.delenv("USE_DATM", raising=False)
+    monkeypatch.delenv("UFS_EXEC_NAME", raising=False)
+    ctx = _make_ctx(tmp_path)
+    assert stage_files.stage_executable(ctx, "nowcast") == 0
+
+
+def test_stage_partition_props_standalone_missing_partition_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.tvd.prop").write_text("tvd\n")
+    with pytest.raises(FileNotFoundError, match="partition.prop"):
+        stage_files.stage_partition_props(ctx, "nowcast")
+
+
+def test_stage_partition_props_standalone_missing_tvd_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.partition.prop").write_text("part\n")
+    with pytest.raises(FileNotFoundError, match="tvd.prop"):
+        stage_files.stage_partition_props(ctx, "nowcast")
+
+
+def test_stage_partition_props_standalone_empty_partition_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.partition.prop").write_text("")
+    (ctx.fixofs / f"{ctx.prefixnos}.tvd.prop").write_text("tvd\n")
+    with pytest.raises(FileNotFoundError, match="partition.prop"):
+        stage_files.stage_partition_props(ctx, "nowcast")
+
+
+def test_stage_partition_props_standalone_present_ok(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
+    assert stage_files.stage_partition_props(ctx, "nowcast") == 2
+    assert (ctx.data / "partition.prop").is_file()
+    assert (ctx.data / "tvd.prop").is_file()
+
+
+def test_stage_partition_props_standalone_no_fixofs_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = dataclasses.replace(_make_ctx(tmp_path), fixofs=None)
+    with pytest.raises(FileNotFoundError, match="FIXofs"):
+        stage_files.stage_partition_props(ctx, "nowcast")
+
+
+def test_stage_partition_props_ufs_missing_stays_silent(tmp_path, monkeypatch):
+    monkeypatch.delenv("USE_DATM", raising=False)
+    ctx = _make_ctx(tmp_path)
+    assert stage_files.stage_partition_props(ctx, "nowcast") == 0
+
+
+def test_stage_sflux_inputs_txt_standalone_missing_raises(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    with pytest.raises(FileNotFoundError, match="sflux_inputs.txt"):
+        stage_files.stage_sflux_inputs_txt(ctx, "nowcast")
+
+
+def test_stage_sflux_inputs_txt_standalone_empty_raises(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    (ctx.fixofs / f"{ctx.prefixnos}.sflux_inputs.txt").write_text("")
+    with pytest.raises(FileNotFoundError, match="sflux_inputs.txt"):
+        stage_files.stage_sflux_inputs_txt(ctx, "nowcast")
+
+
+def test_stage_sflux_inputs_txt_standalone_present_ok(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
+    assert stage_files.stage_sflux_inputs_txt(ctx, "nowcast") == 1
+    assert (ctx.data / "sflux" / "sflux_inputs.txt").is_file()
+
+
+def test_stage_sflux_inputs_txt_ufs_missing_stays_silent(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("USE_DATM", raising=False)
+    ctx = _make_ctx(tmp_path)
+    assert stage_files.stage_sflux_inputs_txt(ctx, "nowcast") == 0
+
+
+def test_run_python_standalone_missing_exe_fails_before_other_staging(
+    tmp_path, monkeypatch,
+):
+    """The real stage_executable raises inside run_python, so the stage
+    fails before any later staging step (and before mpiexec)."""
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("UFS_EXEC_NAME", "pschism_x")
+    ctx = _make_ctx(tmp_path)
+    _seed_standalone_fix(ctx)
+    with patch.object(stage_files, "stage_hotstart") as hs:
+        with pytest.raises(FileNotFoundError, match="pschism_x"):
+            stage_files.run_python(ctx, "nowcast")
+    hs.assert_not_called()

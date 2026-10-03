@@ -7,6 +7,8 @@ tar was absent (non-fatal; caller handles fallback).
 from __future__ import annotations
 
 import logging
+import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -220,6 +222,31 @@ def _met_sflux_tar_names(ctx: SchismRunContext, phase: str) -> tuple:
     return gfs, hrrr
 
 
+_SFLUX_NUMBERED = re.compile(r"^(sflux_(?:air|rad|prc)_[12])\.(\d+)\.nc$")
+
+
+def _link_unpadded_sflux_names(sflux_dir: Path) -> int:
+    """Add ``sflux_*_N.<int>.nc`` symlinks beside zero-padded ``.NNNN.nc``.
+
+    nos-utils writes ``sflux_air_1.0001.nc``; the SCHISM 5.14 binary builds
+    the name with ``(i50)`` + adjustl and opens ``sflux_air_1.1.nc``, while the
+    older pschism wants the padded form. Both names are kept (relative links,
+    so $DATA stays relocatable). Returns the number of links created.
+    MJ (10/03/26)
+    """
+    made = 0
+    for p in sorted(sflux_dir.iterdir()):
+        m = _SFLUX_NUMBERED.match(p.name)
+        if not m or p.is_symlink() or not p.is_file():
+            continue
+        link = sflux_dir / f"{m.group(1)}.{int(m.group(2))}.nc"
+        if link.name == p.name or link.exists() or link.is_symlink():
+            continue
+        os.symlink(p.name, link)
+        made += 1
+    return made
+
+
 def untar_met_sflux(ctx: SchismRunContext, phase: str) -> int:
     """Extract prep sflux met tar(s) from $COMOUT into $DATA/sflux/.
 
@@ -229,7 +256,11 @@ def untar_met_sflux(ctx: SchismRunContext, phase: str) -> int:
     SCHISM aborts at sflux init without it. The HRRR stack-2 tar is
     optional (secondary forcing) and a non-fatal miss.
 
-    Returns the number of ``sflux_*.nc`` files present after extraction.
+    Zero-padded ``.NNNN.nc`` members also get an unpadded ``.N.nc`` symlink
+    (see :func:`_link_unpadded_sflux_names`).
+
+    Returns the number of ``sflux_*.nc`` files present after extraction
+    (symlinks not counted).
     """
     gfs_tar, hrrr_tar = _met_sflux_tar_names(ctx, phase)
 
@@ -262,9 +293,11 @@ def untar_met_sflux(ctx: SchismRunContext, phase: str) -> int:
                 "  HRRR sflux tar absent (optional secondary): %s", hrrr_src,
             )
 
+    _link_unpadded_sflux_names(sflux_dir)
+
     extracted = sum(
         1 for p in sflux_dir.glob("sflux_*.nc")
-        if p.is_file() and p.stat().st_size > 0
+        if p.is_file() and not p.is_symlink() and p.stat().st_size > 0
     )
     logger.info(
         "  Staged sflux met (%d sflux_*.nc files into %s from %s)",
