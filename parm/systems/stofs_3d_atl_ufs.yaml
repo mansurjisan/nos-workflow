@@ -61,9 +61,9 @@ forcing:
     version: "v3.0"
     n_list_target: 121
     n_list_min: 97
-    # Ops v3.1.5 river inputs: sources in json order, source_sink.in / msource.th / vsink.th
-    # copied from the FIX files (staged by tools/fetch_stofs_3d_atl_fix.sh). MJ (10/03/26)
-    ops_static_files: true
+    # Coupled build has no SH_MEM_COMM / PREC_EVAP, so the ops 1.99M-sink files stay off here;
+    # the standalone yaml turns them on. MJ (10/03/26)
+    ops_static_files: false
     files:
       sources_json: stofs_3d_atl_river_sources_conus.json
     st_lawrence:

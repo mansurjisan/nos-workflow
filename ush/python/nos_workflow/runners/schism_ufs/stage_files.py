@@ -379,8 +379,18 @@ def check_atl_river_inputs(ctx: SchismRunContext, phase: str) -> None:
     if not (ctx.prefixnos or "").startswith("stofs_3d_atl"):
         return
 
-    missing = [n for n in _NWM_FALLBACK_FILES
-               if not (ctx.data / n).is_file() or (ctx.data / n).stat().st_size == 0]
+    def _absent(n):
+        return not (ctx.data / n).is_file() or (ctx.data / n).stat().st_size == 0
+
+    missing = [n for n in ("source_sink.in", "vsource.th", "msource.th") if _absent(n)]
+    n_src = n_sink = 0
+    if "source_sink.in" not in missing:
+        with open(ctx.data / "source_sink.in") as f:
+            n_src = int(f.readline())
+            n_sink = int(next(islice(f, n_src + 1, None)))
+        # coupled ATL declares no sinks and stages no vsink.th. MJ (10/03/26)
+        if n_sink and _absent("vsink.th"):
+            missing.append("vsink.th")
     if missing:
         tar = ctx.nwm_source_sink_forecast if phase == "forecast" else ctx.nwm_source_sink_nowcast
         raise FileNotFoundError(
@@ -389,9 +399,6 @@ def check_atl_river_inputs(ctx: SchismRunContext, phase: str) -> None:
             f"tools/fetch_stofs_3d_atl_fix.sh); expected in {ctx.comout / (tar or '')}"
         )
 
-    with open(ctx.data / "source_sink.in") as f:
-        n_src = int(f.readline())
-        n_sink = int(next(islice(f, n_src + 1, None)))
     expect = {"vsource.th": n_src + 1, "msource.th": 2 * n_src + 1}
     if n_sink:
         expect["vsink.th"] = n_sink + 1

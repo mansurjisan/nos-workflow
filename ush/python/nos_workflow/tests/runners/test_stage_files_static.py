@@ -851,6 +851,22 @@ def test_atl_river_check_zero_sinks_skips_vsink_columns(tmp_path):
     check_atl_river_inputs(ctx, "nowcast")
 
 
+def test_atl_river_check_zero_sinks_needs_no_vsink_file(tmp_path):
+    """Coupled ATL: no sinks declared, no vsink.th staged. MJ (10/03/26)"""
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, n_sink=0)
+    (ctx.data / "vsink.th").unlink()
+    check_atl_river_inputs(ctx, "nowcast")
+
+
+def test_atl_river_check_sinks_still_need_vsink_file(tmp_path):
+    ctx = _atl_ctx(tmp_path)
+    _seed_atl_river(ctx, n_sink=4)
+    (ctx.data / "vsink.th").unlink()
+    with pytest.raises(FileNotFoundError, match="vsink.th"):
+        check_atl_river_inputs(ctx, "nowcast")
+
+
 def test_atl_river_check_ignores_other_systems(tmp_path):
     """SECOFS-UFS stages whatever it staged: no files, no error."""
     ctx = _make_ctx(tmp_path)
