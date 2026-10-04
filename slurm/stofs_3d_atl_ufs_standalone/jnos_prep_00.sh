@@ -141,12 +141,12 @@ _law=0
 for _d in ${PDY} ${PDYM1}; do [ -s "${DCOMROOT}/${_d}/can_streamgauge/02OA016_hydrometric.csv" ] && _law=1; done
 [ ${_law} = 1 ] || { echo "FATAL: St. Lawrence 02OA016_hydrometric.csv missing for ${PDY} and ${PDYM1} under ${DCOMROOT}/<day>/can_streamgauge"; exit 1; }
 if [ -n "${COMINrerun:-}" ]; then
-    [ "$(stat -c %s "${COMINrerun}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${COMINrerun}/staout_1 missing or under 10000 bytes (dynamic adjust skips it)"; exit 1; }
+    [ "$(stat -L -c %s "${COMINrerun}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${COMINrerun}/staout_1 missing or under 10000 bytes (dynamic adjust skips it)"; exit 1; }
     [ -s "${COMINrerun}/${OFS}.t${cyc}z.avg_bias" ] || [ -s "${COMINrerun}/average_bias_today" ] || { echo "FATAL: ${COMINrerun}/${OFS}.t${cyc}z.avg_bias missing"; exit 1; }
     [ -s "${COMINrerun}/${OFS}.t${cyc}z.param.nml" ] || [ -s "${COMINrerun}/param.nml" ] || echo "WARNING: no param.nml in ${COMINrerun}"
 else
     _prev="${COMROOT}/nos/${OFS}.${PDYM1}"
-    [ "$(stat -c %s "${_prev}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${_prev}/staout_1 missing or under 10000 bytes (tools/hercules_atl_seed_prev.sh)"; exit 1; }
+    [ "$(stat -L -c %s "${_prev}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${_prev}/staout_1 missing or under 10000 bytes (tools/hercules_atl_seed_prev.sh)"; exit 1; }
     [ -s "${_prev}/rerun/${OFS}.t${cyc}z.avg_bias" ] || { echo "FATAL: ${_prev}/rerun/${OFS}.t${cyc}z.avg_bias missing"; exit 1; }
 fi
 
