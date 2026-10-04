@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._log import emit_stage_summary, stage_logger, timed_step
 from ..errors import StageFailedError
 from ..registry import OFSDescriptor
+from ..tools import build_staout_1
 
 if TYPE_CHECKING:
     from ..env import NCOEnv  # noqa: F401
@@ -62,6 +65,8 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             msg=f"nos_utils.nco_bridge import failed: {exc}",
         ) from exc
 
+    _export_prev_cycle_dirs(descriptor)
+
     for phase in ("nowcast", "forecast"):
         step_name = f"prep_{phase}"
         with timed_step(sl, step_name):
@@ -89,6 +94,34 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
                        runtime_s=time.monotonic() - t_stage,
                        extras={"phases_completed": 2})
     return 0
+
+
+def _export_prev_cycle_dirs(descriptor: OFSDescriptor) -> None:
+    """STOFS-3D-ATL: set COMOUT_PREV and COMOUTrerun as ops JSTOFS_3D_ATL_PREP does, unless already set.
+
+    The dynamic SSH adjust reads $COMOUT_PREV/staout_1 and $COMOUT_PREV/rerun/<run>.<cycle>.avg_bias
+    and writes today's bias to $COMOUTrerun. COMOUT_PREV is the PDY-1 sibling of $COMOUT, as for the
+    hotstart search. MJ (10/03/26)
+    """
+    if not build_staout_1.is_atl_run(descriptor.name):
+        return
+    sl = stage_logger(_STAGE, descriptor.name)
+    comout, pdy = os.environ.get("COMOUT"), os.environ.get("PDY")
+    if not (comout and pdy):
+        sl.warning("COMOUT_PREV / COMOUTrerun not derived: PDY or COMOUT unset")
+        return
+    if not os.environ.get("COMOUTrerun"):
+        os.environ["COMOUTrerun"] = str(Path(comout) / "rerun")
+    if not os.environ.get("COMOUT_PREV"):
+        run = os.environ.get("RUN") or descriptor.name
+        os.environ["COMOUT_PREV"] = str(build_staout_1.previous_comout(comout, run, pdy))
+    prev = Path(os.environ["COMOUT_PREV"])
+    if prev.is_dir():
+        sl.info("COMOUT_PREV=%s COMOUTrerun=%s", prev, os.environ["COMOUTrerun"])
+    else:
+        sl.warning("COMOUT_PREV=%s not found; dynamic adjust runs without a previous-cycle bias", prev)
+    if os.environ.get("COMINrerun"):
+        sl.info("COMINrerun=%s overrides the COMOUT_PREV layout", os.environ["COMINrerun"])
 
 
 def _coerce_rc(result: Any) -> int:
