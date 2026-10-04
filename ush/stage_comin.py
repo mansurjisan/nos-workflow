@@ -296,6 +296,79 @@ def manifest_nwm(pdy, cyc, nowcast_hours, forecast_hours, buffer_hours=3,
     return sorted(set(keys))
 
 
+# ---------------------------------------------------------------------------
+# STOFS-3D-ATL manifests -- mirror the ops-timeline discovery the ATL path uses
+# (gfs_ops_timeline, hrrr small_grib, NWM medium_range_mem1 multi-cycle list,
+# RTOFS same-day ops route 1). Only the primary chain is staged: ops' at-cycle-
+# time fallbacks (older GFS cycles, rtofs.PDY-1, NWM backup list) are not, so a
+# historical cycle such as 20261001 12z is fully covered but a live cycle with a
+# late upstream product is not. MJ (10/04/26)
+# ---------------------------------------------------------------------------
+
+def manifest_gfs_ops(pdy, cyc, nowcast_hours, forecast_hours, resolution="0p25"):
+    """Mirrors GFSProcessor._build_ops_file_list/_ops_chain_cycle (gfs.py): hourly
+    valid times from nowcast start - 3 h to cycle + forecast + 3 h; up to the
+    cycle each hour is lead 1-6 of the newest cycle, after it the cycle's own
+    forecast. MJ (10/04/26)
+    """
+    c0 = cycle_dt(pdy, cyc)
+    valid = c0 - dt.timedelta(hours=nowcast_hours + 3)
+    v_end = c0 + dt.timedelta(hours=forecast_hours + 3)
+    keys = []
+    while valid <= v_end:
+        if valid > c0:
+            cyc_dt, fhr = c0, int((valid - c0).total_seconds() // 3600)
+        else:
+            before = valid - HOUR
+            cyc_dt = before.replace(hour=before.hour - before.hour % 6, minute=0,
+                                    second=0, microsecond=0)
+            fhr = int((valid - cyc_dt).total_seconds() // 3600)
+        keys.append(
+            f"gfs.{cyc_dt:%Y%m%d}/{cyc_dt.hour:02d}/atmos/"
+            f"gfs.t{cyc_dt.hour:02d}z.pgrb2.{resolution}.f{fhr:03d}"
+        )
+        valid += HOUR
+    return sorted(set(keys))
+
+
+def manifest_nwm_stofs(pdy, cyc, nowcast_hours, forecast_hours):
+    """Mirrors NWMProcessor._find_stofs_nwm_files primary list (nwm.py): yesterday
+    t06z f006, t12z/t18z f001-f006, today t00z f001-f006, today t06z f001-f120
+    (139 files), all medium_range_mem1. The cycle hours are fixed by the ops
+    shell logic, not derived from cyc. MJ (10/04/26)
+    """
+    today = cycle_dt(pdy, 0)
+    prev = today - dt.timedelta(days=1)
+
+    def key(date, hour, fhr):
+        return (f"nwm.{date:%Y%m%d}/medium_range_mem1/"
+                f"nwm.t{hour:02d}z.medium_range.channel_rt_1.f{fhr:03d}.conus.nc")
+
+    keys = [key(prev, 6, 6)]
+    keys += [key(prev, 12, f) for f in range(1, 7)]
+    keys += [key(prev, 18, f) for f in range(1, 7)]
+    keys += [key(today, 0, f) for f in range(1, 7)]
+    keys += [key(today, 6, f) for f in range(1, 121)]
+    return sorted(set(keys))
+
+
+def manifest_rtofs_ops(pdy, cyc, nowcast_hours, forecast_hours, region="US_east",
+                        rtofs_date=None, hourly_2d=False):
+    """Mirrors RTOFSProcessor._find_ops_files route 1 (rtofs.py): same-day cycle,
+    2ds n012, n018, f000..f120 and 3dz n012, n018, n024, f006..f120 (6-hourly,
+    only the 6-hourly valid times are ever selected, so 2ds is staged 6-hourly
+    unless hourly_2d). MJ (10/04/26)
+    """
+    date = rtofs_date or cycle_dt(pdy, 0)
+    base = f"rtofs.{date:%Y%m%d}"
+    leads_2d = range(0, 121) if hourly_2d else range(0, 121, 6)
+    keys = [f"{base}/rtofs_glo_2ds_n{n:03d}_diag.nc" for n in (12, 18)]
+    keys += [f"{base}/rtofs_glo_2ds_f{f:03d}_diag.nc" for f in leads_2d]
+    keys += [f"{base}/rtofs_glo_3dz_n{n:03d}_6hrly_hvr_{region}.nc" for n in (12, 18, 24)]
+    keys += [f"{base}/rtofs_glo_3dz_f{f:03d}_6hrly_hvr_{region}.nc" for f in range(6, 121, 6)]
+    return sorted(set(keys))
+
+
 MANIFEST_BUILDERS = {
     "gfs": manifest_gfs,
     "hrrr": manifest_hrrr,
@@ -303,9 +376,22 @@ MANIFEST_BUILDERS = {
     "nwm": manifest_nwm,
 }
 
+# Per-profile overrides: builder per source plus the run lengths the profile
+# defaults to. The default profile (secofs_ufs) is the historical behaviour. MJ (10/04/26)
+PROFILES = {
+    "secofs_ufs": {"nowcast_hours": 6, "forecast_hours": 48, "rtofs_region": "US_east",
+                    "builders": {}},
+    "stofs_3d_atl": {
+        "nowcast_hours": 24, "forecast_hours": 96, "rtofs_region": "US_east",
+        "builders": {"gfs": manifest_gfs_ops, "nwm": manifest_nwm_stofs,
+                      "rtofs": manifest_rtofs_ops},
+    },
+}
+
 
 def build_manifest(sources, pdy, cyc, nowcast_hours, forecast_hours, comroot,
-                    rtofs_region="US_east", rtofs_probe=head_probe):
+                    rtofs_region="US_east", rtofs_probe=head_probe,
+                    profile="secofs_ufs", hourly_2d=False):
     """Returns [(url, local_path), ...]. Each source lands under
     comroot/<source>/ so that dir can be pointed to directly as
     COMINgfs/COMINhrrr/COMINrtofs/COMINnwm (each already contains the dated
@@ -315,8 +401,12 @@ def build_manifest(sources, pdy, cyc, nowcast_hours, forecast_hours, comroot,
     --no-probe) can swap in a fake probe without any network use.
     """
     entries = []
+    overrides = PROFILES[profile]["builders"]
     for source in sources:
-        if source == "rtofs":
+        if source in overrides:
+            kwargs = {"region": rtofs_region, "hourly_2d": hourly_2d} if source == "rtofs" else {}
+            keys = overrides[source](pdy, cyc, nowcast_hours, forecast_hours, **kwargs)
+        elif source == "rtofs":
             rtofs_date, candidates, found = resolve_rtofs_date(pdy, rtofs_probe)
             if not found:
                 tried = ", ".join(d.strftime("%Y%m%d") for d in candidates)
@@ -432,12 +522,18 @@ def parse_args(argv=None):
     p.add_argument("--comroot", required=True, help="root dir for the staged COMIN-shaped tree")
     p.add_argument("--sources", default="gfs,hrrr,rtofs,nwm",
                     help="comma-separated subset of gfs,hrrr,rtofs,nwm")
-    p.add_argument("--nowcast-hours", type=int, default=6,
-                    help="default matches parm/systems/secofs_ufs.yaml model.run.nowcast_hours")
-    p.add_argument("--forecast-hours", type=int, default=48,
-                    help="default matches parm/systems/secofs_ufs.yaml model.run.forecast_hours")
-    p.add_argument("--rtofs-region", default="US_east",
-                    help="default matches secofs_ufs.yaml forcing.ocean.rtofs_3d_region")
+    p.add_argument("--profile", default="secofs_ufs", choices=sorted(PROFILES),
+                    help="file-set profile; stofs_3d_atl stages the ATL ops-timeline set "
+                         "(24 h nowcast, 96 h forecast)")
+    p.add_argument("--hourly-2d", action="store_true",
+                    help="stofs_3d_atl only: stage every hourly RTOFS 2ds file f000-f120 "
+                         "instead of the 6-hourly ones the ops route selects")
+    p.add_argument("--nowcast-hours", type=int, default=None,
+                    help="default from the profile (secofs_ufs: 6, matches secofs_ufs.yaml)")
+    p.add_argument("--forecast-hours", type=int, default=None,
+                    help="default from the profile (secofs_ufs: 48, matches secofs_ufs.yaml)")
+    p.add_argument("--rtofs-region", default=None,
+                    help="default from the profile (US_east)")
     p.add_argument("--jobs", type=int, default=8)
     p.add_argument("--dry-run", action="store_true")
     p.add_argument("--no-probe", action="store_true",
@@ -448,6 +544,10 @@ def parse_args(argv=None):
 
 def main(argv=None):
     args = parse_args(argv)
+    prof = PROFILES[args.profile]
+    nowcast_hours = prof["nowcast_hours"] if args.nowcast_hours is None else args.nowcast_hours
+    forecast_hours = prof["forecast_hours"] if args.forecast_hours is None else args.forecast_hours
+    rtofs_region = args.rtofs_region or prof["rtofs_region"]
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
     unknown = set(sources) - set(MANIFEST_BUILDERS)
     if unknown:
@@ -458,8 +558,9 @@ def main(argv=None):
     rtofs_probe = (lambda url: True) if args.no_probe else head_probe
 
     manifest = build_manifest(
-        sources, args.pdy, args.cyc, args.nowcast_hours, args.forecast_hours,
-        args.comroot, rtofs_region=args.rtofs_region, rtofs_probe=rtofs_probe,
+        sources, args.pdy, args.cyc, nowcast_hours, forecast_hours,
+        args.comroot, rtofs_region=rtofs_region, rtofs_probe=rtofs_probe,
+        profile=args.profile, hourly_2d=args.hourly_2d,
     )
 
     if args.dry_run:
