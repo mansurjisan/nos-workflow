@@ -14,7 +14,8 @@
 #   UFS_COMMIT   required; the clone's HEAD must start with it (take it from
 #                the WCOSS2 provenance file). Check out + update submodules first:
 #                  git -C $UFS_DIR checkout $UFS_COMMIT && git -C $UFS_DIR submodule update --init --recursive
-#   UFS_DIR      default /work2/noaa/nos-surge/$USER/ufs-weather-model
+#   UFS_DIR      required; use a SEPARATE clone for ATL (never the SECOFS clone). The script
+#                never checks out or modifies a clone, it only refuses if HEAD != UFS_COMMIT.
 #   EXECnos      required install dir
 #   COMPILE_ID   default stofs_atl_pe
 #   MAKE_OPT     default below; PREC_EVAP and NO_PARMETIS are verified in
@@ -22,10 +23,11 @@
 # Run on a login node or inside an sbatch allocation; it takes a while. MJ (10/04/26)
 # ======================================================================
 set -euo pipefail
+HOMEWF=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 : "${UFS_COMMIT:?set UFS_COMMIT to the ufs-weather-model commit used on WCOSS2}"
 : "${EXECnos:?set EXECnos to the exec/ install destination}"
-UFS_DIR=${UFS_DIR:-/work2/noaa/nos-surge/${USER}/ufs-weather-model}
+: "${UFS_DIR:?set UFS_DIR to a separate ufs-weather-model clone for ATL}"
 COMPILE_ID=${COMPILE_ID:-stofs_atl_pe}
 MAKE_OPT=${MAKE_OPT:-"-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_TOOLS=ON -DPREC_EVAP=ON"}
 
@@ -58,9 +60,11 @@ md5sum "${EXECnos}/fv3_stofs_3d_atl.exe"
 echo "installed ${EXECnos}/fv3_stofs_3d_atl.exe (from tests/${EXE}; commit ${HEAD_SHA})"
 
 BUILD_DIR=$(dirname "${CACHE}")
-found_utils=$(find "${BUILD_DIR}" ../build -maxdepth 6 -type f -perm -111 \
+SEARCH=("${BUILD_DIR}")
+[ -d ../build ] && SEARCH+=(../build)
+found_utils=$(find "${SEARCH[@]}" -maxdepth 6 -type f -perm -111 \
   \( -name 'combine_hotstart7' -o -name 'combine_output11' -o -name 'combine_output11_MPI' \) \
-  ! -name '*.o' 2>/dev/null | awk '{b=$0; sub(/.*\//, "", b); if (!seen[b]++) print}')
+  ! -name '*.o' 2>/dev/null | awk '{b=$0; sub(/.*\//, "", b); if (!seen[b]++) print}' || true)
 for u in ${found_utils}; do
   b=$(basename "${u}")
   dest="${EXECnos}/${b}"
@@ -68,4 +72,19 @@ for u in ${found_utils}; do
   if [ -e "${dest}" ]; then echo "keeping existing ${dest}"; continue; fi
   install -m 0755 "${u}" "${dest}"
   echo "installed ${dest}"
+done
+
+# Runtime-stack check: the exe must resolve every library under the cards' module set. MJ (10/04/26)
+if type module >/dev/null 2>&1; then
+  missing=$( ( module purge; module use "${HOMEWF}/modulefiles"; module load nos_hercules.intel; ldd "${EXECnos}/fv3_stofs_3d_atl.exe" | grep 'not found' ) 2>/dev/null || true)
+  [ -z "${missing}" ] || { echo "FATAL: unresolved libraries under nos_hercules.intel:" >&2; echo "${missing}" >&2; exit 1; }
+  echo "ldd under nos_hercules.intel: all libraries resolved"
+else
+  echo "WARNING: 'module' not available in this shell; run ldd under nos_hercules.intel by hand" >&2
+fi
+lua_val() { grep -E "^[[:space:]]*$2[[:space:]]*=" "$1" 2>/dev/null | sed -E 's/.*or "([^"]*)".*/\1/' | head -1; }
+for v in spack_stack_ver spack_stack_env stack_intel_ver stack_impi_ver; do
+  a=$(lua_val "${UFS_DIR}/modulefiles/ufs_hercules.intel.lua" "$v"); b=$(lua_val "${HOMEWF}/modulefiles/nos_hercules.intel.lua" "$v")
+  echo "stack ${v}: fork=${a:-?} nos_hercules.intel=${b:-?}"
+  [ -z "${a}" ] || [ "${a}" = "${b}" ] || echo "WARNING: ${v} differs between the fork modulefile and nos_hercules.intel" >&2
 done

@@ -78,10 +78,17 @@ def test_gfs_matches_processor_chain():
     assert set(sc.manifest_gfs_ops("20261001", 12, 24, 96)) == want
 
 
-def test_default_profile_unchanged():
-    old = sc.build_manifest(["gfs", "hrrr", "nwm"], "20260825", 12, 6, 48, "/c")
-    assert old == sc.build_manifest(["gfs", "hrrr", "nwm"], "20260825", 12, 6, 48, "/c", profile="secofs_ufs")
-    assert any("channel_rt.tm00" in l for _, l in old)
+def test_default_profile_golden():
+    """Pinned from 38c85df's stage_comin (20260825 12z, the secofs_ufs defaults)."""
+    import hashlib
+    golden = {"gfs": (78, "91a7a00054faaff5"), "hrrr": (55, "61d631be83c5d2e1"),
+              "rtofs": (67, "0cc59738f5391dab"), "nwm": (76, "34f318d00311dde6")}
+    for src, (n, h) in golden.items():
+        m = sc.build_manifest([src], "20260825", 12, 6, 48, "/c", rtofs_probe=lambda u: True)
+        assert len(m) == n, src
+        assert hashlib.sha256("\n".join(u for u, _ in m).encode()).hexdigest()[:16] == h, src
+        assert m == sc.build_manifest([src], "20260825", 12, 6, 48, "/c", rtofs_probe=lambda u: True,
+                                      profile="secofs_ufs")
 
 
 def test_cli_profile_defaults(capsys):

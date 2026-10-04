@@ -39,7 +39,7 @@ mkdir -p "${BUILD}"
 cp -a "${SRC}/." "${BUILD}/"
 rm -rf "${BUILD}/src/o" "${BUILD}/src/build" "${BUILD}"/src/*.a "${BUILD}"/src/pschism_*
 
-# The three ops flags must be on in the copied include_modules, not just assumed.
+# The three ops flags must be on in the copied include_modules, not just assumed. MJ (10/04/26)
 grep -Eq '^[[:space:]]*NO_PARMETIS[[:space:]]*=[[:space:]]*yes' "${BUILD}/mk/include_modules" || { echo "FATAL: NO_PARMETIS is not enabled in mk/include_modules" >&2; exit 1; }
 grep -Eq '^[[:space:]]*USE_PREC_EVAP[[:space:]]*=[[:space:]]*yes' "${BUILD}/mk/include_modules" || { echo "FATAL: USE_PREC_EVAP is not enabled in mk/include_modules" >&2; exit 1; }
 grep -Eq '^[[:space:]]*TVD_LIM[[:space:]]*=[[:space:]]*VL' "${BUILD}/mk/include_modules" || { echo "FATAL: TVD_LIM is not VL in mk/include_modules" >&2; exit 1; }
@@ -60,7 +60,7 @@ GTMMOD =
 GTMLIBS =
 MK
 
-# src/Makefile runs `python Core/gen_version.py`; give it a python if only python3 exists.
+# src/Makefile runs `python Core/gen_version.py`; give it a python if only python3 exists. MJ (10/04/26)
 if ! command -v python >/dev/null 2>&1; then
   mkdir -p "${BUILD}/.bin"
   ln -sf "$(command -v python3)" "${BUILD}/.bin/python"
@@ -71,8 +71,8 @@ cd "${BUILD}/src"
 make clean >/dev/null 2>&1 || true
 make pschism 2>&1 | tee "${BUILD}/build.log"
 
-# Verify from the actual compile lines, not the config.
-grep -E -- '-DNO_PARMETIS' "${BUILD}/build.log" | grep -E -- '-DPREC_EVAP' | grep -qE -- '-DTVD_VL' || { echo "FATAL: compile lines lack -DNO_PARMETIS -DPREC_EVAP -DTVD_VL" >&2; exit 1; }
+# Verify from the actual compile lines, not the config. MJ (10/04/26)
+awk '/-DNO_PARMETIS/ && /-DPREC_EVAP/ && /-DTVD_VL/ {n++} END {exit n ? 0 : 1}' "${BUILD}/build.log" || { echo "FATAL: compile lines lack -DNO_PARMETIS -DPREC_EVAP -DTVD_VL" >&2; exit 1; }
 if grep -Eq -- '-lparmetis|-lmetis' "${BUILD}/build.log"; then echo "FATAL: link line has parmetis" >&2; exit 1; fi
 EXE=$(ls pschism_HERCULES_VL 2>/dev/null || true)
 [ -x "${EXE}" ] || { echo "FATAL: pschism_HERCULES_VL not built" >&2; exit 1; }

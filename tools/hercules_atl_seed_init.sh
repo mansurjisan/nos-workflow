@@ -9,7 +9,8 @@
 #
 # Usage:
 #   tools/hercules_atl_seed_init.sh <PDY> <COMOUT> [LINK_COMOUT ...]
-# COMOUT is the full cycle directory, e.g. $COMROOT_SA/nos/stofs_3d_atl_ufs.20261001.
+# COMOUT is the full cycle directory under the variant's COMROOT (COMROOT_SA for standalone,
+# COMROOT_UFS for coupled), e.g. $COMROOT_SA/nos/stofs_3d_atl_ufs.20261001; paths are made absolute.
 # Each LINK_COMOUT (e.g. the coupled COMROOT's cycle dir) gets a symlink to the file.
 #
 # Env: CYC (default 12), RUN (default stofs_3d_atl_ufs), WORKDIR (download dir,
@@ -21,7 +22,7 @@
 set -euo pipefail
 
 [ "$#" -ge 2 ] || { echo "Usage: $0 <PDY> <COMOUT> [LINK_COMOUT ...]" >&2; exit 2; }
-PDY=$1; COMOUT=$2; shift 2
+PDY=$1; COMOUT=$(realpath -m "$2"); shift 2
 CYC=${CYC:-12}
 RUN=${RUN:-stofs_3d_atl_ufs}
 WORKDIR=${WORKDIR:-${COMOUT}/.seed}
@@ -53,7 +54,7 @@ if [ -s "${OUT}" ] && check_dims "${OUT}"; then
   echo "init already present and valid: ${OUT}"
 else
   rm -f "${OUT}.partial"
-  want=$(curl -sI "${URL}" | awk 'tolower($1)=="content-length:"{gsub("\r","");print $2}')
+  want=$(curl -fsSI "${URL}" 2>/dev/null | awk 'tolower($1)=="content-length:"{gsub("\r","");print $2}' || true)
   [ -n "${want}" ] || { echo "FATAL: cannot HEAD ${URL}" >&2; exit 1; }
   have=$(stat -c %s "${RAW}" 2>/dev/null || echo 0)
   if [ "${have}" != "${want}" ]; then
@@ -81,6 +82,7 @@ if command -v ncdump >/dev/null 2>&1; then
 fi
 
 for link in "$@"; do
+  link=$(realpath -m "${link}")
   mkdir -p "${link}"
   ln -sfn "${OUT}" "${link}/$(basename "${OUT}")"
   echo "linked ${link}/$(basename "${OUT}")"

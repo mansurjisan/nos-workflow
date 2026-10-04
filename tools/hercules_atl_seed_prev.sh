@@ -11,7 +11,8 @@
 # Usage:
 #   tools/hercules_atl_seed_prev.sh <SEED_DIR> <COMROOT> <PDY> [COMROOT ...]
 # SEED_DIR is the bundle's seeds/dyn_seed_<PDYm1> (staout_1, <run>.t12z.avg_bias,
-# param.nml). Several COMROOTs may be given (standalone and coupled). Files are
+# param.nml). Give the standalone COMROOT_SA and the coupled COMROOT_UFS (the cards read
+# those variables, nothing else). Files are
 # copied, not linked, so a COMROOT can be purged independently.
 #
 # The WCOSS2 parity tests instead exported COMINrerun=<SEED_DIR> (flat dir,
@@ -22,7 +23,8 @@ set -euo pipefail
 
 [ "$#" -ge 3 ] || { echo "Usage: $0 <SEED_DIR> <COMROOT> <PDY> [COMROOT ...]" >&2; exit 2; }
 SEED=$1; PDY=$3
-ROOTS=("$2" "${@:4}")
+ROOTS=("$(realpath -m "$2")")
+for r in "${@:4}"; do ROOTS+=("$(realpath -m "$r")"); done
 CYC=${CYC:-12}
 RUN=${RUN:-stofs_3d_atl_ufs}
 NET=${NET:-nos}
