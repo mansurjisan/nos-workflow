@@ -29,6 +29,8 @@ export NOS_MACHINE=hercules
 
 # Standalone and coupled use the same RUN name and need SEPARATE COMROOTs; OFS is pinned, inherited values ignored. MJ (10/04/26)
 export OFS=stofs_3d_atl_ufs
+# Inherited paths would bypass COMROOT_SA/COMROOT_UFS and the preflight checks; JNOS re-derives them. MJ (10/04/26)
+unset COMOUT COMOUTroot DATA COMOUT_PREV COMOUTrerun COMINadt COMINwl COMINlaw
 NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/${OFS}}
 WORKDIR=${NOS_PTMP}/$LOGNAME/work/stofs_3d_atl_ufs
@@ -123,7 +125,8 @@ esac
 _nu_head=$(git -C "${_nu_root}" rev-parse HEAD 2>/dev/null || echo unknown)
 _nu_pin=$(git -C "${HOMEnos}" ls-tree HEAD ush/python/nos-utils 2>/dev/null | awk '{print $3}')
 echo "nos_utils: ${_nu} HEAD=${_nu_head} gitlink=${_nu_pin:-unknown}"
-[ -z "${_nu_pin}" ] || [ "${_nu_head}" = "${_nu_pin}" ] || echo "WARNING: nos-utils HEAD differs from the gitlink"
+# A stale submodule (git pull without submodule update) would run old nos-utils code; NOS_ALLOW_NU_MISMATCH=1 overrides for deliberate tests. MJ (10/04/26)
+[ -z "${_nu_pin}" ] || [ "${_nu_head}" = "${_nu_pin}" ] || [ "${NOS_ALLOW_NU_MISMATCH:-0}" = 1 ] || { echo "FATAL: nos-utils HEAD ${_nu_head} != gitlink ${_nu_pin} (git submodule update ush/python/nos-utils)"; exit 1; }
 
 # Preflight: Fortran tide_fac must be installed, else tidal.py silently uses Python nodal factors (bctides off from ops). MJ (10/04/26)
 [ -x "${EXECnos}/stofs_3d_atl_tide_fac" ] || [ -x "${EXECnos}/nos_ofs_create_tide_fac_schism" ] || { echo "FATAL: no tide_fac executable in ${EXECnos} (tools/build_stofs_3d_atl_tide_fac_hercules.sh)"; exit 1; }
@@ -138,12 +141,12 @@ _law=0
 for _d in ${PDY} ${PDYM1}; do [ -s "${DCOMROOT}/${_d}/can_streamgauge/02OA016_hydrometric.csv" ] && _law=1; done
 [ ${_law} = 1 ] || { echo "FATAL: St. Lawrence 02OA016_hydrometric.csv missing for ${PDY} and ${PDYM1} under ${DCOMROOT}/<day>/can_streamgauge"; exit 1; }
 if [ -n "${COMINrerun:-}" ]; then
-    [ -s "${COMINrerun}/staout_1" ] || { echo "FATAL: ${COMINrerun}/staout_1 missing"; exit 1; }
+    [ "$(stat -c %s "${COMINrerun}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${COMINrerun}/staout_1 missing or under 10000 bytes (dynamic adjust skips it)"; exit 1; }
     [ -s "${COMINrerun}/${OFS}.t${cyc}z.avg_bias" ] || [ -s "${COMINrerun}/average_bias_today" ] || { echo "FATAL: ${COMINrerun}/${OFS}.t${cyc}z.avg_bias missing"; exit 1; }
     [ -s "${COMINrerun}/${OFS}.t${cyc}z.param.nml" ] || [ -s "${COMINrerun}/param.nml" ] || echo "WARNING: no param.nml in ${COMINrerun}"
 else
     _prev="${COMROOT}/nos/${OFS}.${PDYM1}"
-    [ -s "${_prev}/staout_1" ] || { echo "FATAL: ${_prev}/staout_1 missing (tools/hercules_atl_seed_prev.sh)"; exit 1; }
+    [ "$(stat -c %s "${_prev}/staout_1" 2>/dev/null || echo 0)" -ge 10000 ] || { echo "FATAL: ${_prev}/staout_1 missing or under 10000 bytes (tools/hercules_atl_seed_prev.sh)"; exit 1; }
     [ -s "${_prev}/rerun/${OFS}.t${cyc}z.avg_bias" ] || { echo "FATAL: ${_prev}/rerun/${OFS}.t${cyc}z.avg_bias missing"; exit 1; }
 fi
 

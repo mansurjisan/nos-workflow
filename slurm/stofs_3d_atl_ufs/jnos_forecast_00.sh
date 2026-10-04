@@ -33,6 +33,8 @@ export NOS_MACHINE=hercules
 
 # Standalone and coupled use the same RUN name and need SEPARATE COMROOTs; OFS is pinned, inherited values ignored. MJ (10/04/26)
 export OFS=stofs_3d_atl_ufs
+# Inherited paths would bypass COMROOT_SA/COMROOT_UFS and the preflight checks; JNOS re-derives them. MJ (10/04/26)
+unset COMOUT COMOUTroot DATA COMOUT_PREV COMOUTrerun COMINadt COMINwl COMINlaw
 NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/${OFS}}
 WORKDIR=${NOS_PTMP}/$LOGNAME/work/stofs_3d_atl_ufs
@@ -121,7 +123,8 @@ esac
 _nu_head=$(git -C "${_nu_root}" rev-parse HEAD 2>/dev/null || echo unknown)
 _nu_pin=$(git -C "${HOMEnos}" ls-tree HEAD ush/python/nos-utils 2>/dev/null | awk '{print $3}')
 echo "nos_utils: ${_nu} HEAD=${_nu_head} gitlink=${_nu_pin:-unknown}"
-[ -z "${_nu_pin}" ] || [ "${_nu_head}" = "${_nu_pin}" ] || echo "WARNING: nos-utils HEAD differs from the gitlink"
+# A stale submodule (git pull without submodule update) would run old nos-utils code; NOS_ALLOW_NU_MISMATCH=1 overrides for deliberate tests. MJ (10/04/26)
+[ -z "${_nu_pin}" ] || [ "${_nu_head}" = "${_nu_pin}" ] || [ "${NOS_ALLOW_NU_MISMATCH:-0}" = 1 ] || { echo "FATAL: nos-utils HEAD ${_nu_head} != gitlink ${_nu_pin} (git submodule update ush/python/nos-utils)"; exit 1; }
 
 # Filesystem-sync guard: staged inputs must be visible on every compute node first. MJ (10/04/26)
 sync && sleep 1

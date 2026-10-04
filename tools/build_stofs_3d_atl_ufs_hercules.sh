@@ -76,13 +76,26 @@ done
 
 # Runtime-stack check: the exe must resolve every library under the cards' module set. MJ (10/04/26)
 if type module >/dev/null 2>&1; then
-  missing=$( ( module purge; module use "${HOMEWF}/modulefiles"; module load nos_hercules.intel; ldd "${EXECnos}/fv3_stofs_3d_atl.exe" | grep 'not found' ) 2>/dev/null || true)
+  ldd_out=$( ( module purge; module use "${HOMEWF}/modulefiles"; module load nos_hercules.intel || exit 3; ldd "${EXECnos}/fv3_stofs_3d_atl.exe" ) 2>&1 ) \
+    || { echo "FATAL: module load nos_hercules.intel or ldd failed:" >&2; echo "${ldd_out}" | tail -5 >&2; exit 1; }
+  missing=$(echo "${ldd_out}" | grep 'not found' || true)
   [ -z "${missing}" ] || { echo "FATAL: unresolved libraries under nos_hercules.intel:" >&2; echo "${missing}" >&2; exit 1; }
   echo "ldd under nos_hercules.intel: all libraries resolved"
 else
   echo "WARNING: 'module' not available in this shell; run ldd under nos_hercules.intel by hand" >&2
 fi
-lua_val() { grep -E "^[[:space:]]*$2[[:space:]]*=" "$1" 2>/dev/null | sed -E 's/.*or "([^"]*)".*/\1/' | head -1; }
+# Version from a `var = ... or "X"` line, else from a literal spack-stack-<ver>/envs/<env> path (upstream style). MJ (10/04/26)
+lua_val() {
+  local v
+  v=$(grep -E "^[[:space:]]*$2[[:space:]]*=.*or \"" "$1" 2>/dev/null | sed -E 's/.*or "([^"]*)".*/\1/' | head -1 || true)
+  if [ -z "${v}" ]; then
+    case "$2" in
+      spack_stack_ver) v=$(grep -oE 'spack-stack-[0-9][0-9.]*' "$1" 2>/dev/null | head -1 | sed 's/spack-stack-//' || true) ;;
+      spack_stack_env) v=$(grep -oE 'spack-stack-[0-9][0-9.]*/envs/[A-Za-z0-9._-]+' "$1" 2>/dev/null | head -1 | sed 's#.*/envs/##' || true) ;;
+    esac
+  fi
+  echo "${v}"
+}
 for v in spack_stack_ver spack_stack_env stack_intel_ver stack_impi_ver; do
   a=$(lua_val "${UFS_DIR}/modulefiles/ufs_hercules.intel.lua" "$v"); b=$(lua_val "${HOMEWF}/modulefiles/nos_hercules.intel.lua" "$v")
   echo "stack ${v}: fork=${a:-?} nos_hercules.intel=${b:-?}"
