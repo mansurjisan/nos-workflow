@@ -1,7 +1,8 @@
 ! STOFS-3D-ATL UFS-coupled param.nml: the ops v3.1.5 template (same base as stofs_3d_atl_ufs.standalone.param.nml) plus the coupled changes. MJ (10/03/26)
 ! Differences from the ops template (tests/test_atl_coupled_param_nml.py pins this list): nws=4, wtiminc=150, rnday/start_* placeholders,
 ! step_nu_tr 21600 (as the standalone template), istemp=0 and relax_2_airt=0 added, and stemp_stc, stemp_dz, vclose_surf_frac, veg_lai removed
-! (not in the pinned coupled SCHISM namelist: a namelist read of an unknown name aborts). MJ (10/03/26)
+! (not in the pinned coupled SCHISM namelist: a namelist read of an unknown name aborts). Output only: iof_hydro(2), (17), (21) stay 0 as in the
+! previous coupled template (ops 1; OLDIO combine cost +40% on 3D output and nothing maps them on the coupled path). MJ (10/03/26)
 ! Requires fv3_stofs_3d_atl.exe (built with -DPREC_EVAP=ON): i_hmin_salt_ex/iprecip_off_bnd are live then. MJ (10/03/26)
 
 &CORE
@@ -866,7 +867,7 @@
 ! The variable names that appear in nc output are shown in {}
 !-----------------------------------------------------------------------
   iof_hydro(1) = 1 !0: off; 1: on - elev. [m]  {elevation}  2D
-  iof_hydro(2) = 1 !air pressure [Pa]  {airPressure}  2D
+  iof_hydro(2) = 0 !air pressure [Pa]  {airPressure}  2D
   iof_hydro(3) = 0 !air temperature [C] {airTemperature}  2D
   iof_hydro(4) = 0 !Specific humidity [-] {specificHumidity}  2D
   iof_hydro(5) = 0 !Net downward solar (shortwave) radiation after albedo [W/m/m] {solarRadiation}  2D
@@ -881,11 +882,11 @@
   iof_hydro(14) = 1 !wind velocity vector [m/s] {windSpeedX,Y}  2D vector
   iof_hydro(15) = 1 !wind stress vector [m^2/s/s] {windStressX,Y}  2D vector
   iof_hydro(16) = 1 !depth-averaged vel vector [m/s] {depthAverageVelX,Y}  2D vector
-  iof_hydro(17) = 1 !vertical velocity [m/s] {verticalVelocity}  3D
+  iof_hydro(17) = 0 !vertical velocity [m/s] {verticalVelocity}  3D
   iof_hydro(18) = 1 !water temperature [C] {temperature}  3D
   iof_hydro(19) = 1 !water salinity [PSU] {salinity}  3D
   iof_hydro(20) = 0 !water density [kg/m^3] {waterDensity}  3D
-  iof_hydro(21) = 1 !vertical eddy diffusivity [m^2/s] {diffusivity}  3D
+  iof_hydro(21) = 0 !vertical eddy diffusivity [m^2/s] {diffusivity}  3D
   iof_hydro(22) = 0 !vertical eddy viscosity [m^2/s] {viscosity}  3D
   iof_hydro(23) = 0 !turbulent kinetic energy {turbulentKineticEner}   3D
   iof_hydro(24) = 0 !turbulent mixing length [m] {mixingLength}  3D

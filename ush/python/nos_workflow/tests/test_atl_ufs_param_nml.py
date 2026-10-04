@@ -16,6 +16,9 @@ _VALUE_DIFFS = {
     "rnday", "start_year", "start_month", "start_day", "start_hour",  # run-time placeholders
     "nws",       # 4: NUOPC atmosphere
     "wtiminc",   # 150: the cap resets it to the coupling step anyway
+    # output only: ops 1, coupled 0 (OLDIO combine cost +40% on 3D output, nothing maps them
+    # on the coupled path, walltime risk). MJ (10/03/26)
+    "iof_hydro(2)", "iof_hydro(17)", "iof_hydro(21)",
 }
 _COUPLED_ONLY = {"istemp", "relax_2_airt"}  # new shallow-water/soil T physics OFF, as in ops
 # Not in the pinned coupled SCHISM namelist: reading one aborts the run. MJ (10/03/26)
@@ -61,6 +64,7 @@ def test_coupled_documented_values():
     assert c["istemp"] == "0"
     assert c["i_hmin_salt_ex"] == "2" and c["i_hmin_salt_ex"] == _parse(OPS)["i_hmin_salt_ex"]
     assert c["ihot"] == "1"
+    assert [c[f"iof_hydro({k})"] for k in (2, 17, 21)] == ["0", "0", "0"]
 
 
 def test_coupled_run_control_preserved():

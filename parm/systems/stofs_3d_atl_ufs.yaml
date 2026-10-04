@@ -60,6 +60,7 @@ forcing:
     hrrr:
       rotate_winds: false
       blend_rotate_winds: false
+      blend_weight: 0.99  # ops sflux inside HRRR coverage: 0.99*HRRR + 0.01*GFS (default sflux weights 99 / 1). MJ (10/03/26)
       small_grib: true
     hrrr_blend:
       enabled: true
