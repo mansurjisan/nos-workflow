@@ -7,7 +7,7 @@
 # contract; the difference is the engine: these jobs run fv3_coastalS.exe with
 # the NUOPC/DATM layer and OFS_CONFIG=parm/systems/stofs_3d_atl_ufs.yaml (each
 # PBS job sets it from ${OFS}), whereas the standalone jobs pin the
-# *_standalone.yaml overlay and run pschism_WCOSS2.
+# *_standalone.yaml overlay and run stofs_3d_atl_pschism_v3.1.5.
 #
 # Because the coupled build uses OLDIO, the run stages combine per-rank
 # schout_<rank>_<stack>.nc into global stacks before archiving; the standalone

@@ -8,18 +8,18 @@
 #PBS  -l walltime=05:00:00
 #PBS  -l debug=true
 
-# STOFS-3D-ATL STANDALONE forecast (pschism, nws=2, 6 scribes) — operational parity.
+# STOFS-3D-ATL STANDALONE forecast (pschism v3.1.5, nws=2, 8 scribes) — operational parity.
 # Same nos_workflow prep/stages as the UFS-coupled jnos; only the engine differs
 # (execution.mode=standalone in stofs_3d_atl_ufs_standalone.yaml -> the resolver emits
-# USE_DATM=false + pschism_WCOSS2 + 4918 ranks/41 nodes, and _schism_run_mpi runs
-# `mpiexec -n 4918 -ppn 120 pschism_WCOSS2 6`). The forecast hotstarts from the nowcast
+# USE_DATM=false + $UFS_EXEC_NAME + 4920 ranks/41 nodes, and _schism_run_mpi runs
+# `mpiexec -n 4920 -ppn 120 $UFS_EXEC_NAME 8`). The forecast hotstarts from the nowcast
 # rst (rank-independent global hotstart). Resources/module set/MPI tuning mirror
 # operational IT-STOFS (jstofs_3d_atl_now_forecast_v2.ecf).
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
-# pschism_WCOSS2 module versions come from the IT-STOFS version file it was built
+# The pschism module versions come from the IT-STOFS version file it was built
 # against. Override STOFS_RUNVER if your pschism was built against a different stack.
 STOFS_RUNVER=${STOFS_RUNVER:-${PACKAGEROOT}/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver}
 [ -r "${STOFS_RUNVER}" ] && . "${STOFS_RUNVER}"
@@ -41,7 +41,7 @@ export MPICH_COLL_SYNC=MPI_Bcast
 export MPICH_REDUCE_NO_SMP=1
 
 # ----------------------------------------------------------------
-# Module setup: standalone pschism_WCOSS2 stack (NOT the UFS modules.fv3 hpc-stack)
+# Module setup: ops v3.1.5 pschism stack (NOT the UFS modules.fv3 hpc-stack) MJ (10/03/26)
 # ----------------------------------------------------------------
 module purge
 module reset
@@ -105,11 +105,11 @@ export COMINrtofs_2d=${COMINrtofs_2d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINrtofs_3d=${COMINrtofs_3d:-/lfs/h1/ops/prod/com/rtofs/${rtofs_ver}}
 export COMINnwm=${COMINnwm:-/lfs/h1/ops/prod/com/nwm/${nwm_ver}}
 
-# Standalone: 4912 SCHISM compute + 6 I/O scribes = 4918 ranks on 41 nodes (operational
+# Standalone: 4912 SCHISM compute + 8 I/O scribes = 4920 ranks on 41 nodes (operational
 # parity). The standalone overlay's TOTAL_TASKS/NSCRIBES are also emitted by the resolver
 # at stage time; this default just covers a direct/manual submit. partition.prop must be
 # staged for 4912 compute ranks (NO_PARMETIS pschism build).
-export TOTAL_TASKS=${TOTAL_TASKS:-4918}
+export TOTAL_TASKS=${TOTAL_TASKS:-4920}
 
 ################################################
 # CALL executable job script here

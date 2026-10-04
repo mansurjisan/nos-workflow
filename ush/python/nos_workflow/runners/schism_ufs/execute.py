@@ -10,7 +10,7 @@ from pathlib import Path
 from ...bash_compat import run_shell_function
 from . import _dateutils, combine_hotstart, mesh, normalize_fields
 from .context import SchismRunContext
-from .stage_files import _is_ufs, _is_wave_enabled
+from .stage_files import _is_stofs_atl, _is_ufs, _is_wave_enabled
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,10 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
         return rc
 
     rc = _validate_wave_ufs_configure(ctx, phase)
+    if rc != 0:
+        return rc
+
+    rc = _validate_atl_inputs(ctx, phase)
     if rc != 0:
         return rc
 
@@ -148,6 +152,102 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
         "execute: validated %d UFS configs in %s",
         len(required), ctx.data,
     )
+    return 0
+
+
+def _atl_schism_ranks(ctx: SchismRunContext) -> "int | None":
+    """SCHISM compute ranks the launch will give pschism/the OCN component.
+
+    Standalone: TOTAL_TASKS (what nos_run.sh launches, NPROCS as fallback)
+    minus NSCRIBES. Coupled: the OCN span of the staged ufs.configure (the
+    3-component layout sets OCN = total - DATM and ignores schism_tasks),
+    falling back to SCHISM_TASKS. None when nothing says. MJ (10/03/26)
+    """
+    try:
+        if not _is_ufs():
+            nprocs = os.environ.get("TOTAL_TASKS") or os.environ.get("NPROCS")
+            return int(nprocs) - int(os.environ.get("NSCRIBES") or 8)
+        cfg = ctx.data / "ufs.configure"
+        if cfg.is_file():
+            for comp, lo, hi in _PETLIST_BOUNDS_RE.findall(cfg.read_text()):
+                if comp == "OCN":
+                    return int(hi) - int(lo) + 1
+        return int(os.environ["SCHISM_TASKS"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
+    """STOFS-3D-ATL pre-launch hard-fails (standalone and coupled).
+
+    - flux.th must be staged (the ATL bctides has an ifltype=1 boundary;
+      SCHISM aborts with 'file not found, unit 51' otherwise).
+    - partition.prop must have one line per hgrid element and its highest
+      rank + 1 must equal the SCHISM compute-rank count; lowest rank must be 0.
+    MJ (10/03/26)
+    """
+    del phase
+    if not _is_stofs_atl(ctx):
+        return 0
+
+    flux = ctx.data / "flux.th"
+    if not flux.is_file() or flux.stat().st_size == 0:
+        logger.error(
+            "execute: flux.th missing or empty in %s. STOFS-3D-ATL has an "
+            "ifltype=1 boundary and SCHISM aborts without it. Re-run prep so "
+            "$COMOUT holds %s.%s.riv.obs.flux.th.",
+            ctx.data, ctx.run, ctx.cycle,
+        )
+        return 1
+
+    prop = ctx.data / "partition.prop"
+    hgrid = ctx.data / "hgrid.gr3"
+    if not prop.is_file() or not hgrid.is_file():
+        logger.error(
+            "execute: partition.prop or hgrid.gr3 missing in %s", ctx.data,
+        )
+        return 1
+    with hgrid.open() as fh:
+        fh.readline()
+        ne_global = int(fh.readline().split()[0])
+    n_lines = 0
+    max_rank = -1
+    min_rank = None
+    with prop.open() as fh:
+        for line in fh:
+            tok = line.split()
+            if not tok:
+                continue
+            n_lines += 1
+            r = int(tok[-1])
+            max_rank = max(max_rank, r)
+            min_rank = r if min_rank is None else min(min_rank, r)
+    if n_lines != ne_global:
+        logger.error(
+            "execute: partition.prop has %d lines but hgrid ne_global=%d "
+            "(wrong mesh generation?)", n_lines, ne_global,
+        )
+        return 1
+    if min_rank != 0:
+        logger.error(
+            "execute: partition.prop lowest rank is %s, not 0; SCHISM aborts "
+            "(grid_subs.F90:305-308).", min_rank,
+        )
+        return 1
+    ranks = _atl_schism_ranks(ctx)
+    if ranks is None:
+        logger.warning(
+            "execute: SCHISM rank count not derivable from the env; "
+            "partition.prop rank check skipped",
+        )
+    elif max_rank + 1 != ranks:
+        logger.error(
+            "execute: partition.prop uses %d ranks (max rank %d) but the "
+            "launch gives SCHISM %d compute ranks. Regenerate it "
+            "(tools/gen_stofs_partition_prop.sh) or fix the task counts.",
+            max_rank + 1, max_rank, ranks,
+        )
+        return 1
     return 0
 
 
