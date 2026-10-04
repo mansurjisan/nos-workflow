@@ -878,3 +878,35 @@ def test_validate_atl_inputs_missing_flux_fails(tmp_path, monkeypatch):
 def test_validate_atl_inputs_skips_other_systems(tmp_path, monkeypatch):
     ctx = _make_ctx(tmp_path, prefixnos="secofs_ufs")
     assert execute._validate_atl_inputs(ctx, "nowcast") == 0
+
+
+def test_validate_atl_inputs_coupled_uses_ocn_petlist_over_schism_tasks(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("USE_DATM", raising=False)
+    monkeypatch.setenv("SCHISM_TASKS", "99")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    (ctx.data / "ufs.configure").write_text(
+        "MED_petlist_bounds: 0 4\nATM_petlist_bounds: 0 1\nOCN_petlist_bounds: 2 4\n"
+    )
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 0
+    (ctx.data / "ufs.configure").write_text("OCN_petlist_bounds: 2 5\n")
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_min_rank_must_be_zero(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCHISM_TASKS", "3")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx, ranks=(1, 2, 3, 1, 2, 3))
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_standalone_prefers_total_tasks(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("TOTAL_TASKS", "5")
+    monkeypatch.setenv("NPROCS", "9")
+    monkeypatch.setenv("NSCRIBES", "2")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 0
