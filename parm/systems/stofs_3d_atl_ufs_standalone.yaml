@@ -2,3 +2,8 @@
 _base: stofs_3d_atl_ufs
 execution:
   mode: standalone
+forcing:
+  river:
+    # Ops v3.1.5 river inputs: sources in json order, source_sink.in / msource.th / vsink.th
+    # copied from the FIX files (staged by tools/fetch_stofs_3d_atl_fix.sh). MJ (10/03/26)
+    ops_static_files: true
