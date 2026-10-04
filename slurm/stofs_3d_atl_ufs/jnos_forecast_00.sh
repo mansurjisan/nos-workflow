@@ -24,7 +24,9 @@
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
-PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
+# PACKAGEROOT must be set explicitly: the old default held the SECOFS package, whose code would run silently. MJ (10/04/26)
+PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the ATL nos-workflow clone>}
+[ -d "${PACKAGEROOT}/nos-workflow/slurm/stofs_3d_atl_ufs" ] || { echo "FATAL: ${PACKAGEROOT}/nos-workflow has no ATL cards (wrong PACKAGEROOT?)"; exit 1; }
 . ${PACKAGEROOT}/nos-workflow/versions/run.hercules.ver
 
 # Load-bearing: must be set before anything sources yaml_to_env, or the resolver
@@ -83,7 +85,7 @@ export SENDSMS=NO
 # Archive manifest on: ATL standalone stages flux.th and the run inputs through it. MJ (10/04/26)
 export NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}
 
-export PACKAGEROOT=${PACKAGEROOT:-/work2/noaa/nos-surge/mjisan}
+export PACKAGEROOT
 
 # Data and COM paths
 # Variant-specific override only: an inherited generic COMROOT/DATAROOT is ignored. MJ (10/04/26)
