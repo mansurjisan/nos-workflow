@@ -445,10 +445,13 @@ def check_atl_river_inputs(ctx: SchismRunContext, phase: str) -> None:
         # Both ATL modes use the ops river set (about 2M sinks); with PREC_EVAP a set
         # without sinks floods silently. MJ (10/03/26)
         if n_sink == 0:
+            tar = ctx.nwm_source_sink_forecast if phase == "forecast" else ctx.nwm_source_sink_nowcast
             raise ValueError(
-                f"STOFS-3D-ATL source_sink.in declares 0 sinks: re-run prep, the river "
-                f"set has no sinks (expected the ops set, see "
-                f"tools/fetch_stofs_3d_atl_fix.sh)"
+                f"STOFS-3D-ATL source_sink.in declares 0 sinks: the river set has no "
+                f"sinks (expected the ops set, see tools/fetch_stofs_3d_atl_fix.sh). "
+                f"Check yaml forcing.river.ops_static_files is true (re-running prep "
+                f"will not help if it is false), then re-run prep; expected NWM "
+                f"source/sink tar {ctx.comout / (tar or '')}"
             )
         if _absent("vsink.th"):
             missing.append("vsink.th")

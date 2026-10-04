@@ -1,5 +1,5 @@
 ! STOFS-3D-ATL UFS-coupled param.nml: the ops v3.1.5 template (same base as stofs_3d_atl_ufs.standalone.param.nml) plus the coupled changes. MJ (10/03/26)
-! Differences from the ops template (tests/test_atl_coupled_param_nml.py pins this list): nws=4, wtiminc=150, rnday/start_* placeholders,
+! Differences from the ops template (nos_workflow/tests/test_atl_ufs_param_nml.py pins this list): nws=4, wtiminc=150, rnday/start_* placeholders,
 ! step_nu_tr 21600 (as the standalone template), istemp=0 and relax_2_airt=0 added, and stemp_stc, stemp_dz, vclose_surf_frac, veg_lai removed
 ! (not in the pinned coupled SCHISM namelist: a namelist read of an unknown name aborts). Output only: iof_hydro(2), (17), (21) stay 0 as in the
 ! previous coupled template (ops 1; OLDIO combine cost +40% on 3D output and nothing maps them on the coupled path). MJ (10/03/26)
