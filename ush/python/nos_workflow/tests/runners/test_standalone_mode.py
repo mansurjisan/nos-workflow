@@ -47,6 +47,10 @@ def _make_ctx(
     execnos = tmp_path / "exec"
     for p in (comout, data, fixofs, execnos):
         p.mkdir(parents=True, exist_ok=True)
+    # run_python checks the ATL river set (check_atl_river_inputs); one source, no sinks. MJ (10/03/26)
+    (data / "source_sink.in").write_text("1\n300\n\n0\n")
+    for name, row in (("vsource.th", "1.0"), ("msource.th", "-9999 0"), ("vsink.th", "")):
+        (data / name).write_text(f"0 {row}\n")
     return SchismRunContext(
         comout=comout,
         data=data,

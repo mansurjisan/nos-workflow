@@ -5,6 +5,7 @@ import logging
 import os
 import re
 import shutil
+from itertools import islice
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
@@ -365,6 +366,51 @@ def fallback_nwm_files_from_fixofs(ctx: SchismRunContext, phase: str) -> int:
             logger.warning("WARNING: %s not found after NWM tar extraction "
                            "and no FIXofs fallback", fname)
     return staged
+
+
+def check_atl_river_inputs(ctx: SchismRunContext, phase: str) -> None:
+    """STOFS-3D-ATL: raise unless the four river source/sink files are staged and agree.
+
+    Prep copies the ops FIX source_sink.in / msource.th / vsink.th next to vsource.th
+    (ops source order). A tar from an older prep, or a FIX file from another mesh, would
+    reach SCHISM as a silent count mismatch, so name the problem here instead. Other
+    systems are untouched. MJ (10/03/26)
+    """
+    if not (ctx.prefixnos or "").startswith("stofs_3d_atl"):
+        return
+
+    def _absent(n):
+        return not (ctx.data / n).is_file() or (ctx.data / n).stat().st_size == 0
+
+    missing = [n for n in ("source_sink.in", "vsource.th", "msource.th") if _absent(n)]
+    n_src = n_sink = 0
+    if "source_sink.in" not in missing:
+        with open(ctx.data / "source_sink.in") as f:
+            n_src = int(f.readline())
+            n_sink = int(next(islice(f, n_src + 1, None)))
+        # coupled ATL declares no sinks and stages no vsink.th. MJ (10/03/26)
+        if n_sink and _absent("vsink.th"):
+            missing.append("vsink.th")
+    if missing:
+        tar = ctx.nwm_source_sink_forecast if phase == "forecast" else ctx.nwm_source_sink_nowcast
+        raise FileNotFoundError(
+            f"STOFS-3D-ATL river inputs missing from {ctx.data}: {', '.join(missing)}. "
+            f"Re-run prep (it stages them from the ops river FIX files, see "
+            f"tools/fetch_stofs_3d_atl_fix.sh); expected in {ctx.comout / (tar or '')}"
+        )
+
+    expect = {"vsource.th": n_src + 1, "msource.th": 2 * n_src + 1}
+    if n_sink:
+        expect["vsink.th"] = n_sink + 1
+    for name, want in expect.items():
+        with open(ctx.data / name) as f:
+            got = len(f.readline().split())
+        if got != want:
+            raise ValueError(
+                f"STOFS-3D-ATL {name} has {got} columns but source_sink.in declares "
+                f"{n_src} sources and {n_sink} sinks (expected {want}); re-run prep"
+            )
+    logger.info("  ATL river inputs consistent: %d sources, %d sinks", n_src, n_sink)
 
 
 # (source, dest) pairs: schism_*.th -> SCHISM canonical names per bctides.in.
@@ -1489,6 +1535,8 @@ def run_python(ctx: SchismRunContext, phase: str):
 
     fallback_nwm_files_from_fixofs(ctx, phase)
 
+    check_atl_river_inputs(ctx, phase)
+
     forcing.untar_obc_forcing(ctx, phase)
     forcing.untar_river_forcing(ctx, phase)
 
@@ -1545,6 +1593,7 @@ __all__ = [
     "stage_forecast_restart_outputs",
     "stage_bctides_in",
     "fallback_nwm_files_from_fixofs",
+    "check_atl_river_inputs",
     "rename_river_th_files",
     "stage_st_lawrence_river",
     "stage_sflux_inputs_txt",
