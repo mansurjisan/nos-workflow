@@ -772,3 +772,109 @@ def test_run_python_standalone_missing_exe_fails_before_other_staging(
         with pytest.raises(FileNotFoundError, match="pschism_x"):
             stage_files.run_python(ctx, "nowcast")
     hs.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# ATL flux.th always staged + partition.prop / flux.th preflight. MJ (10/03/26)
+# ---------------------------------------------------------------------------
+
+
+def _seed_flux_comout(ctx: SchismRunContext) -> None:
+    (ctx.comout / f"{ctx.run}.{ctx.cycle}.riv.obs.flux.th").write_text(
+        "0 -1\n3600 -1\n"
+    )
+
+
+def test_st_lawrence_staged_for_atl_without_manifest_flag(tmp_path, monkeypatch):
+    monkeypatch.delenv("NOS_ARCHIVE_MANIFEST", raising=False)
+    ctx = _make_ctx(tmp_path)
+    _seed_flux_comout(ctx)
+    assert stage_files.stage_st_lawrence_river(ctx, "nowcast") == 1
+    assert (ctx.data / "flux.th").is_file()
+
+
+def test_st_lawrence_not_staged_for_other_systems_without_flag(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("NOS_ARCHIVE_MANIFEST", raising=False)
+    ctx = _make_ctx(tmp_path, prefixnos="secofs_ufs")
+    _seed_flux_comout(ctx)
+    assert stage_files.stage_st_lawrence_river(ctx, "nowcast") == 0
+    assert not (ctx.data / "flux.th").exists()
+
+
+@pytest.mark.parametrize("prefix", ["stofs_3d_atl_ufs", "stofs_3d_atl"])
+def test_is_stofs_atl_true(tmp_path, prefix):
+    assert stage_files._is_stofs_atl(_make_ctx(tmp_path, prefixnos=prefix))
+
+
+@pytest.mark.parametrize(
+    "prefix", ["secofs_ufs", "secofs_ufs_ww3", "stofs_3d_ak_ufs",
+               "stofs_3d_pac_ufs", None],
+)
+def test_is_stofs_atl_false(tmp_path, prefix):
+    assert not stage_files._is_stofs_atl(_make_ctx(tmp_path, prefixnos=prefix))
+
+
+def _seed_atl_exec_inputs(ctx, *, ne=6, ranks=(0, 1, 2, 0, 1, 2), flux=True):
+    (ctx.data / "hgrid.gr3").write_text(f"grid\n{ne} 9\n")
+    (ctx.data / "partition.prop").write_text(
+        "".join(f"{i + 1} {r}\n" for i, r in enumerate(ranks))
+    )
+    if flux:
+        (ctx.data / "flux.th").write_text("0 -1\n3600 -1\n")
+
+
+def test_validate_atl_inputs_standalone_ok(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("NPROCS", "5")
+    monkeypatch.setenv("NSCRIBES", "2")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 0
+
+
+def test_validate_atl_inputs_coupled_ok(tmp_path, monkeypatch):
+    monkeypatch.delenv("USE_DATM", raising=False)
+    monkeypatch.setenv("SCHISM_TASKS", "3")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 0
+
+
+def test_validate_atl_inputs_rank_mismatch_fails(tmp_path, monkeypatch):
+    monkeypatch.delenv("USE_DATM", raising=False)
+    monkeypatch.setenv("SCHISM_TASKS", "4")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_standalone_rank_mismatch_fails(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("NPROCS", "5")
+    monkeypatch.setenv("NSCRIBES", "1")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_line_count_mismatch_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCHISM_TASKS", "3")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx, ne=7)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_missing_flux_fails(tmp_path, monkeypatch):
+    monkeypatch.setenv("SCHISM_TASKS", "3")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx, flux=False)
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_skips_other_systems(tmp_path, monkeypatch):
+    ctx = _make_ctx(tmp_path, prefixnos="secofs_ufs")
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 0

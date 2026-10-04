@@ -434,6 +434,11 @@ def rename_river_th_files(ctx: SchismRunContext, phase: str) -> int:
     return renamed
 
 
+def _is_stofs_atl(ctx: SchismRunContext) -> bool:
+    """True for STOFS-3D-ATL (standalone and coupled), never AK/PAC/SECOFS. MJ (10/03/26)"""
+    return (ctx.prefixnos or "").startswith("stofs_3d_atl")
+
+
 def _archive_manifest_enabled() -> bool:
     """True when the opt-in archive-manifest flag is set (YES/1/TRUE).
 
@@ -474,7 +479,8 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
     ``{run}.{cycle}.riv.obs.*`` files when ``st_lawrence_enabled`` (false
     for SECOFS), so the source files are absent and nothing is copied.
     Also gated on the ``NOS_ARCHIVE_MANIFEST`` opt-in flag for symmetry
-    with the prep side.
+    with the prep side, except STOFS-3D-ATL (standalone and coupled), which
+    stages regardless of the flag. MJ (10/03/26)
 
     Forecast (ihot=1, clock reset, standalone and coupled alike): the
     archived files have time 0 at the nowcast start, so they are rebased to
@@ -483,7 +489,9 @@ def stage_st_lawrence_river(ctx: SchismRunContext, phase: str) -> int:
 
     Returns the number of files staged (0..2).
     """
-    if not _archive_manifest_enabled():
+    # ATL always stages: its bctides has an ifltype=1 boundary, so a nowcast
+    # without flux.th aborts in SCHISM after the queue wait. MJ (10/03/26)
+    if not (_archive_manifest_enabled() or _is_stofs_atl(ctx)):
         return 0
 
     prefix = f"{ctx.run}.{ctx.cycle}"
@@ -1609,6 +1617,7 @@ __all__ = [
     "fallback_nwm_files_from_fixofs",
     "rename_river_th_files",
     "stage_st_lawrence_river",
+    "_is_stofs_atl",
     "stage_sflux_inputs_txt",
     "copy_hgrid_to_outputs",
     "collect_staged_inputs",
