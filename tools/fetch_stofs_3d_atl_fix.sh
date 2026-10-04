@@ -15,7 +15,7 @@
 #
 # Re-running is cheap: a file whose size already matches the source is
 # skipped, and every copy lands under a .partial name first. The set is
-# ~5.5 GB (hgrid/vgrid/tvd.prop dominate). Ops ships 55 files; the 28
+# ~5.6 GB (hgrid/vgrid/tvd.prop dominate). Ops ships 55 files; the 31
 # below are the ones this port reads. graphinfo.txt (1.3 GB) is left out
 # because the NO_PARMETIS build reads partition.prop instead. MJ (09/28/26)
 # ======================================================================
@@ -30,7 +30,9 @@ SCHISM_TASKS=4912
 # name (stage_files.py has no fallback); the SAL/TEM nudge renames are
 # case-sensitive, and a lowercase miss makes SCHISM run without nudging
 # and without an error. The bare-named entries are resolved by fix_file(),
-# which tries the bare name first. MJ (09/28/26)
+# which tries the bare name first. The three river_ files after the sources
+# json (1348 sources + 1,986,300 sinks, static T/S, static sink flow) are
+# what ops links into every cycle; prep fails without them. MJ (10/03/26)
 FILES="
 stofs_3d_atl_hgrid.gr3                 stofs_3d_atl_ufs.hgrid.gr3
 stofs_3d_atl_hgrid.ll                  stofs_3d_atl_ufs.hgrid.ll
@@ -52,6 +54,9 @@ stofs_3d_atl_obc_3dth_nc.in            stofs_3d_atl_ufs.obc_3dth_nc.in
 stofs_3d_atl_obc_nudge_nc.in           stofs_3d_atl_ufs.obc_nudge_nc.in
 stofs_3d_atl_sflux_inputs.txt          stofs_3d_atl_ufs.sflux_inputs.txt
 stofs_3d_atl_river_sources_conus.json  stofs_3d_atl_river_sources_conus.json
+stofs_3d_atl_river_source_sink.in      stofs_3d_atl_river_source_sink.in
+stofs_3d_atl_river_msource.th          stofs_3d_atl_river_msource.th
+stofs_3d_atl_river_vsink.th            stofs_3d_atl_river_vsink.th
 stofs_3d_atl_adt_weight.nc             stofs_3d_atl_adt_weight.nc
 stofs_3d_atl_staout_nc.json            stofs_3d_atl_staout_nc.json
 stofs_3d_atl_staout_nc.csv             stofs_3d_atl_staout_nc.csv
