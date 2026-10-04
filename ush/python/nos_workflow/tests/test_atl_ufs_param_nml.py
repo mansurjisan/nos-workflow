@@ -10,14 +10,18 @@ COUPLED = FIX / "stofs_3d_atl_ufs.param.nml"
 OPS = FIX / "stofs_3d_atl_ufs.standalone.param.nml"
 OPS_V315 = Path(__file__).resolve().parent / "data" / "stofs_3d_atl_ops_v3.1.5.param.nml"
 
-# Runner-patched or coupling-specific; everything else must match ops. MJ (09/30/26)
-_MAY_DIFFER = {
-    "rnday", "nws", "ihot",
-    "start_year", "start_month", "start_day", "start_hour",
-    # ops v3.1.5 values the coupled SCHISM build/output set does not follow. MJ (10/02/26)
-    "flag_ic(7)", "iof_hydro(2)", "iof_hydro(17)", "iof_hydro(21)",
-    "drampwafo", "nbins_veg_vert",
+# Documented differences coupled vs ops v3.1.5 (via the standalone template, which is ops plus
+# step_nu_tr 21600). Nothing else may differ. MJ (10/03/26)
+_VALUE_DIFFS = {
+    "rnday", "start_year", "start_month", "start_day", "start_hour",  # run-time placeholders
+    "nws",       # 4: NUOPC atmosphere
+    "wtiminc",   # 150: the cap resets it to the coupling step anyway
 }
+_COUPLED_ONLY = {"istemp", "relax_2_airt"}  # new shallow-water/soil T physics OFF, as in ops
+# Not in the pinned coupled SCHISM namelist: reading one aborts the run. MJ (10/03/26)
+_OPS_ONLY = {"stemp_stc", "stemp_dz(1)", "stemp_dz(2)", "vclose_surf_frac", "veg_lai"}
+
+
 def _groups(path: Path) -> dict:
     """{group: {key: value}} per namelist group; fails on a duplicate key or a
     key outside a group. MJ (09/30/26)"""
@@ -44,16 +48,19 @@ def _parse(path: Path) -> dict:
     return {k: v for g in _groups(path).values() for k, v in g.items()}
 
 
-def test_shared_keys_match_ops():
+def test_coupled_template_is_ops_except_the_documented_keys():
     c, o = _parse(COUPLED), _parse(OPS)
-    bad = {k: (c[k], o[k]) for k in c.keys() & o.keys()
-           if k not in _MAY_DIFFER and c[k] != o[k]}
-    assert bad == {}
+    assert {k for k in c.keys() & o.keys() if c[k] != o[k]} == _VALUE_DIFFS
+    assert set(c) - set(o) == _COUPLED_ONLY
+    assert set(o) - set(c) == _OPS_ONLY
 
 
-def test_coupled_only_keys_are_the_documented_ones():
-    c, o = _parse(COUPLED), _parse(OPS)
-    assert set(c) - set(o) == {"relax_2_airt"}
+def test_coupled_documented_values():
+    c = _parse(COUPLED)
+    assert c["wtiminc"] == "150." == c["dt"]
+    assert c["istemp"] == "0"
+    assert c["i_hmin_salt_ex"] == "2" and c["i_hmin_salt_ex"] == _parse(OPS)["i_hmin_salt_ex"]
+    assert c["ihot"] == "1"
 
 
 def test_coupled_run_control_preserved():
@@ -163,3 +170,39 @@ def test_standalone_runner_patches_only_documented_keys(tmp_path):
         assert (got["start_year"], got["start_month"], got["start_day"]) == (
             start[:4], str(int(start[4:6])), str(int(start[6:8])))
         assert got["ihot"] == "1" and got["nws"] == "2"
+
+
+def test_coupled_runner_patcher_matches_every_runtime_key_once(tmp_path, monkeypatch):
+    """Real patcher on the coupled template, both phases: no placeholder survives, only the
+    run-control keys change, nws stays 4. MJ (10/03/26)"""
+    import shutil
+    from nos_workflow.runners.schism_ufs import configure
+    from nos_workflow.runners.schism_ufs.context import SchismRunContext
+
+    monkeypatch.delenv("USE_DATM", raising=False)
+    text = COUPLED.read_text()
+    for key in ("rnday", "start_year", "start_month", "start_day", "start_hour"):
+        assert len(re.findall(rf"^\s*{key}\s*=", text, re.M)) == 1, key
+        assert re.search(rf"^\s*{key}\s*=\s*{key}_value", text, re.M), key
+    assert len(re.findall(r"\bihot = ", text)) == 1
+
+    base = _parse(COUPLED)
+    for phase, start, days in (("nowcast", "2026092612", "1.0"),
+                               ("forecast", "2026092712", "4.0")):
+        data = tmp_path / phase
+        data.mkdir()
+        shutil.copy(COUPLED, data / "param.nml")
+        ctx = SchismRunContext(
+            comout=tmp_path, data=data, phase=phase, run="x", cycle="t12z",
+            pdy="20260927", cyc="12", prefixnos="stofs_3d_atl_ufs",
+            time_hotstart="2026092612", time_nowcastend="2026092712",
+            len_nowcast="24", len_forecast="96",
+        )
+        configure.patch_param_nml(ctx, phase)
+        out = (data / "param.nml").read_text()
+        assert "_value" not in out
+        got = _parse(data / "param.nml")
+        assert {k for k in got if got[k] != base[k]} <= {
+            "rnday", "start_year", "start_month", "start_day", "start_hour"}
+        assert got["rnday"] == days
+        assert got["ihot"] == "1" and got["nws"] == "4"

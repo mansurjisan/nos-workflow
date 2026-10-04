@@ -155,17 +155,23 @@ def stage_executable(ctx: SchismRunContext, phase: str) -> int:
     sets $UFS_EXEC_NAME (``standalone.executable`` in the system yaml; same
     env var, different binary). Standalone also searches $HOMEnos/exec like
     nos_run.sh and raises when the binary is nowhere to be found, instead of
-    letting mpiexec launch an empty command. MJ (10/03/26)
+    letting mpiexec launch an empty command. STOFS-3D-ATL coupled does the
+    same for ``ufs_coastal.executable`` (fv3_stofs_3d_atl.exe, built with
+    PREC_EVAP) so a missing build fails here, not after the queue wait; other
+    UFS systems keep the silent behaviour. MJ (10/03/26)
     """
     del phase
 
     standalone = not _is_ufs()
+    strict = standalone or (
+        _is_stofs_atl(ctx) and bool(os.environ.get("UFS_EXEC_NAME"))
+    )
     exec_name = os.environ.get("UFS_EXEC_NAME") or "fv3_coastalS.exe"
     dst_exec = ctx.data / exec_name
     if dst_exec.is_file() and os.access(dst_exec, os.X_OK):
         return 0
     search = [ctx.execnos] if ctx.execnos is not None else []
-    if standalone and ctx.homenos is not None:
+    if strict and ctx.homenos is not None:
         search.append(ctx.homenos / "exec")
     for src_dir in search:
         src_exec = src_dir / exec_name
@@ -173,13 +179,15 @@ def stage_executable(ctx: SchismRunContext, phase: str) -> int:
             shutil.copy2(src_exec, dst_exec)
             logger.info("  Staged executable: %s", exec_name)
             return 1
-    if standalone:
+    if strict:
         searched = "\n".join(f"      {d / exec_name}" for d in [ctx.data, *search])
+        kind = "standalone SCHISM" if standalone else "UFS-Coastal"
+        key = "standalone.executable" if standalone else "ufs_coastal.executable"
         raise FileNotFoundError(
-            f"stage_executable: standalone SCHISM executable {exec_name!r} "
+            f"stage_executable: {kind} executable {exec_name!r} "
             f"not found (or not executable).\n  Searched:\n{searched}\n"
             f"  Fix: copy the binary into $EXECnos, or change "
-            f"standalone.executable in the system yaml."
+            f"{key} in the system yaml."
         )
     return 0
 
@@ -434,7 +442,7 @@ def check_atl_river_inputs(ctx: SchismRunContext, phase: str) -> None:
         with open(ctx.data / "source_sink.in") as f:
             n_src = int(f.readline())
             n_sink = int(next(islice(f, n_src + 1, None)))
-        # coupled ATL declares no sinks and stages no vsink.th. MJ (10/03/26)
+        # older prep tars declare no sinks and carry no vsink.th. MJ (10/03/26)
         if n_sink and _absent("vsink.th"):
             missing.append("vsink.th")
     if missing:
