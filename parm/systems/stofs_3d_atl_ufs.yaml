@@ -48,12 +48,20 @@ grid:
     lat_min: 7.347
     lat_max: 52.5904
 
-# Feeds the standalone path's sflux prep; the coupled run gets its atmosphere from DATM. MJ (09/30/26)
+# Standalone: sflux prep. Coupled: the same GFS/HRRR processors feed the DATM blend. MJ (10/03/26)
 forcing:
   atmospheric:
     met_num: 2
     gfs:
       resolution: "0.25"
+      ops_timeline: true  # ops GFS file chain + last PRATE record, standalone sflux and DATM inputs alike. MJ (10/03/26)
+    # Ops keeps HRRR winds grid-relative (about 17 deg off over the Atlantic); no rotation in
+    # extraction or in the DATM blender reproduces it. Parity only: SECOFS keeps its rotation. MJ (10/03/26)
+    hrrr:
+      rotate_winds: false
+      blend_rotate_winds: false
+      blend_weight: 0.99  # ops sflux inside HRRR coverage: 0.99*HRRR + 0.01*GFS (default sflux weights 99 / 1). MJ (10/03/26)
+      small_grib: true
     hrrr_blend:
       enabled: true
       lon_min: -98.5
@@ -66,9 +74,9 @@ forcing:
     version: "v3.0"
     n_list_target: 121
     n_list_min: 97
-    # Coupled build has no SH_MEM_COMM / PREC_EVAP, so the ops 1.99M-sink files stay off here;
-    # the standalone yaml turns them on. MJ (10/03/26)
-    ops_static_files: false
+    # Ops v3.1.5 river inputs (1.99M sinks, source_sink.in / msource.th / vsink.th from the FIX
+    # files) for coupled too: fv3_stofs_3d_atl.exe is built with PREC_EVAP. MJ (10/03/26)
+    ops_static_files: true
     files:
       sources_json: stofs_3d_atl_river_sources_conus.json
     st_lawrence:
@@ -138,6 +146,10 @@ model:
 
 ufs_coastal:
   enabled: true
+  # Coupled ATL binary (-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPREC_EVAP=ON, TVD_LIM=VL),
+  # kept apart from SECOFS's fv3_coastalS.exe; the resolver exports it as UFS_EXEC_NAME and
+  # stage_executable fails before the launch when it is not in $EXECnos. MJ (10/03/26)
+  executable: fv3_stofs_3d_atl.exe
   datm_domain: STOFS3D_ATL  # preset in nos_utils ForcingConfig.from_yaml
   coupling_interval: 150  # must match runSeq @150 in ufs.configure and dt in param.nml
   datm_tasks: 120
@@ -185,6 +197,7 @@ shell_mappings:
     N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
 
     USE_DATM: ufs_coastal.enabled
+    UFS_EXEC_NAME: ufs_coastal.executable
     SCHISM_TASKS: ufs_coastal.schism_tasks
     COUPLING_INTERVAL: ufs_coastal.coupling_interval
 

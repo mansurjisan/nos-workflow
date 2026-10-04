@@ -845,18 +845,12 @@ def test_atl_river_check_column_mismatch(tmp_path, bad):
         check_atl_river_inputs(ctx, "nowcast")
 
 
-def test_atl_river_check_zero_sinks_skips_vsink_columns(tmp_path):
-    ctx = _atl_ctx(tmp_path)
-    _seed_atl_river(ctx, n_sink=0, **{"vsink.th": 7})
-    check_atl_river_inputs(ctx, "nowcast")
-
-
-def test_atl_river_check_zero_sinks_needs_no_vsink_file(tmp_path):
-    """Coupled ATL: no sinks declared, no vsink.th staged. MJ (10/03/26)"""
+def test_atl_river_check_zero_sinks_hard_fails(tmp_path):
+    """A source_sink.in without sinks is a stale or wrong river set. MJ (10/03/26)"""
     ctx = _atl_ctx(tmp_path)
     _seed_atl_river(ctx, n_sink=0)
-    (ctx.data / "vsink.th").unlink()
-    check_atl_river_inputs(ctx, "nowcast")
+    with pytest.raises(ValueError, match="no sinks"):
+        check_atl_river_inputs(ctx, "nowcast")
 
 
 def test_atl_river_check_sinks_still_need_vsink_file(tmp_path):

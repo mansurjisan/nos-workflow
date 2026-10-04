@@ -31,12 +31,12 @@ def test_fetch_tool_stages_the_ops_river_files_under_bare_names():
 
 
 @pytest.mark.parametrize("name,expected", [
-    ("stofs_3d_atl_ufs", False),
+    ("stofs_3d_atl_ufs", True),
     ("stofs_3d_atl_ufs_standalone", True),
     ("secofs_ufs", False),
     ("stofs_3d_ak_ufs", False),
 ])
-def test_yaml_enables_ops_river_for_standalone_atl_only(name, expected):
+def test_yaml_enables_ops_river_for_atl_only(name, expected):
     pytest.importorskip("yaml")
     config = pytest.importorskip("nos_utils.config")
     cfg = config.ForcingConfig.from_yaml(SYSTEMS / f"{name}.yaml", pdy="20261001", cyc=12)
@@ -46,5 +46,5 @@ def test_yaml_enables_ops_river_for_standalone_atl_only(name, expected):
 def test_atl_yaml_names_the_json_the_fetch_tool_stages():
     yaml = pytest.importorskip("yaml")
     river = yaml.safe_load((SYSTEMS / "stofs_3d_atl_ufs.yaml").read_text())["forcing"]["river"]
-    assert river["ops_static_files"] is False
+    assert river["ops_static_files"] is True
     assert river["files"]["sources_json"] in _fetch_map()

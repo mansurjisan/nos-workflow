@@ -10,6 +10,11 @@
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
+# MPI tuning as ops v3.1.5 and the standalone cards; the retry qsub below forwards them. MJ (10/03/26)
+export MPICH_OFI_STARTUP_CONNECT=${MPICH_OFI_STARTUP_CONNECT:-1}
+export MPICH_COLL_SYNC=${MPICH_COLL_SYNC:-MPI_Bcast}
+export MPICH_REDUCE_NO_SMP=${MPICH_REDUCE_NO_SMP:-1}
+
 # Working directory
 export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
@@ -27,7 +32,7 @@ cd ${WORKDIR}
 # ----------------------------------------------------------------
 # Module setup: UFS-Coastal hpc-stack libraries
 # ----------------------------------------------------------------
-# The UFS executable (fv3_coastalS.exe) requires hpc-stack libraries
+# The UFS executable (fv3_stofs_3d_atl.exe) requires hpc-stack libraries
 # (hdf5-D/1.14.0, netcdf-D/4.9.2, esmf-D/8.8.0) that differ from
 # standard WCOSS2 system modules (hdf5/1.10.6, netcdf/4.7.4).
 module purge
