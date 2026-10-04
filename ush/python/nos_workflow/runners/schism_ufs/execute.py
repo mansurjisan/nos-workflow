@@ -155,16 +155,23 @@ def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
     return 0
 
 
-def _atl_schism_ranks() -> "int | None":
+def _atl_schism_ranks(ctx: SchismRunContext) -> "int | None":
     """SCHISM compute ranks the launch will give pschism/the OCN component.
 
-    Standalone: nprocs - nscribes. Coupled: ufs_coastal.schism_tasks
-    (SCHISM_TASKS, the OCN petlist). None when the env does not say. MJ (10/03/26)
+    Standalone: TOTAL_TASKS (what nos_run.sh launches, NPROCS as fallback)
+    minus NSCRIBES. Coupled: the OCN span of the staged ufs.configure (the
+    3-component layout sets OCN = total - DATM and ignores schism_tasks),
+    falling back to SCHISM_TASKS. None when nothing says. MJ (10/03/26)
     """
     try:
         if not _is_ufs():
-            nprocs = os.environ.get("NPROCS") or os.environ.get("TOTAL_TASKS")
+            nprocs = os.environ.get("TOTAL_TASKS") or os.environ.get("NPROCS")
             return int(nprocs) - int(os.environ.get("NSCRIBES") or 8)
+        cfg = ctx.data / "ufs.configure"
+        if cfg.is_file():
+            for comp, lo, hi in _PETLIST_BOUNDS_RE.findall(cfg.read_text()):
+                if comp == "OCN":
+                    return int(hi) - int(lo) + 1
         return int(os.environ["SCHISM_TASKS"])
     except (KeyError, TypeError, ValueError):
         return None
@@ -176,7 +183,7 @@ def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
     - flux.th must be staged (the ATL bctides has an ifltype=1 boundary;
       SCHISM aborts with 'file not found, unit 51' otherwise).
     - partition.prop must have one line per hgrid element and its highest
-      rank + 1 must equal the SCHISM compute-rank count.
+      rank + 1 must equal the SCHISM compute-rank count; lowest rank must be 0.
     MJ (10/03/26)
     """
     del phase
@@ -205,20 +212,29 @@ def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
         ne_global = int(fh.readline().split()[0])
     n_lines = 0
     max_rank = -1
+    min_rank = None
     with prop.open() as fh:
         for line in fh:
             tok = line.split()
             if not tok:
                 continue
             n_lines += 1
-            max_rank = max(max_rank, int(tok[-1]))
+            r = int(tok[-1])
+            max_rank = max(max_rank, r)
+            min_rank = r if min_rank is None else min(min_rank, r)
     if n_lines != ne_global:
         logger.error(
             "execute: partition.prop has %d lines but hgrid ne_global=%d "
             "(wrong mesh generation?)", n_lines, ne_global,
         )
         return 1
-    ranks = _atl_schism_ranks()
+    if min_rank != 0:
+        logger.error(
+            "execute: partition.prop lowest rank is %s, not 0; SCHISM aborts "
+            "(grid_subs.F90:305-308).", min_rank,
+        )
+        return 1
+    ranks = _atl_schism_ranks(ctx)
     if ranks is None:
         logger.warning(
             "execute: SCHISM rank count not derivable from the env; "
