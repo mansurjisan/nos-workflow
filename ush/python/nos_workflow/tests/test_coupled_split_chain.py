@@ -202,6 +202,9 @@ def test_split_carries_wetdry_and_edge_table_and_ponds_run(tmp_path):
         assert ds["SCHISM_hgrid_edge_nodes"].shape == (5, 2)
         assert ds["dryFlagNode"][1, 2] == 1
 
+    # The pond fill needs scipy (present on WCOSS2 and Hercules); the hosted CI image
+    # has none, so only the pond half is skipped there. MJ (10/05/26)
+    pytest.importorskip("scipy")
     seed = np.array([1, 0, 0, 0], dtype=bool)
     ops_fields.stamp_stack(
         netCDF4.Dataset, tmp_path / "out2d_1.nc", "out2d",
