@@ -51,9 +51,17 @@ FIELD_GLOBS = (
 
 
 def staging_dir(ctx: ProductContext, phase: str) -> Path:
-    """COMOUT staging directory for ``phase``."""
+    """Directory the products read the staged stacks from for ``phase``.
+
+    The raw COMOUT staging dir, unless ``fields_nc`` built a ``.masked``
+    sibling (ATL production add_attr step): that one holds the masked
+    out2d copies plus links to everything else, so every later product
+    reads the masked field while the raw archive stays intact. MJ (10/05/26)
+    """
     suffix = dict(PHASE_DIRS)[phase]
-    return ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
+    raw = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
+    masked = raw.with_name(raw.name + ".masked")
+    return masked if masked.is_dir() else raw
 
 
 def has_field_stacks(staging: Path) -> bool:

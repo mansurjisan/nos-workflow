@@ -11,7 +11,7 @@ pytest.importorskip("scipy")
 
 from nos_workflow.post.products import fields, ops_fields  # noqa: E402
 
-# 5 nodes in a line 0-1-2-3-4, plus an unrelated node 5 joined to 4 only
+# 5 nodes in a line 0-1-2-3-4, plus an unrelated node 5 joined to 4 only. MJ (10/05/26)
 _EDGES = np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]])
 
 
@@ -56,11 +56,11 @@ def test_isolated_ponds_flags_wet_component_without_seed():
     seed = np.array([1, 0, 0, 0, 0, 0], dtype=bool)
     wet = np.ones(6, dtype=bool)
     assert not ops_fields.isolated_ponds(wet, seed, _EDGES).any()
-    wet[2] = False  # cuts the line: nodes 3,4,5 lose the seed
+    wet[2] = False  # cuts the line: nodes 3,4,5 lose the seed. MJ (10/05/26)
     pond = ops_fields.isolated_ponds(wet, seed, _EDGES)
     assert pond.tolist() == [False, False, False, True, True, True]
     seed2 = seed.copy()
-    seed2[0] = False  # dry seed is no seed
+    seed2[0] = False  # dry seed is no seed. MJ (10/05/26)
     wet2 = np.array([0, 1, 1, 1, 1, 1], dtype=bool)
     assert ops_fields.isolated_ponds(wet2, seed2, _EDGES).sum() == 5
 
@@ -138,3 +138,65 @@ def test_worker_without_flag_leaves_stack_untouched(tmp_path):
     with netCDF4.Dataset(st / "out2d_1.nc") as ds:
         assert "idmask" not in ds.variables
         assert "units" not in ds["elevation"].ncattrs()
+
+
+def _stage_idmask(tmp_path):
+    f = tmp_path / "mask.nc"
+    with netCDF4.Dataset(f, "w") as ds:
+        ds.createDimension("nSCHISM_hgrid_node", 6)
+        ds.createVariable("idmask", "i4", ("nSCHISM_hgrid_node",))[:] = [0, 1, 0, 0, 0, 1]
+    return f
+
+
+def test_worker_masks_a_copy_and_leaves_raw_stack_intact(tmp_path):
+    st = tmp_path / "r.t12z.restart_outputs"
+    st.mkdir()
+    com = tmp_path
+    dry = np.zeros((1, 6), dtype="f4")
+    _out2d(st / "out2d_1.nc", dry)
+    (st / "staout_1").write_text("x")
+    seed = tmp_path / "seed.npz"
+    ops_fields.save_pond_seed(seed, np.array([1, 0, 0, 0, 0, 0], dtype=bool))
+    rc = fields.main([
+        "--staging", str(st), "--comout", str(com), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast",
+        "--ops-attrs", "--idmask-file", str(_stage_idmask(tmp_path)),
+        "--pond-seed-file", str(seed),
+    ])
+    assert rc == 0
+    with netCDF4.Dataset(st / "out2d_1.nc") as raw:
+        assert "idmask" not in raw.variables
+        assert (np.asarray(raw["elevation"][:]) == 2.5).all()
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    assert (masked / "staout_1").is_symlink()
+    with netCDF4.Dataset(masked / "out2d_1.nc") as ds:
+        ds.set_auto_mask(False)
+        assert ds["elevation"][0, 1] == -99999
+    pub = com / "p.t12z.20261001.fields.out2d.n000_000.nc"
+    assert pub.is_file() and pub.samefile(masked / "out2d_1.nc")
+    assert not list(masked.glob(".*.tmp"))
+
+
+def test_seed_size_mismatch_raises(tmp_path):
+    f = tmp_path / "out2d_1.nc"
+    _out2d(f, np.zeros((1, 6), dtype="f4"))
+    with pytest.raises(ValueError, match="pond seed"):
+        ops_fields.stamp_stack(
+            netCDF4.Dataset, f, "out2d",
+            idmask=np.zeros(6, dtype=np.int32),
+            pond_seed=np.zeros(5, dtype=bool),
+        )
+
+
+def test_missing_dryflag_warns(tmp_path):
+    g = tmp_path / "out2d_2.nc"
+    with netCDF4.Dataset(g, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 6)
+        ds.createVariable("time", "f8", ("time",))[:] = [0.0]
+    msgs = []
+    ops_fields.stamp_stack(
+        netCDF4.Dataset, g, "out2d", pond_seed=np.zeros(6, dtype=bool),
+        log=msgs.append,
+    )
+    assert any(m.startswith("WARNING") for m in msgs)

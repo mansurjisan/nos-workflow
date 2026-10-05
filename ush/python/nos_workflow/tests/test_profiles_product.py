@@ -837,8 +837,39 @@ def test_outside_drop_is_a_no_op_when_every_station_is_inside(tmp_path, capsys):
         assert ds.dimensions["station"].size == len(STATIONS)
 
 
+def test_outside_fill_keeps_every_station_in_order(tmp_path):
+    """ops station names are not unique, so the station axis must keep
+    station.in order; the out-of-mesh station carries the fill value.
+    MJ (10/05/26)"""
+    staging, comout = _dirs(tmp_path)
+    _seed_stack(staging, 1, hours=[1])
+    stations = STATIONS[:1] + (OUTSIDE_STATION,) + STATIONS[1:]
+
+    rc, result_json = _run(
+        staging, comout, tmp_path, extra=("--outside", "fill"),
+        stations=stations,
+    )
+    assert rc == 0
+    created = json.loads(result_json.read_text())["created"]
+    with netCDF4.Dataset(created[0]) as ds:
+        assert ds.dimensions["station"].size == 3
+        names = [
+            b"".join(c for c in row.tolist() if c).decode()
+            for row in ds["station_name"][:]
+        ]
+        assert names[1].startswith("STA_OFFSHORE") or "OFFSHORE" in names[1]
+        assert ds["lon"][1] == pytest.approx(9.0)
+        for var in ("zeta", "salinity", "u"):
+            data = np.asarray(ds[var][:])
+            assert (data[:, 1] == -99999).all()
+            assert (data[:, [0, 2]] != -99999).all()
+        # surviving stations keep their values and their positions
+        assert ds["zeta"][0, 0] == pytest.approx(_elev(1, 0), abs=1e-5)
+        assert ds["zeta"][0, 2] == pytest.approx(3.0 + 0.01, abs=1e-4)
+
+
 def test_outside_choices_are_the_three_documented_modes():
-    for mode in ("error", "nearest", "drop"):
+    for mode in ("error", "nearest", "drop", "fill"):
         assert profiles._parse_args([
             "--staging", "s", "--comout", "c", "--prefix", "p", "--cyc", "12",
             "--pdy", "20260722", "--phase", "nowcast", "--base-date", "d",

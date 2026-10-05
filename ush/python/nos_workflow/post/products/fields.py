@@ -93,7 +93,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return rc
 
     if args.ops_attrs:
-        rc = _apply_ops_attrs(Dataset, staging, args)
+        rc, staging = _apply_ops_attrs(Dataset, staging, args)
         if rc != 0:
             return rc
 
@@ -140,14 +140,25 @@ def main(argv: Optional[List[str]] = None) -> int:
     return 0
 
 
-def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace) -> int:
-    """Production add_attr over every staged stack, in place. MJ (10/05/26)"""
+def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace):
+    """Production add_attr, applied to COPIES; returns ``(rc, input_dir)``.
+
+    The staged raw stacks are the only archive of the model output, so the
+    destructive step (idmask -99999 on out2d) never touches them: each
+    out2d is copied to ``<staging>.masked/``, stamped under a temporary
+    name and renamed into place, so a kill mid-write cannot leave a
+    half-masked file under a final name. 3D stacks only get attributes
+    (data untouched), stamped in place to avoid duplicating ~90 GB, and
+    are symlinked into the masked dir together with every other staged
+    file. The masked dir is what the later products read (see
+    ``worker_base.staging_dir``) and what is published. MJ (10/05/26)
+    """
     from . import ops_fields
 
     idmask_path = Path(args.idmask_file) if args.idmask_file else None
     if idmask_path is None or not idmask_path.is_file():
         print(f"fields: --ops-attrs needs a readable --idmask-file ({args.idmask_file!r})")
-        return 5
+        return 5, staging
     idmask = ops_fields.read_idmask(idmask_path)
     seed = None
     if args.pond_seed_file:
@@ -155,18 +166,46 @@ def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace) -> int:
         if seed_path.is_file():
             seed = ops_fields.read_pond_seed(seed_path)
         else:
-            print(f"fields: pond seed {seed_path} not found; isolatedPondNode skipped")
-    for var in _VAR_FILE_PREFIXES:
-        for src, _stack in _stack_files(staging, var):
+            print(f"WARNING: fields: pond seed {seed_path} not found; isolatedPondNode NOT written")
+
+    masked = staging.with_name(staging.name + ".masked")
+    masked.mkdir(exist_ok=True)
+    for old in masked.iterdir():
+        if old.is_symlink() or old.is_file():
+            old.unlink()
+
+    stacks = {
+        src: var
+        for var in _VAR_FILE_PREFIXES
+        for src, _stack in _stack_files(staging, var)
+    }
+    for f in sorted(staging.iterdir()):
+        if not f.is_file():
+            continue
+        dst = masked / f.name
+        var = stacks.get(f)
+        if var == "out2d":
+            tmp = masked / f".{f.name}.tmp"
+            shutil.copyfile(f, tmp)
+            try:
+                ops_fields.stamp_stack(
+                    Dataset, tmp, var,
+                    fallback_base_date=args.base_date,
+                    idmask=idmask, pond_seed=seed, log=print,
+                )
+            except BaseException:
+                tmp.unlink()
+                raise
+            os.replace(tmp, dst)
+            print(f"fields: ops attrs + mask applied to a copy of {f.name}")
+            continue
+        if var is not None:
             ops_fields.stamp_stack(
-                Dataset, src, var,
-                fallback_base_date=args.base_date,
-                idmask=idmask if var == "out2d" else None,
-                pond_seed=seed if var == "out2d" else None,
-                log=print,
+                Dataset, f, var, fallback_base_date=args.base_date, log=print,
             )
-            print(f"fields: ops attrs applied to {src.name}")
-    return 0
+            print(f"fields: ops attrs applied to {f.name}")
+        dst.symlink_to(f.resolve())
+    return 0, masked
 
 
 def _zlib_level(raw: str) -> int:

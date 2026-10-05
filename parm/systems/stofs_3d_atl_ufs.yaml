@@ -166,14 +166,16 @@ resources:
 post:
   archive_fields: true   # run stages normalize + stage global field stacks
   products:
-    # points_cwl, not stations_nc: no 3D station profiles here. Needs
-    # stofs_3d_atl_staout_nc.json/.csv in $FIXofs or it skips. MJ (09/05/26)
+    # points_cwl (surface station series, the ops points.cwl.nc) needs
+    # stofs_3d_atl_staout_nc.json/.csv in $FIXofs or it skips; the 3D station
+    # profiles come from the profiles product below. MJ (10/05/26)
     - points_cwl
     - fields_nc
     - bias_correct
     # profiles: verified against the S3 ncast profile on PDY 20261001 (161 of
-    # 166 stations exact; the other 5 lie outside the mesh and production fills
-    # them with extrapolated junk, so they are dropped, not invented).
+    # 166 stations exact). The other 5 lie outside the mesh, where production
+    # writes extrapolated junk; "fill" keeps all 166 in station.in order and
+    # writes -99999 for those 5, so indices still line up with ops.
     # geopkg stays off: geopandas + shapely>=1.8 are not in the WCOSS2 python
     # 3.8 module set, and nos-utils geopkg does not yet apply the production
     # isolatedPondNode mask or xGEOID20b datum string. MJ (10/05/26)
@@ -182,7 +184,7 @@ post:
     - adcirc
     - name: profiles
       options:
-        outside: drop
+        outside: fill
 
 shell_mappings:
   variables:

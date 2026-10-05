@@ -141,7 +141,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     station_kwargs = {"station_file": Path(args.station_in)}
     outside = args.outside
-    if outside == "drop":
+    keep_mask = None
+    if outside in ("drop", "fill"):
         kept = _keep_in_mesh_stations(args)
         if kept is None:
             return 6
@@ -163,16 +164,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         with atomic_publish(out_path) as tmp:
+            if args.outside == "fill":
+                write_to = tmp.with_name(tmp.name + ".inmesh")
+            else:
+                write_to = tmp
             write_station_profiles(
                 stacks,
                 Path(args.hgrid),
                 Path(args.vgrid),
-                tmp,
+                write_to,
                 base_date=base_date,
                 outside=outside,
                 datum_offsets=offsets,
                 **station_kwargs,
             )
+            if args.outside == "fill":
+                _expand_to_all_stations(write_to, tmp, args, keep_mask)
+                write_to.unlink()
     except ValueError as exc:
         if "outside of domain" not in str(exc):
             raise
@@ -193,6 +201,63 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     print(f"profiles: wrote {out_path.name} ({datum_note})")
     return 0
+
+
+def _expand_to_all_stations(src: Path, dst: Path, args, keep_mask) -> None:
+    """Rewrite an in-mesh-only profile file with every station.
+
+    ``--outside fill`` keeps the station dimension and order of
+    station.in (ops names are not unique, so consumers match by index);
+    each out-of-mesh station keeps its name and coordinates and carries
+    the fill value in every data variable. MJ (10/05/26)
+    """
+    import numpy as np
+    from netCDF4 import Dataset
+    from nos_utils.post.profiles import read_station_in
+
+    lons, lats, names = read_station_in(Path(args.station_in))
+    nsta = lons.size
+    if keep_mask is None:
+        keep_mask = np.ones(nsta, dtype=bool)
+    with Dataset(src, "r") as s, Dataset(dst, "w", format="NETCDF3_CLASSIC") as d:
+        d.setncatts({k: s.getncattr(k) for k in s.ncattrs()})
+        for name, dim in s.dimensions.items():
+            size = nsta if name == "station" else (
+                None if dim.isunlimited() else len(dim)
+            )
+            d.createDimension(name, size)
+        for name, var in s.variables.items():
+            fill = getattr(var, "_FillValue", None)
+            out = d.createVariable(
+                name, var.dtype, var.dimensions,
+                **({"fill_value": fill} if fill is not None else {}),
+            )
+            out.setncatts({
+                a: var.getncattr(a) for a in var.ncattrs() if a != "_FillValue"
+            })
+            if "station" not in var.dimensions:
+                out[:] = var[:]
+                continue
+            ax = var.dimensions.index("station")
+            data = np.asarray(var[:])
+            shape = list(data.shape)
+            shape[ax] = nsta
+            if name == "station_name":
+                full = np.zeros(shape, dtype=data.dtype)
+                for i in np.nonzero(~keep_mask)[0]:
+                    b = str(names[i]).encode("ascii")[: shape[1]]
+                    full[i, : len(b)] = np.frombuffer(b, dtype="S1")
+            elif name in ("lon", "lat"):
+                full = np.asarray(lons if name == "lon" else lats, dtype=data.dtype)
+            else:
+                full = np.full(
+                    shape, -99999.0 if fill is None else fill, dtype=data.dtype
+                )
+            if name not in ("lon", "lat"):
+                idx = [slice(None)] * data.ndim
+                idx[ax] = keep_mask
+                full[tuple(idx)] = data
+            out[:] = full
 
 
 def _locate_stations(args: argparse.Namespace):
@@ -308,14 +373,16 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         help="SCHISM station.in -- the ops station list",
     )
     p.add_argument(
-        "--outside", default="error", choices=("error", "nearest", "drop"),
+        "--outside", default="error", choices=("error", "nearest", "drop", "fill"),
         help="what to do with a station outside the mesh. 'error' (default) "
              "is ops parity: the operational driver sys.exit()s on one. "
              "'nearest' takes pylib's nearest-node fallback, which publishes "
              "another node's column under the misplaced station's name. "
              "'drop' excludes it and publishes the rest, naming what went -- "
              "the only choice that neither loses good stations to one bad "
-             "entry nor invents data for it.",
+             "entry nor invents data for it. 'fill' keeps all stations in "
+             "station.in order and writes the fill value for the out-of-mesh "
+             "ones, so indices stay comparable with ops and points.cwl.",
     )
     p.add_argument(
         "--datum-offsets", default="",

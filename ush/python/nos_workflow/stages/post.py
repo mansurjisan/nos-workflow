@@ -986,9 +986,7 @@ def _ops_field_args(ctx, phase: str) -> List[str]:
     skips ``isolatedPondNode`` without it). MJ (10/05/26)
     """
     ops = ctx.prefix_nos.split("_ufs")[0]
-    mask = fix_file(
-        ctx, f"{ops}_mask_land_ocean_bnd_out2d.nc", "mask_land_ocean_bnd_out2d.nc"
-    )
+    mask = fix_file(ctx, f"{ops}_mask_land_ocean_bnd_out2d.nc")
     if mask is None:
         return []
     args = [
@@ -1248,6 +1246,8 @@ class PointsCwlProduct(NosUtilsProduct):
         # The station JSON labels zeta with a datum (NAVD88 on the ATL
         # fix set) that is only true AFTER the ops ncap2 shift, so the
         # .nco must be applied whenever the metadata claims one.
+        if ops == "stofs_3d_atl":
+            args.append("--utc-suffix")  # production ATL time units; MJ (10/05/26)
         nco = _resolve_datum_nco(ctx, ops)
         if nco is not None:
             args += ["--datum-offsets", str(nco)]

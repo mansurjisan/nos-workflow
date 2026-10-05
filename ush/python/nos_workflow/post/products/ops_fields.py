@@ -42,7 +42,7 @@ _COMMON = {
     "mesh": "SCHISM_hgrid",
 }
 
-#: file prefix -> {variable: attributes}; production add_attr:72-139
+#: file prefix -> {variable: attributes}; production add_attr:72-139. MJ (10/05/26)
 _VAR_ATTRS: Dict[str, Dict[str, Dict[str, str]]] = {
     "out2d": {
         "elevation": dict(
@@ -116,11 +116,17 @@ def read_pond_seed(path: Path) -> np.ndarray:
         return np.unpackbits(z["seed_bits"])[:n].astype(bool)
 
 
-def save_pond_seed(path: Path, seed: np.ndarray) -> None:
+def save_pond_seed(
+    path: Path, seed: np.ndarray, provenance: Optional[Dict[str, str]] = None
+) -> None:
+    """Write the bit-packed seed; ``provenance`` (source version, input
+    file hashes) is stored as string arrays under ``prov_<key>``."""
+    extra = {f"prov_{k}": np.array(v) for k, v in (provenance or {}).items()}
     np.savez_compressed(
         path,
         n_nodes=np.int64(seed.size),
         seed_bits=np.packbits(np.asarray(seed, dtype=bool)),
+        **extra,
     )
 
 
@@ -173,9 +179,15 @@ def stamp_stack(
         ds.set_auto_mask(False)
         if "time" in ds.variables:
             tvar = ds.variables["time"]
-            parts = parse_base_date(
-                str(getattr(tvar, "base_date", ""))
-            ) or parse_base_date(fallback_base_date)
+            # The stack's own origin first (SCHISM base_date, then its time
+            # units), then the stage-computed value. MJ (10/05/26)
+            parts = (
+                parse_base_date(str(getattr(tvar, "base_date", "")))
+                or parse_base_date(
+                    str(getattr(tvar, "units", "")).replace("seconds since", "")
+                )
+                or parse_base_date(fallback_base_date)
+            )
             if parts is None:
                 log(f"ops_fields: {path.name}: no usable base date; time attrs kept")
             else:
@@ -220,16 +232,23 @@ def stamp_stack(
 
 def _append_ponds(ds, nnode, pond_seed, name, log) -> None:
     if pond_seed.size != nnode:
-        log(f"ops_fields: {name}: pond seed has {pond_seed.size} nodes, file {nnode}; skipped")
-        return
+        raise ValueError(
+            f"{name}: pond seed has {pond_seed.size} nodes, file {nnode}"
+        )
     needed = ("dryFlagNode", "SCHISM_hgrid_edge_nodes")
     if any(v not in ds.variables for v in needed):
-        log(f"ops_fields: {name}: no dryFlagNode/edge table; isolatedPondNode skipped")
+        log(
+            f"WARNING: ops_fields: {name}: no dryFlagNode/edge table; "
+            "isolatedPondNode NOT written"
+        )
         return
     try:
         import scipy.sparse.csgraph  # noqa: F401
     except ImportError as exc:
-        log(f"ops_fields: {name}: scipy unavailable ({exc}); isolatedPondNode skipped")
+        log(
+            f"WARNING: ops_fields: {name}: scipy unavailable ({exc}); "
+            "isolatedPondNode NOT written"
+        )
         return
 
     edges = np.asarray(ds.variables["SCHISM_hgrid_edge_nodes"][:], dtype=np.int64) - 1

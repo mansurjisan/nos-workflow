@@ -88,7 +88,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             var_defs,
             args.station_meta,
             tmp,
-            base_date=_ops_base_date(args.base_date),
+            base_date=(
+                _ops_base_date(args.base_date) if args.utc_suffix
+                else args.base_date
+            ),
             datum_offsets=offsets,
         )
         _warn_transposed_coords(tmp, args.station_meta)
@@ -207,6 +210,10 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
         help="ops xGEOID20B->target-datum .nco (NAVD88 pre-v3.1, MSL "
              "from v3.1 on); its constants are negated and added to "
              "the elevation variable",
+    )
+    p.add_argument(
+        "--utc-suffix", action="store_true",
+        help="append ' UTC' to the time origin, as production ATL stamps it",
     )
     p.add_argument("--result-json", default="")
     return p.parse_args(argv)

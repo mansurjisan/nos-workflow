@@ -10,8 +10,15 @@ needs neither geopandas nor mpi4py. Run on a machine with geopandas:
 
     tools/gen_stofs_pond_seed.py HGRID.gr3 coastal.shp lakes.shp OUT.npz
 
+Inputs for the committed file: stofs.v3.1.5 fix/stofs_3d_atl/
+stofs_3d_atl_hgrid.gr3, stofs_3d_atl_coastal.shp, stofs_3d_atl_lakes.shp
+(https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/fix/stofs_3d_atl/).
+The source version and sha256 of each input are stored inside the npz
+(prov_* arrays); regenerate it whenever the mesh or polygons change.
+
 MJ (10/05/26)
 """
+import hashlib
 import sys
 from pathlib import Path
 
@@ -21,6 +28,14 @@ sys.path.insert(
     0, str(Path(__file__).resolve().parents[1] / "ush" / "python")
 )
 from nos_workflow.post.products.ops_fields import save_pond_seed  # noqa: E402
+
+
+def _sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def main(argv):
@@ -43,7 +58,10 @@ def main(argv):
         hit = gpd.sjoin(pts, poly, how="inner", predicate="within").index.values
         seed[hit] = True
         print(f"{Path(shp).name}: {np.unique(hit).size} nodes")
-    save_pond_seed(out, seed)
+    prov = {"source": "stofs.v3.1.5 fix/stofs_3d_atl"}
+    for path in [hgrid] + [Path(a) for a in argv[1:-1]]:
+        prov[f"sha256_{path.name}"] = _sha256(path)
+    save_pond_seed(out, seed, prov)
     print(f"{int(seed.sum())} seed nodes of {nnode} -> {out}")
     return 0
 

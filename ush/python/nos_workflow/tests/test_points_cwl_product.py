@@ -224,7 +224,7 @@ def test_publishes_canonical_nc_with_writer_values(tmp_path):
         assert ds.dimensions["namelen"].size == 50
         # 6-minute axis from the first sample to the last staout time.
         assert list(np.asarray(ds["time"][:])) == [360.0, 720.0, 1080.0]
-        assert ds["time"].units == "seconds since 2026-07-22 06:00 UTC"
+        assert ds["time"].units == "seconds since 2026-07-22 06:00"
         assert sorted(
             v for v in ds.variables
             if v not in ("time", "station_name", "x", "y")
@@ -832,3 +832,13 @@ def test_ops_base_date_appends_utc_once():
 
     assert _ops_base_date("2026-09-30 12:00:00") == "2026-09-30 12:00:00 UTC"
     assert _ops_base_date("2026-09-30 12:00:00 UTC") == "2026-09-30 12:00:00 UTC"
+
+
+def test_utc_suffix_is_opt_in():
+    base = [
+        "--staging", "s", "--comout", "c", "--prefix", "p", "--cyc", "12",
+        "--pdy", "20260722", "--phase", "nowcast", "--base-date", "d",
+        "--var-defs", "v", "--station-meta", "m",
+    ]
+    assert points_cwl._parse_args(base).utc_suffix is False
+    assert points_cwl._parse_args(base + ["--utc-suffix"]).utc_suffix is True

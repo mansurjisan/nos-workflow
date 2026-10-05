@@ -778,12 +778,9 @@ def test_shipped_yaml_enables_only_what_has_been_validated():
         for ready in ("maxele", "slab2d", "adcirc"):
             assert ready in atl, (name, ready)
         # geopkg stays off on ATL (no geometry stack in the WCOSS2 python);
-        # profiles is on, verified against the S3 ncast profile.
+        # profiles is on, verified against the S3 ncast profile. MJ (10/05/26)
         assert "geopkg" not in atl, name
-        assert any(
-            n == "profiles" or (isinstance(n, dict) and n.get("name") == "profiles")
-            for n in atl
-        ) or "profiles" in atl, name
+        assert "profiles" in atl, name
 
 
 def test_no_system_enables_profiles_without_an_outside_setting():
@@ -825,5 +822,21 @@ def test_ops_field_args_only_when_idmask_fix_is_staged(tmp_path):
     (tmp_path / "stofs_3d_atl_pond_seed.npz").write_bytes(b"x")
     assert "--pond-seed-file" in _ops_field_args(ctx, "forecast")
     # a system with a different prefix gets nothing even with the files present
+    # (MJ 10/05/26)
     ctx.prefix_nos = "secofs_ufs"
     assert _ops_field_args(ctx, "nowcast") == []
+
+
+def test_staging_dir_prefers_the_masked_copy_when_present(tmp_path):
+    from types import SimpleNamespace
+
+    from nos_workflow.post.worker_base import staging_dir
+
+    ctx = SimpleNamespace(comout=tmp_path, run_name="r", cycle="t12z")
+    raw = tmp_path / "r.t12z.restart_outputs"
+    raw.mkdir()
+    assert staging_dir(ctx, "nowcast") == raw
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    masked.mkdir()
+    assert staging_dir(ctx, "nowcast") == masked
+    assert staging_dir(ctx, "forecast") == tmp_path / "r.t12z.forecast_outputs"
