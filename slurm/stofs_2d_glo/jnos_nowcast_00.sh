@@ -27,11 +27,11 @@
 # from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst1 launch 4064 + 32 writers = 4096 ranks, which needs
 # 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
 # surf ncst -> fcst1 -> fcst2:
-#   sbatch -t 2:00:00 --export=ALL,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
-#   sbatch -t 1:00:00 --export=ALL,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
-#   sbatch -t 0:15:00 --export=ALL,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
-#   sbatch -t 0:30:00 --export=ALL,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.sh
-#   sbatch -t 0:25:00 --export=ALL,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.sh
+#   sbatch -t 2:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
+#   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
+#   sbatch -t 0:15:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
+#   sbatch -t 0:30:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.sh
+#   sbatch -t 0:25:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.sh
 #   surf: the same three with ADCIRC_STREAM=surf, -t 0:15:00 -N 52, 0:40:00 -N 52, 0:25:00. MJ (10/05/26)
 
 # PACKAGEROOT must be set explicitly: a default could pick up the SECOFS or ATL package and run its code silently. MJ (10/05/26)

@@ -170,7 +170,7 @@ def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str],
                 archive_path(ctx.comges, ctx.run, s.ncpu_compute), runner)
     if not (run_dir / "PE0000" / "fort.24").is_file():
         raise AdcircConfigError(f"FATAL ERROR: {archive_path(ctx.comges, ctx.run, s.ncpu_compute)} is a single-mode "
-                                "decomposition (no ops station files); re-run cold_adcprep with COLDSTART=YES")
+                                "decomposition (no fort.24); delete it and its .json to rebuild, or run cold_adcprep with COLDSTART=YES")
     return run_dir
 
 
