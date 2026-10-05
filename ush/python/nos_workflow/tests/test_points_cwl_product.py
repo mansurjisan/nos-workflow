@@ -825,3 +825,20 @@ def test_ak_product_wiring_omits_datum_offsets_and_logs_info_not_warning(
         # Must not carry the ATL-only alarming language.
         assert "bias" not in message
         assert "labels them" not in message
+
+
+def test_ops_base_date_appends_utc_once():
+    from nos_workflow.post.products.points_cwl import _ops_base_date
+
+    assert _ops_base_date("2026-09-30 12:00:00") == "2026-09-30 12:00:00 UTC"
+    assert _ops_base_date("2026-09-30 12:00:00 UTC") == "2026-09-30 12:00:00 UTC"
+
+
+def test_utc_suffix_is_opt_in():
+    base = [
+        "--staging", "s", "--comout", "c", "--prefix", "p", "--cyc", "12",
+        "--pdy", "20260722", "--phase", "nowcast", "--base-date", "d",
+        "--var-defs", "v", "--station-meta", "m",
+    ]
+    assert points_cwl._parse_args(base).utc_suffix is False
+    assert points_cwl._parse_args(base + ["--utc-suffix"]).utc_suffix is True

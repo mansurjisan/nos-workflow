@@ -172,3 +172,45 @@ def test_split_omits_precipitation_when_absent(tmp_path):
         assert np.allclose(ds["elevation"][:], 0.5)
         assert "SCHISM_hgrid_face_nodes" in ds.variables
         assert "bottom_index_node" in ds.variables
+
+
+def test_split_carries_wetdry_and_edge_table_and_ponds_run(tmp_path):
+    """The coupled out2d must carry dryFlagNode and the side table so the
+    ATL isolated-pond step runs on the OLDIO path too. Synthetic schout:
+    no coupled ATL data is local. MJ (10/05/26)"""
+    import numpy as np
+
+    from nos_workflow.post.products import ops_fields
+
+    _write_oldio_schout(tmp_path / "schout_1.nc")
+    with netCDF4.Dataset(tmp_path / "schout_1.nc", "a") as ds:
+        ds.createDimension("nSCHISM_hgrid_edge", 5)
+        en = ds.createVariable(
+            "SCHISM_hgrid_edge_nodes", "i4", ("nSCHISM_hgrid_edge", "two"),
+            fill_value=-1,
+        )
+        en[:] = [[1, 2], [2, 3], [1, 3], [2, 4], [3, 4]]
+        ds.createVariable(
+            "wetdry_node", "i4", ("time", "nSCHISM_hgrid_node"))[:] = [
+                [0, 0, 0, 0], [0, 0, 1, 0]]
+    _split(tmp_path)
+
+    with netCDF4.Dataset(tmp_path / "out2d_1.nc") as ds:
+        assert ds["dryFlagNode"].dtype == np.float32
+        assert ds["dryFlagNode"].dimensions == ("time", "nSCHISM_hgrid_node")
+        assert ds["dryFlagNode"].i23d == 1
+        assert ds["SCHISM_hgrid_edge_nodes"].shape == (5, 2)
+        assert ds["dryFlagNode"][1, 2] == 1
+
+    # The pond fill needs scipy (present on WCOSS2 and Hercules); the hosted CI image
+    # has none, so only the pond half is skipped there. MJ (10/05/26)
+    pytest.importorskip("scipy")
+    seed = np.array([1, 0, 0, 0], dtype=bool)
+    ops_fields.stamp_stack(
+        netCDF4.Dataset, tmp_path / "out2d_1.nc", "out2d",
+        idmask=np.zeros(4, dtype=np.int32), pond_seed=seed,
+    )
+    with netCDF4.Dataset(tmp_path / "out2d_1.nc") as ds:
+        pond = np.asarray(ds["isolatedPondNode"][:])
+    # node 3 (index 2) dry at record 1: node 4 stays joined through node 2. MJ (10/05/26)
+    assert pond.sum() == 0

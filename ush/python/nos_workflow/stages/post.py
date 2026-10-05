@@ -28,6 +28,7 @@ from ..post.worker_base import (
     staging_dir,
 )
 from ..registry import OFSDescriptor
+from ..tools import build_staout_1
 
 if TYPE_CHECKING:
     from ..env import NCOEnv  # noqa: F401
@@ -88,6 +89,52 @@ def _run_comf_post(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         ) from exc
 
 
+def _float_env(name: str) -> Optional[float]:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return None
+
+
+def _require_complete_model_runs(descriptor: OFSDescriptor, comout: Path, run_name: str,
+                                 cycle: str) -> None:
+    """STOFS-3D-ATL: stop post when a phase's archived mirror.out is missing or incomplete.
+
+    Production stops in post, not in the model job
+    (nco_v315 scripts/stofs_3d_atl/exstofs_3d_atl_post_1.sh:375-383, post_2.sh:224-229).
+    The verdict is written next to the archived mirror.out by archive_outputs. MJ (10/05/26)
+    """
+    from ..runners.schism_ufs.mirror_status import STATUS_NAME, check_mirror_out
+    from ..runners.schism_ufs.stage_files import _is_ufs
+
+    if not build_staout_1.is_atl_run(run_name):
+        return
+    problems = []
+    for sub in ("restart_outputs", "forecast_outputs"):
+        d = comout / f"{run_name}.{cycle}.{sub}"
+        status = d / STATUS_NAME
+        if not (d / "mirror.out").is_file():
+            problems.append(f"{d / 'mirror.out'} missing")
+        elif status.is_file():
+            if not status.read_text().startswith("OK"):
+                problems.append(f"{d.name}: {status.read_text().strip()}")
+        else:
+            # Cycles archived before the verdict existed: judge the archived mirror.out. The coupled
+            # step count needs dt and the run length: dt from the archived nowcast param.nml
+            # (post's $DATA is a fresh dir), the forecast length from LEN_FORECAST. MJ (10/05/26)
+            nowcast = sub == "restart_outputs"
+            param = comout / "rerun" / f"{run_name}.{cycle}.param.nml"
+            hours = None if nowcast else _float_env("LEN_FORECAST")
+            ok, why = check_mirror_out(d / "mirror.out", param, coupled=_is_ufs(), run_hours=hours)
+            if not ok:
+                problems.append(f"{d.name}: {why}")
+    if problems:
+        raise StageFailedError(
+            stage=_STAGE, ofs=descriptor.name, returncode=1,
+            msg="model run incomplete, post stopped: " + "; ".join(problems),
+        )
+
+
 def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """Run COMF post-processing; raise on fatal failures, return 0 on success."""
     sl = stage_logger(_STAGE, descriptor.name)
@@ -108,6 +155,8 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     # running when the job is killed only has its lines in $pgmout. Say
     # where that is so it can be tailed live rather than reconstructed.
     sl.info("worker output also at $pgmout=%s (tail -f during the run)", pgmout)
+
+    _require_complete_model_runs(descriptor, comout, run_name, cycle)
 
     combine_script = _resolve_combine_script(homenos, shell_env)
     if combine_script is None:
@@ -977,6 +1026,28 @@ def _read_fields_result(result_json: Path) -> List[str]:
         return []
 
 
+def _ops_field_args(ctx, phase: str) -> List[str]:
+    """Flags that turn on the production add_attr step for ``fields_nc``.
+
+    Keyed on the ops idmask fix file being staged: only the STOFS-3D-ATL
+    fix set carries it, so every other system gets no extra flags and
+    publishes exactly as before. The pond seed is optional (the worker
+    skips ``isolatedPondNode`` without it). MJ (10/05/26)
+    """
+    ops = ctx.prefix_nos.split("_ufs")[0]
+    mask = fix_file(ctx, f"{ops}_mask_land_ocean_bnd_out2d.nc")
+    if mask is None:
+        return []
+    args = [
+        "--ops-attrs", "--idmask-file", str(mask),
+        "--base-date", _product_base_date(ctx, phase),
+    ]
+    seed = fix_file(ctx, f"{ops}_pond_seed.npz", "pond_seed.npz")
+    if seed is not None:
+        args += ["--pond-seed-file", str(seed)]
+    return args
+
+
 @register
 class FieldsNcProduct(PostProduct):
     """Canonical per-variable field stacks from the staged model outputs.
@@ -1032,6 +1103,7 @@ class FieldsNcProduct(PostProduct):
                 "--combine-script", str(ctx.combine_script),
                 "--result-json", str(result_json),
             ]
+            argv += _ops_field_args(ctx, phase)
             if not publish:
                 argv.append("--split-only")
             rc = _run_subprocess_appending(
@@ -1220,6 +1292,8 @@ class PointsCwlProduct(NosUtilsProduct):
             "--var-defs", str(var_defs),
             "--station-meta", str(meta),
         ]
+        if ops == "stofs_3d_atl":
+            args.append("--utc-suffix")  # production ATL time units; MJ (10/05/26)
         # The station JSON labels zeta with a datum (NAVD88 on the ATL
         # fix set) that is only true AFTER the ops ncap2 shift, so the
         # .nco must be applied whenever the metadata claims one.

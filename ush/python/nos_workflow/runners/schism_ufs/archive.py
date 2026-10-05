@@ -9,7 +9,9 @@ from typing import List
 
 from ...post.registry import resolve_archive_fields
 from ...tools import build_staout_1
+from . import mirror_status
 from .context import SchismRunContext
+from .stage_files import _is_stofs_atl, _is_ufs
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +57,13 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
             dst = target / src.name
             shutil.copy2(src, dst)
             copied += 1
+
+    if _is_stofs_atl(ctx):
+        # Verdict for post, which stops on an incomplete run as production post does
+        # (nco_v315 scripts/stofs_3d_atl/exstofs_3d_atl_post_1.sh:375-383). MJ (10/05/26)
+        ok, why = mirror_status.check_mirror_out(
+            source / "mirror.out", ctx.data / "param.nml", coupled=_is_ufs())
+        (target / mirror_status.STATUS_NAME).write_text(("OK " if ok else "INCOMPLETE ") + why + "\n")
 
     if resolve_archive_fields(os.environ):
         # Field staging must never fail the model job -- fields are

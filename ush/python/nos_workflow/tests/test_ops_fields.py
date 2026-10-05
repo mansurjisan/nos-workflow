@@ -1,0 +1,247 @@
+"""Production add_attr port: masking, attributes, isolated ponds."""
+from __future__ import annotations
+
+from pathlib import Path
+
+import numpy as np
+import pytest
+
+netCDF4 = pytest.importorskip("netCDF4")
+pytest.importorskip("scipy")
+
+from nos_workflow.post.products import fields, ops_fields  # noqa: E402
+
+# 5 nodes in a line 0-1-2-3-4, plus an unrelated node 5 joined to 4 only. MJ (10/05/26)
+_EDGES = np.array([[0, 1], [1, 2], [2, 3], [3, 4], [4, 5]])
+
+
+def _out2d(path: Path, dry, base="' 2026  9 30      12.00       0.00'") -> None:
+    nt, nn = dry.shape
+    with netCDF4.Dataset(path, "w", format="NETCDF4") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", nn)
+        ds.createDimension("nSCHISM_vgrid_layers", 3)
+        ds.createDimension("nSCHISM_hgrid_edge", len(_EDGES))
+        ds.createDimension("two", 2)
+        t = ds.createVariable("time", "f8", ("time",))
+        t.units = "seconds since 2026-09-30T12:00:00+00"
+        t.base_date = base.strip("'")
+        t[:] = np.arange(nt) * 3600.0
+        e = ds.createVariable("elevation", "f4", ("time", "nSCHISM_hgrid_node"))
+        e[:] = 2.5
+        d = ds.createVariable("dryFlagNode", "f4", ("time", "nSCHISM_hgrid_node"))
+        d[:] = dry
+        en = ds.createVariable("SCHISM_hgrid_edge_nodes", "i4", ("nSCHISM_hgrid_edge", "two"))
+        en[:] = _EDGES + 1
+        ds.createVariable("windSpeedX", "f4", ("time", "nSCHISM_hgrid_node"))[:] = 1.0
+
+
+def test_parse_base_date_schism_and_iso():
+    assert ops_fields.parse_base_date(" 2026  9 30      12.00       0.00") == (
+        2026, 9, 30, 12.0, 0.0,
+    )
+    assert ops_fields.parse_base_date("2026-10-01 12:00:00")[:4] == (2026, 10, 1, 12.0)
+    assert ops_fields.parse_base_date("garbage") is None
+
+
+def test_time_attrs_match_production_strings():
+    got = ops_fields.time_attrs((2026, 9, 30, 12.0, 0.0))
+    assert got == {
+        "units": "seconds since 2026-09-30 12:00:00 +0",
+        "base_date": "2026 09 30 12 0",
+    }
+
+
+def test_isolated_ponds_flags_wet_component_without_seed():
+    seed = np.array([1, 0, 0, 0, 0, 0], dtype=bool)
+    wet = np.ones(6, dtype=bool)
+    assert not ops_fields.isolated_ponds(wet, seed, _EDGES).any()
+    wet[2] = False  # cuts the line: nodes 3,4,5 lose the seed. MJ (10/05/26)
+    pond = ops_fields.isolated_ponds(wet, seed, _EDGES)
+    assert pond.tolist() == [False, False, False, True, True, True]
+    seed2 = seed.copy()
+    seed2[0] = False  # dry seed is no seed. MJ (10/05/26)
+    wet2 = np.array([0, 1, 1, 1, 1, 1], dtype=bool)
+    assert ops_fields.isolated_ponds(wet2, seed2, _EDGES).sum() == 5
+
+
+def test_seed_roundtrip(tmp_path):
+    seed = np.zeros(13, dtype=bool)
+    seed[[0, 5, 12]] = True
+    ops_fields.save_pond_seed(tmp_path / "s.npz", seed)
+    assert np.array_equal(ops_fields.read_pond_seed(tmp_path / "s.npz"), seed)
+
+
+def test_stamp_stack_masks_stamps_and_is_idempotent(tmp_path):
+    dry = np.zeros((2, 6), dtype="f4")
+    dry[:, 2] = 1
+    f = tmp_path / "out2d_1.nc"
+    _out2d(f, dry)
+    idmask = np.array([0, 1, 0, 0, 0, 1], dtype=np.int32)
+    seed = np.array([1, 0, 0, 0, 0, 0], dtype=bool)
+    for _ in range(2):
+        ops_fields.stamp_stack(
+            netCDF4.Dataset, f, "out2d", idmask=idmask, pond_seed=seed,
+        )
+    with netCDF4.Dataset(f) as ds:
+        ds.set_auto_mask(False)
+        elev = ds["elevation"][:]
+        assert (elev[:, [1, 5]] == -99999).all() and (elev[:, [0, 2, 3, 4]] == 2.5).all()
+        assert ds["elevation"].missing_value == np.float32(-99999)
+        assert ds["elevation"].long_name == "water surface elevation above xgeoid20b"
+        assert ds["windSpeedX"].units == "m/s"
+        assert ds["time"].units == "seconds since 2026-09-30 12:00:00 +0"
+        assert ds["time"].base_date == "2026 09 30 12 0"
+        assert ds["idmask"][:].tolist() == idmask.tolist()
+        assert ds["vgrid_dummy"].shape == (3,)
+        assert ds["isolatedPondNode"][0].tolist() == [0, 0, 0, 1, 1, 1]
+        assert ds["isolatedPondNode"].dtype == np.int8
+
+
+def test_stamp_stack_3d_attrs_only(tmp_path):
+    f = tmp_path / "salinity_1.nc"
+    with netCDF4.Dataset(f, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("n", 2)
+        ds.createVariable("time", "f8", ("time",))[:] = [0.0]
+        ds.createVariable("salinity", "f4", ("time", "n"))[:] = 1.0
+    ops_fields.stamp_stack(
+        netCDF4.Dataset, f, "salinity", fallback_base_date="2026-09-30 12:00:00",
+    )
+    with netCDF4.Dataset(f) as ds:
+        assert ds["salinity"].units == "PSU"
+        assert ds["salinity"].mesh == "SCHISM_hgrid"
+        assert ds["time"].units == "seconds since 2026-09-30 12:00:00 +0"
+
+
+def test_worker_ops_attrs_requires_idmask(tmp_path, capsys):
+    st = tmp_path / "stg"
+    st.mkdir()
+    _out2d(st / "out2d_1.nc", np.zeros((1, 6), dtype="f4"))
+    rc = fields.main([
+        "--staging", str(st), "--comout", str(tmp_path), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast", "--ops-attrs",
+    ])
+    assert rc == 5
+
+
+def test_worker_without_flag_leaves_stack_untouched(tmp_path):
+    st = tmp_path / "stg"
+    st.mkdir()
+    com = tmp_path / "com"
+    com.mkdir()
+    _out2d(st / "out2d_1.nc", np.zeros((1, 6), dtype="f4"))
+    assert fields.main([
+        "--staging", str(st), "--comout", str(com), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast",
+    ]) == 0
+    with netCDF4.Dataset(st / "out2d_1.nc") as ds:
+        assert "idmask" not in ds.variables
+        assert "units" not in ds["elevation"].ncattrs()
+
+
+def _stage_idmask(tmp_path):
+    f = tmp_path / "mask.nc"
+    with netCDF4.Dataset(f, "w") as ds:
+        ds.createDimension("nSCHISM_hgrid_node", 6)
+        ds.createVariable("idmask", "i4", ("nSCHISM_hgrid_node",))[:] = [0, 1, 0, 0, 0, 1]
+    return f
+
+
+def test_worker_masks_a_copy_and_leaves_raw_stack_intact(tmp_path):
+    st = tmp_path / "r.t12z.restart_outputs"
+    st.mkdir()
+    com = tmp_path
+    dry = np.zeros((1, 6), dtype="f4")
+    _out2d(st / "out2d_1.nc", dry)
+    (st / "staout_1").write_text("x")
+    seed = tmp_path / "seed.npz"
+    ops_fields.save_pond_seed(seed, np.array([1, 0, 0, 0, 0, 0], dtype=bool))
+    rc = fields.main([
+        "--staging", str(st), "--comout", str(com), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast",
+        "--ops-attrs", "--idmask-file", str(_stage_idmask(tmp_path)),
+        "--pond-seed-file", str(seed),
+    ])
+    assert rc == 0
+    with netCDF4.Dataset(st / "out2d_1.nc") as raw:
+        assert "idmask" not in raw.variables
+        assert (np.asarray(raw["elevation"][:]) == 2.5).all()
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    assert (masked / "staout_1").is_symlink()
+    with netCDF4.Dataset(masked / "out2d_1.nc") as ds:
+        ds.set_auto_mask(False)
+        assert ds["elevation"][0, 1] == -99999
+    pub = com / "p.t12z.20261001.fields.out2d.n000_000.nc"
+    assert pub.is_file() and pub.samefile(masked / "out2d_1.nc")
+    assert not list(masked.glob(".*.tmp"))
+
+
+def test_seed_size_mismatch_raises(tmp_path):
+    f = tmp_path / "out2d_1.nc"
+    _out2d(f, np.zeros((1, 6), dtype="f4"))
+    with pytest.raises(ValueError, match="pond seed"):
+        ops_fields.stamp_stack(
+            netCDF4.Dataset, f, "out2d",
+            idmask=np.zeros(6, dtype=np.int32),
+            pond_seed=np.zeros(5, dtype=bool),
+        )
+
+
+def test_missing_dryflag_warns(tmp_path):
+    g = tmp_path / "out2d_2.nc"
+    with netCDF4.Dataset(g, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 6)
+        ds.createVariable("time", "f8", ("time",))[:] = [0.0]
+    msgs = []
+    ops_fields.stamp_stack(
+        netCDF4.Dataset, g, "out2d", pond_seed=np.zeros(6, dtype=bool),
+        log=msgs.append,
+    )
+    assert any(m.startswith("WARNING") for m in msgs)
+
+
+def _stage_with_3d(tmp_path):
+    st = tmp_path / "r.t12z.restart_outputs"
+    st.mkdir()
+    _out2d(st / "out2d_1.nc", np.zeros((1, 6), dtype="f4"))
+    with netCDF4.Dataset(st / "salinity_1.nc", "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("n", 2)
+        ds.createVariable("time", "f8", ("time",))[:] = [0.0]
+        ds.createVariable("salinity", "f4", ("time", "n"))[:] = 1.0
+    return st
+
+
+def _run_ops(st, com, tmp_path, extra=()):
+    return fields.main([
+        "--staging", str(st), "--comout", str(com), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast",
+        "--ops-attrs", "--idmask-file", str(_stage_idmask(tmp_path)), *extra,
+    ])
+
+
+def test_published_3d_stack_is_a_hardlink_not_a_symlink(tmp_path):
+    import os
+
+    st = _stage_with_3d(tmp_path)
+    assert _run_ops(st, tmp_path, tmp_path) == 0
+    pub = tmp_path / "p.t12z.20261001.fields.salinity.n000_000.nc"
+    raw = st / "salinity_1.nc"
+    assert not os.path.islink(pub)
+    assert os.stat(pub).st_ino == os.stat(raw).st_ino and not os.path.islink(raw)
+    assert (tmp_path / "r.t12z.restart_outputs.masked" / "salinity_1.nc").is_symlink()
+
+
+def test_failed_build_leaves_no_partial_masked_dir(tmp_path):
+    st = _stage_with_3d(tmp_path)
+    assert _run_ops(st, tmp_path, tmp_path) == 0
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    before = sorted(p.name for p in masked.iterdir())
+    bad = tmp_path / "bad_seed.npz"
+    ops_fields.save_pond_seed(bad, np.zeros(5, dtype=bool))  # wrong size: raises MJ (10/05/26)
+    with pytest.raises(ValueError):
+        _run_ops(st, tmp_path, tmp_path, ("--pond-seed-file", str(bad)))
+    assert sorted(p.name for p in masked.iterdir()) == before
+    assert not (tmp_path / "r.t12z.restart_outputs.masked.tmp").exists()
