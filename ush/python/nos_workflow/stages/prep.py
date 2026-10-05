@@ -100,15 +100,16 @@ def _run_adcirc_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """STOFS-2D-GLO prep: nowcast then forecast inputs (forcing, fort.15, adcprep). MJ (10/05/26)"""
     sl = stage_logger(_STAGE, descriptor.name)
     t_stage = time.monotonic()
-    from ..runners.adcirc import prep as adcirc_prep
+    from ..runners.adcirc import ops as adcirc_ops, prep as adcirc_prep
     from ..runners.adcirc.settings import AdcircSettings, CycleContext
 
     try:
         cfg = os.environ.get("OFS_CONFIG") or Path(os.environ.get("HOMEnos", ".")) / descriptor.yaml_path
         settings = AdcircSettings.from_yaml(cfg)
         ctx = CycleContext.from_env(settings)
-        for phase, fn in (("nowcast", adcirc_prep.prep_nowcast),
-                          ("forecast", adcirc_prep.prep_forecast)):
+        phases = ([("ops", adcirc_ops.run_prep)] if settings.mode == "ops"
+                  else [("nowcast", adcirc_prep.prep_nowcast), ("forecast", adcirc_prep.prep_forecast)])
+        for phase, fn in phases:
             with timed_step(sl, f"prep_{phase}"):
                 fn(ctx)
     except Exception as exc:  # noqa: BLE001

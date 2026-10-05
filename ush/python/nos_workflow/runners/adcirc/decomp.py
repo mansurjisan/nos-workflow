@@ -19,7 +19,8 @@ from typing import Callable, List, Optional, Sequence
 
 log = logging.getLogger(__name__)
 
-PE_FILES = ("fort.14", "fort.18", "fort.13", "fort.24", "fort.rotm")
+# The two station files exist only in ops mode (decomposed by adcprep like fort.24). MJ (10/05/26)
+PE_FILES = ("fort.14", "fort.18", "fort.13", "fort.24", "fort.rotm", "elev_stat.151", "vel_stat.151")
 CommandRunner = Callable[[Sequence[str], Path], int]
 
 
