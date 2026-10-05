@@ -777,9 +777,13 @@ def test_shipped_yaml_enables_only_what_has_been_validated():
         atl = _read_yaml_post_products(_PARM / name)
         for ready in ("maxele", "slab2d", "adcirc"):
             assert ready in atl, (name, ready)
-        # Held until timed / fix files staged on ATL.
+        # geopkg stays off on ATL (no geometry stack in the WCOSS2 python);
+        # profiles is on, verified against the S3 ncast profile.
         assert "geopkg" not in atl, name
-        assert "profiles" not in atl, name
+        assert any(
+            n == "profiles" or (isinstance(n, dict) and n.get("name") == "profiles")
+            for n in atl
+        ) or "profiles" in atl, name
 
 
 def test_no_system_enables_profiles_without_an_outside_setting():
@@ -802,3 +806,24 @@ def test_no_system_enables_profiles_without_an_outside_setting():
         )
     if not checked:
         pytest.skip("no shipped system currently enables profiles")
+
+
+def test_ops_field_args_only_when_idmask_fix_is_staged(tmp_path):
+    from types import SimpleNamespace
+
+    from nos_workflow.stages.post import _ops_field_args
+
+    ctx = SimpleNamespace(
+        fixofs=tmp_path, prefix_nos="stofs_3d_atl_ufs", pdy="20261001",
+        cyc="12", shell_env={"LEN_NOWCAST": "24"},
+    )
+    assert _ops_field_args(ctx, "nowcast") == []
+    (tmp_path / "stofs_3d_atl_mask_land_ocean_bnd_out2d.nc").write_bytes(b"x")
+    args = _ops_field_args(ctx, "nowcast")
+    assert args[0] == "--ops-attrs" and "--pond-seed-file" not in args
+    assert args[args.index("--base-date") + 1] == "2026-09-30 12:00:00"
+    (tmp_path / "stofs_3d_atl_pond_seed.npz").write_bytes(b"x")
+    assert "--pond-seed-file" in _ops_field_args(ctx, "forecast")
+    # a system with a different prefix gets nothing even with the files present
+    ctx.prefix_nos = "secofs_ufs"
+    assert _ops_field_args(ctx, "nowcast") == []

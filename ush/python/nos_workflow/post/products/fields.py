@@ -92,6 +92,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if rc != 0:
             return rc
 
+    if args.ops_attrs:
+        rc = _apply_ops_attrs(Dataset, staging, args)
+        if rc != 0:
+            return rc
+
     if args.split_only:
         if args.result_json:
             Path(args.result_json).write_text(
@@ -132,6 +137,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
 
     print(f"fields: published {len(created)} stack(s) for {args.phase}")
+    return 0
+
+
+def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace) -> int:
+    """Production add_attr over every staged stack, in place. MJ (10/05/26)"""
+    from . import ops_fields
+
+    idmask_path = Path(args.idmask_file) if args.idmask_file else None
+    if idmask_path is None or not idmask_path.is_file():
+        print(f"fields: --ops-attrs needs a readable --idmask-file ({args.idmask_file!r})")
+        return 5
+    idmask = ops_fields.read_idmask(idmask_path)
+    seed = None
+    if args.pond_seed_file:
+        seed_path = Path(args.pond_seed_file)
+        if seed_path.is_file():
+            seed = ops_fields.read_pond_seed(seed_path)
+        else:
+            print(f"fields: pond seed {seed_path} not found; isolatedPondNode skipped")
+    for var in _VAR_FILE_PREFIXES:
+        for src, _stack in _stack_files(staging, var):
+            ops_fields.stamp_stack(
+                Dataset, src, var,
+                fallback_base_date=args.base_date,
+                idmask=idmask if var == "out2d" else None,
+                pond_seed=seed if var == "out2d" else None,
+                log=print,
+            )
+            print(f"fields: ops attrs applied to {src.name}")
     return 0
 
 
@@ -177,6 +211,28 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
              "the ops-parity default: publish by hardlink). Level 1 gets "
              "essentially all of the available compression; see the module "
              "docstring for measured ratios.",
+    )
+    p.add_argument(
+        "--ops-attrs", action="store_true",
+        help="apply the production add_attr step in place on the staged "
+             "stacks before anything is published or read downstream: "
+             "CF attributes on every stack, plus idmask masking and "
+             "isolatedPondNode on out2d (see ops_fields.py)",
+    )
+    p.add_argument(
+        "--idmask-file", default="",
+        help="fix mask NetCDF with the idmask variable (ops "
+             "stofs_3d_atl_mask_land_ocean_bnd_out2d.nc); required "
+             "with --ops-attrs",
+    )
+    p.add_argument(
+        "--pond-seed-file", default="",
+        help="precomputed isolated-pond seed npz; omit to skip "
+             "isolatedPondNode",
+    )
+    p.add_argument(
+        "--base-date", default="",
+        help="fallback time origin for stacks without a SCHISM base_date",
     )
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")

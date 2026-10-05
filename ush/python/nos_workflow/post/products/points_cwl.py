@@ -88,7 +88,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             var_defs,
             args.station_meta,
             tmp,
-            base_date=args.base_date,
+            base_date=_ops_base_date(args.base_date),
             datum_offsets=offsets,
         )
         _warn_transposed_coords(tmp, args.station_meta)
@@ -99,6 +99,16 @@ def main(argv: Optional[List[str]] = None) -> int:
         )
     print(f"points_cwl: wrote {out_path.name}")
     return 0
+
+
+def _ops_base_date(text: str) -> str:
+    """Time origin spelled as production stamps it, ``... 12:00:00 UTC``.
+
+    generate_station_timeseries.py (nco_v315 ush/stofs_3d_atl/pysh, time
+    units/base_date) appends the zone; the S3 points.cwl.nc carries it. MJ (10/05/26)
+    """
+    text = text.strip()
+    return text if text.endswith("UTC") else f"{text} UTC"
 
 
 def _warn_transposed_coords(path: Path, meta_source: str) -> None:

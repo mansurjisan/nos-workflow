@@ -171,10 +171,18 @@ post:
     - points_cwl
     - fields_nc
     - bias_correct
-    # geopkg and profiles held back until timed on a real ATL cycle. MJ (09/05/26)
+    # profiles: verified against the S3 ncast profile on PDY 20261001 (161 of
+    # 166 stations exact; the other 5 lie outside the mesh and production fills
+    # them with extrapolated junk, so they are dropped, not invented).
+    # geopkg stays off: geopandas + shapely>=1.8 are not in the WCOSS2 python
+    # 3.8 module set, and nos-utils geopkg does not yet apply the production
+    # isolatedPondNode mask or xGEOID20b datum string. MJ (10/05/26)
     - maxele
     - slab2d
     - adcirc
+    - name: profiles
+      options:
+        outside: drop
 
 shell_mappings:
   variables:

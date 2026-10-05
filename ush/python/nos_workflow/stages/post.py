@@ -977,6 +977,30 @@ def _read_fields_result(result_json: Path) -> List[str]:
         return []
 
 
+def _ops_field_args(ctx, phase: str) -> List[str]:
+    """Flags that turn on the production add_attr step for ``fields_nc``.
+
+    Keyed on the ops idmask fix file being staged: only the STOFS-3D-ATL
+    fix set carries it, so every other system gets no extra flags and
+    publishes exactly as before. The pond seed is optional (the worker
+    skips ``isolatedPondNode`` without it). MJ (10/05/26)
+    """
+    ops = ctx.prefix_nos.split("_ufs")[0]
+    mask = fix_file(
+        ctx, f"{ops}_mask_land_ocean_bnd_out2d.nc", "mask_land_ocean_bnd_out2d.nc"
+    )
+    if mask is None:
+        return []
+    args = [
+        "--ops-attrs", "--idmask-file", str(mask),
+        "--base-date", _product_base_date(ctx, phase),
+    ]
+    seed = fix_file(ctx, f"{ops}_pond_seed.npz", "pond_seed.npz")
+    if seed is not None:
+        args += ["--pond-seed-file", str(seed)]
+    return args
+
+
 @register
 class FieldsNcProduct(PostProduct):
     """Canonical per-variable field stacks from the staged model outputs.
@@ -1032,6 +1056,7 @@ class FieldsNcProduct(PostProduct):
                 "--combine-script", str(ctx.combine_script),
                 "--result-json", str(result_json),
             ]
+            argv += _ops_field_args(ctx, phase)
             if not publish:
                 argv.append("--split-only")
             rc = _run_subprocess_appending(
