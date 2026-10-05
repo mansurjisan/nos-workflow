@@ -58,6 +58,7 @@ def base_configs(parm_dir: Path) -> Dict[str, Path]:
         "schism": base / "schism.yaml",
         "fvcom": base / "fvcom.yaml",
         "roms": base / "roms.yaml",
+        "adcirc": base / "adcirc.yaml",
     }
 
 

@@ -269,7 +269,7 @@ case "${OFS_FRAMEWORK}" in
         export nback=${nback:-20}
 
         # Execute unified prep script (ADCIRC path)
-        $SCRIstofs3d/exnos_ofs_prep.sh
+        $SCRIPTSnos/exnos_adcirc.sh prep
         ;;
     comf|*)
         # Python-based prep (nos-utils) — the only supported path on this branch

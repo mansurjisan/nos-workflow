@@ -32,7 +32,7 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if descriptor.framework == "stofs":
         raise NotImplementedError("STOFS-3D-ATL prep not yet ported")
     if descriptor.framework == "adcirc":
-        raise NotImplementedError("STOFS-2D-GLO prep not yet ported")
+        return _run_adcirc_prep(descriptor, env)
     if descriptor.framework == "comf_standalone":
         raise NotImplementedError(
             "comf_standalone prep (ROMS/FVCOM standalone) not yet wired; "
@@ -92,6 +92,33 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
     emit_stage_summary(sl, status="PASS",
                        runtime_s=time.monotonic() - t_stage,
+                       extras={"phases_completed": 2})
+    return 0
+
+
+def _run_adcirc_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
+    """STOFS-2D-GLO prep: nowcast then forecast inputs (forcing, fort.15, adcprep). MJ (10/05/26)"""
+    sl = stage_logger(_STAGE, descriptor.name)
+    t_stage = time.monotonic()
+    from ..runners.adcirc import prep as adcirc_prep
+    from ..runners.adcirc.settings import AdcircSettings, CycleContext
+
+    try:
+        cfg = os.environ.get("OFS_CONFIG") or Path(os.environ.get("HOMEnos", ".")) / descriptor.yaml_path
+        settings = AdcircSettings.from_yaml(cfg)
+        ctx = CycleContext.from_env(settings)
+        for phase, fn in (("nowcast", adcirc_prep.prep_nowcast),
+                          ("forecast", adcirc_prep.prep_forecast)):
+            with timed_step(sl, f"prep_{phase}"):
+                fn(ctx)
+    except Exception as exc:  # noqa: BLE001
+        emit_stage_summary(sl, status="FAIL", runtime_s=time.monotonic() - t_stage,
+                           extras={"reason": str(exc)[:200]})
+        raise StageFailedError(
+            stage=_STAGE, ofs=descriptor.name, returncode=1,
+            msg=f"ADCIRC prep failed: {exc}",
+        ) from exc
+    emit_stage_summary(sl, status="PASS", runtime_s=time.monotonic() - t_stage,
                        extras={"phases_completed": 2})
     return 0
 

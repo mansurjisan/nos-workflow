@@ -6,8 +6,8 @@ against the real cards.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
 
 from .profile import MachineProfile, ProfileError
 
@@ -33,6 +33,8 @@ class JobSpec:
     stdout: Optional[str] = "/dev/null"
     stderr: Optional[str] = "/dev/null"
     extra_resources: Tuple[str, ...] = ()    # e.g. ("debug=true",)
+    # Per-system packing by machine name (resources.ranks_per_node); empty = profile default. MJ (10/05/26)
+    ranks_per_node: Dict[str, int] = field(default_factory=dict)
 
     def __post_init__(self):
         if self.kind not in (KIND_MODEL, KIND_SERIAL):
@@ -63,13 +65,14 @@ def _render_pbs(spec: JobSpec, profile: MachineProfile) -> List[str]:
         lines.append(f"{p}-e {spec.stderr}")
 
     alloc = profile.allocation
+    rpn = profile.ranks_per_node_for(spec.ranks_per_node)
     if spec.kind == KIND_MODEL:
         chunk = (
-            f"select={profile.nodes(spec.total_ranks)}"
+            f"select={profile.nodes(spec.total_ranks, rpn)}"
             f":ncpus={alloc.cores_per_node}"
         )
         if alloc.emit_ranks_per_node:
-            chunk += f":mpiprocs={alloc.ranks_per_node}"
+            chunk += f":mpiprocs={rpn}"
         # Both follow mpiprocs= in the existing cards; no card carries both, so
         # this order is a convention rather than something reproduced from one.
         if spec.threads_per_rank is not None:
@@ -100,12 +103,12 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
 
     alloc = profile.allocation
     if spec.kind == KIND_MODEL:
-        lines.append(f"{p}--nodes={profile.nodes(spec.total_ranks)}")
+        lines.append(f"{p}--nodes={profile.nodes(spec.total_ranks, profile.ranks_per_node_for(spec.ranks_per_node))}")
         if alloc.emit_ranks_per_node:
             # --nodes + --ntasks-per-node fully specify the allocation (a
             # working ufs-coastal Hercules card uses exactly this pair);
             # --ntasks alongside it would be redundant.
-            lines.append(f"{p}--ntasks-per-node={alloc.ranks_per_node}")
+            lines.append(f"{p}--ntasks-per-node={profile.ranks_per_node_for(spec.ranks_per_node)}")
         else:
             lines.append(f"{p}--ntasks={spec.total_ranks}")
         if alloc.exclusive:
@@ -139,6 +142,8 @@ def _render_slurm(spec: JobSpec, profile: MachineProfile) -> List[str]:
 def render_mpi_argv(spec: JobSpec, profile: MachineProfile, executable: str,
                     exe_args: Optional[List[str]] = None,
                     ranks_per_node: Optional[int] = None) -> List[str]:
+    if ranks_per_node is None and spec.ranks_per_node:
+        ranks_per_node = profile.ranks_per_node_for(spec.ranks_per_node)
     return profile.mpi_argv(spec.total_ranks, executable, exe_args, ranks_per_node)
 
 

@@ -13,8 +13,8 @@ DESC = OFSDescriptor(
     stage_aliases={},
     extra_stages=(),
     yaml_path=Path("parm/systems/stofs_2d_glo.yaml"),
-    runner_module="",
-    notes="STOFS-2D-GLO ADCIRC support pending.",
+    runner_module="nos_workflow.runners.adcirc",
+    notes="STOFS-2D-GLO ADCIRC; engine adapted from Zach Cobell's StofsWorkflow.",
 )
 
 

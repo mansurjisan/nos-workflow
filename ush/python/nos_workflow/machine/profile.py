@@ -50,10 +50,10 @@ class Allocation:
     emit_ranks_per_node: bool = True
     exclusive: bool = True
 
-    def nodes(self, total_ranks: int) -> int:
+    def nodes(self, total_ranks: int, ranks_per_node: Optional[int] = None) -> int:
         if total_ranks < 1:
             raise ProfileError(f"total_ranks must be >= 1, got {total_ranks}")
-        return math.ceil(total_ranks / self.ranks_per_node)
+        return math.ceil(total_ranks / (ranks_per_node or self.ranks_per_node))
 
 
 @dataclass(frozen=True)
@@ -223,8 +223,20 @@ class MachineProfile:
                 f"{hints}, or supply it via a deployment overlay"
             )
 
-    def nodes(self, total_ranks: int) -> int:
-        return self.allocation.nodes(total_ranks)
+    def nodes(self, total_ranks: int, ranks_per_node: Optional[int] = None) -> int:
+        return self.allocation.nodes(total_ranks, ranks_per_node)
+
+    def ranks_per_node_for(self, by_machine: Optional[Dict[str, int]] = None) -> int:
+        """Per-system packing for this machine (``resources.ranks_per_node``), else the profile's.
+        MJ (10/05/26)"""
+        rpn = (by_machine or {}).get(self.machine)
+        if rpn is None:
+            return self.allocation.ranks_per_node
+        if not isinstance(rpn, int) or not 1 <= rpn <= self.allocation.cores_per_node:
+            raise ProfileError(
+                f"ranks_per_node override {rpn!r} for {self.machine} is outside "
+                f"1..{self.allocation.cores_per_node}")
+        return rpn
 
     def mpi_argv(
         self,

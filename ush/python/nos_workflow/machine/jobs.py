@@ -79,6 +79,17 @@ CATALOG: Dict[Tuple[str, str], StageSpec] = {
 }
 
 
+def ranks_per_node_for(system: str, repo_root: Optional[Path] = None) -> Dict[str, int]:
+    """``resources.ranks_per_node`` (machine -> ranks) from the system YAML; empty if unset."""
+    from nos_workflow.utils import yaml_to_env
+
+    root = Path(repo_root) if repo_root else REPO
+    path = root / "parm" / "systems" / f"{system}.yaml"
+    data = yaml_to_env.load_yaml_with_inheritance(path, root / "parm")
+    rpn = (data.get("resources") or {}).get("ranks_per_node")
+    return dict(rpn) if isinstance(rpn, dict) else {}
+
+
 def nprocs_for(system: str, repo_root: Optional[Path] = None) -> int:
     """Total MPI ranks for ``system``, straight from the resolved YAML."""
     from nos_workflow.utils import yaml_to_env
@@ -121,9 +132,10 @@ def build_job_spec(system: str, stage: str, repo_root: Optional[Path] = None) ->
         threads_per_rank=ss.threads_per_rank,
         mem_per_node=ss.mem_per_node,
         extra_resources=ss.extra_resources,
+        ranks_per_node=ranks_per_node_for(system, repo_root) if ss.kind == KIND_MODEL else {},
         stdout=stdio,
         stderr=stdio,
     )
 
 
-__all__ = ["CATALOG", "StageSpec", "build_job_spec", "nprocs_for"]
+__all__ = ["CATALOG", "StageSpec", "build_job_spec", "nprocs_for", "ranks_per_node_for"]

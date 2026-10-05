@@ -83,10 +83,36 @@ def test_prep_stofs_branch_raises_not_implemented(fake_env):
     assert "STOFS-3D-ATL" in str(exc_info.value)
 
 
-def test_prep_adcirc_branch_raises_not_implemented(fake_env):
-    with pytest.raises(NotImplementedError) as exc_info:
+def test_prep_adcirc_branch_runs_both_phases(fake_env, monkeypatch, tmp_path):
+    from nos_workflow.runners.adcirc import prep as adcirc_prep
+
+    calls = []
+    monkeypatch.setattr(adcirc_prep, "prep_nowcast", lambda ctx: calls.append("nowcast"))
+    monkeypatch.setattr(adcirc_prep, "prep_forecast", lambda ctx: calls.append("forecast"))
+    repo = Path(__file__).resolve().parents[4]
+    monkeypatch.setenv("OFS_CONFIG", str(repo / "parm" / "systems" / "stofs_2d_glo.yaml"))
+    for k, v in (("PDY", "20261004"), ("cyc", "12"), ("COMOUT", str(tmp_path / "c" / "x")),
+                 ("HOMEnos", str(repo))):
+        monkeypatch.setenv(k, v)
+    assert prep_stage.run(_adcirc_desc(), fake_env) == 0
+    assert calls == ["nowcast", "forecast"]
+
+
+def test_prep_adcirc_failure_is_stage_failed(fake_env, monkeypatch, tmp_path):
+    from nos_workflow.errors import StageFailedError
+    from nos_workflow.runners.adcirc import prep as adcirc_prep
+
+    def boom(ctx):
+        raise RuntimeError("adcprep --partmesh failed with return code 1")
+
+    monkeypatch.setattr(adcirc_prep, "prep_nowcast", boom)
+    repo = Path(__file__).resolve().parents[4]
+    monkeypatch.setenv("OFS_CONFIG", str(repo / "parm" / "systems" / "stofs_2d_glo.yaml"))
+    for k, v in (("PDY", "20261004"), ("cyc", "12"), ("COMOUT", str(tmp_path / "c" / "x")),
+                 ("HOMEnos", str(repo))):
+        monkeypatch.setenv(k, v)
+    with pytest.raises(StageFailedError, match="adcprep"):
         prep_stage.run(_adcirc_desc(), fake_env)
-    assert "STOFS-2D-GLO" in str(exc_info.value)
 
 
 @pytest.mark.parametrize("stage_name", ["prep", "nowcast", "forecast", "post"])
