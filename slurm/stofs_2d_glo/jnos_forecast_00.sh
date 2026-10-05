@@ -80,6 +80,7 @@ export PDY=${PDY:?set PDY (YYYYMMDD)}
 export job=stofs_2d_glo_fc_00_$envir
 export platform=ptmp
 export framework=adcirc
+export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
 export KEEPDATA=YES
 export SENDCOM=NO
@@ -135,9 +136,8 @@ for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
     [ -s "${FIXDIR}/${_f}" ] || { echo "FATAL: ${FIXDIR}/${_f} missing (tools/fetch_stofs_2d_glo_fix.sh)"; exit 1; }
 done
 [ -x "${ADCIRC_EXEC_DIR}/padcirc" ] || { echo "FATAL: ${ADCIRC_EXEC_DIR}/padcirc not executable"; exit 1; }
-_tot=$(python3 -c "import yaml;a=yaml.safe_load(open('${OFS_CONFIG}'))['adcirc'];print(a['ncpu_compute']+a.get('ncpu_writer',0))" 2>/dev/null) || _tot=
-[ -n "${_tot}" ] || { echo "FATAL: cannot read adcirc.ncpu_compute/ncpu_writer from ${OFS_CONFIG}"; exit 1; }
-[ "${_tot}" -le 4080 ] || { echo "FATAL: ${_tot} ranks exceed the 51 x 80 allocation of this card"; exit 1; }
+# Allocation size for the launch-time rank check (compute + writers must fit). MJ (10/05/26)
+export ADCIRC_ALLOC_RANKS=${SLURM_NTASKS}
 
 # Filesystem-sync guard: staged inputs must be visible on every compute node first. MJ (10/04/26)
 sync && sleep 1

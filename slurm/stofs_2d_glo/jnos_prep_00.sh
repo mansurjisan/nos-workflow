@@ -77,6 +77,7 @@ export NET=nos
 export job=stofs_2d_glo_prep_${cyc}_$envir
 export platform=ptmp
 export framework=adcirc
+export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
 export KEEPDATA=YES
 export SENDCOM=NO
@@ -129,9 +130,9 @@ for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
     [ -s "${FIXDIR}/${_f}" ] || { echo "FATAL: ${FIXDIR}/${_f} missing (tools/fetch_stofs_2d_glo_fix.sh)"; exit 1; }
 done
 [ -x "${ADCIRC_EXEC_DIR}/adcprep" ] || { echo "FATAL: ${ADCIRC_EXEC_DIR}/adcprep not executable"; exit 1; }
-[ -d "${COMINgfs}" ] || { echo "FATAL: COMINgfs ${COMINgfs} missing"; exit 1; }
+[ "${ADCIRC_MODE}" = ops ] || [ -d "${COMINgfs}" ] || { echo "FATAL: COMINgfs ${COMINgfs} missing"; exit 1; }
 # cfgrib/ecCodes preflight: a missing package fails here in seconds, not after the GFS copies. MJ (10/05/26)
-if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ]; then
+if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ]; then
     python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
 fi
 
