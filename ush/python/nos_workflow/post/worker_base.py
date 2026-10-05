@@ -51,9 +51,33 @@ FIELD_GLOBS = (
 
 
 def staging_dir(ctx: ProductContext, phase: str) -> Path:
-    """COMOUT staging directory for ``phase``."""
+    """Directory the products read the staged stacks from for ``phase``.
+
+    The raw COMOUT staging dir, unless ``fields_nc`` built a ``.masked``
+    sibling (ATL production add_attr step): that one holds the masked
+    out2d copies plus links to everything else, so every later product
+    reads the masked field while the raw archive stays intact. MJ (10/05/26)
+    """
     suffix = dict(PHASE_DIRS)[phase]
-    return ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
+    raw = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
+    masked = raw.with_name(raw.name + ".masked")
+    if not masked.is_dir():
+        return raw
+    # Use it only while it is complete and newer than the raw out2d; after
+    # a model re-run without fields_nc it is stale, and silently reading it
+    # would publish the previous run's masked field. MJ (10/05/26)
+    try:
+        for r in raw.glob("out2d_[0-9]*.nc"):
+            m = masked / r.name
+            if not m.is_file() or m.stat().st_mtime < r.stat().st_mtime:
+                raise FileNotFoundError(r.name)
+    except OSError as exc:
+        logger.warning(
+            "WARNING: %s is stale or incomplete (%s); using the raw staging "
+            "dir, so products are NOT masked. Re-run fields_nc.", masked, exc,
+        )
+        return raw
+    return masked
 
 
 def has_field_stacks(staging: Path) -> bool:

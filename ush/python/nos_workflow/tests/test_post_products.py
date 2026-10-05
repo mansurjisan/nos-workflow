@@ -777,9 +777,10 @@ def test_shipped_yaml_enables_only_what_has_been_validated():
         atl = _read_yaml_post_products(_PARM / name)
         for ready in ("maxele", "slab2d", "adcirc"):
             assert ready in atl, (name, ready)
-        # Held until timed / fix files staged on ATL.
+        # geopkg stays off on ATL (no geometry stack in the WCOSS2 python);
+        # profiles is on, verified against the S3 ncast profile. MJ (10/05/26)
         assert "geopkg" not in atl, name
-        assert "profiles" not in atl, name
+        assert "profiles" in atl, name
 
 
 def test_no_system_enables_profiles_without_an_outside_setting():
@@ -802,3 +803,66 @@ def test_no_system_enables_profiles_without_an_outside_setting():
         )
     if not checked:
         pytest.skip("no shipped system currently enables profiles")
+
+
+def test_ops_field_args_only_when_idmask_fix_is_staged(tmp_path):
+    from types import SimpleNamespace
+
+    from nos_workflow.stages.post import _ops_field_args
+
+    ctx = SimpleNamespace(
+        fixofs=tmp_path, prefix_nos="stofs_3d_atl_ufs", pdy="20261001",
+        cyc="12", shell_env={"LEN_NOWCAST": "24"},
+    )
+    assert _ops_field_args(ctx, "nowcast") == []
+    (tmp_path / "stofs_3d_atl_mask_land_ocean_bnd_out2d.nc").write_bytes(b"x")
+    args = _ops_field_args(ctx, "nowcast")
+    assert args[0] == "--ops-attrs" and "--pond-seed-file" not in args
+    assert args[args.index("--base-date") + 1] == "2026-09-30 12:00:00"
+    (tmp_path / "stofs_3d_atl_pond_seed.npz").write_bytes(b"x")
+    assert "--pond-seed-file" in _ops_field_args(ctx, "forecast")
+    # a system with a different prefix gets nothing even with the files present
+    # MJ (10/05/26)
+    ctx.prefix_nos = "secofs_ufs"
+    assert _ops_field_args(ctx, "nowcast") == []
+
+
+def test_staging_dir_prefers_the_masked_copy_when_present(tmp_path):
+    from types import SimpleNamespace
+
+    from nos_workflow.post.worker_base import staging_dir
+
+    ctx = SimpleNamespace(comout=tmp_path, run_name="r", cycle="t12z")
+    raw = tmp_path / "r.t12z.restart_outputs"
+    raw.mkdir()
+    assert staging_dir(ctx, "nowcast") == raw
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    masked.mkdir()
+    assert staging_dir(ctx, "nowcast") == masked
+    assert staging_dir(ctx, "forecast") == tmp_path / "r.t12z.forecast_outputs"
+
+
+def test_staging_dir_ignores_a_stale_or_incomplete_masked_copy(tmp_path):
+    import os
+    from types import SimpleNamespace
+
+    from nos_workflow.post.worker_base import staging_dir
+
+    ctx = SimpleNamespace(comout=tmp_path, run_name="r", cycle="t12z")
+    raw = tmp_path / "r.t12z.restart_outputs"
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    raw.mkdir()
+    masked.mkdir()
+    (raw / "out2d_1.nc").write_bytes(b"a")
+    (raw / "out2d_2.nc").write_bytes(b"a")
+    (masked / "out2d_1.nc").write_bytes(b"m")
+    # out2d_2 has no masked counterpart: incomplete MJ (10/05/26)
+    assert staging_dir(ctx, "nowcast") == raw
+    (masked / "out2d_2.nc").write_bytes(b"m")
+    now = os.stat(raw / "out2d_1.nc").st_mtime
+    for f in masked.iterdir():
+        os.utime(f, (now + 10, now + 10))
+    assert staging_dir(ctx, "nowcast") == masked
+    # model re-run: raw out2d now newer than the masked copy MJ (10/05/26)
+    os.utime(raw / "out2d_2.nc", (now + 100, now + 100))
+    assert staging_dir(ctx, "nowcast") == raw

@@ -92,6 +92,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         if rc != 0:
             return rc
 
+    if args.ops_attrs:
+        rc, staging = _apply_ops_attrs(Dataset, staging, args)
+        if rc != 0:
+            return rc
+
     if args.split_only:
         if args.result_json:
             Path(args.result_json).write_text(
@@ -133,6 +138,83 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     print(f"fields: published {len(created)} stack(s) for {args.phase}")
     return 0
+
+
+def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace):
+    """Production add_attr, applied to COPIES; returns ``(rc, input_dir)``.
+
+    The staged raw stacks are the only archive of the model output, so the
+    destructive step (idmask -99999 on out2d) never touches them: each
+    out2d is copied into ``<staging>.masked.tmp/`` and stamped there, and
+    the finished directory is renamed to ``<staging>.masked/``, so a kill
+    or error mid-write never leaves a partial masked set. 3D stacks only get attributes
+    (data untouched), stamped in place to avoid duplicating ~90 GB, and
+    are symlinked into the masked dir together with every other staged
+    file. The masked dir is what the later products read (see
+    ``worker_base.staging_dir``) and what is published. MJ (10/05/26)
+    """
+    from . import ops_fields
+
+    idmask_path = Path(args.idmask_file) if args.idmask_file else None
+    if idmask_path is None or not idmask_path.is_file():
+        print(f"fields: --ops-attrs needs a readable --idmask-file ({args.idmask_file!r})")
+        return 5, staging
+    idmask = ops_fields.read_idmask(idmask_path)
+    seed = None
+    if args.pond_seed_file:
+        seed_path = Path(args.pond_seed_file)
+        if seed_path.is_file():
+            seed = ops_fields.read_pond_seed(seed_path)
+        else:
+            print(f"WARNING: fields: pond seed {seed_path} not found; isolatedPondNode NOT written")
+
+    masked = staging.with_name(staging.name + ".masked")
+    build = staging.with_name(staging.name + ".masked.tmp")
+    if build.exists():
+        shutil.rmtree(build)
+    build.mkdir()
+
+    stacks = {
+        src: var
+        for var in _VAR_FILE_PREFIXES
+        for src, _stack in _stack_files(staging, var)
+    }
+    try:
+        for f in sorted(staging.iterdir()):
+            if not f.is_file():
+                continue
+            dst = build / f.name
+            var = stacks.get(f)
+            if var == "out2d":
+                shutil.copyfile(f, dst)
+                ops_fields.stamp_stack(
+                    Dataset, dst, var,
+                    fallback_base_date=args.base_date,
+                    idmask=idmask, pond_seed=seed, log=print,
+                )
+                print(f"fields: ops attrs + mask applied to a copy of {f.name}")
+                continue
+            if var is not None:
+                ops_fields.stamp_stack(
+                    Dataset, f, var, fallback_base_date=args.base_date,
+                    log=print,
+                )
+                print(f"fields: ops attrs applied to {f.name}")
+            dst.symlink_to(f.resolve())
+    except BaseException:
+        shutil.rmtree(build, ignore_errors=True)
+        raise
+    # Swap in whole: a failure above never leaves a partial .masked for
+    # staging_dir to prefer. The old copy is renamed aside, not deleted first,
+    # so no .masked-less window spans the rmtree. MJ (10/05/26)
+    old = masked.with_name(masked.name + ".old")
+    if old.exists():
+        shutil.rmtree(old)
+    if masked.exists():
+        os.replace(masked, old)
+    os.replace(build, masked)
+    shutil.rmtree(old, ignore_errors=True)
+    return 0, masked
 
 
 def _zlib_level(raw: str) -> int:
@@ -177,6 +259,28 @@ def _parse_args(argv: Optional[List[str]]) -> argparse.Namespace:
              "the ops-parity default: publish by hardlink). Level 1 gets "
              "essentially all of the available compression; see the module "
              "docstring for measured ratios.",
+    )
+    p.add_argument(
+        "--ops-attrs", action="store_true",
+        help="apply the production add_attr step in place on the staged "
+             "stacks before anything is published or read downstream: "
+             "CF attributes on every stack, plus idmask masking and "
+             "isolatedPondNode on out2d (see ops_fields.py)",
+    )
+    p.add_argument(
+        "--idmask-file", default="",
+        help="fix mask NetCDF with the idmask variable (ops "
+             "stofs_3d_atl_mask_land_ocean_bnd_out2d.nc); required "
+             "with --ops-attrs",
+    )
+    p.add_argument(
+        "--pond-seed-file", default="",
+        help="precomputed isolated-pond seed npz; omit to skip "
+             "isolatedPondNode",
+    )
+    p.add_argument(
+        "--base-date", default="",
+        help="fallback time origin for stacks without a SCHISM base_date",
     )
     p.add_argument("--combine-script", default="")
     p.add_argument("--result-json", default="")
@@ -301,7 +405,7 @@ def _link_or_copy(src: Path, dst: Path) -> None:
     if dst.exists() or dst.is_symlink():
         dst.unlink()
     try:
-        os.link(src, dst)
+        os.link(os.path.realpath(src), dst)  # links, not symlinks; MJ (10/05/26)
     except OSError:
         shutil.copy2(src, dst)
 

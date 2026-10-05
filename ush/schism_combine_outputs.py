@@ -763,6 +763,31 @@ def convert_schout_to_split():
             for att in src.ncattrs():
                 if att != '_FillValue':
                     fv.setncattr(att, src.getncattr(att))
+        # Side table and wet/dry flag: the isolated-pond step of the ATL
+        # post (ops_fields.py) needs both in the split out2d, as the scribe
+        # out2d carries them. combine_output11 names the flag 'wetdry_node';
+        # the scribe name and float32 type are kept. MJ (10/05/26)
+        if 'SCHISM_hgrid_edge_nodes' in ds.variables:
+            src = ds.variables['SCHISM_hgrid_edge_nodes']
+            for dname, dsize in zip(src.dimensions, src.shape):
+                if dname not in ds_out.dimensions:
+                    ds_out.createDimension(dname, dsize)
+            _fill = getattr(src, '_FillValue', None)
+            ev = ds_out.createVariable(
+                'SCHISM_hgrid_edge_nodes', src.dtype, src.dimensions,
+                **({'fill_value': _fill} if _fill is not None else {}))
+            ev[:] = src[:]
+            for att in src.ncattrs():
+                if att != '_FillValue':
+                    ev.setncattr(att, src.getncattr(att))
+        if 'wetdry_node' in ds.variables:
+            dfv = ds_out.createVariable(
+                'dryFlagNode', 'f4', ('time', 'nSCHISM_hgrid_node'))
+            dfv[:] = ds.variables['wetdry_node'][:]
+            dfv.i23d = 1
+            dfv.location = 'node'
+            dfv.mesh = 'SCHISM_hgrid'
+            dfv.coordinates = 'SCHISM_hgrid_node_x SCHISM_hgrid_node_y'
         # The two engines spell this differently: scribe_io writes
         # 'bottom_index_node', combine_output11 (the coupled/OLDIO path)
         # writes 'node_bottom_index'. Accept either, always emit the
