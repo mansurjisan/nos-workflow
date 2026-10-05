@@ -81,7 +81,10 @@ def test_card_env_and_syntax(system, stage):
     assert "export OFS=stofs_3d_atl_ufs\n" in text and "OFS:-" not in text
     assert "import nos_utils" in text and "ush/python/nos-utils" in text
     assert "MJ (10/04/26)" in text
-    assert "unset USE_DATM UFS_EXEC_NAME UFS_EXEC\n" in text
+    unset_line = next(l for l in text.splitlines() if l.startswith("unset USE_DATM"))
+    for var in ("USE_DATM", "UFS_EXEC_NAME", "UFS_EXEC", "SCHISM_EXEC", "NTASKS",
+                "USHnos", "SCRIPTSnos", "PARMnos", "FIXofs"):
+        assert var in unset_line.split(), var
     assert "export NET=nos RUN=stofs_3d_atl_ufs PREFIXNOS=stofs_3d_atl_ufs\n" in text
     assert "export NOS_UTILS_DIR=${HOMEnos}/ush/python/nos-utils\n" in text
     assert "export NOS_WORKFLOW_DIR=${HOMEnos}/ush/python\n" in text
