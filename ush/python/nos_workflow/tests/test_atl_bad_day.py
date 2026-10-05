@@ -109,10 +109,27 @@ class TestPostStops:
         with pytest.raises(StageFailedError, match="mirror.out"):
             post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
 
-    def test_stops_when_verdict_never_written(self, tmp_path):
-        _archived(tmp_path, "stofs_3d_atl_ufs", "x", None)
-        with pytest.raises(StageFailedError, match="mirror.status"):
+    def test_old_archive_without_verdict_is_judged_from_mirror_out(self, tmp_path, monkeypatch):
+        # cycles archived before mirror.status existed MJ (10/05/26)
+        monkeypatch.setenv("USE_DATM", "false")
+        _archived(tmp_path, "stofs_3d_atl_ufs", STANDALONE_OK, None)
+        post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
+
+    def test_old_archive_with_incomplete_mirror_out_fails(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("USE_DATM", "false")
+        _archived(tmp_path, "stofs_3d_atl_ufs", COUPLED_END, None)
+        with pytest.raises(StageFailedError, match="Run completed successfully"):
             post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
+
+    def test_old_coupled_archive_uses_step_count(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("USE_DATM", "true")
+        _archived(tmp_path, "stofs_3d_atl_ufs", COUPLED_END, None)
+        (tmp_path / "rerun").mkdir()
+        (tmp_path / "rerun" / "stofs_3d_atl_ufs.t12z.param.nml").write_text(PARAM)
+        data = tmp_path / "data"
+        data.mkdir()
+        (data / "param.nml").write_text(PARAM)
+        post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z", data)
 
     def test_other_systems_untouched(self, tmp_path):
         post._require_complete_model_runs(_Desc, tmp_path, "secofs_ufs", "t12z")
