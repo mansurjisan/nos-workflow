@@ -16,9 +16,11 @@ def _param(text: str, key: str) -> Optional[float]:
     return float(m.group(1).lower().replace("d", "e")) if m else None
 
 
-def check_mirror_out(mirror: Path, param_nml: Optional[Path], coupled: bool) -> Tuple[bool, str]:
+def check_mirror_out(mirror: Path, param_nml: Optional[Path], coupled: bool,
+                     run_hours: Optional[float] = None) -> Tuple[bool, str]:
     """Standalone: the "Run completed successfully" line. Coupled mirror.out has no such line,
-    so its last "TIME STEP=" must equal rnday*86400/dt from param.nml. MJ (10/05/26)
+    so its last "TIME STEP=" must equal rnday*86400/dt from param.nml, or run_hours*3600/dt
+    (dt still from param.nml) when the run length is given. MJ (10/05/26)
     """
     if not mirror.is_file() or mirror.stat().st_size == 0:
         return False, f"{mirror} missing or empty"
@@ -34,12 +36,12 @@ def check_mirror_out(mirror: Path, param_nml: Optional[Path], coupled: bool) -> 
     if not steps:
         return False, f'no "TIME STEP=" line in {mirror}'
     if param_nml is None or not param_nml.is_file():
-        return False, f"param.nml not available to derive the expected step count"
+        return False, "param.nml not available to derive the expected step count"
     text = param_nml.read_text()
     rnday, dt = _param(text, "rnday"), _param(text, "dt")
-    if not rnday or not dt:
+    if not dt or not (run_hours or rnday):
         return False, f"rnday/dt not readable from {param_nml}"
-    expect = int(round(rnday * 86400.0 / dt))
+    expect = int(round((run_hours * 3600.0 if run_hours else rnday * 86400.0) / dt))
     last = int(steps[-1])
     if last != expect:
         return False, f"last TIME STEP={last}, expected {expect} (rnday={rnday}, dt={dt})"

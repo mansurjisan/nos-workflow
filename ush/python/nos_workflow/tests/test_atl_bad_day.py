@@ -121,15 +121,23 @@ class TestPostStops:
         with pytest.raises(StageFailedError, match="Run completed successfully"):
             post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
 
-    def test_old_coupled_archive_uses_step_count(self, tmp_path, monkeypatch):
+    def _coupled_old(self, tmp_path, monkeypatch, forecast_last):
         monkeypatch.setenv("USE_DATM", "true")
+        monkeypatch.setenv("LEN_FORECAST", "96")
         _archived(tmp_path, "stofs_3d_atl_ufs", COUPLED_END, None)
+        (tmp_path / "stofs_3d_atl_ufs.t12z.forecast_outputs" / "mirror.out").write_text(
+            f"TIME STEP={forecast_last:>12};  TIME= 1.0\n")
         (tmp_path / "rerun").mkdir()
-        (tmp_path / "rerun" / "stofs_3d_atl_ufs.t12z.param.nml").write_text(PARAM)
-        data = tmp_path / "data"
-        data.mkdir()
-        (data / "param.nml").write_text(PARAM)
-        post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z", data)
+        (tmp_path / "rerun" / "stofs_3d_atl_ufs.t12z.param.nml").write_text(PARAM)  # no data/param.nml
+
+    def test_old_coupled_archive_uses_step_count(self, tmp_path, monkeypatch):
+        self._coupled_old(tmp_path, monkeypatch, 2304)  # 4 days at dt 150
+        post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
+
+    def test_old_coupled_forecast_stopping_at_nowcast_length_fails(self, tmp_path, monkeypatch):
+        self._coupled_old(tmp_path, monkeypatch, 576)
+        with pytest.raises(StageFailedError, match="expected 2304"):
+            post._require_complete_model_runs(_Desc, tmp_path, "stofs_3d_atl_ufs", "t12z")
 
     def test_other_systems_untouched(self, tmp_path):
         post._require_complete_model_runs(_Desc, tmp_path, "secofs_ufs", "t12z")

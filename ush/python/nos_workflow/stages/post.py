@@ -89,8 +89,15 @@ def _run_comf_post(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         ) from exc
 
 
+def _float_env(name: str) -> Optional[float]:
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return None
+
+
 def _require_complete_model_runs(descriptor: OFSDescriptor, comout: Path, run_name: str,
-                                 cycle: str, data: Optional[Path] = None) -> None:
+                                 cycle: str) -> None:
     """STOFS-3D-ATL: stop post when a phase's archived mirror.out is missing or incomplete.
 
     Production stops in post, not in the model job
@@ -112,12 +119,13 @@ def _require_complete_model_runs(descriptor: OFSDescriptor, comout: Path, run_na
             if not status.read_text().startswith("OK"):
                 problems.append(f"{d.name}: {status.read_text().strip()}")
         else:
-            # Cycles archived before the verdict existed: judge the archived mirror.out. For the
-            # coupled step count, the nowcast param.nml is in rerun/ and the forecast one is $DATA's. MJ (10/05/26)
+            # Cycles archived before the verdict existed: judge the archived mirror.out. The coupled
+            # step count needs dt and the run length: dt from the archived nowcast param.nml
+            # (post's $DATA is a fresh dir), the forecast length from LEN_FORECAST. MJ (10/05/26)
             nowcast = sub == "restart_outputs"
-            param = (comout / "rerun" / f"{run_name}.{cycle}.param.nml" if nowcast
-                     else (Path(data) / "param.nml" if data else None))
-            ok, why = check_mirror_out(d / "mirror.out", param, coupled=_is_ufs())
+            param = comout / "rerun" / f"{run_name}.{cycle}.param.nml"
+            hours = None if nowcast else _float_env("LEN_FORECAST")
+            ok, why = check_mirror_out(d / "mirror.out", param, coupled=_is_ufs(), run_hours=hours)
             if not ok:
                 problems.append(f"{d.name}: {why}")
     if problems:
@@ -148,7 +156,7 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     # where that is so it can be tailed live rather than reconstructed.
     sl.info("worker output also at $pgmout=%s (tail -f during the run)", pgmout)
 
-    _require_complete_model_runs(descriptor, comout, run_name, cycle, data)
+    _require_complete_model_runs(descriptor, comout, run_name, cycle)
 
     combine_script = _resolve_combine_script(homenos, shell_env)
     if combine_script is None:
