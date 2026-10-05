@@ -18,6 +18,13 @@
 #                never checks out or modifies a clone, it only refuses if HEAD != UFS_COMMIT.
 #   EXECnos      required install dir
 #   COMPILE_ID   default stofs_atl_pe
+#   UFS_SOURCE_MD5_CHECK  default 1; verifies the two WCOSS2-patched sources below before compiling,
+#                0 skips the check with a WARNING (the build then is NOT WCOSS2-parity).
+#   NUOPC_CAP_MD5 / CMEPS_FLDS_MD5  expected md5 of SCHISM-interface/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90
+#                and CMEPS-interface/CMEPS/mediator/esmFldsExchange_coastal_mod.F90 (defaults pin the
+#                WCOSS2 stofs_atl_pe sources; override to pin a rebuild). The patches
+#                (cmeps_wcoss2_local.patch, schism_esmf_cap_wcoss2_local.patch) live outside the repo; apply
+#                them by hand with `git -C <submodule> apply <patch>`. This script never edits a clone.
 #   MAKE_OPT     default below; PREC_EVAP and NO_PARMETIS are verified in
 #                CMakeCache.txt afterwards, the typed flags are not trusted.
 # Run on a login node or inside an sbatch allocation; it takes a while. MJ (10/04/26)
@@ -40,6 +47,25 @@ case "${HEAD_SHA}" in
 esac
 echo "building ${HEAD_SHA} in ${UFS_DIR} (compile id ${COMPILE_ID})"
 git status --short | head -5 | sed 's/^/  local change: /'
+
+# WCOSS2 parity needs two locally patched submodule sources; refuse to build unpatched ones. MJ (10/05/26)
+if [ "${UFS_SOURCE_MD5_CHECK:-1}" = 0 ]; then
+  echo "WARNING: UFS_SOURCE_MD5_CHECK=0, skipping the patched-source md5 check; this build may not match WCOSS2" >&2
+else
+  for spec in "SCHISM-interface/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90:${NUOPC_CAP_MD5:-b54e2615aa65ee1d38c385d5f7f1ea0c}" \
+              "CMEPS-interface/CMEPS/mediator/esmFldsExchange_coastal_mod.F90:${CMEPS_FLDS_MD5:-f243b8edc027a69f84c545f7e98f975c}"; do
+    src=${spec%%:*}; want=${spec##*:}
+    have=$(md5sum "${src}" 2>/dev/null | awk '{print $1}' || true)
+    if [ "${have}" != "${want}" ]; then
+      echo "FATAL: ${src} md5 ${have:-<missing>} != expected ${want}." >&2
+      echo "  These must be the WCOSS2 stofs_atl_pe sources. Apply the WCOSS2 patches (cmeps_wcoss2_local.patch and" >&2
+      echo "  schism_esmf_cap_wcoss2_local.patch, kept outside the repo) with 'git -C <submodule> apply <patch>'," >&2
+      echo "  or set UFS_SOURCE_MD5_CHECK=0 to build unpatched sources on purpose." >&2
+      exit 1
+    fi
+  done
+  echo "patched-source md5 check passed (schism_nuopc_cap.F90, esmFldsExchange_coastal_mod.F90)"
+fi
 
 cd tests
 ./compile.sh hercules "${MAKE_OPT}" "${COMPILE_ID}" intel YES NO 2>&1 | tee "build_${COMPILE_ID}.log"

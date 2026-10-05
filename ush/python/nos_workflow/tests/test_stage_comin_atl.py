@@ -42,7 +42,9 @@ def test_rtofs_is_same_day_ops_route():
     assert not any("3dz_f000" in k for k in keys)
     assert all("rtofs.20261001" in k for _, k in _atl("rtofs"))
     hourly = sc.manifest_rtofs_ops("20261001", 12, 24, 96, hourly_2d=True)
-    assert sum("2ds_f" in k for k in hourly) == 121
+    assert sum("2ds_f" in k for k in hourly) == 89
+    assert not any("2ds_f073" in k or "2ds_f074" in k for k in hourly)
+    assert any("2ds_f072" in k for k in hourly) and any("2ds_f075" in k for k in hourly)
 
 
 def test_hrrr_nowcast_lookback_and_forecast_cap():

@@ -81,6 +81,12 @@ def test_card_env_and_syntax(system, stage):
     assert "export OFS=stofs_3d_atl_ufs\n" in text and "OFS:-" not in text
     assert "import nos_utils" in text and "ush/python/nos-utils" in text
     assert "MJ (10/04/26)" in text
+    assert "unset USE_DATM UFS_EXEC_NAME UFS_EXEC\n" in text
+    assert "export NET=nos RUN=stofs_3d_atl_ufs PREFIXNOS=stofs_3d_atl_ufs\n" in text
+    assert "export NOS_UTILS_DIR=${HOMEnos}/ush/python/nos-utils\n" in text
+    assert "export NOS_WORKFLOW_DIR=${HOMEnos}/ush/python\n" in text
+    assert text.index("export NOS_UTILS_DIR=") < text.index("import nos_utils")
+    assert 'readlink -f "${NOS_UTILS_DIR}"' in text
     if stage == "prep":
         assert "DCOMROOT:?" in text
         assert "COMINrerun" in text
@@ -122,7 +128,9 @@ def test_scripts_parse(script):
 
 def test_build_scripts_verify_flags():
     cpl = (REPO / "tools/build_stofs_3d_atl_ufs_hercules.sh").read_text()
-    for needle in ("PREC_EVAP=ON", "NO_PARMETIS=ON", "stofs_atl_pe", "CMakeCache", "fv3_stofs_3d_atl.exe"):
+    for needle in ("PREC_EVAP=ON", "NO_PARMETIS=ON", "stofs_atl_pe", "CMakeCache", "fv3_stofs_3d_atl.exe",
+                   "b54e2615aa65ee1d38c385d5f7f1ea0c", "f243b8edc027a69f84c545f7e98f975c",
+                   "UFS_SOURCE_MD5_CHECK", "NUOPC_CAP_MD5", "CMEPS_FLDS_MD5"):
         assert needle in cpl
     sa = (REPO / "tools/build_stofs_3d_atl_pschism_hercules.sh").read_text()
     for needle in ("-DNO_PARMETIS", "-DPREC_EVAP", "-DTVD_VL", "stofs_3d_atl_pschism_v3.1.5"):

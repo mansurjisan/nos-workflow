@@ -361,7 +361,8 @@ def manifest_rtofs_ops(pdy, cyc, nowcast_hours, forecast_hours, region="US_east"
     """
     date = rtofs_date or cycle_dt(pdy, 0)
     base = f"rtofs.{date:%Y%m%d}"
-    leads_2d = range(0, 121) if hourly_2d else range(0, 121, 6)
+    # RTOFS 2ds is hourly through f072, then 3-hourly (see _rtofs_2d_lead); f073.. are never published. MJ (10/05/26)
+    leads_2d = [*range(0, 73), *range(75, 121, 3)] if hourly_2d else range(0, 121, 6)
     keys = [f"{base}/rtofs_glo_2ds_n{n:03d}_diag.nc" for n in (12, 18)]
     keys += [f"{base}/rtofs_glo_2ds_f{f:03d}_diag.nc" for f in leads_2d]
     keys += [f"{base}/rtofs_glo_3dz_n{n:03d}_6hrly_hvr_{region}.nc" for n in (12, 18, 24)]
@@ -526,8 +527,9 @@ def parse_args(argv=None):
                     help="file-set profile; stofs_3d_atl stages the ATL ops-timeline set "
                          "(24 h nowcast, 96 h forecast)")
     p.add_argument("--hourly-2d", action="store_true",
-                    help="stofs_3d_atl only: stage every hourly RTOFS 2ds file f000-f120 "
-                         "instead of the 6-hourly ones the ops route selects")
+                    help="stofs_3d_atl only: stage every published RTOFS 2ds file (hourly "
+                         "f000-f072, then 3-hourly f075-f120) instead of the 6-hourly "
+                         "ones the ops route selects")
     p.add_argument("--nowcast-hours", type=int, default=None,
                     help="default from the profile (secofs_ufs: 6, matches secofs_ufs.yaml)")
     p.add_argument("--forecast-hours", type=int, default=None,

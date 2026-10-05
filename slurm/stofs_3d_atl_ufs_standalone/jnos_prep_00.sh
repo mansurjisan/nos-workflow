@@ -33,6 +33,10 @@ export NOS_MACHINE=hercules
 export OFS=stofs_3d_atl_ufs
 # Inherited paths would bypass COMROOT_SA/COMROOT_UFS and the preflight checks; JNOS re-derives them. MJ (10/04/26)
 unset COMOUT COMOUTroot DATA COMOUT_PREV COMOUTrerun COMINadt COMINwl COMINlaw
+# Mode and executable come only from the card's yaml: shell_mappings lets an inherited non-empty value win, and nos_run.sh honours UFS_EXEC as a path. MJ (10/05/26)
+unset USE_DATM UFS_EXEC_NAME UFS_EXEC SCHISM_EXEC NTASKS USHnos SCRIPTSnos PARMnos FIXofs
+# Pin the job identity JNOS derives for this OFS (NET=nos, RUN=PREFIXNOS=OFS), so a leaked value cannot move the COMOUT layout. MJ (10/05/26)
+export NET=nos RUN=stofs_3d_atl_ufs PREFIXNOS=stofs_3d_atl_ufs
 NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 RPTDIR=${RPTDIR:-${NOS_PTMP}/$LOGNAME/rpt/${OFS}}
 WORKDIR=${NOS_PTMP}/$LOGNAME/work/stofs_3d_atl_ufs_standalone
@@ -111,15 +115,18 @@ export jobid=${jobid:-$job.$SLURM_JOB_ID}
 
 export HOMEnos=${PACKAGEROOT}/nos-workflow
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
+# exnos_*.sh prepend inherited NOS_WORKFLOW_DIR/NOS_UTILS_DIR to PYTHONPATH; pin them to what the preflight checks. MJ (10/05/26)
+export NOS_WORKFLOW_DIR=${HOMEnos}/ush/python
+export NOS_UTILS_DIR=${HOMEnos}/ush/python/nos-utils
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 export USE_PYTHON_PREP=YES
 export FULL_PYTHON_PREP=YES
 
 # Preflight: nos_utils must come from the checked-out submodule, not a venv editable install. MJ (10/04/26)
-export PYTHONPATH=${HOMEnos}/ush/python:${HOMEnos}/ush/python/nos-utils:${PYTHONPATH:-}
+export PYTHONPATH=${NOS_WORKFLOW_DIR}:${NOS_UTILS_DIR}:${PYTHONPATH:-}
 _nu=$(python3 -c 'import nos_utils; print(nos_utils.__file__)' 2>&1) || { echo "FATAL: cannot import nos_utils: ${_nu}"; exit 1; }
-_nu_root=$(readlink -f "${HOMEnos}/ush/python/nos-utils")
+_nu_root=$(readlink -f "${NOS_UTILS_DIR}")
 case "$(readlink -f "${_nu}")" in
     "${_nu_root}"/*) ;;
     *) echo "FATAL: nos_utils resolves to ${_nu}, not under ${_nu_root} (submodule not initialised? git submodule update --init)"; exit 1 ;;
