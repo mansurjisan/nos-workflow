@@ -82,7 +82,9 @@ def _render_pbs(spec: JobSpec, profile: MachineProfile) -> List[str]:
         place = "vscatter:excl" if alloc.exclusive else "vscatter"
         lines.append(f"{p}-l place={place},{chunk}")
     else:
-        lines.append(f"{p}-l select=1:ncpus={spec.cpus}:mpiprocs={spec.cpus}")
+        # mem_per_node on serial jobs (e.g. 2D-Global cold prep); unset renders as before. MJ (10/05/26)
+        mem = f":mem={spec.mem_per_node}" if spec.mem_per_node else ""
+        lines.append(f"{p}-l select=1:ncpus={spec.cpus}:mpiprocs={spec.cpus}{mem}")
         lines.append(f"{p}-l place=vscatter")
 
     lines.append(f"{p}-l walltime={spec.walltime}")

@@ -83,7 +83,9 @@ def test_model_node_counts_are_derived_not_authored(wcoss2):
         if not expected:
             continue
         authored = int(re.search(r"select=(\d+)", " ".join(expected)).group(1))
-        derived = wcoss2.nodes(jobs.nprocs_for(system, REPO))
+        # Per-system ranks_per_node (2D-Global packs 128 per node). MJ (10/05/26)
+        rpn = wcoss2.ranks_per_node_for(jobs.ranks_per_node_for(system, REPO))
+        derived = wcoss2.nodes(jobs.nprocs_for(system, REPO), rpn)
         assert derived == authored, (
             f"{ss.card}: derived {derived} nodes, card says {authored}"
         )
@@ -97,7 +99,7 @@ def _normalized() -> dict:
         spec = jobs.build_job_spec(system, stage, REPO)
         record = {
             "directives": render_directives(spec, profile),
-            "nodes": profile.nodes(spec.total_ranks) if ss.kind == KIND_MODEL else 1,
+            "nodes": profile.nodes(spec.total_ranks, profile.ranks_per_node_for(spec.ranks_per_node)) if ss.kind == KIND_MODEL else 1,
             "total_ranks": spec.total_ranks,
         }
         if ss.kind == KIND_MODEL:

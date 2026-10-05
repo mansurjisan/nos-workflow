@@ -4,7 +4,7 @@
 #
 # Layout: 4064 ADCIRC compute ranks on 51 x 80-rank nodes (4080 slots; 4064 + up to 16 writer ranks fit).
 # Nodes and ranks-per-node follow parm/machines/hercules.yaml (allocation.ranks_per_node = 80);
-# tests/test_stofs_2d_glo_cards.py fails if they drift. Walltime: ops 6 h nowcast 0:15, 4 h covers a cold 18 d spin-up. MJ (10/05/26)
+# tests/test_stofs_2d_glo_cards.py fails if they drift. Walltime: ops 6 h nowcast 0:15, 6 h covers a cold 18 d spin-up (est. 2.4-2.7 h). MJ (10/05/26)
 #
 # Required env (sbatch passes the caller's environment): PDY, PACKAGEROOT, ADCIRC_EXEC_DIR (dir holding
 # padcirc and adcprep; no module exists on Hercules). Optional: CYC (default 12; 00/06/12/18), COMROOT_2DGLO
@@ -19,7 +19,7 @@
 #SBATCH --nodes=51
 #SBATCH --ntasks-per-node=80
 #SBATCH --exclusive
-#SBATCH --time=04:00:00
+#SBATCH --time=06:00:00
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 

@@ -5,10 +5,10 @@
 #PBS  -o /dev/null
 #PBS  -e /dev/null
 #PBS  -l place=vscatter:excl,select=32:ncpus=128:mpiprocs=128:ompthreads=1
-#PBS  -l walltime=04:00:00
+#PBS  -l walltime=06:00:00
 
 # STOFS-2D-Global (ADCIRC padcirc v56.1.0) nowcast: 4064 compute ranks on 32 x 128 (ops layout, ecf
-# jstofs_2d_glo_tide_ncst). The ops 6 h nowcast takes 15 min; the 4 h walltime covers a COLD first
+# jstofs_2d_glo_tide_ncst). The ops 6 h nowcast takes 15 min; the 6 h walltime covers a COLD first
 # cycle (18 d spin-up inside the nowcast). Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
 # stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked below. Cycles: 00/06/12/18
 # (ops runs four a day); the default is 12 like the ATL cards. MJ (10/05/26)

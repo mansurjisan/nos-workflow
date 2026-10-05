@@ -4,13 +4,13 @@
 #PBS  -q dev
 #PBS  -o /dev/null
 #PBS  -e /dev/null
-#PBS  -l select=1:ncpus=8:mpiprocs=8
+#PBS  -l select=1:ncpus=8:mpiprocs=8:mem=100GB
 #PBS  -l place=vscatter
 #PBS  -l walltime=06:00:00
 
 # STOFS-2D-Global prep: GFS surface forcing plus adcprep for the 12.8 M node mesh. adcprep runs
 # serially (ops COLD_ADCPREP is select=1:ncpus=1, 50 GB, 2 h; Zach measured about 85 min), so the 8
-# cpus here only cover the Python side. The decomposition is cached at $COMGES/<RUN>_4064.tar, so
+# cpus here only cover the Python side; mem=100GB covers 18 d of GFS through cfgrib/xarray on a cold prep (ops asks 50 GB for adcprep alone). The decomposition is cached at $COMGES/<RUN>_4064.tar, so
 # only the first cycle pays for the full partition and later cycles run adcprep --prep15. MJ (10/05/26)
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages

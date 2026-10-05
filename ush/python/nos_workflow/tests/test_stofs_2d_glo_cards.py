@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO / "ush" / "python"))
 from nos_workflow.machine import MachineProfile  # noqa: E402
 
 RANKS = 4064
-WALL = {"prep": "06:00:00", "nowcast": "04:00:00", "forecast": "02:00:00"}
+WALL = {"prep": "06:00:00", "nowcast": "06:00:00", "forecast": "02:00:00"}
 STAGES = list(WALL)
 PBS = REPO / "pbs" / "stofs_2d_glo"
 SLURM = REPO / "slurm" / "stofs_2d_glo"
@@ -54,7 +54,7 @@ def test_wcoss2_node_math(wcoss2):
 
 def test_wcoss2_prep_card():
     pbs = _lines(PBS / "jnos_prep_00.pbs", "#PBS")
-    assert "#PBS  -l select=1:ncpus=8:mpiprocs=8" in pbs
+    assert "#PBS  -l select=1:ncpus=8:mpiprocs=8:mem=100GB" in pbs
     assert "#PBS  -l place=vscatter" in pbs
     assert f"#PBS  -l walltime={WALL['prep']}" in pbs
 
