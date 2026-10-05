@@ -201,7 +201,7 @@ case "${OFS_FRAMEWORK}" in
         export nback=${nback:-20}
 
         # Execute nowcast-only ex-script (ADCIRC path)
-        $SCRIstofs3d/exnos_nowcast.sh
+        $SCRIPTSnos/exnos_adcirc.sh nowcast
         ;;
     comf|*)
         # NB: legacy J-jobs set LD_PRELOAD=libnetcdff.so here for the old

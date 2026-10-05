@@ -200,7 +200,7 @@ case "${OFS_FRAMEWORK}" in
         export nback=${nback:-20}
 
         # Execute forecast-only ex-script (ADCIRC path)
-        $SCRIstofs3d/exnos_forecast.sh
+        $SCRIPTSnos/exnos_adcirc.sh forecast
         ;;
     comf|*)
         # NB: legacy LD_PRELOAD=libnetcdff.so removed; see JNOS_NOWCAST for

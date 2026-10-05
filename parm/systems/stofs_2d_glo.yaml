@@ -1,0 +1,78 @@
+# STOFS-2D-Global (ADCIRC), adapted from Zach Cobell's examples/config_adcirc.yaml
+# (oceanmodeling/nos-workflow, branch zcobell/stofs_2d_global). MJ (10/05/26)
+
+_base: adcirc
+
+system:
+  name: stofs_2d_glo
+  description: "Storm Surge and Tide Operational Forecast System - 2D Global (ADCIRC)"
+  framework: adcirc
+  prefix: stofs_2d_glo
+
+# Staged by tools/fetch_stofs_2d_glo_fix.sh; the runner links them as fort.14 / fort.13,
+# the only names adcprep accepts. MJ (10/05/26)
+grid:
+  files:
+    horizontal: stofs_2d_glo_grid
+    attributes: stofs_2d_glo_attr
+
+model:
+  physics:
+    dt: 6.0
+  run:
+    hindcast_days: 0.25     # nowcast_interval 6 h
+    forecast_days: 7.5      # forecast_duration 180 h
+    # 6 h suits a 4-cycles-a-day run. A once-a-day (12z only) run must set NOWCAST_HOURS=24 so the
+    # restart lookup finds the previous day's 12z nowcast instead of cold-starting daily. MJ (10/05/26)
+    nowcast_hours: 6
+    forecast_hours: 180
+    # Cold-start spin-up is tide-only; COLDSTART_SPINUP_DAYS in the job env overrides it. MJ (10/05/26)
+    coldstart_spinup_days: 18.0
+
+# Total ranks = ncpu_compute + ncpu_writer. One knob sets both the adcprep partition count and
+# the padcirc compute ranks; the 12.8M-node mesh crashes in the first GWCE solve at 256 ranks
+# (June fix 2), so never size this down. MJ (10/05/26)
+adcirc:
+  name: stofs2dglobal
+  executables:
+    padcirc: padcirc
+    adcprep: adcprep
+    directory: null       # ADCIRC_EXEC_DIR overrides; else $EXECnos, then PATH
+  ncpu_compute: 4064
+  ncpu_writer: 0          # -W writers start only when this is > 0
+  atmospheric_forcing: true   # false = tide-only (NWS=0)
+  attributes:
+    - mannings_n_at_sea_floor
+  physics:
+    preset: jjw
+    coordinate_rotation: [114.16991, 0.77432]
+    coordinate_system: 22   # ICS -22 on the rotated global mesh (June fix 1). MJ (10/05/26)
+  decomposition_cache: true   # $COMGES/<RUN>_<ncpu>.tar, then adcprep --prep15 only
+
+forcing:
+  atmospheric:
+    primary: gfs
+    # Exact wgrib2 inventory strings: bare UGRD/VGRD would match every pressure level. MJ (10/05/26)
+    variables: ["PRMSL:mean sea level", "UGRD:10 m above ground", "VGRD:10 m above ground", "ICEC:surface"]
+  tidal:
+    # Zach's 15 constituents; ops uses 8 (parity phase). Nodal factors are computed from the
+    # cold-start time over the whole run, as his Tide class does. MJ (10/05/26)
+    constituents: [K1, O1, P1, Q1, M2, S2, N2, K2, MF, MM, M4, MS4, MN4, SA, SSA]
+    adcirc_nodal_reference: midrun
+
+resources:
+  nprocs: 4064
+  nscribes: 0
+  # 4064 ranks fill 32 x 128 on WCOSS2 (ops layout); Hercules keeps the profile's 80 per node
+  # (51 nodes). MJ (10/05/26)
+  ranks_per_node:
+    wcoss2: 128
+
+shell_mappings:
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    NCPU: adcirc.ncpu_compute
+    NUM_WRITERS: adcirc.ncpu_writer
+    COLDSTART_SPINUP_DAYS: model.run.coldstart_spinup_days
+    GRIDFILE_ATTR: grid.files.attributes

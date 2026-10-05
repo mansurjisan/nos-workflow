@@ -1,0 +1,100 @@
+#!/bin/bash
+#PBS  -N stofs_2d_glo_prep_00
+#PBS  -A ESTOFS-DEV
+#PBS  -q dev
+#PBS  -o /dev/null
+#PBS  -e /dev/null
+#PBS  -l select=1:ncpus=8:mpiprocs=8:mem=100GB
+#PBS  -l place=vscatter
+#PBS  -l walltime=06:00:00
+
+# STOFS-2D-Global prep: GFS surface forcing plus adcprep for the 12.8 M node mesh. adcprep runs
+# serially (ops COLD_ADCPREP is select=1:ncpus=1, 50 GB, 2 h; Zach measured about 85 min), so the 8
+# cpus here only cover the Python side; mem=100GB covers the 7.5 d forecast GFS through cfgrib/xarray (a cold nowcast is tide-only) (ops asks 50 GB for adcprep alone). The decomposition is cached at $COMGES/<RUN>_4064.tar, so
+# only the first cycle pays for the full partition and later cycles run adcprep --prep15. MJ (10/05/26)
+
+PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+
+STOFS_RUNVER=${STOFS_RUNVER:-/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver}
+[ -r "${STOFS_RUNVER}" ] && . "${STOFS_RUNVER}"
+
+# Pinned: leaked OFS/RUN values would move the COMOUT layout. MJ (10/05/26)
+export OFS=stofs_2d_glo
+export NET=nos RUN=stofs_2d_glo PREFIXNOS=stofs_2d_glo
+RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
+WORKDIR=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+mkdir -p -m 755 $RPTDIR $WORKDIR
+
+_JOBID=${PBS_JOBID%%.*}
+_LOG_PREFIX="$RPTDIR/stofs_2d_glo_prep_00.${_JOBID}"
+exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
+echo "=== stofs_2d_glo_prep_00 -- PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
+cd ${WORKDIR}
+
+module purge
+module reset
+module load PrgEnv-intel/${PrgEnv_intel_ver}
+module load craype/${craype_ver}
+module load intel/${intel_ver}
+module load cray-mpich/${cray_mpich_ver}
+module load cray-pals/${cray_pals_ver}
+module load hdf5/${hdf5_ver}
+module load netcdf/${netcdf_ver}
+module load udunits/${udunits_ver}
+module load gsl/${gsl_ver}
+module load libjpeg/${libjpeg_ver}
+[ -z "${ADCIRC_MODULE_PATH:-}" ] || module use ${ADCIRC_MODULE_PATH}
+module load adcirc/${adcirc_ver}
+module load python/${python_ver:-3.8.6}
+module load prod_envir/${prod_envir_ver:-2.0.6}
+module load prod_util/${prod_util_ver:-2.0.17}
+module load wgrib2/${wgrib2_ver:-2.0.8}
+module list
+
+# EXPORT list MJ (10/05/26)
+set +x
+export envir=dev
+export cyc=${CYC:-12}
+export CYC=${cyc}
+export PDY=${PDY:?set PDY (YYYYMMDD)}
+export job=stofs_2d_glo_prep_${cyc}_$envir
+export platform=ptmp
+export framework=adcirc
+
+export KEEPDATA=YES
+export SENDCOM=NO
+export SENDDBN=NO
+export SENDSMS=NO
+
+export PACKAGEROOT
+
+# Separate COMROOT keeps this system away from SECOFS and ATL. MJ (10/05/26)
+export COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/$LOGNAME/com_2dglo}
+export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
+export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver:-v16.3}}
+export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
+[ -z "${ADCIRC_EXEC_DIR:-}" ] || export ADCIRC_EXEC_DIR
+
+export pbsid=${PBS_JOBID%%.*}
+export job=${job:-$PBS_JOBNAME}
+export jobid=${jobid:-$job.$PBS_JOBID}
+
+export HOMEnos=${PACKAGEROOT}/nos-workflow
+export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_2d_glo.yaml
+export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
+
+# Preflight: fix files and adcprep, so a missing mesh fails here and not after the queue wait. MJ (10/05/26)
+FIXDIR=${FIXofs:-${HOMEnos}/fix/${OFS}}
+for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
+    [ -s "${FIXDIR}/${_f}" ] || { echo "FATAL: ${FIXDIR}/${_f} missing (tools/fetch_stofs_2d_glo_fix.sh)"; exit 1; }
+done
+if [ -n "${ADCIRC_EXEC_DIR:-}" ]; then _ap=${ADCIRC_EXEC_DIR}/adcprep; else _ap=$(command -v adcprep || true); fi
+[ -n "${_ap}" ] && [ -x "${_ap}" ] || { echo "FATAL: adcprep not found (module adcirc or ADCIRC_EXEC_DIR)"; exit 1; }
+[ -d "${COMINgfs}" ] || { echo "FATAL: COMINgfs ${COMINgfs} missing"; exit 1; }
+# cfgrib/ecCodes preflight: a missing package fails here in seconds, not after the GFS copies. MJ (10/05/26)
+if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ]; then
+    python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
+fi
+
+${HOMEnos}/jobs/JNOS_PREP

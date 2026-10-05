@@ -76,7 +76,29 @@ CATALOG: Dict[Tuple[str, str], StageSpec] = {
         "pbs/stofs_3d_atl_ufs_standalone/jnos_forecast_00.pbs",
         "stofs_3d_atl_ufs_sa_fc_00", KIND_MODEL, "05:00:00", threads_per_rank=1,
         extra_resources=("debug=true",)),
+
+    # Prep memory: ops COLD_ADCPREP asks 50 GB; the GFS forecast window via cfgrib/xarray may need ~100 GB. MJ (10/05/26)
+    ("stofs_2d_glo", "prep"): StageSpec(
+        "pbs/stofs_2d_glo/jnos_prep_00.pbs", "stofs_2d_glo_prep_00",
+        KIND_SERIAL, "06:00:00", mem_per_node="100GB"),
+    ("stofs_2d_glo", "nowcast"): StageSpec(
+        "pbs/stofs_2d_glo/jnos_nowcast_00.pbs", "stofs_2d_glo_nc_00",
+        KIND_MODEL, "06:00:00", threads_per_rank=1),
+    ("stofs_2d_glo", "forecast"): StageSpec(
+        "pbs/stofs_2d_glo/jnos_forecast_00.pbs", "stofs_2d_glo_fc_00",
+        KIND_MODEL, "03:00:00", threads_per_rank=1),
 }
+
+
+def ranks_per_node_for(system: str, repo_root: Optional[Path] = None) -> Dict[str, int]:
+    """``resources.ranks_per_node`` (machine -> ranks) from the system YAML; empty if unset."""
+    from nos_workflow.utils import yaml_to_env
+
+    root = Path(repo_root) if repo_root else REPO
+    path = root / "parm" / "systems" / f"{system}.yaml"
+    data = yaml_to_env.load_yaml_with_inheritance(path, root / "parm")
+    rpn = (data.get("resources") or {}).get("ranks_per_node")
+    return dict(rpn) if isinstance(rpn, dict) else {}
 
 
 def nprocs_for(system: str, repo_root: Optional[Path] = None) -> int:
@@ -121,9 +143,10 @@ def build_job_spec(system: str, stage: str, repo_root: Optional[Path] = None) ->
         threads_per_rank=ss.threads_per_rank,
         mem_per_node=ss.mem_per_node,
         extra_resources=ss.extra_resources,
+        ranks_per_node=ranks_per_node_for(system, repo_root) if ss.kind == KIND_MODEL else {},
         stdout=stdio,
         stderr=stdio,
     )
 
 
-__all__ = ["CATALOG", "StageSpec", "build_job_spec", "nprocs_for"]
+__all__ = ["CATALOG", "StageSpec", "build_job_spec", "nprocs_for", "ranks_per_node_for"]

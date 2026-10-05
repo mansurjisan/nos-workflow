@@ -1,0 +1,16 @@
+# Base configuration for ADCIRC-based OFS systems. MJ (10/05/26)
+
+model:
+  type: adcirc
+  ocean_model: ADCIRC
+  physics:
+    dt: 6.0
+
+adcirc:
+  initial_water_level: 0.0
+  ramp: 5.0
+  ncpu_writer: 0
+  output_minutes: 20.0
+  wind_dt: 3600
+  physics:
+    preset: jjw

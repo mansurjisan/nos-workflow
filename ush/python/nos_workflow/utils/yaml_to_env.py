@@ -348,10 +348,12 @@ def get_standard_exports(
     # it is only suppressed for a machine profile that sets it false.
     profile = _machine_profile()
     if profile is not None:
+        rpn_map = resources.get("ranks_per_node")
+        rpn = profile.ranks_per_node_for(rpn_map if isinstance(rpn_map, dict) else None)
         if profile.allocation.emit_ranks_per_node:
-            exports["PPN"] = str(profile.allocation.ranks_per_node)
+            exports["PPN"] = str(rpn)
         try:
-            exports["NNODES"] = str(profile.nodes(int(total)))
+            exports["NNODES"] = str(profile.nodes(int(total), rpn))
         except (TypeError, ValueError):
             pass
 

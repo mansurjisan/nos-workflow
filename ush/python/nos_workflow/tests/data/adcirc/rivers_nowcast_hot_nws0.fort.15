@@ -1,0 +1,89 @@
+gstofs_stofs2dglobal
+nos-stofs-workflow
+1 20.0 1 50 1000.0  ! NFOVER
+0                   ! NABOUT
+600                 ! NSCREEN
+567                 ! IHOT
+-22                   ! ICS
+511113 ! IM 
+1                  ! NOLIBF
+2                  ! NOLIFA
+1                  ! NOLICA
+1                  ! NOLICAT
+1       ! NWP
+mannings_n_at_sea_floor
+ 1                     ! NCOR
+ 1                     ! NTIP
+0                          ! NWS
+2                      ! NRAMP
+9.81                   ! G
+0.050000                ! TAU0
+6.000                   ! DT
+0.00                   ! STATIM
+0.00                   ! REFTIM
+18.0000           ! RNDAY
+5.00 4.0 0.00            ! DRAMP
+0.80 0.20 0.00    ! A00 B00 C00
+0.100 0 0 0.010         ! H0
+10.00 13.00         ! SLAM0 SFEA0
+0.00100 2.00000 10.00000 1.33330 ! FFACTOR
+-0.2000           ! ESL
+0.0                   ! CORI
+15                     ! NTIF - Simulation start: 2026-09-16T12:00:00, duration: 18.00
+K1
+0.14156 0.000072921158358 0.736 1.09969 89.60
+O1
+0.10051 0.000067597744151 0.695 1.16157 152.62
+P1
+0.04684 0.000072522945975 0.706 1.00000 274.54
+Q1
+0.01926 0.000064958541129 0.695 1.16157 8.65
+M2
+0.24233 0.000140518902509 0.693 0.96874 243.90
+S2
+0.11284 0.000145444104333 0.693 1.00000 0.00
+N2
+0.04640 0.000137879699487 0.693 0.96874 99.93
+K2
+0.03070 0.000145842317201 0.693 1.27058 359.67
+MF
+0.04174 0.000005323414692 0.693 1.39137 118.66
+MM
+0.02203 0.000002639203022 0.693 0.89048 143.97
+M4
+0.00000 0.000281037805017 0.693 0.93846 127.80
+MS4
+0.00000 0.000285963006842 0.693 0.96874 243.90
+MN4
+0.00000 0.000278398601995 0.693 0.93846 343.82
+SA
+0.00494 0.000000199106191 0.693 1.00000 175.46
+SSA
+0.01945 0.000000398212868 0.693 1.00000 350.91
+0      ! NBFR
+110.0        ! ANGINN
+-1           ! NFFR
+0 0.0 0.0 0   !NOUTE
+0
+0 0.0 0.0 0   !NOUTV
+0
+-5 0.0 18.00 200 !NOUTGE
+-5 0.0 18.00 200 !NOUTGV
+0 ! NHARFR
+40.0 50.0 5 0.0 ! THAS
+1 1 1 1 ! NHASE
+5 259200 ! NHSTAR
+1 0 1.e-7 35 0 ! ITITER
+gstofs
+The Water Institute
+padcirc
+netCDF
+one
+no_comments
+testhost
+CF3
+zcobell@thewaterinstitute.org
+2026-09-16 12:00:00
+&wetDryControl slim=0.000400 windlim=.true. directvelWD=.true. useHF=.false. StatPartWetFix=.false. /
+&inundationOutputControl inundationOutput=.false. /
+&VEW1DChannelControl activateVEW1DChannelWetPerimeter=.false. /

@@ -35,7 +35,10 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if descriptor.framework == "stofs":
         raise NotImplementedError("STOFS-3D-ATL nowcast not yet ported")
     if descriptor.framework == "adcirc":
-        raise NotImplementedError("STOFS-2D-GLO nowcast not yet ported")
+        from ..runners.adcirc import run as adcirc_run
+        from ._adcirc import run_model_stage
+
+        return run_model_stage(descriptor, _STAGE, lambda ctx: adcirc_run.run_nowcast(ctx))
     if descriptor.framework == "comf_standalone":
         raise NotImplementedError(
             "comf_standalone nowcast (ROMS/FVCOM standalone) not yet wired; "
