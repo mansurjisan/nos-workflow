@@ -145,9 +145,9 @@ def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace):
 
     The staged raw stacks are the only archive of the model output, so the
     destructive step (idmask -99999 on out2d) never touches them: each
-    out2d is copied to ``<staging>.masked/``, stamped under a temporary
-    name and renamed into place, so a kill mid-write cannot leave a
-    half-masked file under a final name. 3D stacks only get attributes
+    out2d is copied into ``<staging>.masked.tmp/`` and stamped there, and
+    the finished directory is renamed to ``<staging>.masked/``, so a kill
+    or error mid-write never leaves a partial masked set. 3D stacks only get attributes
     (data untouched), stamped in place to avoid duplicating ~90 GB, and
     are symlinked into the masked dir together with every other staged
     file. The masked dir is what the later products read (see
@@ -169,42 +169,46 @@ def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace):
             print(f"WARNING: fields: pond seed {seed_path} not found; isolatedPondNode NOT written")
 
     masked = staging.with_name(staging.name + ".masked")
-    masked.mkdir(exist_ok=True)
-    for old in masked.iterdir():
-        if old.is_symlink() or old.is_file():
-            old.unlink()
+    build = staging.with_name(staging.name + ".masked.tmp")
+    if build.exists():
+        shutil.rmtree(build)
+    build.mkdir()
 
     stacks = {
         src: var
         for var in _VAR_FILE_PREFIXES
         for src, _stack in _stack_files(staging, var)
     }
-    for f in sorted(staging.iterdir()):
-        if not f.is_file():
-            continue
-        dst = masked / f.name
-        var = stacks.get(f)
-        if var == "out2d":
-            tmp = masked / f".{f.name}.tmp"
-            shutil.copyfile(f, tmp)
-            try:
+    try:
+        for f in sorted(staging.iterdir()):
+            if not f.is_file():
+                continue
+            dst = build / f.name
+            var = stacks.get(f)
+            if var == "out2d":
+                shutil.copyfile(f, dst)
                 ops_fields.stamp_stack(
-                    Dataset, tmp, var,
+                    Dataset, dst, var,
                     fallback_base_date=args.base_date,
                     idmask=idmask, pond_seed=seed, log=print,
                 )
-            except BaseException:
-                tmp.unlink()
-                raise
-            os.replace(tmp, dst)
-            print(f"fields: ops attrs + mask applied to a copy of {f.name}")
-            continue
-        if var is not None:
-            ops_fields.stamp_stack(
-                Dataset, f, var, fallback_base_date=args.base_date, log=print,
-            )
-            print(f"fields: ops attrs applied to {f.name}")
-        dst.symlink_to(f.resolve())
+                print(f"fields: ops attrs + mask applied to a copy of {f.name}")
+                continue
+            if var is not None:
+                ops_fields.stamp_stack(
+                    Dataset, f, var, fallback_base_date=args.base_date,
+                    log=print,
+                )
+                print(f"fields: ops attrs applied to {f.name}")
+            dst.symlink_to(f.resolve())
+    except BaseException:
+        shutil.rmtree(build, ignore_errors=True)
+        raise
+    # Swap in whole: a failure above never leaves a partial .masked for
+    # staging_dir to prefer. MJ (10/05/26)
+    if masked.exists():
+        shutil.rmtree(masked)
+    os.replace(build, masked)
     return 0, masked
 
 
@@ -396,7 +400,7 @@ def _link_or_copy(src: Path, dst: Path) -> None:
     if dst.exists() or dst.is_symlink():
         dst.unlink()
     try:
-        os.link(src, dst)
+        os.link(os.path.realpath(src), dst)  # links, not symlinks; MJ (10/05/26)
     except OSError:
         shutil.copy2(src, dst)
 

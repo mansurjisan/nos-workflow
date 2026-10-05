@@ -200,3 +200,48 @@ def test_missing_dryflag_warns(tmp_path):
         log=msgs.append,
     )
     assert any(m.startswith("WARNING") for m in msgs)
+
+
+def _stage_with_3d(tmp_path):
+    st = tmp_path / "r.t12z.restart_outputs"
+    st.mkdir()
+    _out2d(st / "out2d_1.nc", np.zeros((1, 6), dtype="f4"))
+    with netCDF4.Dataset(st / "salinity_1.nc", "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("n", 2)
+        ds.createVariable("time", "f8", ("time",))[:] = [0.0]
+        ds.createVariable("salinity", "f4", ("time", "n"))[:] = 1.0
+    return st
+
+
+def _run_ops(st, com, tmp_path, extra=()):
+    return fields.main([
+        "--staging", str(st), "--comout", str(com), "--prefix", "p",
+        "--cyc", "12", "--pdy", "20261001", "--phase", "nowcast",
+        "--ops-attrs", "--idmask-file", str(_stage_idmask(tmp_path)), *extra,
+    ])
+
+
+def test_published_3d_stack_is_a_hardlink_not_a_symlink(tmp_path):
+    import os
+
+    st = _stage_with_3d(tmp_path)
+    assert _run_ops(st, tmp_path, tmp_path) == 0
+    pub = tmp_path / "p.t12z.20261001.fields.salinity.n000_000.nc"
+    raw = st / "salinity_1.nc"
+    assert not os.path.islink(pub)
+    assert os.stat(pub).st_ino == os.stat(raw).st_ino and not os.path.islink(raw)
+    assert (tmp_path / "r.t12z.restart_outputs.masked" / "salinity_1.nc").is_symlink()
+
+
+def test_failed_build_leaves_no_partial_masked_dir(tmp_path):
+    st = _stage_with_3d(tmp_path)
+    assert _run_ops(st, tmp_path, tmp_path) == 0
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    before = sorted(p.name for p in masked.iterdir())
+    bad = tmp_path / "bad_seed.npz"
+    ops_fields.save_pond_seed(bad, np.zeros(5, dtype=bool))  # wrong size: raises
+    with pytest.raises(ValueError):
+        _run_ops(st, tmp_path, tmp_path, ("--pond-seed-file", str(bad)))
+    assert sorted(p.name for p in masked.iterdir()) == before
+    assert not (tmp_path / "r.t12z.restart_outputs.masked.tmp").exists()

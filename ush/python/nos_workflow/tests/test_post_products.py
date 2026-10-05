@@ -822,7 +822,7 @@ def test_ops_field_args_only_when_idmask_fix_is_staged(tmp_path):
     (tmp_path / "stofs_3d_atl_pond_seed.npz").write_bytes(b"x")
     assert "--pond-seed-file" in _ops_field_args(ctx, "forecast")
     # a system with a different prefix gets nothing even with the files present
-    # (MJ 10/05/26)
+    # MJ (10/05/26)
     ctx.prefix_nos = "secofs_ufs"
     assert _ops_field_args(ctx, "nowcast") == []
 
@@ -840,3 +840,29 @@ def test_staging_dir_prefers_the_masked_copy_when_present(tmp_path):
     masked.mkdir()
     assert staging_dir(ctx, "nowcast") == masked
     assert staging_dir(ctx, "forecast") == tmp_path / "r.t12z.forecast_outputs"
+
+
+def test_staging_dir_ignores_a_stale_or_incomplete_masked_copy(tmp_path):
+    import os
+    from types import SimpleNamespace
+
+    from nos_workflow.post.worker_base import staging_dir
+
+    ctx = SimpleNamespace(comout=tmp_path, run_name="r", cycle="t12z")
+    raw = tmp_path / "r.t12z.restart_outputs"
+    masked = tmp_path / "r.t12z.restart_outputs.masked"
+    raw.mkdir()
+    masked.mkdir()
+    (raw / "out2d_1.nc").write_bytes(b"a")
+    (raw / "out2d_2.nc").write_bytes(b"a")
+    (masked / "out2d_1.nc").write_bytes(b"m")
+    # out2d_2 has no masked counterpart: incomplete
+    assert staging_dir(ctx, "nowcast") == raw
+    (masked / "out2d_2.nc").write_bytes(b"m")
+    now = os.stat(raw / "out2d_1.nc").st_mtime
+    for f in masked.iterdir():
+        os.utime(f, (now + 10, now + 10))
+    assert staging_dir(ctx, "nowcast") == masked
+    # model re-run: raw out2d now newer than the masked copy
+    os.utime(raw / "out2d_2.nc", (now + 100, now + 100))
+    assert staging_dir(ctx, "nowcast") == raw

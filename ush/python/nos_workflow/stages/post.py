@@ -1243,11 +1243,11 @@ class PointsCwlProduct(NosUtilsProduct):
             "--var-defs", str(var_defs),
             "--station-meta", str(meta),
         ]
+        if ops == "stofs_3d_atl":
+            args.append("--utc-suffix")  # production ATL time units; MJ (10/05/26)
         # The station JSON labels zeta with a datum (NAVD88 on the ATL
         # fix set) that is only true AFTER the ops ncap2 shift, so the
         # .nco must be applied whenever the metadata claims one.
-        if ops == "stofs_3d_atl":
-            args.append("--utc-suffix")  # production ATL time units; MJ (10/05/26)
         nco = _resolve_datum_nco(ctx, ops)
         if nco is not None:
             args += ["--datum-offsets", str(nco)]

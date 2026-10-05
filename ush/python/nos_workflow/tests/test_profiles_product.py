@@ -863,9 +863,11 @@ def test_outside_fill_keeps_every_station_in_order(tmp_path):
             data = np.asarray(ds[var][:])
             assert (data[:, 1] == -99999).all()
             assert (data[:, [0, 2]] != -99999).all()
-        # surviving stations keep their values and their positions
+        # surviving stations keep their values and their positions. MJ (10/05/26)
         assert ds["zeta"][0, 0] == pytest.approx(_elev(1, 0), abs=1e-5)
         assert ds["zeta"][0, 2] == pytest.approx(3.0 + 0.01, abs=1e-4)
+        assert ds["depth"].missing_value == np.float32(-99999)
+    assert not list(comout.glob(".*"))
 
 
 def test_outside_choices_are_the_three_documented_modes():

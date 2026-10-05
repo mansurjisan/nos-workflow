@@ -209,5 +209,5 @@ def test_split_carries_wetdry_and_edge_table_and_ponds_run(tmp_path):
     )
     with netCDF4.Dataset(tmp_path / "out2d_1.nc") as ds:
         pond = np.asarray(ds["isolatedPondNode"][:])
-    # node 3 (index 2) dry at record 1: node 4 stays joined through node 2
+    # node 3 (index 2) dry at record 1: node 4 stays joined through node 2. MJ (10/05/26)
     assert pond.sum() == 0

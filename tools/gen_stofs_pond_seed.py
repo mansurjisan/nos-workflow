@@ -59,7 +59,11 @@ def main(argv):
         seed[hit] = True
         print(f"{Path(shp).name}: {np.unique(hit).size} nodes")
     prov = {"source": "stofs.v3.1.5 fix/stofs_3d_atl"}
-    for path in [hgrid] + [Path(a) for a in argv[1:-1]]:
+    hashed = [hgrid]
+    for a in argv[1:-1]:
+        # the .prj drives to_crs, so every shapefile sidecar is hashed
+        hashed += [Path(a).with_suffix(x) for x in (".shp", ".shx", ".dbf", ".prj")]
+    for path in hashed:
         prov[f"sha256_{path.name}"] = _sha256(path)
     save_pond_seed(out, seed, prov)
     print(f"{int(seed.sum())} seed nodes of {nnode} -> {out}")

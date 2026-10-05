@@ -162,6 +162,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             offsets = list(np.asarray(offsets)[keep_mask])
 
+    write_to = None
     try:
         with atomic_publish(out_path) as tmp:
             if args.outside == "fill":
@@ -180,7 +181,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             )
             if args.outside == "fill":
                 _expand_to_all_stations(write_to, tmp, args, keep_mask)
-                write_to.unlink()
     except ValueError as exc:
         if "outside of domain" not in str(exc):
             raise
@@ -190,6 +190,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         print(f"profiles: {exc}")
         _diagnose_outside(args)
         return 6
+    finally:
+        # the fill-mode in-mesh intermediate must never outlive the call
+        if args.outside == "fill" and write_to is not None:
+            write_to.unlink(missing_ok=True)
 
     if args.result_json:
         Path(args.result_json).write_text(
@@ -235,6 +239,8 @@ def _expand_to_all_stations(src: Path, dst: Path, args, keep_mask) -> None:
             out.setncatts({
                 a: var.getncattr(a) for a in var.ncattrs() if a != "_FillValue"
             })
+            if name == "depth":
+                out.setncattr("missing_value", np.float32(-99999.0))
             if "station" not in var.dimensions:
                 out[:] = var[:]
                 continue
@@ -303,8 +309,9 @@ def _keep_in_mesh_stations(args: argparse.Namespace):
     bad = np.nonzero(ie == -1)[0]
     if not bad.size:
         return lons, lats, names, np.ones(lons.size, dtype=bool)
+    verb = "filling with -99999" if args.outside == "fill" else "dropping"
     print(
-        f"profiles: dropping {bad.size} of {lons.size} station(s) outside "
+        f"profiles: {verb} {bad.size} of {lons.size} station(s) outside "
         f"{Path(args.hgrid).name}:"
     )
     for k in bad:

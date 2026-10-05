@@ -61,7 +61,23 @@ def staging_dir(ctx: ProductContext, phase: str) -> Path:
     suffix = dict(PHASE_DIRS)[phase]
     raw = ctx.comout / f"{ctx.run_name}.{ctx.cycle}.{suffix}"
     masked = raw.with_name(raw.name + ".masked")
-    return masked if masked.is_dir() else raw
+    if not masked.is_dir():
+        return raw
+    # Use it only while it is complete and newer than the raw out2d; after
+    # a model re-run without fields_nc it is stale, and silently reading it
+    # would publish the previous run's masked field.
+    try:
+        for r in raw.glob("out2d_[0-9]*.nc"):
+            m = masked / r.name
+            if not m.is_file() or m.stat().st_mtime < r.stat().st_mtime:
+                raise FileNotFoundError(r.name)
+    except OSError as exc:
+        logger.warning(
+            "WARNING: %s is stale or incomplete (%s); using the raw staging "
+            "dir, so products are NOT masked. Re-run fields_nc.", masked, exc,
+        )
+        return raw
+    return masked
 
 
 def has_field_stacks(staging: Path) -> bool:
