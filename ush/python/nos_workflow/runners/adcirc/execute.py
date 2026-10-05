@@ -40,6 +40,16 @@ def padcirc_argv(settings: AdcircSettings, profile: MachineProfile, executable: 
     return argv
 
 
+def run_uses_met(run_dir: Path, default: bool) -> bool:
+    """True when the run's fort.15 NWS is non-zero (a cold-start nowcast is tide-only). MJ (10/05/26)"""
+    f = Path(run_dir) / "fort.15"
+    if f.is_file():
+        for line in f.read_text().splitlines():
+            if line.rstrip().endswith("! NWS"):
+                return int(line.split("!")[0].split()[0]) != 0
+    return default
+
+
 def check_inputs(run_dir: Path, ncpu: int, hotstart: bool, atmospheric: bool) -> None:
     run_dir = Path(run_dir)
     need = ["fort.14", "fort.13", "fort.15"]
@@ -75,7 +85,8 @@ def run_padcirc(ctx: CycleContext, run_dir: Path, hotstart: bool,
                 launcher: Launcher = default_launcher,
                 profile: Optional[MachineProfile] = None) -> List[str]:
     s = ctx.settings
-    check_inputs(run_dir, s.ncpu_compute, hotstart, s.atmospheric_forcing)
+    check_inputs(run_dir, s.ncpu_compute, hotstart,
+                 run_uses_met(run_dir, s.atmospheric_forcing))
     profile = profile or MachineProfile.load(validate=False)
     rpn_map = (s.raw.get("resources") or {}).get("ranks_per_node")
     argv = padcirc_argv(s, profile, s.executable("padcirc", ctx.execnos),

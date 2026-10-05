@@ -3,7 +3,8 @@
 Adapted from Zach Cobell's StofsWorkflow (oceanmodeling/nos-workflow, branch
 zcobell/stofs_2d_global), models/adcirc/adcirc_configuration.py. Kept verbatim
 apart from this header and the postponed-annotation import so a fort.15 built
-from the same config matches his generator.
+from the same config matches his generator. The comments below are his, copied
+verbatim, and stay untagged.
 """
 from __future__ import annotations
 

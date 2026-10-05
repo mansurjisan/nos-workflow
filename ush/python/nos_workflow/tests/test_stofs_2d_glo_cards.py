@@ -14,7 +14,7 @@ sys.path.insert(0, str(REPO / "ush" / "python"))
 from nos_workflow.machine import MachineProfile  # noqa: E402
 
 RANKS = 4064
-WALL = {"prep": "06:00:00", "nowcast": "06:00:00", "forecast": "02:00:00"}
+WALL = {"prep": "06:00:00", "nowcast": "06:00:00", "forecast": "03:00:00"}
 STAGES = list(WALL)
 PBS = REPO / "pbs" / "stofs_2d_glo"
 SLURM = REPO / "slurm" / "stofs_2d_glo"
@@ -142,6 +142,15 @@ def test_launcher():
     assert os.access(LAUNCH, os.X_OK)
     assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast}"' in text
     assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "")
+    for v in ("ATMOSPHERIC_FORCING", "COLDSTART_SPINUP_DAYS", "NOWCAST_HOURS"):
+        assert v in text.split("for _v in")[1].split(";")[0], v
+
+
+def test_prep_cards_preflight_cfgrib():
+    for card in (PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"):
+        text = card.read_text()
+        assert "import xarray, cfgrib, eccodes" in text, card
+        assert text.index("import xarray, cfgrib, eccodes") < text.index("jobs/JNOS_PREP"), card
     r = subprocess.run(["bash", str(LAUNCH), "20261005", "07"], capture_output=True, text=True)
     assert r.returncode == 2 and "CYC must be" in r.stderr
     assert subprocess.run(["bash", str(LAUNCH)], capture_output=True).returncode == 2

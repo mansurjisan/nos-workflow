@@ -82,6 +82,12 @@ class AdcircSettings:
         if spinup is None:
             spinup = float(run.get("coldstart_spinup_days", 18.0))
 
+        # NOWCAST_HOURS overrides the yaml (24 with a once-a-day 12z cycle, so the restart is
+        # the previous day's 12z nowcast and nothing cold-starts). MJ (10/05/26)
+        nowcast = pick("NOWCAST_HOURS", float)
+        if nowcast is None:
+            nowcast = float(run.get("nowcast_hours", 6))
+
         return cls(
             name=str(ad.get("name", "stofs2dglobal")),
             mesh_name=str(ad.get("name", "stofs2dglobal")),
@@ -95,7 +101,7 @@ class AdcircSettings:
             tide_constituents=[str(c).upper() for c in tidal.get("constituents") or []],
             nodal_reference=str(tidal.get("adcirc_nodal_reference", "midrun")),
             coldstart_spinup_days=spinup,
-            nowcast_interval_hours=float(run.get("nowcast_hours", 6)),
+            nowcast_interval_hours=nowcast,
             forecast_duration_hours=float(run.get("forecast_hours", 180)),
             output_minutes=float(ad.get("output_minutes", 20.0)),
             wind_dt=int(ad.get("wind_dt", 3600)),

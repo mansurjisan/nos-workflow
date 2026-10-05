@@ -8,7 +8,11 @@
 # Example:  ./launch_stofs_2d_glo.sh 20261005 12
 #
 # Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com_2dglo) is forwarded when set.
-# STAGES selects a subset, e.g. STAGES="nowcast forecast" once prep has run. MJ (10/05/26)
+# STAGES selects a subset, e.g. STAGES="nowcast forecast" once prep has run.
+# Operator overrides, forwarded when set: ATMOSPHERIC_FORCING=false (tide-only), COLDSTART_SPINUP_DAYS,
+# NOWCAST_HOURS (default 6; use 24 for a once-a-day 12z run so the restart is the previous day's 12z).
+# A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
+# node counts, so they come from the yaml only. MJ (10/05/26)
 set -eu
 
 if [ "$#" -lt 1 ]; then
@@ -22,7 +26,7 @@ PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
 PBSDIR="${PKG}/pbs/stofs_2d_glo"
 # qsub -v replaces the job environment wholesale, so anything the cards need must be listed here. MJ (10/05/26)
 VARS="PDY=${PDY},CYC=${CYC}"
-for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER; do
+for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER ATMOSPHERIC_FORCING COLDSTART_SPINUP_DAYS NOWCAST_HOURS; do
   eval "_val=\${${_v}:-}"
   if [ -n "${_val}" ]; then
     VARS="${VARS},${_v}=${_val}"

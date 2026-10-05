@@ -55,8 +55,11 @@ def acquire_met(ctx: CycleContext, phase: str, start: datetime, end: datetime, r
 
 
 def build_fort15(ctx: CycleContext, run_dir: Path, coldstart: datetime, start: datetime,
-                 end: datetime, hotstart_unit: int) -> Path:
+                 end: datetime, hotstart_unit: int, atmospheric: Optional[bool] = None,
+                 ice: bool = False) -> Path:
     s = ctx.settings
+    if atmospheric is None:
+        atmospheric = s.atmospheric_forcing
     mesh = read_mesh_info(run_dir / "fort.14", ctx.comges / f"{ctx.run}_mesh_info.json")
     spec = Fort15Spec(
         name="gstofs",
@@ -71,8 +74,8 @@ def build_fort15(ctx: CycleContext, run_dir: Path, coldstart: datetime, start: d
         tides=compute_tides(ctx, coldstart, end),
         tide_constituents=s.tide_constituents,
         hotstart_unit=hotstart_unit,
-        nws=14 if s.atmospheric_forcing else 0,
-        ice=s.atmospheric_forcing,
+        nws=14 if atmospheric else 0,
+        ice=bool(atmospheric and ice),
         ramp=s.ramp,
         output_minutes=s.output_minutes,
         wind_dt=s.wind_dt,
@@ -92,11 +95,13 @@ def _finish(ctx: CycleContext, run_dir: Path, runner: CommandRunner) -> str:
                        archive, runner)
 
 
-def _met(ctx, phase, start, end, run_dir, acquire):
-    if ctx.settings.atmospheric_forcing:
-        acquire(ctx, phase, start, end, run_dir)
-    else:
-        log.info("atmospheric_forcing disabled; tide-only %s (NWS=0)", phase)
+def _met(ctx, phase, start, end, run_dir, acquire, enabled=True):
+    """Returns (nws_on, ice_written): the fort.15 flags follow what met actually produced."""
+    if not (ctx.settings.atmospheric_forcing and enabled):
+        log.info("tide-only %s (NWS=0)", phase)
+        return False, False
+    res = acquire(ctx, phase, start, end, run_dir)
+    return True, bool(res is not None and "fort.225.nc" in getattr(res, "files", {}))
 
 
 def prep_nowcast(ctx: CycleContext, runner: CommandRunner = default_runner,
@@ -113,8 +118,12 @@ def prep_nowcast(ctx: CycleContext, runner: CommandRunner = default_runner,
     hs.stage_hotstart(info, run_dir)
     hs.write_timing(run_dir, info.coldstart_time, info.start_time, ctx.cycle_time,
                     info.hotstart_file)
-    _met(ctx, "nowcast", info.start_time, ctx.cycle_time, run_dir, acquire)
-    build_fort15(ctx, run_dir, info.coldstart_time, info.start_time, ctx.cycle_time, info.unit)
+    # A cold start spins up tide-only (ops does the same): the 18 d spin-up would need GFS older
+    # than the WCOSS2 tank keeps (about 10 d). The forecast still uses GFS. MJ (10/05/26)
+    atm, ice = _met(ctx, "nowcast", info.start_time, ctx.cycle_time, run_dir, acquire,
+                    enabled=not info.is_coldstart)
+    build_fort15(ctx, run_dir, info.coldstart_time, info.start_time, ctx.cycle_time, info.unit,
+                 atm, ice)
     log.info("nowcast adcprep: %s", _finish(ctx, run_dir, runner))
     return info
 
@@ -130,8 +139,8 @@ def prep_forecast(ctx: CycleContext, runner: CommandRunner = default_runner,
     run_dir.mkdir(parents=True, exist_ok=True)
     link_mesh_files(ctx, run_dir)
     hs.write_timing(run_dir, coldstart, ctx.cycle_time, ctx.forecast_end, None)
-    _met(ctx, "forecast", ctx.cycle_time, ctx.forecast_end, run_dir, acquire)
-    build_fort15(ctx, run_dir, coldstart, ctx.cycle_time, ctx.forecast_end, 67)
+    atm, ice = _met(ctx, "forecast", ctx.cycle_time, ctx.forecast_end, run_dir, acquire)
+    build_fort15(ctx, run_dir, coldstart, ctx.cycle_time, ctx.forecast_end, 67, atm, ice)
     log.info("forecast adcprep: %s", _finish(ctx, run_dir, runner))
 
 

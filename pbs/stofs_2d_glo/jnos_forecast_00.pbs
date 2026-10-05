@@ -5,11 +5,11 @@
 #PBS  -o /dev/null
 #PBS  -e /dev/null
 #PBS  -l place=vscatter:excl,select=32:ncpus=128:mpiprocs=128:ompthreads=1
-#PBS  -l walltime=02:00:00
+#PBS  -l walltime=03:00:00
 
 # STOFS-2D-Global (ADCIRC padcirc v56.1.0) forecast: 180 h from the nowcast hotstart, 4064 compute ranks
 # on 32 x 128 (ops layout, ecf jstofs_2d_glo_tide_fcst1/2 at 0:30 + 0:25; surf_fcst1/2 0:40 + 0:25).
-# Zach's WCOSS2 180 h test ran inside 2 h. Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
+# Zach's WCOSS2 180 h test ran inside 2 h; 3 h walltime leaves headroom. Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
 # stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked below. MJ (10/05/26)
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -33,7 +33,7 @@ exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== stofs_2d_glo_forecast_00 -- PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
-# MPI efficiency settings (operational parity with the other STOFS cards)
+# MPI efficiency settings (operational parity with the other STOFS cards). MJ (10/05/26)
 export MPICH_OFI_STARTUP_CONNECT=1
 export MPICH_COLL_SYNC=MPI_Bcast
 export MPICH_REDUCE_NO_SMP=1

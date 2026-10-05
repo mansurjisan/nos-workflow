@@ -22,8 +22,11 @@ model:
   run:
     hindcast_days: 0.25     # nowcast_interval 6 h
     forecast_days: 7.5      # forecast_duration 180 h
+    # 6 h suits a 4-cycles-a-day run. A once-a-day (12z only) run must set NOWCAST_HOURS=24 so the
+    # restart lookup finds the previous day's 12z nowcast instead of cold-starting daily. MJ (10/05/26)
     nowcast_hours: 6
     forecast_hours: 180
+    # Cold-start spin-up is tide-only; COLDSTART_SPINUP_DAYS in the job env overrides it. MJ (10/05/26)
     coldstart_spinup_days: 18.0
 
 # Total ranks = ncpu_compute + ncpu_writer. One knob sets both the adcprep partition count and
@@ -49,7 +52,8 @@ adcirc:
 forcing:
   atmospheric:
     primary: gfs
-    variables: [PRMSL, UGRD, VGRD, ICEC]
+    # Exact wgrib2 inventory strings: bare UGRD/VGRD would match every pressure level. MJ (10/05/26)
+    variables: ["PRMSL:mean sea level", "UGRD:10 m above ground", "VGRD:10 m above ground", "ICEC:surface"]
   tidal:
     # Zach's 15 constituents; ops uses 8 (parity phase). Nodal factors are computed from the
     # cold-start time over the whole run, as his Tide class does. MJ (10/05/26)

@@ -6,6 +6,7 @@ import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -78,9 +79,14 @@ def fake_tides(constituents, start, run_days, nodal_reference="midrun"):
                               equilibrium_arg_deg=0.0) for c in constituents]
 
 
-def fake_acquire(ctx, phase, start, end, run_dir):
-    for n in ("fort.221.nc", "fort.222.nc", "fort.225.nc", "fort.22"):
+def fake_acquire(ctx, phase, start, end, run_dir, names=("fort.221.nc", "fort.222.nc", "fort.225.nc")):
+    for n in names + ("fort.22",):
         (run_dir / n).write_text(phase)
+    return SimpleNamespace(files={n: run_dir / n for n in names})
+
+
+def fake_acquire_no_ice(ctx, phase, start, end, run_dir):
+    return fake_acquire(ctx, phase, start, end, run_dir, names=("fort.221.nc", "fort.222.nc"))
 
 
 @pytest.fixture
@@ -129,8 +135,32 @@ def test_env_overrides_settings():
     assert s.atmospheric_forcing is False
 
 
+def test_operator_overrides_survive_the_resolver(monkeypatch):
+    monkeypatch.setenv("COLDSTART_SPINUP_DAYS", "3")
+    monkeypatch.setenv("NOWCAST_HOURS", "24")
+    out = json.loads(yaml_to_env.export_env(YAML, framework="adcirc", output_format="json"))
+    assert out["COLDSTART_SPINUP_DAYS"] == "3"
+    s = AdcircSettings.from_yaml(YAML, {"COLDSTART_SPINUP_DAYS": "3", "NOWCAST_HOURS": "24"})
+    assert s.coldstart_spinup_days == 3.0 and s.nowcast_interval_hours == 24.0
+
+
+def test_once_a_day_finds_previous_12z(tmp_path):
+    env = _env(tmp_path, NOWCAST_HOURS="24")
+    ctx = CycleContext.from_env(AdcircSettings.from_yaml(YAML, env), env)
+    assert ctx.prev_nowcast_dir == ctx.cycle_dir(CYCLE - timedelta(days=1), "nowcast")
+    assert ctx.nowcast_start == CYCLE - timedelta(days=1)
+
+
+def test_yaml_met_variables_are_the_10m_strings():
+    from nos_utils.forcing import adcirc_met
+    s = AdcircSettings.from_yaml(YAML, {})
+    assert s.met_variables == adcirc_met.DEFAULT_VARIABLES
+    lines = ["1:0:d=2026100512:UGRD:10 m above ground:anl:", "2:1:d=2026100512:UGRD:850 mb:anl:"]
+    assert len(adcirc_met.match_inventory(lines, s.met_variables)) == 1
+
+
 def test_cards_node_math_against_machine_layer():
-    sp = JobSpec(name="stofs_2d_glo_nc_00", walltime="04:00:00", total_ranks=jobs.nprocs_for("stofs_2d_glo"),
+    sp = JobSpec(name="stofs_2d_glo_nc_00", walltime="03:00:00", total_ranks=jobs.nprocs_for("stofs_2d_glo"),
                  threads_per_rank=1, ranks_per_node=jobs.ranks_per_node_for("stofs_2d_glo"))
     assert sp.total_ranks == 4064 and sp.ranks_per_node == {"wcoss2": 128}
     w = MachineProfile.load("wcoss2", validate=False)
@@ -293,13 +323,15 @@ def test_prep_cold_cycle_nowcast_and_forecast(tmp_path, mesh):
     t = hs.read_timing(nc)
     assert datetime.fromisoformat(t["coldstart_time"]) == CYCLE - timedelta(days=18)
     assert t["hotstart_file"] is None
-    assert "0                   ! IHOT" in (nc / "fort.15").read_text()
+    nc_text = (nc / "fort.15").read_text()
+    assert "0                   ! IHOT" in nc_text
+    assert "14014" not in nc_text and not (nc / "fort.221.nc").exists()  # tide-only cold spin-up
     ft = hs.read_timing(fc)
     assert ft["coldstart_time"] == t["coldstart_time"]
     assert datetime.fromisoformat(ft["end_time"]) == CYCLE + timedelta(hours=180)
     text = (fc / "fort.15").read_text()
     assert "567                 ! IHOT" in text and "14014" in text
-    assert (nc / "fort.221.nc").is_file() and (fc / "fort.222.nc").read_text() == "forecast"
+    assert (fc / "fort.222.nc").read_text() == "forecast"
     assert runner.calls[:2] == [["--partmesh", "--np", "4"], ["--prepall", "--np", "4"]]
     assert ["--prep15", "--np", "4"] in runner.calls[2:]
     assert not (fc / "fort.67.nc").exists()
@@ -314,6 +346,32 @@ def test_prep_tide_only_skips_met(tmp_path, mesh):
     assert "14014" not in (ctx.run_dir("nowcast") / "fort.15").read_text()
 
 
+def test_cold_nowcast_asks_for_no_gfs_forecast_does(tmp_path, mesh):
+    ctx, _ = _ctx(tmp_path)
+    phases = []
+
+    def spy(ctx_, phase, *a):
+        phases.append(phase)
+        return fake_acquire(ctx_, phase, *a)
+    prep.run_prep(ctx, FakeAdcprep(), spy)
+    assert phases == ["forecast"]
+
+
+def _nws_of(text):
+    return int(next(l for l in text.splitlines() if l.endswith("! NWS")).split("!")[0])
+
+
+def test_no_ice_file_means_no_ice_flag(tmp_path, mesh):
+    ctx, _ = _ctx(tmp_path)
+    prep.run_prep(ctx, FakeAdcprep(), fake_acquire_no_ice)
+    text = (ctx.run_dir("forecast") / "fort.15").read_text()
+    assert _nws_of(text) == 14
+    (tmp_path / "ice").mkdir()
+    ctx2, _ = _ctx(tmp_path / "ice")
+    prep.run_prep(ctx2, FakeAdcprep(), fake_acquire)
+    assert _nws_of((ctx2.run_dir("forecast") / "fort.15").read_text()) == 14014
+
+
 def test_prep_hot_cycle_copies_restart(tmp_path, mesh):
     ctx, _ = _ctx(tmp_path)
     cold = CYCLE - timedelta(days=30)
@@ -324,6 +382,7 @@ def test_prep_hot_cycle_copies_restart(tmp_path, mesh):
     _restart(prev / "fort.67.nc", (end - cold).total_seconds())
     prep.prep_nowcast(ctx, FakeAdcprep(), fake_acquire)
     nc = ctx.run_dir("nowcast")
+    assert "14014" in (nc / "fort.15").read_text()  # warm nowcast uses GFS
     assert (nc / "fort.67.nc").is_file() and not (nc / "fort.67.nc").is_symlink()
     assert "567                 ! IHOT" in (nc / "fort.15").read_text()
     assert json.loads((nc / "timing.json").read_text())["hotstart_file"].endswith("fort.67.nc")

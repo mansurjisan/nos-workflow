@@ -79,6 +79,8 @@ def _zach(mesh_path: Path, phase: str, nws: int, out_dir: Path) -> Path:
         from StofsWorkflow.executables import ModelExecutables  # noqa: F401
         from StofsWorkflow.models.adcirc.adcirc import Adcirc
         from StofsWorkflow.models.adcirc.adcirc_config import AdcircConfig
+    except Exception as exc:  # his code needs Python >= 3.9. MJ (10/05/26)
+        pytest.skip("Zach's StofsWorkflow does not import here: {!r}".format(exc))
     finally:
         sys.path.remove(str(ZACH))
     cold, start, end, unit = PHASES[phase]

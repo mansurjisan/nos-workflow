@@ -130,5 +130,9 @@ for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
 done
 [ -x "${ADCIRC_EXEC_DIR}/adcprep" ] || { echo "FATAL: ${ADCIRC_EXEC_DIR}/adcprep not executable"; exit 1; }
 [ -d "${COMINgfs}" ] || { echo "FATAL: COMINgfs ${COMINgfs} missing"; exit 1; }
+# cfgrib/ecCodes preflight: a missing package fails here in seconds, not after the GFS copies. MJ (10/05/26)
+if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ]; then
+    python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
+fi
 
 ${HOMEnos}/jobs/JNOS_PREP

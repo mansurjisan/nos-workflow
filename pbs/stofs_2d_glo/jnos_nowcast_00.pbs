@@ -34,7 +34,7 @@ exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== stofs_2d_glo_nowcast_00 -- PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
-# MPI efficiency settings (operational parity with the other STOFS cards)
+# MPI efficiency settings (operational parity with the other STOFS cards). MJ (10/05/26)
 export MPICH_OFI_STARTUP_CONNECT=1
 export MPICH_COLL_SYNC=MPI_Bcast
 export MPICH_REDUCE_NO_SMP=1

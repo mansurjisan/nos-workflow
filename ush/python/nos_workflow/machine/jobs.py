@@ -77,7 +77,7 @@ CATALOG: Dict[Tuple[str, str], StageSpec] = {
         "stofs_3d_atl_ufs_sa_fc_00", KIND_MODEL, "05:00:00", threads_per_rank=1,
         extra_resources=("debug=true",)),
 
-    # Prep memory: ops COLD_ADCPREP asks 50 GB; 18 d of GFS via cfgrib/xarray may need ~100 GB. MJ (10/05/26)
+    # Prep memory: ops COLD_ADCPREP asks 50 GB; the GFS forecast window via cfgrib/xarray may need ~100 GB. MJ (10/05/26)
     ("stofs_2d_glo", "prep"): StageSpec(
         "pbs/stofs_2d_glo/jnos_prep_00.pbs", "stofs_2d_glo_prep_00",
         KIND_SERIAL, "06:00:00", mem_per_node="100GB"),
@@ -86,7 +86,7 @@ CATALOG: Dict[Tuple[str, str], StageSpec] = {
         KIND_MODEL, "06:00:00", threads_per_rank=1),
     ("stofs_2d_glo", "forecast"): StageSpec(
         "pbs/stofs_2d_glo/jnos_forecast_00.pbs", "stofs_2d_glo_fc_00",
-        KIND_MODEL, "02:00:00", threads_per_rank=1),
+        KIND_MODEL, "03:00:00", threads_per_rank=1),
 }
 
 
