@@ -117,7 +117,8 @@ export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
-export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+# Own COMROOT: standalone and coupled share RUN=stofs_3d_atl_ufs and would otherwise write one COMOUT. MJ (10/05/26)
+export COMROOT=${COMROOT_SA:-/lfs/h1/nos/ptmp/$LOGNAME/com_atl_sa}
 export DCOMROOT=/lfs/h1/ops/prod/dcom
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 

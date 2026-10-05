@@ -115,6 +115,7 @@ def _export_prev_cycle_dirs(descriptor: OFSDescriptor) -> None:
     if not os.environ.get("COMOUT_PREV"):
         run = os.environ.get("RUN") or descriptor.name
         os.environ["COMOUT_PREV"] = str(build_staout_1.previous_comout(comout, run, pdy))
+    _anchor_restart_search_on_comout(comout, pdy, descriptor)
     prev = Path(os.environ["COMOUT_PREV"])
     if prev.is_dir():
         sl.info("COMOUT_PREV=%s COMOUTrerun=%s", prev, os.environ["COMOUTrerun"])
@@ -122,6 +123,23 @@ def _export_prev_cycle_dirs(descriptor: OFSDescriptor) -> None:
         sl.warning("COMOUT_PREV=%s not found; dynamic adjust runs without a previous-cycle bias", prev)
     if os.environ.get("COMINrerun"):
         sl.info("COMINrerun=%s overrides the COMOUT_PREV layout", os.environ["COMINrerun"])
+
+
+def _anchor_restart_search_on_comout(comout: str, pdy: str, descriptor: OFSDescriptor) -> None:
+    """Make the restart search follow an overridden COMOUT.
+
+    JNOS_PREP derives COMIN from COMROOT/NET/RUN.PDY, so a COMOUT override alone left the
+    search in the shared com tree. COMIN is moved to COMOUT only when it still equals that
+    default; an explicit COMIN or RESTART_DIR is kept. MJ (10/05/26)
+    """
+    if os.environ.get("RESTART_DIR"):
+        return
+    run = os.environ.get("RUN") or descriptor.name
+    default = Path(os.environ.get("COMROOT", "")) / os.environ.get("NET", "") / f"{run}.{pdy}"
+    comin = os.environ.get("COMIN")
+    if (not comin or Path(comin) == default) and Path(comout) != default:
+        os.environ["COMIN"] = comout
+        stage_logger(_STAGE, descriptor.name).info("COMIN=%s (follows COMOUT override)", comout)
 
 
 def _coerce_rc(result: Any) -> int:

@@ -8,7 +8,7 @@ import shutil
 from pathlib import Path
 
 from ...bash_compat import run_shell_function
-from . import _dateutils, combine_hotstart, mesh, normalize_fields
+from . import _dateutils, combine_hotstart, mesh, mirror_status, normalize_fields
 from .context import SchismRunContext
 from .stage_files import _is_stofs_atl, _is_ufs, _is_wave_enabled
 
@@ -71,6 +71,16 @@ def run_python(ctx: SchismRunContext, phase: str) -> int:
     if rc != 0:
         logger.error("execute: mpiexec failed (rc=%d)", rc)
         return rc
+
+    if _is_stofs_atl(ctx):
+        # Production only logs a missing completion line here and stops in post
+        # (nco_v315 exstofs_3d_atl_now_forecast.sh:584-615). MJ (10/05/26)
+        for d in ("outputs", "outputs_nowcast"):
+            if (ctx.data / d / "mirror.out").is_file():
+                ok, why = mirror_status.check_mirror_out(
+                    ctx.data / d / "mirror.out", ctx.data / "param.nml", coupled=_is_ufs())
+                (logger.info if ok else logger.warning)("execute: mirror.out check: %s", why)
+                break
 
     # combine_hotstart7 also stays in shell for the hpc-stack module load.
     combine_rc = combine_hotstart.combine_hotstart_files(ctx, phase)
@@ -177,6 +187,10 @@ def _atl_schism_ranks(ctx: SchismRunContext) -> "int | None":
         return None
 
 
+_ATL_REQUIRED_INPUTS: tuple = ("bctides.in", "elev2D.th.nc", "TEM_3D.th.nc", "SAL_3D.th.nc",
+                               "uv3D.th.nc", "TEM_nu.nc", "SAL_nu.nc")
+
+
 def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
     """STOFS-3D-ATL pre-launch hard-fails (standalone and coupled).
 
@@ -186,7 +200,6 @@ def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
       rank + 1 must equal the SCHISM compute-rank count; lowest rank must be 0.
     MJ (10/03/26)
     """
-    del phase
     if not _is_stofs_atl(ctx):
         return 0
 
@@ -197,6 +210,18 @@ def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
             "ifltype=1 boundary and SCHISM aborts without it. Re-run prep so "
             "$COMOUT holds %s.%s.riv.obs.flux.th.",
             ctx.data, ctx.run, ctx.cycle,
+        )
+        return 1
+
+    # OBC, nudging and tide files production's prep gate requires
+    # (nco_v315 scripts/stofs_3d_atl/exstofs_3d_atl_prep_processing.sh:425-700). MJ (10/05/26)
+    missing = [n for n in _ATL_REQUIRED_INPUTS
+               if not (ctx.data / n).is_file() or (ctx.data / n).stat().st_size == 0]
+    if missing:
+        logger.error(
+            "execute: %s missing or empty in %s. Re-run prep so $COMOUT holds the %s tars "
+            "(SCHISM would abort after the node allocation).",
+            missing, ctx.data, phase,
         )
         return 1
 
