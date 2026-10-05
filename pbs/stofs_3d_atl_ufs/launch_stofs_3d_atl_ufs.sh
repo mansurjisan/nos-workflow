@@ -40,7 +40,7 @@ VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
 #   grep -rhoE '"(NOS_[A-Z_]+|POST_[A-Z_]+)"' ush/python/nos_workflow/post/
 # PBS splits -v on commas only, so a space-separated value survives whole.
 for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
-          POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT; do
+          POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT COMROOT_UFS; do
   eval "_val=\${${_v}:-}"
   if [ -n "${_val}" ]; then
     VARS="${VARS},${_v}=${_val}"
@@ -83,7 +83,7 @@ cat <<EOM
 Chain submitted (${STAGES}), each gated on afterok of the previous.
   Monitor : qstat -u ${LOGNAME}
   Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
-  COMOUT  : /lfs/h1/nos/ptmp/${LOGNAME}/com/nos/stofs_3d_atl_ufs.${PDY}
+  COMOUT  : ${COMROOT_UFS:-/lfs/h1/nos/ptmp/${LOGNAME}/com}/nos/stofs_3d_atl_ufs.${PDY}
 
 Note: the coupled path is roughly 5x slower than the standalone variant
 (pbs/stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh) and, being

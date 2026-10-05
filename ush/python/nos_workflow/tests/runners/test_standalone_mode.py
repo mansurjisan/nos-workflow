@@ -820,7 +820,10 @@ def test_is_stofs_atl_false(tmp_path, prefix):
     assert not stage_files._is_stofs_atl(_make_ctx(tmp_path, prefixnos=prefix))
 
 
-def _seed_atl_exec_inputs(ctx, *, ne=6, ranks=(0, 1, 2, 0, 1, 2), flux=True):
+def _seed_atl_exec_inputs(ctx, *, ne=6, ranks=(0, 1, 2, 0, 1, 2), flux=True, obc=True):
+    if obc:
+        for name in execute._ATL_REQUIRED_INPUTS:
+            (ctx.data / name).write_bytes(b"x")
     (ctx.data / "hgrid.gr3").write_text(f"grid\n{ne} 9\n")
     (ctx.data / "partition.prop").write_text(
         "".join(f"{i + 1} {r}\n" for i, r in enumerate(ranks))
@@ -914,3 +917,25 @@ def test_validate_atl_inputs_standalone_prefers_total_tasks(tmp_path, monkeypatc
     ctx = _make_ctx(tmp_path)
     _seed_atl_exec_inputs(ctx)
     assert execute._validate_atl_inputs(ctx, "nowcast") == 0
+
+
+@pytest.mark.parametrize("gone", ["bctides.in", "elev2D.th.nc", "TEM_3D.th.nc", "SAL_3D.th.nc",
+                                  "uv3D.th.nc", "TEM_nu.nc", "SAL_nu.nc"])
+def test_validate_atl_inputs_requires_obc_nudging_files(tmp_path, monkeypatch, gone):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("NPROCS", "5")
+    monkeypatch.setenv("NSCRIBES", "2")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    (ctx.data / gone).unlink()
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1
+
+
+def test_validate_atl_inputs_rejects_empty_obc_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("USE_DATM", "false")
+    monkeypatch.setenv("NPROCS", "5")
+    monkeypatch.setenv("NSCRIBES", "2")
+    ctx = _make_ctx(tmp_path)
+    _seed_atl_exec_inputs(ctx)
+    (ctx.data / "TEM_nu.nc").write_bytes(b"")
+    assert execute._validate_atl_inputs(ctx, "nowcast") == 1

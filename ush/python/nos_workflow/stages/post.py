@@ -28,6 +28,7 @@ from ..post.worker_base import (
     staging_dir,
 )
 from ..registry import OFSDescriptor
+from ..tools import build_staout_1
 
 if TYPE_CHECKING:
     from ..env import NCOEnv  # noqa: F401
@@ -88,6 +89,35 @@ def _run_comf_post(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         ) from exc
 
 
+def _require_complete_model_runs(descriptor: OFSDescriptor, comout: Path, run_name: str,
+                                 cycle: str) -> None:
+    """STOFS-3D-ATL: stop post when a phase's archived mirror.out is missing or incomplete.
+
+    Production stops in post, not in the model job
+    (nco_v315 scripts/stofs_3d_atl/exstofs_3d_atl_post_1.sh:375-383, post_2.sh:224-229).
+    The verdict is written next to the archived mirror.out by archive_outputs. MJ (10/05/26)
+    """
+    from ..runners.schism_ufs.mirror_status import STATUS_NAME
+
+    if not build_staout_1.is_atl_run(run_name):
+        return
+    problems = []
+    for sub in ("restart_outputs", "forecast_outputs"):
+        d = comout / f"{run_name}.{cycle}.{sub}"
+        status = d / STATUS_NAME
+        if not (d / "mirror.out").is_file():
+            problems.append(f"{d / 'mirror.out'} missing")
+        elif not status.is_file():
+            problems.append(f"{status} missing (archive_outputs did not run)")
+        elif not status.read_text().startswith("OK"):
+            problems.append(f"{d.name}: {status.read_text().strip()}")
+    if problems:
+        raise StageFailedError(
+            stage=_STAGE, ofs=descriptor.name, returncode=1,
+            msg="model run incomplete, post stopped: " + "; ".join(problems),
+        )
+
+
 def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     """Run COMF post-processing; raise on fatal failures, return 0 on success."""
     sl = stage_logger(_STAGE, descriptor.name)
@@ -108,6 +138,8 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     # running when the job is killed only has its lines in $pgmout. Say
     # where that is so it can be tailed live rather than reconstructed.
     sl.info("worker output also at $pgmout=%s (tail -f during the run)", pgmout)
+
+    _require_complete_model_runs(descriptor, comout, run_name, cycle)
 
     combine_script = _resolve_combine_script(homenos, shell_env)
     if combine_script is None:
