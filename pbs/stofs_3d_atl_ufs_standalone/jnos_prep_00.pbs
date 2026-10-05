@@ -18,6 +18,9 @@
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
+# The shared run.ver exports COLDSTART=YES; ATL never cold-starts (production J-job default NO,
+# exstofs_3d_atl_prep_processing.sh refuses YES), so pin it for the ATL prep. MJ (10/05/26)
+export COLDSTART=NO
 
 export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}

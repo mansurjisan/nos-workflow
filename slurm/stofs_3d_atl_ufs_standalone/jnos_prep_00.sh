@@ -24,6 +24,9 @@
 PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the ATL nos-workflow clone>}
 [ -d "${PACKAGEROOT}/nos-workflow/slurm/stofs_3d_atl_ufs" ] || { echo "FATAL: ${PACKAGEROOT}/nos-workflow has no ATL cards (wrong PACKAGEROOT?)"; exit 1; }
 . ${PACKAGEROOT}/nos-workflow/versions/run.hercules.ver
+# The shared run.ver exports COLDSTART=YES; ATL never cold-starts (production J-job default NO,
+# exstofs_3d_atl_prep_processing.sh refuses YES), so pin it for the ATL prep. MJ (10/05/26)
+export COLDSTART=NO
 
 # Load-bearing: must be set before anything sources yaml_to_env, or the resolver
 # silently applies the WCOSS2 profile (PPN=120 on an 80-core node). MJ (10/04/26)

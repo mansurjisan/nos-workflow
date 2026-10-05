@@ -248,3 +248,17 @@ class TestPbsCardsSeparateComroot:
         sa = (self.PBS / "stofs_3d_atl_ufs_standalone" / "launch_stofs_standalone.sh").read_text()
         ufs = (self.PBS / "stofs_3d_atl_ufs" / "launch_stofs_3d_atl_ufs.sh").read_text()
         assert "COMROOT_SA; do" in sa and "COMROOT_UFS; do" in ufs
+
+
+def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
+    # The shared run.ver exports COLDSTART=YES; the ATL prep gate refuses it, so every ATL
+    # prep card must reset it after sourcing run.ver. MJ (10/05/26)
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[4]
+    cards = sorted(root.glob("pbs/stofs_3d_atl_ufs*/jnos_prep_00.pbs")) + sorted(root.glob("slurm/stofs_3d_atl_ufs*/jnos_prep_00.sh"))
+    assert len(cards) == 4
+    for card in cards:
+        lines = card.read_text().splitlines()
+        src = next(i for i, l in enumerate(lines) if l.startswith(". ${PACKAGEROOT}/nos-workflow/versions/run"))
+        pin = next(i for i, l in enumerate(lines) if l.strip() == "export COLDSTART=NO")
+        assert pin > src, card
