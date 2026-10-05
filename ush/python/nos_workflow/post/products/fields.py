@@ -205,10 +205,15 @@ def _apply_ops_attrs(Dataset, staging: Path, args: argparse.Namespace):
         shutil.rmtree(build, ignore_errors=True)
         raise
     # Swap in whole: a failure above never leaves a partial .masked for
-    # staging_dir to prefer. MJ (10/05/26)
+    # staging_dir to prefer. The old copy is renamed aside, not deleted first,
+    # so no .masked-less window spans the rmtree. MJ (10/05/26)
+    old = masked.with_name(masked.name + ".old")
+    if old.exists():
+        shutil.rmtree(old)
     if masked.exists():
-        shutil.rmtree(masked)
+        os.replace(masked, old)
     os.replace(build, masked)
+    shutil.rmtree(old, ignore_errors=True)
     return 0, masked
 
 

@@ -65,7 +65,7 @@ def staging_dir(ctx: ProductContext, phase: str) -> Path:
         return raw
     # Use it only while it is complete and newer than the raw out2d; after
     # a model re-run without fields_nc it is stale, and silently reading it
-    # would publish the previous run's masked field.
+    # would publish the previous run's masked field. MJ (10/05/26)
     try:
         for r in raw.glob("out2d_[0-9]*.nc"):
             m = masked / r.name

@@ -856,13 +856,13 @@ def test_staging_dir_ignores_a_stale_or_incomplete_masked_copy(tmp_path):
     (raw / "out2d_1.nc").write_bytes(b"a")
     (raw / "out2d_2.nc").write_bytes(b"a")
     (masked / "out2d_1.nc").write_bytes(b"m")
-    # out2d_2 has no masked counterpart: incomplete
+    # out2d_2 has no masked counterpart: incomplete MJ (10/05/26)
     assert staging_dir(ctx, "nowcast") == raw
     (masked / "out2d_2.nc").write_bytes(b"m")
     now = os.stat(raw / "out2d_1.nc").st_mtime
     for f in masked.iterdir():
         os.utime(f, (now + 10, now + 10))
     assert staging_dir(ctx, "nowcast") == masked
-    # model re-run: raw out2d now newer than the masked copy
+    # model re-run: raw out2d now newer than the masked copy MJ (10/05/26)
     os.utime(raw / "out2d_2.nc", (now + 100, now + 100))
     assert staging_dir(ctx, "nowcast") == raw

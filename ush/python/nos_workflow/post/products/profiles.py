@@ -191,7 +191,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         _diagnose_outside(args)
         return 6
     finally:
-        # the fill-mode in-mesh intermediate must never outlive the call
+        # the fill-mode in-mesh intermediate must never outlive the call MJ (10/05/26)
         if args.outside == "fill" and write_to is not None:
             write_to.unlink(missing_ok=True)
 

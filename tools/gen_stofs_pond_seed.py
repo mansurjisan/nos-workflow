@@ -61,7 +61,7 @@ def main(argv):
     prov = {"source": "stofs.v3.1.5 fix/stofs_3d_atl"}
     hashed = [hgrid]
     for a in argv[1:-1]:
-        # the .prj drives to_crs, so every shapefile sidecar is hashed
+        # the .prj drives to_crs, so every shapefile sidecar is hashed MJ (10/05/26)
         hashed += [Path(a).with_suffix(x) for x in (".shp", ".shx", ".dbf", ".prj")]
     for path in hashed:
         prov[f"sha256_{path.name}"] = _sha256(path)

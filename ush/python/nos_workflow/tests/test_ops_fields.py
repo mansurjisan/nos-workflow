@@ -240,7 +240,7 @@ def test_failed_build_leaves_no_partial_masked_dir(tmp_path):
     masked = tmp_path / "r.t12z.restart_outputs.masked"
     before = sorted(p.name for p in masked.iterdir())
     bad = tmp_path / "bad_seed.npz"
-    ops_fields.save_pond_seed(bad, np.zeros(5, dtype=bool))  # wrong size: raises
+    ops_fields.save_pond_seed(bad, np.zeros(5, dtype=bool))  # wrong size: raises MJ (10/05/26)
     with pytest.raises(ValueError):
         _run_ops(st, tmp_path, tmp_path, ("--pond-seed-file", str(bad)))
     assert sorted(p.name for p in masked.iterdir()) == before
