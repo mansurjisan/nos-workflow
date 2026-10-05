@@ -31,10 +31,8 @@ Launcher = Callable[[Sequence[str], Path], int]
 
 def padcirc_argv(settings: AdcircSettings, profile: MachineProfile, executable: str,
                  ranks_per_node_by_machine: Optional[dict] = None,
-                 writers: Optional[int] = None) -> List[str]:
+                 writers: int = 0) -> List[str]:
     """Full launch argv: compute plus writer ranks, packed per the machine profile."""
-    if writers is None:
-        writers = settings.ncpu_writer
     rpn = profile.ranks_per_node_for(ranks_per_node_by_machine)
     exe_args = ["-W", str(writers)] if writers > 0 else []
     argv = profile.mpi_argv(settings.ncpu_compute + writers, executable, exe_args, ranks_per_node=rpn)
@@ -89,13 +87,15 @@ def run_padcirc(ctx: CycleContext, run_dir: Path, hotstart: bool,
                 profile: Optional[MachineProfile] = None,
                 writers: Optional[int] = None) -> List[str]:
     s = ctx.settings
+    if writers is None:
+        writers = s.ncpu_writer
     check_inputs(run_dir, s.ncpu_compute, hotstart,
                  run_uses_met(run_dir, s.atmospheric_forcing))
     profile = profile or MachineProfile.load(validate=False)
     rpn_map = (s.raw.get("resources") or {}).get("ranks_per_node")
     argv = padcirc_argv(s, profile, s.executable("padcirc", ctx.execnos),
                         rpn_map if isinstance(rpn_map, dict) else None, writers)
-    ranks = s.ncpu_compute + (s.ncpu_writer if writers is None else writers)
+    ranks = s.ncpu_compute + writers
     # The cards export the allocation size; a launch that cannot fit must stop here, not hang in the launcher. MJ (10/05/26)
     if ranks > int(os.environ.get("ADCIRC_ALLOC_RANKS") or ranks):
         raise AdcircConfigError(f"{ranks} ranks (compute + writers) exceed the {os.environ['ADCIRC_ALLOC_RANKS']}"

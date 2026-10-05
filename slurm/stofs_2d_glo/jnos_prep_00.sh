@@ -79,7 +79,7 @@ export platform=ptmp
 export framework=adcirc
 export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO

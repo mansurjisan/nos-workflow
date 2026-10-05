@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 SPINH, WNDH, NOWH, LSTH, NBACK = 162, 3, 6, 180, 20
 # Substitution order of the ops sed chain; a token absent from the values is skipped, as in the scripts. MJ (10/05/26)
-TOKEN_ORDER = (["cycle", "ihot", "winc", "rnday", "dramp"]
+TOKEN_ORDER = (["cycle", "ihot", "winc", "rnday"]
                + ["%s%d" % (k, i) for i in range(1, 9) for k in ("fft", "facet")]
                + ["nout", "touts", "toutf", "nhstar", "nhsinc", "hh", "dd", "mm", "yyyy"])
 CONSTITUENTS = ("K1", "O1", "P1", "Q1", "M2", "S2", "N2", "K2")  # the order the fort.15 templates expect MJ (10/05/26)
@@ -34,10 +34,9 @@ STREAMS = {"tide": ("hotstart", "hottime", "stofs_2d_glo_tide.15"),
            "surf": ("restart", "retime", "stofs_2d_glo_surf.15")}
 FIX = (("stofs_2d_glo_body", "fort.24"), ("stofs_2d_glo_rotm", "fort.rotm"),
        ("stofs_2d_glo_elev_stat", "elev_stat.151"), ("stofs_2d_glo_elev_stat", "vel_stat.151"))  # ops has no separate velocity station file MJ (10/05/26)
-MAXES = ("maxele", "maxvel", "maxwvel")
 RERUN = {"tide": [("fort.61.nc", "tide.61.nc"), ("fort.63.nc", "tide.63.nc")],
          "surf": [("fort.%d.nc" % n, "surf.%d.nc" % n) for n in (61, 62, 63, 64)]
-         + [("%s.63.nc" % m, "%s.63.nc" % m) for m in MAXES]}
+         + [("%s.63.nc" % m, "%s.63.nc" % m) for m in ("maxele", "maxvel", "maxwvel")]}
 PRODUCTS = {"tide": [("fort.61.nc", "points.htp.nc"), ("fort.63.nc", "fields.htp.nc")],
             "surf": [("fort.61.nc", "points.cwl.nc"), ("fort.61.nc", "points.cwl.noanomaly.nc"),
                      ("fort.62.nc", "points.cwl.vel.nc"), ("fort.63.nc", "fields.cwl.nc"),
@@ -63,7 +62,6 @@ def parity_ihot(time_s, divisor_h: int) -> int:
 class Segment(NamedTuple):
     tokens: Dict[str, str]
     state_time: str
-    ihot: int
 
 
 def spinup_tokens() -> Dict[str, str]:
@@ -81,7 +79,7 @@ def ncst_segment(stream: str, time_hotstart, ncsth: int) -> Segment:
            "nhstar": "3", "nhsinc": "1800"}
     if stream == "surf":
         tok["winc"] = "3600"
-    return Segment(tok, "%.0f" % (ncstd * 86400), ihot)
+    return Segment(tok, "%.0f" % (ncstd * 86400))
 
 
 def fcst_segment(stream: str, segment: str, time_hotstart, touts: str, toutf: str) -> Segment:
@@ -92,7 +90,7 @@ def fcst_segment(stream: str, segment: str, time_hotstart, touts: str, toutf: st
            "nhstar": "3", "nhsinc": nhsinc}
     if stream == "surf":
         tok["winc"] = winc
-    return Segment(tok, "%.0f" % (rnday * 86400), ihot)
+    return Segment(tok, "%.0f" % (rnday * 86400))
 
 
 def read_nod_equi(path: Path) -> Tuple[datetime, Dict[str, str]]:
@@ -131,6 +129,13 @@ def _load_nod(ctx: CycleContext) -> Tuple[datetime, Dict[str, str]]:
     return read_nod_equi(_nod_path(ctx))
 
 
+def _time(f: Path) -> float:
+    t = hotstart.file_time(f)
+    if t is None:
+        raise AdcircConfigError(f"FATAL ERROR: no usable time in chain file {f}")
+    return t
+
+
 def _publish(src: Path, dst: Path) -> None:
     """Copy through a .partial name so the multistart search never sees a half-written chain file. MJ (10/05/26)"""
     dst.parent.mkdir(parents=True, exist_ok=True)
@@ -163,6 +168,9 @@ def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str],
     (run_dir / "fort.15").write_text(render(template.read_text(), nod, tokens, cycle))
     run_adcprep(s.executable("adcprep", ctx.execnos), run_dir, s.ncpu_compute,
                 archive_path(ctx.comges, ctx.run, s.ncpu_compute), runner)
+    if not (run_dir / "PE0000" / "fort.24").is_file():
+        raise AdcircConfigError(f"FATAL ERROR: {archive_path(ctx.comges, ctx.run, s.ncpu_compute)} is a single-mode "
+                                "decomposition (no ops station files); re-run cold_adcprep with COLDSTART=YES")
     return run_dir
 
 
@@ -188,7 +196,7 @@ def _need(run_dir: Path, name: str) -> Path:
     return f
 
 
-def make_nod_equi(ctx: CycleContext, start: datetime, out: Path) -> None:
+def check_tide_fac(ctx: CycleContext) -> Path:
     """Ops tide factors come from the Fortran stofs_2d_glo_tide_fac only: a float32/float64 difference would
     freeze different FFT/FACET into every segment for 365 days, so there is no Python fallback. MJ (10/05/26)"""
     exe = ctx.execnos / f"{ctx.run}_tide_fac" if ctx.execnos else None
@@ -196,12 +204,18 @@ def make_nod_equi(ctx: CycleContext, start: datetime, out: Path) -> None:
         raise AdcircConfigError(
             f"FATAL: {ctx.run}_tide_fac not found in EXECnos ({ctx.execnos}); WCOSS2: copy it from "
             "/lfs/h1/ops/prod/packages/stofs.v3.1.5/exec/stofs_2d_glo/, elsewhere build sorc/stofs_2d_glo_tide_fac.fd")
+    return exe
+
+
+def make_nod_equi(ctx: CycleContext, start: datetime, out: Path) -> None:
+    exe = check_tide_fac(ctx)
     subprocess.run([str(exe), "--length", "365", "--year", str(start.year), "--month", "%02d" % start.month,
                     "--day", "%02d" % start.day, "--hour", "%02d" % start.hour, "--outputformat", "simple",
                     "--outputdir", str(out.parent), "--outputname", out.name], check=True, stdout=subprocess.DEVNULL)
 
 
 def cold_adcprep(ctx: CycleContext, runner: CommandRunner = default_runner) -> None:
+    check_tide_fac(ctx)
     ctx.comges.mkdir(parents=True, exist_ok=True)
     for p in (_nod_path(ctx), archive_path(ctx.comges, ctx.run, ctx.settings.ncpu_compute)):
         if p.exists():
@@ -254,12 +268,12 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     chain, state = STREAMS[stream][:2]
     _base, nod = _load_nod(ctx)
     beg, hfile = find_chain_start(ctx, chain)
-    seg = ncst_segment(stream, "%.15g" % hotstart.file_time(hfile), int((now - beg).total_seconds() // 3600))
+    seg = ncst_segment(stream, "%.15g" % _time(hfile), int((now - beg).total_seconds() // 3600))
     # A stale fcst1-end hotstart from an earlier run of this cycle must not reach fcst1/fcst2. MJ (10/05/26)
     h68 = rerun_dir(ctx) / f"{ctx.run}_{stream}.68.nc"
     if h68.exists():
         h68.unlink()
-    run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, seg.ihot)
+    run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
     argv = _launch(ctx, run_dir, stream, "ncst", launcher, profile)
     _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, WNDH) - 300}.nc"), ctx.cycle_dir(now, chain))
     _export(ctx, run_dir)
@@ -279,7 +293,10 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
         raise AdcircConfigError(f"missing or empty {sp}; run the {stream} nowcast first")
     seg = fcst_segment(stream, segment, st[1], st[2], st[3])
     hot = ctx.cycle_dir(now, chain) if segment == "fcst1" else rr / f"{ctx.run}_{stream}.68.nc"
-    run_dir = _stage(ctx, stream, segment, seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hot, seg.ihot,
+    if abs(_time(hot) - float(st[1])) > 1:
+        raise AdcircConfigError(f"FATAL ERROR: {sp} has advanced past this {segment} (its start is {st[1]} s, "
+                                f"{hot.name} is at {_time(hot):g} s); redo the cycle from ncst")
+    run_dir = _stage(ctx, stream, segment, seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hot, int(seg.tokens["ihot"]),
                      [(rr / f"{ctx.run}_{name}", src) for src, name in RERUN[stream]])
     argv = _launch(ctx, run_dir, stream, segment, launcher, profile)
     if segment == "fcst1":

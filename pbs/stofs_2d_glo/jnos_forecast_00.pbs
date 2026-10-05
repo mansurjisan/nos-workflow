@@ -10,7 +10,7 @@
 # STOFS-2D-Global (ADCIRC padcirc v56.1.0) forecast: 180 h from the nowcast hotstart, 4064 compute ranks
 # on 32 x 128 (ops layout, ecf jstofs_2d_glo_tide_fcst1/2 at 0:30 + 0:25; surf_fcst1/2 0:40 + 0:25).
 # Zach's WCOSS2 180 h test ran inside 2 h; 3 h walltime leaves headroom. Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
-# stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked below. MJ (10/05/26)
+# stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked at launch. MJ (10/05/26)
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
@@ -69,7 +69,7 @@ export platform=ptmp
 export framework=adcirc
 export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO

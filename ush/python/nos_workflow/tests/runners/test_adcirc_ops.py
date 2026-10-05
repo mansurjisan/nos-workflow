@@ -122,6 +122,33 @@ def test_missing_tide_fac_is_fatal_and_no_python_fallback(tmp_path):
     assert not (ctx.comges / f"{RUN}_nod_equi").exists()
 
 
+def test_missing_tide_fac_leaves_a_live_chain_untouched(tmp_path):
+    _cold(tmp_path)
+    (tmp_path / "bin" / "stofs_2d_glo_tide_fac").unlink()
+    with pytest.raises(AdcircConfigError, match="tide_fac"):
+        ops.cold_adcprep(_ctx(tmp_path, COLDSTART="YES"), FakeAdcprep())
+    assert (tmp_path / "com" / RUN / f"{RUN}_nod_equi").is_file()
+    assert not list((tmp_path / "com" / RUN).glob("*.old"))
+
+
+def test_single_mode_cache_is_fatal(tmp_path):
+    _cold(tmp_path)
+
+    class Single:
+        def __call__(self, cmd, cwd):
+            return FakeAdcprep()(cmd, cwd) or [(cwd / f"PE{i:04d}" / "fort.24").unlink() for i in range(NC)] and 0
+    with pytest.raises(AdcircConfigError, match="single-mode.*COLDSTART=YES"):
+        ops.cold_spinup(_ctx(tmp_path, ADCIRC_SEGMENT="spinup"), FakeAdcirc(),
+                        MachineProfile.load("wcoss2", validate=False), Single())
+
+
+def test_bad_chain_file_time_is_named(tmp_path, monkeypatch):
+    _cold(tmp_path)
+    monkeypatch.setattr(hotstart, "file_time", lambda f: None)
+    with pytest.raises(AdcircConfigError, match="no usable time in chain file.*hotstart"):
+        _go(tmp_path, "tide", "ncst")
+
+
 def test_no_nod_equi_asks_for_a_cold_start(tmp_path):
     with pytest.raises(AdcircConfigError, match="restart with COLDSTART=YES"):
         ops.run_prep(_ctx(tmp_path))
@@ -143,20 +170,33 @@ def test_tide_chain(tmp_path):
     assert not list((tmp_path / "work" / "tide_fcst2").glob("PE[0-9]*"))
 
 
+def test_fcst_rerun_after_success_is_refused(tmp_path):
+    _cold(tmp_path)
+    _go(tmp_path, "tide", "ncst")
+    _go(tmp_path, "tide", "fcst1")
+    with pytest.raises(AdcircConfigError, match="advanced.*redo the cycle from ncst"):
+        _go(tmp_path, "tide", "fcst1")
+    _go(tmp_path, "tide", "fcst2")
+    with pytest.raises(AdcircConfigError, match="advanced"):
+        _go(tmp_path, "tide", "fcst2")
+
+
 def test_surf_chain_writers_and_forcing(tmp_path):
     _cold(tmp_path)
     ctx, fa = _go(tmp_path, "surf", "ncst")
     assert fa.argv[0][1:3] == ["-n", "36"] and fa.argv[0][-2:] == ["-W", "32"]
     assert hotstart.file_time(ctx.cycle_dir(CYCLE, "restart")) == 604800
+    f222 = ops.rerun_dir(ctx) / f"{RUN}_fcst1.222.nc"
+    f222.unlink()
+    with pytest.raises(AdcircConfigError, match="fcst1.222.nc"):
+        _go(tmp_path, "surf", "fcst1")
+    f222.write_text("fcst1")
     _, fa = _go(tmp_path, "surf", "fcst1")
     assert fa.argv[0][-2:] == ["-W", "32"]
     assert (tmp_path / "work" / "surf_fcst1" / "fort.221.nc").read_text() == "fcst1"
     _, fa = _go(tmp_path, "surf", "fcst2")
     assert "-W" not in fa.argv[0]
     assert ctx.cycle_dir(CYCLE, "fields.cwl.maxwvel.nc").is_file()
-    (ops.rerun_dir(ctx) / f"{RUN}_fcst1.222.nc").unlink()
-    with pytest.raises(AdcircConfigError, match="fcst1.222.nc"):
-        _go(tmp_path, "surf", "fcst1")
 
 
 def test_multistart_and_stale_68(tmp_path):

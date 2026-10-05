@@ -16,11 +16,11 @@
 # Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
 # from ecf/jstofs_2d_glo_*.ecf, and surf/tide only differ by ADCIRC_STREAM. The cold-start pair runs once per
 # restart (cold_adcprep, then spinup), then each cycle runs tide and surf ncst -> fcst1 -> fcst2:
-#   qsub -l walltime=2:00:00 -v ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.pbs                    (cold_adcprep)
-#   qsub -l walltime=1:00:00 -v ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.pbs         (cold_spinup)
-#   qsub -l walltime=0:15:00 -v ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.pbs
-#   qsub -l walltime=0:30:00 -v ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.pbs
-#   qsub -l walltime=0:25:00 -v ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.pbs
+#   qsub -l walltime=2:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.pbs                    (cold_adcprep)
+#   qsub -l walltime=1:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.pbs         (cold_spinup)
+#   qsub -l walltime=0:15:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.pbs
+#   qsub -l walltime=0:30:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.pbs
+#   qsub -l walltime=0:25:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.pbs
 #   surf: the same three with ADCIRC_STREAM=surf and walltimes 0:15:00, 0:40:00, 0:25:00. MJ (10/05/26)
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
@@ -80,7 +80,7 @@ export platform=ptmp
 export framework=adcirc
 export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO

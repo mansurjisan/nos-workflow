@@ -52,10 +52,6 @@ class AdcircSettings:
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False)
     mode: str = "single"
 
-    @property
-    def ncpu_total(self) -> int:
-        return self.ncpu_compute + self.ncpu_writer
-
     @classmethod
     def from_yaml(cls, path, env: Optional[Mapping[str, str]] = None) -> "AdcircSettings":
         env = os.environ if env is None else env

@@ -150,7 +150,7 @@ def test_segment_matches_ops_sed(tmp_path, stream, segment, time_hot, ncsth):
         seg = op.fcst_segment(stream, name, seg.state_time, seg.tokens["touts"], seg.tokens["toutf"])
     got = op.render((DATA / f"stofs_2d_glo_{stream}.15").read_text(), nod, seg.tokens, NOW)
     _check(tmp_path, _bash(stream, segment, time_hot, ncsth), got)
-    assert [ln for ln in got.splitlines() if ln.endswith("! IHOT")][0].split()[0] == str(seg.ihot)
+    assert [ln for ln in got.splitlines() if ln.endswith("! IHOT")][0].split()[0] == seg.tokens["ihot"]
 
 
 def test_spinup_matches_ops_sed(tmp_path):

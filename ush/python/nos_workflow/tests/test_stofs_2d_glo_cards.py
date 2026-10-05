@@ -200,3 +200,9 @@ def test_ops_mode_is_chosen_at_submit_time(card):
             assert job in text
     if "prep" not in card.name:
         assert "export ADCIRC_ALLOC_RANKS=" in text and "_tot" not in text
+
+
+def test_keepdata_is_a_submit_time_override():
+    for card in list(PBS.glob("jnos_*_00.pbs")) + list(SLURM.glob("jnos_*_00.sh")):
+        text = card.read_text()
+        assert "export KEEPDATA=${KEEPDATA:-YES}" in text and "KEEPDATA=YES\n" not in text.replace(":-YES}", "")

@@ -120,7 +120,7 @@ def _run_adcirc_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
             msg=f"ADCIRC prep failed: {exc}",
         ) from exc
     emit_stage_summary(sl, status="PASS", runtime_s=time.monotonic() - t_stage,
-                       extras={"phases_completed": 2})
+                       extras={"phases_completed": len(phases)})
     return 0
 
 
