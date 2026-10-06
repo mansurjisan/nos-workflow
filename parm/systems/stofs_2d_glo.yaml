@@ -37,6 +37,9 @@ adcirc:
   # ADCIRC_MODE=ops (set per job at submit time) runs the stofs.v3.1.5 structure; surf ncst and fcst1
   # add this many -W writers (4064 + 32 = 4096). MJ (10/05/26)
   ops_surf_writers: 32
+  # Seconds the ops GFS prep jobs (ADCIRC_SEGMENT=ncst|fcst1|fcst2) wait in total for a late sfcf file, inside the ecf
+  # walltimes 0:10, 0:30 and 0:10; ops waits until the walltime kills it. MJ (10/06/26)
+  ops_gfs_wait_s: {ncst: 420, fcst1: 1500, fcst2: 420}
   executables:
     padcirc: padcirc
     adcprep: adcprep

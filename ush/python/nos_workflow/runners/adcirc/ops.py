@@ -3,8 +3,9 @@
 Tide (NWS=0, chain file .hotstart) and surf (NWS=14014, chain file .restart) streams, each run as
 ncst, fcst1 (+120 h), fcst2 (+60 h); cold_adcprep (nod_equi + decomposition) runs in prep and
 cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
-chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. Surf forcing is not made here: the
-surf segments read $COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst1,fcst2}.{221,222,225}.nc. MJ (10/05/26)
+chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
+$COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst1,fcst2}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst1|fcst2
+as the ops GFS_NCST/FCST1/FCST2 jobs do. MJ (10/06/26)
 """
 from __future__ import annotations
 
@@ -263,6 +264,17 @@ def _export(ctx: CycleContext, run_dir: Path) -> None:
         _publish(_need(run_dir, src), rerun_dir(ctx) / f"{ctx.run}_{name}")
 
 
+def _check_window(path: Path, want: int) -> None:
+    import netCDF4
+    if not path.is_file():
+        return  # _stage names the missing file MJ (10/06/26)
+    with netCDF4.Dataset(str(path)) as d:
+        have = len(d.dimensions["record"])
+    if have != want:
+        raise AdcircConfigError(f"{path.name} has {have} records but the restart chain start needs {want}: the forcing window "
+                                f"does not match it; delete rerun/{path.name[:-6]}22?.nc and re-run the GFS ncst prep")  # MJ (10/06/26)
+
+
 def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     stream, now = ctx.stream, ctx.cycle_time
     chain, state = STREAMS[stream][:2]
@@ -273,6 +285,8 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     h68 = rerun_dir(ctx) / f"{ctx.run}_{stream}.68.nc"
     if h68.exists():
         h68.unlink()
+    if stream == "surf":
+        _check_window(rerun_dir(ctx) / f"{ctx.run}_ncst.221.nc", int((now - beg).total_seconds() // 3600) + 1)
     run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
     argv = _launch(ctx, run_dir, stream, "ncst", launcher, profile)
     _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, WNDH) - 300}.nc"), ctx.cycle_dir(now, chain))
@@ -310,8 +324,25 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     return argv
 
 
+def gfs_forcing(ctx: CycleContext) -> None:
+    """One ops GFS job: the ncst window starts at the multistart restart time, as exstofs_2d_glo_gfs.sh. MJ (10/06/26)"""
+    from nos_utils.forcing.adcirc_met import build_sfcf_forcing
+
+    seg, rr = ctx.segment, rerun_dir(ctx)
+    if (rr / f"{ctx.run}_{seg}.221.nc").is_file():
+        log.info("surface forcing files for gfs.%s already exist", seg)
+        return
+    if not ctx.comin_gfs:
+        raise AdcircConfigError("COMINgfs is not set; the GFS sfcf files are the surf forcing source")
+    start = find_chain_start(ctx, STREAMS["surf"][0])[0] if seg == "ncst" else None
+    wait = float((ctx.settings.raw["adcirc"].get("ops_gfs_wait_s") or {}).get(seg, 0))
+    build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait)
+
+
 def run_prep(ctx: CycleContext, runner: CommandRunner = default_runner) -> int:
-    if ctx.coldstart:
+    if ctx.segment in ("ncst", "fcst1", "fcst2"):
+        gfs_forcing(ctx)
+    elif ctx.coldstart:
         cold_adcprep(ctx, runner)
     else:
         _load_nod(ctx)

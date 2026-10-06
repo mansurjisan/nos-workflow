@@ -126,5 +126,7 @@ if grep -qE 'partition_hgrid|double free or corruption|Failed during initial par
     echo "PARMETIS_RETRY: max retries (${MAXRETRY}) exhausted — giving up"
   fi
 fi
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1
 exit "${_rc}"
 # --- end ParMETIS blind-retry -----------------------------------------------
