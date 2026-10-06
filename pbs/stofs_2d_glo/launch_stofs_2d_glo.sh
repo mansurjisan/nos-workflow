@@ -36,7 +36,6 @@ for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER ATMOSPHE
 done
 
 if [ "${ADCIRC_MODE:-single}" = ops ]; then
-  PKGPBS="${PKG}/pbs"
   OPSVARS="${VARS},KEEPDATA=NO,ADCIRC_MODE=ops"
   declare -A J
   # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]
@@ -52,12 +51,10 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
     printf '%-14s: %s%s\n' "${label}" "${J[$label]}" "${dep:+   (afterok${dep})}"
   }
   PREP="${PBSDIR}/jnos_prep_00.pbs"; NOW="${PBSDIR}/jnos_nowcast_00.pbs"; FC="${PBSDIR}/jnos_forecast_00.pbs"
-  POST="${PKGPBS}/jnos_post_00.pbs"
-  for _c in "${PREP}" "${NOW}" "${FC}" "${POST}"; do
+  for _c in "${PREP}" "${NOW}" "${FC}"; do
     [ -f "${_c}" ] || { echo "ERROR: missing ${_c} -- is the branch checked out and pulled?" >&2; exit 1; }
   done
-  PREPSEL="1:ncpus=1:prepost=true:mem=400gb"; POSTSEL="1:ncpus=1:prepost=true:mem=100gb"
-  POSTV="OFS=stofs_2d_glo,COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/${LOGNAME}/com_2dglo}"
+  PREPSEL="1:ncpus=1:prepost=true:mem=400gb"
   echo "=== STOFS-2D-Global ops-mode chain: PDY=${PDY} CYC=${CYC} PKG=${PKG} ==="
   COLD=""
   if [ "${COLDSTART:-NO}" = YES ]; then
@@ -74,8 +71,8 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
   sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_ncdiff "${POST}" 0:10:00 "${POSTSEL}" "${POSTV},ADCIRC_SEGMENT=ncdiff" tide_fcst2 surf_fcst2
-  sub post_ncrcat "${POST}" 0:15:00 "${POSTSEL}" "${POSTV},ADCIRC_SEGMENT=ncrcat" gfs_ncst gfs_fcst1 gfs_fcst2
+  sub post_ncdiff "${PREP}" 0:10:00 - ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
+  sub post_ncrcat "${PREP}" 0:15:00 - ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
   exit 0
 fi
 

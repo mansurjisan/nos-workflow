@@ -21,7 +21,7 @@ SLURM = REPO / "slurm" / "stofs_2d_glo"
 FETCH = REPO / "tools" / "fetch_stofs_2d_glo_fix.sh"
 LAUNCH = PBS / "launch_stofs_2d_glo.sh"
 TAG = "MJ (10/05/26)"
-LAST = {"prep": "JNOS_PREP", "nowcast": "JNOS_NOWCAST", "forecast": "JNOS_FORECAST"}
+LAST = {"prep": "esac", "nowcast": "JNOS_NOWCAST", "forecast": "JNOS_FORECAST"}
 
 
 def _lines(path: Path, prefix: str) -> list:
@@ -141,7 +141,7 @@ def test_launcher():
     text = LAUNCH.read_text()
     assert os.access(LAUNCH, os.X_OK)
     assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast}"' in text
-    assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "").replace("OFS=stofs_2d_glo,", "")
+    assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "")
     for v in ("ATMOSPHERIC_FORCING", "COLDSTART_SPINUP_DAYS", "NOWCAST_HOURS"):
         assert v in text.split("for _v in")[1].split(";")[0], v
 
@@ -244,7 +244,7 @@ def test_launcher_ops_job_graph(tmp_path):
         assert v["v"]["ADCIRC_MODE"] == "ops"
     assert (name("surf_fcst1")["v"]["ADCIRC_STREAM"], name("surf_fcst1")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst1")
     assert name("gfs_fcst1")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst1")["v"]["ADCIRC_SEGMENT"] == "fcst1"
-    assert name("post_ncdiff")["card"] == "jnos_post_00.pbs" and name("post_ncdiff")["v"]["OFS"] == "stofs_2d_glo"
+    assert name("post_ncdiff")["card"] == "jnos_prep_00.pbs" and name("post_ncrcat")["v"]["ADCIRC_SEGMENT"] == "ncrcat"
     assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_fcst1", "post_ncdiff", "post_ncrcat")} == {
         "tide_ncst": "walltime=0:15:00", "surf_fcst1": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
         "post_ncrcat": "walltime=0:15:00"}
@@ -272,3 +272,10 @@ def test_launcher_single_mode_graph_unchanged(tmp_path):
     assert [Path(l.split()[-1]).name for l in lines] == [f"jnos_{s}_00.pbs" for s in STAGES]
     assert "depend" not in lines[0] and all("afterok:j" in l for l in lines[1:])
     assert not any("ADCIRC_MODE" in l or "-N" in l.split() for l in lines)
+
+
+@pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
+def test_prep_card_dispatches_ops_post_jobs(card):
+    last = card.read_text().rstrip().splitlines()[-1]
+    assert last == ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat) ${HOMEnos}/jobs/JNOS_POST ;; '
+                    '*) ${HOMEnos}/jobs/JNOS_PREP ;; esac')
