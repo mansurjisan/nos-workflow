@@ -247,7 +247,7 @@ class TestPbsCardsSeparateComroot:
     def test_launchers_forward_the_overrides(self):
         sa = (self.PBS / "stofs_3d_atl_ufs_standalone" / "launch_stofs_standalone.sh").read_text()
         ufs = (self.PBS / "stofs_3d_atl_ufs" / "launch_stofs_3d_atl_ufs.sh").read_text()
-        assert "COMROOT_SA; do" in sa and "COMROOT_UFS; do" in ufs
+        assert "COMROOT_SA STOFS_RUNVER; do" in sa and "COMROOT_UFS; do" in ufs
 
 
 def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
@@ -259,6 +259,6 @@ def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
     assert len(cards) == 4
     for card in cards:
         lines = card.read_text().splitlines()
-        src = next(i for i, l in enumerate(lines) if l.startswith(". ${PACKAGEROOT}/nos-workflow/versions/run"))
+        src = next(i for i, l in enumerate(lines) if l.startswith((". ${PACKAGEROOT}/nos-workflow/versions/run", ". ${HOMEnos}/versions/run")))
         pin = next(i for i, l in enumerate(lines) if l.strip() == "export COLDSTART=NO")
         assert pin > src, card

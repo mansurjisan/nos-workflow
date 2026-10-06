@@ -24,7 +24,7 @@
 # ======================================================================
 set -euo pipefail
 
-DEST="${1:-fix/stofs_3d_atl_ufs}"
+DEST="$(mkdir -p "${1:-fix/stofs_3d_atl_ufs}" && cd "${1:-fix/stofs_3d_atl_ufs}" && pwd)"
 OPS_DIR="/lfs/h1/ops/prod/packages/stofs.v3.1.5/fix/stofs_3d_atl"
 OPS_URL="https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/fix/stofs_3d_atl"
 SCHISM_TASKS=4912
@@ -123,8 +123,8 @@ if [ "$failed" -gt 0 ]; then
 fi
 
 # Coupled-only DATM/UFS templates. Five are byte-identical across the tracked
-# SECOFS and AK sets, so copy them (not link: the size checks above would see
-# the link). ufs.configure differs only in the OCN rank span and the coupling
+# SECOFS and AK sets, so copy them from the repo (a copy stays valid if the
+# clone moves, a link would not). ufs.configure differs only in the OCN rank span and the coupling
 # step, so derive it from the SECOFS one. MJ (10/06/26)
 TPL="$(cd "$(dirname "$0")/.." && pwd)/fix/secofs_ufs"
 if [ -d "$TPL" ]; then

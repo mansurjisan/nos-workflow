@@ -29,7 +29,8 @@
 # ------------------------------------------------------------------
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-stofs_3d_atl_ufs}
@@ -131,7 +132,7 @@ export jobid=${jobid:-$job.$PBS_JOBID}
 # YAML configuration for the standalone variant (execution.mode=standalone).
 # Set explicitly rather than from ${OFS} so post reads the same config the
 # run stages used and cannot silently diverge on naming or paths.
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

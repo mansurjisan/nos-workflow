@@ -13,7 +13,8 @@
 # stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked at launch. MJ (10/05/26)
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # ADCIRC module stack from the ops v3.1.5 version file (adcirc/v56.1.0 etc.); override STOFS_RUNVER
 # if your padcirc was built against another stack. MJ (10/05/26)
@@ -80,7 +81,7 @@ export PACKAGEROOT
 export COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/$LOGNAME/com_2dglo}
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver:-v16.3}}
-export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
 # padcirc/adcprep come from the adcirc module on PATH unless ADCIRC_EXEC_DIR points at a private build. MJ (10/05/26)
 [ -z "${ADCIRC_EXEC_DIR:-}" ] || export ADCIRC_EXEC_DIR
 
@@ -88,7 +89,7 @@ export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_2d_glo.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

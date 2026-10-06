@@ -8,7 +8,8 @@
 #PBS  -l walltime=05:30:00
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # MPI tuning as ops v3.1.5 and the standalone cards; the retry qsub below forwards them. MJ (10/03/26)
 export MPICH_OFI_STARTUP_CONNECT=${MPICH_OFI_STARTUP_CONNECT:-1}
@@ -43,7 +44,7 @@ module reset
 unset PrgEnv_intel_ver craype_ver cmake_ver g2_ver w3emc_ver 2>/dev/null || true
 
 # Load UFS-Coastal hpc-stack modules
-module use ${PACKAGEROOT}/nos-workflow/modulefiles
+module use ${HOMEnos}/modulefiles
 module load modules.fv3
 module load cray-pals
 
@@ -102,7 +103,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for stofs_3d_atl_ufs
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
@@ -125,7 +126,7 @@ if grep -qE 'partition_hgrid|double free or corruption|Failed during initial par
   RETRY=${PARMETIS_RETRY:-0}; MAXRETRY=8
   if [ "${RETRY}" -lt "${MAXRETRY}" ]; then
     echo "PARMETIS_RETRY: partition_hgrid crash (rc=${_rc}); resubmitting attempt $((RETRY+1))/${MAXRETRY}"
-    qsub -v "PDY=${PDY:-},CYC=${CYC:-${cyc:-12}},OFS=${OFS:-stofs_3d_atl_ufs},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES},MPICH_OFI_STARTUP_CONNECT=${MPICH_OFI_STARTUP_CONNECT:-1},MPICH_COLL_SYNC=${MPICH_COLL_SYNC:-MPI_Bcast},MPICH_REDUCE_NO_SMP=${MPICH_REDUCE_NO_SMP:-1},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
+    qsub -v "PDY=${PDY:-},CYC=${CYC:-${cyc:-12}},OFS=${OFS:-stofs_3d_atl_ufs},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES},MPICH_OFI_STARTUP_CONNECT=${MPICH_OFI_STARTUP_CONNECT:-1},MPICH_COLL_SYNC=${MPICH_COLL_SYNC:-MPI_Bcast},MPICH_REDUCE_NO_SMP=${MPICH_REDUCE_NO_SMP:-1},COMOUT=${COMOUT:-},COMIN=${COMIN:-},PACKAGEROOT=${PACKAGEROOT},HOMEnos=${HOMEnos},COMROOT_UFS=${COMROOT_UFS:-},PARMETIS_RETRY=$((RETRY+1))" "$0"
   else
     echo "PARMETIS_RETRY: max retries (${MAXRETRY}) exhausted — giving up"
   fi

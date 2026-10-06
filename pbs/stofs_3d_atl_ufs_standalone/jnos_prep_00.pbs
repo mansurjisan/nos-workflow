@@ -17,7 +17,8 @@
 # not run the model, so no pschism/4920-rank/module.fv3 changes are needed here.
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 # The shared run.ver exports COLDSTART=YES; ATL never cold-starts (production J-job default NO,
 # exstofs_3d_atl_prep_processing.sh refuses YES), so pin it for the ATL prep. MJ (10/05/26)
 export COLDSTART=NO
@@ -102,7 +103,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for the standalone variant (execution.mode=standalone -> nws=2)
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
