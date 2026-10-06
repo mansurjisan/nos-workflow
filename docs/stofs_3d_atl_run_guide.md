@@ -98,24 +98,37 @@ cp fv3_stofs_atl_pe.exe <your nos-workflow>/exec/fv3_stofs_3d_atl.exe
 
 ### 3.1a Starting from a teammate's package
 
-If someone already runs STOFS-3D-ATL on WCOSS2, clone your own copy and borrow only their executables. Don't copy their whole package directory:
+If someone already runs STOFS-3D-ATL on WCOSS2, clone your own copy and copy only their fix files and executables. Don't copy their whole package directory:
 - **Symlinks:** `fix/` and `exec/` in a working package are often symlinks into another package. `cp -r` keeps the links, so your runs would read their files and break when they change them.
 - **Location and access:** a copy may still carry hard-coded paths, or sit somewhere you cannot write.
 - **Updates:** a copy does not get updates with `git pull`.
 
-Do this instead:
+Do this instead. The maintainer's WCOSS2 package (Mansur Jisan) holds a complete, validated fix set and the executables:
+
+| What | Path on WCOSS2 |
+|---|---|
+| ATL fix files, including the river files, out2d mask and DATM/UFS templates | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages_dev/nos-workflow/fix/stofs_3d_atl_ufs` |
+| Executables | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec` |
+
 ```bash
 git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
 git submodule update --init ush/python/nos-utils
-./tools/fetch_stofs_3d_atl_fix.sh                  # operational fix files, river files, out2d mask, DATM/UFS templates
-OTHER=<their package>/exec                         # ask the maintainer for the path
+MJFIX=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages_dev/nos-workflow/fix/stofs_3d_atl_ufs
+MJEXE=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec
+
+# fix: either copy the maintainer's set (about 6 GB; many entries there are symlinks, so -L) ...
+cp -rL $MJFIX/. fix/stofs_3d_atl_ufs/
+git checkout -- fix/stofs_3d_atl_ufs              # keep this clone's tracked files (pond seed, param.nml)
+# ... or fetch it from the operational package instead:  ./tools/fetch_stofs_3d_atl_fix.sh
+
 mkdir -p exec
-cp -L $OTHER/fv3_stofs_3d_atl.exe $OTHER/nos_ofs_create_tide_fac_schism $OTHER/schism_combine_hotstart7.exe exec/
+cp -L $MJEXE/fv3_stofs_3d_atl.exe $MJEXE/nos_ofs_create_tide_fac_schism $MJEXE/schism_combine_hotstart7.exe exec/
 cp /apps/prod/schism/5.14.0/bin/pschism_WCOSS2_VL exec/stofs_3d_atl_pschism_v3.1.5
-ls -l exec/
+ls -l exec/ && ls fix/stofs_3d_atl_ufs | wc -l
 ```
 - `cp -L` copies the real files, not links.
-- The owner must make those three files group-readable (`chmod g+r`) if you get "Permission denied".
+- If a copy fails with "Permission denied", ask the maintainer to make the files readable (`chmod -R g+rX` on the directory).
+- These are the maintainer's working directories and may move. If a path no longer exists, use the fetch tool for fix and ask for the executable location.
 - The cards submit with `#PBS -A ESTOFS-DEV -q dev`. The launchers and the ParMETIS retry use the card's account. Without that project, ask for access, or change `#PBS -A` in your clone's cards.
 - Your COMROOT, work directories and logs go under your own ptmp (`$LOGNAME`). Inputs come from the shared operational `com` and `dcom`.
 
