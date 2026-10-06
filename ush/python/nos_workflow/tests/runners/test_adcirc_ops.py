@@ -1,6 +1,7 @@
 """STOFS-2D-GLO ops mode: cold start and the tide/surf ncst, fcst1, fcst2 chain. MJ (10/05/26)"""
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from datetime import datetime, timedelta
@@ -419,3 +420,98 @@ def test_surf_ncst_window_must_match_the_chain_start(tmp_path):
         _go(tmp_path, "surf", "ncst")
     _ncst221(ctx0, 7)
     _go(tmp_path, "surf", "ncst")
+
+
+STUB_EX = """#!/bin/bash
+env | sort > "$DATA/env.rec"; echo "$@" > "$DATA/args.rec"; ls -l "$COMIN" > "$DATA/comin.rec"
+%s
+"""
+OPS_MAKE = {"anomaly": 'echo anomaly > $COMOUT/${RUN}.${cycle}.points.cwl.nc; echo db > $COMOUT/database.tar.gz',
+            "bias": 'echo bias > $COMOUT/${RUN}.${cycle}.fields.cwl.nc',
+            "grib2": 'echo g > $COMOUT/${RUN}.${cycle}.conus.east.cwl.grib2; echo w > $COMOUT/wmo/grib2_x'}
+
+
+def _pkg(tmp_path, monkeypatch, seg, skip=None):
+    pkg, bindir = tmp_path / "pkg", tmp_path / "tools"
+    bindir.mkdir()
+    need = post.OPS_JOBS[seg][2]
+    for n in ["scripts/{r}/exstofs_2d_glo_post_%s.sh" % post.OPS_JOBS[seg][0]] + need:
+        f = pkg / n.format(r=RUN)
+        if n != skip:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(STUB_EX % OPS_MAKE[seg] if f.suffix == ".sh" else "x")
+    for t in post.OPS_JOBS[seg][3] + post.PROD_UTIL:
+        (bindir / t).write_text("#!/bin/sh\n")
+        (bindir / t).chmod(0o755)
+    monkeypatch.setenv("PATH", "%s:%s" % (bindir, os.environ["PATH"]))
+    monkeypatch.setenv("STOFS_RUNVER", str(pkg / "versions" / "run.ver"))
+    return pkg
+
+
+def _ops_env(tmp_path):
+    return dict(l.split("=", 1) for l in (tmp_path / "work" / "ops_anomaly" / "env.rec").read_text().splitlines() if "=" in l)
+
+
+def test_ops_anomaly_env_scratch_comin_and_publish(tmp_path, monkeypatch):
+    pkg = _pkg(tmp_path, monkeypatch, "anomaly")
+    ctx = _seg(tmp_path, "anomaly")
+    _touch(ctx, "points.cwl.nc", "points.cwl.noanomaly.nc", "points.htp.nc")
+    day = ctx.cycle_dir(CYCLE, "x").parent
+    (day / "database.tar.gz").write_text("old")
+    assert post.run_post(ctx) == ["exstofs_2d_glo_post_anomaly.sh"]
+    e = _ops_env(tmp_path)
+    assert (e["RUN"], e["NET"], e["PDY"], e["PDYm1"], e["cyc"], e["cycle"]) == (RUN, "stofs", "20261005", "20261004", "12", "t12z")
+    assert (e["SENDCOM"], e["SENDDBN"], e["SENDDBN_NTC"]) == ("YES", "NO", "NO")
+    assert e["EXECstofs"] == str(pkg / "exec" / RUN) and e["FIXstofs"] == str(pkg / "fix" / RUN) and e["COM"] == str(ctx.comoutroot)
+    assert e["DCOMIN"] == "/lfs/h1/ops/prod/dcom/20261005/coops_waterlvlobs" and "NCPU" not in e
+    comin = Path(e["COMIN"])
+    assert comin != day and comin.parent == Path(e["DATA"])
+    # a rerun must not re-add the anomaly: the script's points.cwl.nc input is the noanomaly file. MJ (10/06/26)
+    assert (comin / f"{RUN}.t12z.points.cwl.nc").resolve() == ctx.cycle_dir(CYCLE, "points.cwl.noanomaly.nc").resolve()
+    assert (comin / f"{RUN}.t12z.points.htp.nc").resolve() == ctx.cycle_dir(CYCLE, "points.htp.nc").resolve()
+    assert (comin / "database.tar.gz").resolve() == (day / "database.tar.gz").resolve()
+    assert ctx.cycle_dir(CYCLE, "points.cwl.nc").read_text() == "anomaly\n"
+    assert (day / "database.tar.gz").read_text() == "db\n" and not list(day.glob("*.partial"))
+
+
+def test_ops_bias_and_grib2_ranks_and_outputs(tmp_path, monkeypatch):
+    _pkg(tmp_path, monkeypatch, "bias")
+    ctx = _seg(tmp_path, "bias")
+    _touch(ctx, "points.cwl.nc", "fields.cwl.noanomaly.nc")
+    post.run_post(ctx)
+    env = {l.split("=", 1)[0]: l.split("=", 1)[1] for l in (tmp_path / "work/ops_bias/env.rec").read_text().splitlines() if "=" in l}
+    assert (env["NCPU"], env["PPN"]) == ("256", "32")
+    assert (Path(env["COMIN"]) / f"{RUN}.t12z.fields.cwl.nc").resolve() == ctx.cycle_dir(CYCLE, "fields.cwl.noanomaly.nc").resolve()
+    assert ctx.cycle_dir(CYCLE, "fields.cwl.nc").read_text() == "bias\n"
+    shutil.rmtree(str(tmp_path / "tools"))
+    _pkg(tmp_path, monkeypatch, "grib2")
+    post.run_post(_seg(tmp_path, "grib2"))
+    assert ctx.cycle_dir(CYCLE, "conus.east.cwl.grib2").is_file() and (ctx.cycle_dir(CYCLE, "x").parent / "wmo" / "grib2_x").is_file()
+    env = {l.split("=", 1)[0]: l.split("=", 1)[1] for l in (tmp_path / "work/ops_grib2/env.rec").read_text().splitlines() if "=" in l}
+    assert (env["NCPU"], env["PPN"]) == ("7", "7")
+
+
+def test_ops_missing_package_exe_or_tool_is_clear(tmp_path, monkeypatch):
+    _pkg(tmp_path, monkeypatch, "anomaly", skip="exec/{r}/{r}_anomaly")
+    with pytest.raises(AdcircConfigError, match="missing for post anomaly.*stofs_2d_glo_anomaly"):
+        post.run_post(_seg(tmp_path, "anomaly"))
+    monkeypatch.setenv("STOFS_RUNVER", str(tmp_path / "nope" / "versions" / "run.ver"))
+    with pytest.raises(AdcircConfigError, match="exstofs_2d_glo_post_anomaly.sh"):
+        post.run_post(_seg(tmp_path, "anomaly"))
+    shutil.rmtree(str(tmp_path / "tools"))
+    shutil.rmtree(str(tmp_path / "pkg"))
+    _pkg(tmp_path, monkeypatch, "anomaly")
+    (tmp_path / "tools" / "err_chk").unlink()
+    monkeypatch.setenv("PATH", str(tmp_path / "tools"))
+    with pytest.raises(AdcircConfigError, match="err_chk"):
+        post.run_post(_seg(tmp_path, "anomaly"))
+
+
+def test_ops_script_failure_and_missing_product(tmp_path, monkeypatch):
+    _pkg(tmp_path, monkeypatch, "anomaly")
+    ctx = _seg(tmp_path, "anomaly")
+    _touch(ctx, "points.cwl.nc", "points.cwl.noanomaly.nc", "points.htp.nc")
+    with pytest.raises(RuntimeError, match="failed"):
+        post.run_post(ctx, Recorder(rc=1))
+    with pytest.raises(RuntimeError, match="made no stofs_2d_glo.t12z.points.cwl.nc"):
+        post.run_post(ctx, Recorder())
