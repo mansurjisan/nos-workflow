@@ -96,6 +96,29 @@ cp fv3_stofs_atl_pe.exe <your nos-workflow>/exec/fv3_stofs_3d_atl.exe
 ```
 `PREC_EVAP` matters: without it SCHISM ignores precipitation and the operational river sinks (1,986,300) drain the domain.
 
+### 3.1a Starting from a teammate's package
+
+If someone already runs STOFS-3D-ATL on WCOSS2, clone your own copy and borrow only their executables. Don't copy their whole package directory:
+- **Symlinks:** `fix/` and `exec/` in a working package are often symlinks into another package. `cp -r` keeps the links, so your runs would read their files and break when they change them.
+- **Location and access:** a copy may still carry hard-coded paths, or sit somewhere you cannot write.
+- **Updates:** a copy does not get updates with `git pull`.
+
+Do this instead:
+```bash
+git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
+git submodule update --init ush/python/nos-utils
+./tools/fetch_stofs_3d_atl_fix.sh                  # operational fix files, river files, out2d mask, DATM/UFS templates
+OTHER=<their package>/exec                         # ask the maintainer for the path
+mkdir -p exec
+cp -L $OTHER/fv3_stofs_3d_atl.exe $OTHER/nos_ofs_create_tide_fac_schism $OTHER/schism_combine_hotstart7.exe exec/
+cp /apps/prod/schism/5.14.0/bin/pschism_WCOSS2_VL exec/stofs_3d_atl_pschism_v3.1.5
+ls -l exec/
+```
+- `cp -L` copies the real files, not links.
+- The owner must make those three files group-readable (`chmod g+r`) if you get "Permission denied".
+- The cards submit with `#PBS -A ESTOFS-DEV -q dev`. The launchers and the ParMETIS retry use the card's account. Without that project, ask for access, or change `#PBS -A` in your clone's cards.
+- Your COMROOT, work directories and logs go under your own ptmp (`$LOGNAME`). Inputs come from the shared operational `com` and `dcom`.
+
 ### 3.2 Seed the first cycle
 
 ```bash
