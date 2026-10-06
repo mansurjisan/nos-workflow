@@ -13,7 +13,7 @@ import shutil
 from pathlib import Path
 from typing import List
 
-from . import hotstart as hs
+from . import hotstart as hs, ops
 from .decomp import pe_dirs
 from .execute import Launcher, default_launcher, run_padcirc
 from .settings import CycleContext
@@ -53,6 +53,8 @@ def archive(ctx: CycleContext, phase: str, keep_decomposition: bool = False) -> 
 
 
 def run_nowcast(ctx: CycleContext, launcher: Launcher = default_launcher, profile=None) -> List[str]:
+    if ctx.settings.mode == "ops":
+        return ops.run_nowcast(ctx, launcher, profile)
     run_dir = ctx.run_dir("nowcast")
     timing = hs.read_timing(run_dir)
     if timing is None:
@@ -63,6 +65,8 @@ def run_nowcast(ctx: CycleContext, launcher: Launcher = default_launcher, profil
 
 
 def run_forecast(ctx: CycleContext, launcher: Launcher = default_launcher, profile=None) -> List[str]:
+    if ctx.settings.mode == "ops":
+        return ops.run_forecast(ctx, launcher, profile)
     prepare_forecast_restart(ctx)
     argv = run_padcirc(ctx, ctx.run_dir("forecast"), True, launcher, profile)
     archive(ctx, "forecast")

@@ -53,36 +53,40 @@ def read_timing(run_dir: Path) -> Optional[dict]:
     return json.loads(p.read_text()) if p.is_file() else None
 
 
+def file_time(path: Path) -> Optional[float]:
+    import netCDF4
+
+    ds = netCDF4.Dataset(path, "r")
+    try:
+        var = ds.variables["time"]
+        if var.size == 0:
+            log.warning("%s: time dimension is empty, skipping", path.name)
+            return None
+        data = var[:]
+        fill = getattr(var, "_FillValue", None)
+        # netCDF4 returns a masked element for a fill value. MJ (10/05/26)
+        if np.ma.is_masked(data.flat[0]) or (fill is not None and data.flat[0] == fill):
+            log.warning("%s: time contains fill value, skipping", path.name)
+            return None
+        return float(data.flat[0])
+    finally:
+        ds.close()
+
+
 def select_restart_file(prev_dir: Path) -> Optional[Tuple[Path, int, datetime]]:
     """Latest valid fort.67/68.nc in ``prev_dir`` whose time matches its timing.json end."""
     timing = read_timing(prev_dir)
     if timing is None:
         return None
-    import netCDF4
-
     coldstart = datetime.fromisoformat(timing["coldstart_time"])
     expected = (datetime.fromisoformat(timing["end_time"]) - coldstart).total_seconds()
 
     candidates = []
     for unit in (67, 68):
         path = prev_dir / f"fort.{unit}.nc"
-        if not path.exists():
-            continue
-        ds = netCDF4.Dataset(path, "r")
-        try:
-            var = ds.variables["time"]
-            if var.size == 0:
-                log.warning("%s: time dimension is empty, skipping", path.name)
-                continue
-            data = var[:]
-            fill = getattr(var, "_FillValue", None)
-            # netCDF4 returns a masked element for a fill value. MJ (10/05/26)
-            if np.ma.is_masked(data.flat[0]) or (fill is not None and data.flat[0] == fill):
-                log.warning("%s: time contains fill value, skipping", path.name)
-                continue
-            candidates.append((path, unit, float(data.flat[0])))
-        finally:
-            ds.close()
+        seconds = file_time(path) if path.exists() else None
+        if seconds is not None:
+            candidates.append((path, unit, seconds))
     if not candidates:
         return None
 

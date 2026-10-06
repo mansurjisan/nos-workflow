@@ -119,7 +119,7 @@ def test_slurm_card_exports(stage):
     assert text.rstrip().endswith(LAST[stage])
     if stage != "prep":
         assert "I_MPI_EXTRA_FILESYSTEM=ON" in text and "FI_MLX_INJECT_LIMIT=0" in text
-        assert "-le 4080" in text
+        assert "export ADCIRC_ALLOC_RANKS=${SLURM_NTASKS}" in text
 
 
 def test_cards_never_touch_secofs_or_atl():
@@ -187,3 +187,22 @@ def test_fetch_tool(tmp_path):
     r5 = subprocess.run(["bash", str(FETCH), str(tmp_path / "d3")], env={**os.environ, "OPS_DIR": str(ops)},
                         capture_output=True, text=True)
     assert r5.returncode == 2 and "WARNING" in r5.stdout
+
+
+@pytest.mark.parametrize("card", sorted(PBS.glob("jnos_*.pbs")) + sorted(SLURM.glob("jnos_*.sh")))
+def test_ops_mode_is_chosen_at_submit_time(card):
+    text = card.read_text()
+    assert "export ADCIRC_MODE=${ADCIRC_MODE:-single}\n" in text
+    assert not [l for l in text.splitlines() if l.startswith(("export ADCIRC_STREAM", "export ADCIRC_SEGMENT",
+                                                              "export ADCIRC_MODE=ops"))]
+    if "nowcast" in card.name:
+        for job in ("ADCIRC_SEGMENT=spinup", "ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst", "COLDSTART=YES"):
+            assert job in text
+    if "prep" not in card.name:
+        assert "export ADCIRC_ALLOC_RANKS=" in text and "_tot" not in text
+
+
+def test_keepdata_is_a_submit_time_override():
+    for card in list(PBS.glob("jnos_*_00.pbs")) + list(SLURM.glob("jnos_*_00.sh")):
+        text = card.read_text()
+        assert "export KEEPDATA=${KEEPDATA:-YES}" in text and "KEEPDATA=YES\n" not in text.replace(":-YES}", "")

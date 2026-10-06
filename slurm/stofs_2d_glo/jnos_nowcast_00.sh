@@ -23,6 +23,17 @@
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
+# Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
+# from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst1 launch 4064 + 32 writers = 4096 ranks, which needs
+# 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
+# surf ncst -> fcst1 -> fcst2:
+#   sbatch -t 2:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
+#   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
+#   sbatch -t 0:15:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
+#   sbatch -t 0:30:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.sh
+#   sbatch -t 0:25:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.sh
+#   surf: the same three with ADCIRC_STREAM=surf, -t 0:15:00 -N 52, 0:40:00 -N 52, 0:25:00. MJ (10/05/26)
+
 # PACKAGEROOT must be set explicitly: a default could pick up the SECOFS or ATL package and run its code silently. MJ (10/05/26)
 PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the 2D-Global nos-workflow clone>}
 [ -d "${PACKAGEROOT}/nos-workflow/slurm/stofs_2d_glo" ] || { echo "FATAL: ${PACKAGEROOT}/nos-workflow has no 2D-Global cards (wrong PACKAGEROOT?)"; exit 1; }
@@ -80,8 +91,9 @@ export PDY=${PDY:?set PDY (YYYYMMDD)}
 export job=stofs_2d_glo_nc_00_$envir
 export platform=ptmp
 export framework=adcirc
+export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
@@ -135,9 +147,8 @@ for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
     [ -s "${FIXDIR}/${_f}" ] || { echo "FATAL: ${FIXDIR}/${_f} missing (tools/fetch_stofs_2d_glo_fix.sh)"; exit 1; }
 done
 [ -x "${ADCIRC_EXEC_DIR}/padcirc" ] || { echo "FATAL: ${ADCIRC_EXEC_DIR}/padcirc not executable"; exit 1; }
-_tot=$(python3 -c "import yaml;a=yaml.safe_load(open('${OFS_CONFIG}'))['adcirc'];print(a['ncpu_compute']+a.get('ncpu_writer',0))" 2>/dev/null) || _tot=
-[ -n "${_tot}" ] || { echo "FATAL: cannot read adcirc.ncpu_compute/ncpu_writer from ${OFS_CONFIG}"; exit 1; }
-[ "${_tot}" -le 4080 ] || { echo "FATAL: ${_tot} ranks exceed the 51 x 80 allocation of this card"; exit 1; }
+# Allocation size for the launch-time rank check (compute + writers must fit). MJ (10/05/26)
+export ADCIRC_ALLOC_RANKS=${SLURM_NTASKS}
 
 # Filesystem-sync guard: staged inputs must be visible on every compute node first. MJ (10/04/26)
 sync && sleep 1

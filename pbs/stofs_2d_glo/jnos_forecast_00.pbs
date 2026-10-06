@@ -10,7 +10,7 @@
 # STOFS-2D-Global (ADCIRC padcirc v56.1.0) forecast: 180 h from the nowcast hotstart, 4064 compute ranks
 # on 32 x 128 (ops layout, ecf jstofs_2d_glo_tide_fcst1/2 at 0:30 + 0:25; surf_fcst1/2 0:40 + 0:25).
 # Zach's WCOSS2 180 h test ran inside 2 h; 3 h walltime leaves headroom. Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
-# stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked below. MJ (10/05/26)
+# stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked at launch. MJ (10/05/26)
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
@@ -67,8 +67,9 @@ export PDY=${PDY:?set PDY (YYYYMMDD)}
 export job=stofs_2d_glo_fc_00_$envir
 export platform=ptmp
 export framework=adcirc
+export ADCIRC_MODE=${ADCIRC_MODE:-single}
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
@@ -98,10 +99,8 @@ for _f in stofs_2d_glo_grid stofs_2d_glo_attr; do
 done
 if [ -n "${ADCIRC_EXEC_DIR:-}" ]; then _px=${ADCIRC_EXEC_DIR}/padcirc; else _px=$(command -v padcirc || true); fi
 [ -n "${_px}" ] && [ -x "${_px}" ] || { echo "FATAL: padcirc not found (module adcirc or ADCIRC_EXEC_DIR)"; exit 1; }
-# Total ranks (compute + writers) must fit the 32 x 128 allocation. MJ (10/05/26)
-_tot=$(python3 -c "import yaml;a=yaml.safe_load(open('${OFS_CONFIG}'))['adcirc'];print(a['ncpu_compute']+a.get('ncpu_writer',0))" 2>/dev/null) || _tot=
-[ -n "${_tot}" ] || { echo "FATAL: cannot read adcirc.ncpu_compute/ncpu_writer from ${OFS_CONFIG}"; exit 1; }
-[ "${_tot}" -le 4096 ] || { echo "FATAL: ${_tot} ranks exceed the 32 x 128 allocation of this card"; exit 1; }
+# Allocation size for the launch-time rank check (compute + writers must fit). MJ (10/05/26)
+export ADCIRC_ALLOC_RANKS=$(( $(sort -u "${PBS_NODEFILE}" | wc -l) * 128 ))
 
 ${HOMEnos}/jobs/JNOS_FORECAST
 exit $?

@@ -38,10 +38,10 @@ def test_hercules_launch_line():
 
 
 def test_writers_add_ranks_and_w_flag():
-    argv = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("wcoss2"), "padcirc", RPN)
+    argv = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("wcoss2"), "padcirc", RPN, 32)
     assert argv == ["mpiexec", "-n", "4096", "-ppn", "128", "--cpu-bind", "core",
                     "padcirc", "-W", "32"]
-    h = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("hercules"), "padcirc", RPN)
+    h = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("hercules"), "padcirc", RPN, 32)
     assert h[-3:] == ["padcirc", "-W", "32"] and h[2] == "4096"
 
 

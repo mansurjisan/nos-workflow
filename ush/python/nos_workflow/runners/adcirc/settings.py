@@ -50,10 +50,7 @@ class AdcircSettings:
     exec_dir: Optional[str]
     met_variables: List[str]
     raw: Mapping[str, Any] = field(default_factory=dict, compare=False)
-
-    @property
-    def ncpu_total(self) -> int:
-        return self.ncpu_compute + self.ncpu_writer
+    mode: str = "single"
 
     @classmethod
     def from_yaml(cls, path, env: Optional[Mapping[str, str]] = None) -> "AdcircSettings":
@@ -88,6 +85,10 @@ class AdcircSettings:
         if nowcast is None:
             nowcast = float(run.get("nowcast_hours", 6))
 
+        mode = (pick("ADCIRC_MODE") or "single").strip().lower()
+        if mode not in ("single", "ops"):
+            raise AdcircConfigError(f"ADCIRC_MODE must be single or ops, got {mode!r}")
+
         return cls(
             name=str(ad.get("name", "stofs2dglobal")),
             mesh_name=str(ad.get("name", "stofs2dglobal")),
@@ -113,6 +114,7 @@ class AdcircSettings:
             exec_dir=env.get("ADCIRC_EXEC_DIR") or execs.get("directory"),
             met_variables=list(atm.get("variables") or []),
             raw=data,
+            mode=mode,
         )
 
     def executable(self, which: str, execnos: Optional[Path] = None) -> str:
@@ -142,6 +144,10 @@ class CycleContext:
     fixofs: Path
     execnos: Optional[Path] = None
     comin_gfs: Optional[str] = None
+    data: Optional[Path] = None
+    stream: str = ""
+    segment: str = ""
+    coldstart: bool = False
 
     @classmethod
     def from_env(cls, settings: AdcircSettings, env: Optional[Mapping[str, str]] = None) -> "CycleContext":
@@ -168,6 +174,10 @@ class CycleContext:
             fixofs=fixofs,
             execnos=Path(env["EXECnos"]) if env.get("EXECnos") else None,
             comin_gfs=env.get("COMINgfs") or None,
+            data=Path(env["DATA"]) if env.get("DATA") else None,
+            stream=env.get("ADCIRC_STREAM", "").strip().lower(),
+            segment=env.get("ADCIRC_SEGMENT", "").strip().lower(),
+            coldstart=env.get("COLDSTART", "").strip().upper() == "YES",
         )
 
     @property

@@ -34,6 +34,9 @@ model:
 # (June fix 2), so never size this down. MJ (10/05/26)
 adcirc:
   name: stofs2dglobal
+  # ADCIRC_MODE=ops (set per job at submit time) runs the stofs.v3.1.5 structure; surf ncst and fcst1
+  # add this many -W writers (4064 + 32 = 4096). MJ (10/05/26)
+  ops_surf_writers: 32
   executables:
     padcirc: padcirc
     adcprep: adcprep

@@ -123,7 +123,7 @@ def test_june_fixes_in_yaml():
     s = AdcircSettings.from_yaml(YAML, {})
     assert s.physics["coordinate_system"] == 22
     assert s.physics["coordinate_rotation"] == [114.16991, 0.77432]
-    assert s.ncpu_compute == 4064 and s.ncpu_total == 4064
+    assert s.ncpu_compute == 4064
     data = yaml_to_env.load_yaml_with_inheritance(YAML, REPO / "parm")
     assert data["resources"]["nprocs"] == s.ncpu_compute + s.ncpu_writer
 
@@ -131,7 +131,7 @@ def test_june_fixes_in_yaml():
 def test_env_overrides_settings():
     s = AdcircSettings.from_yaml(YAML, {"NCPU": "256", "ATMOSPHERIC_FORCING": "false",
                                         "NUM_WRITERS": "32"})
-    assert (s.ncpu_compute, s.ncpu_writer, s.ncpu_total) == (256, 32, 288)
+    assert (s.ncpu_compute, s.ncpu_writer) == (256, 32)
     assert s.atmospheric_forcing is False
 
 
