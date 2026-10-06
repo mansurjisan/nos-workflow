@@ -228,3 +228,63 @@ def test_fcst_needs_its_nowcast_and_ranks_must_fit(tmp_path, monkeypatch):
     monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "35")
     with pytest.raises(AdcircConfigError, match="36 ranks.*35 allocated"):
         _go(tmp_path, "surf", "ncst")
+
+
+def _sfcf(comin, cycle, fhr):
+    nc = pytest.importorskip("netCDF4")
+    from nos_utils.forcing import adcirc_met as am
+    p = am.sfcf_path(comin, cycle, fhr)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    with nc.Dataset(str(p), "w", format="NETCDF4_CLASSIC") as d:
+        d.createDimension("grid_xt", 2)
+        d.createDimension("grid_yt", 2)
+        d.createDimension("time", 1)
+        for n, dims in (("grid_xt", ("grid_xt",)), ("grid_yt", ("grid_yt",)), ("time", ("time",)),
+                        ("lon", ("grid_yt", "grid_xt")), ("lat", ("grid_yt", "grid_xt"))):
+            d.createVariable(n, "f8", dims)[:] = 0
+        for n in ("pressfc", "ugrd10m", "vgrd10m", "icec"):
+            d.createVariable(n, "f4", ("time", "grid_yt", "grid_xt"))[:] = fhr
+
+
+def _gfs_ctx(tmp_path, seg, **extra):
+    return _ctx(tmp_path, ADCIRC_SEGMENT=seg, COMINgfs=str(tmp_path / "gfs"), **extra)
+
+
+def test_gfs_ncst_prep_starts_at_the_restart_chain_time(tmp_path):
+    nc = pytest.importorskip("netCDF4")
+    _cold(tmp_path)
+    for p in ops.rerun_dir(_ctx(tmp_path)).glob(f"{RUN}_ncst.*"):
+        p.unlink()
+    c06 = CYCLE - timedelta(hours=6)
+    for h in range(6):
+        _sfcf(tmp_path / "gfs", c06, h)
+    _sfcf(tmp_path / "gfs", CYCLE, 0)
+    assert ops.run_prep(_gfs_ctx(tmp_path, "ncst")) == 0
+    rr = ops.rerun_dir(_ctx(tmp_path))
+    for n, v in (("221", "pressfc"), ("222", "ugrd10m"), ("225", "icec")):
+        with nc.Dataset(str(rr / f"{RUN}_ncst.{n}.nc")) as d:
+            assert d.variables[v].shape[0] == 7 and d.dimensions["record"].isunlimited()
+
+
+def test_gfs_prep_skips_existing_and_fails_clearly(tmp_path):
+    _cold(tmp_path)
+    rr = ops.rerun_dir(_ctx(tmp_path))
+    ops.run_prep(_gfs_ctx(tmp_path, "fcst1"))  # the placeholder is kept, as ops does
+    assert (rr / f"{RUN}_fcst1.221.nc").read_text() == "fcst1"
+    (rr / f"{RUN}_fcst1.221.nc").unlink()
+    with pytest.raises(Exception, match="no GFS sfcf"):
+        ops.run_prep(_gfs_ctx(tmp_path, "fcst1"))
+    with pytest.raises(AdcircConfigError, match="COMINgfs"):
+        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="fcst1"))
+
+
+def test_gfs_prep_wait_comes_from_the_yaml(tmp_path, monkeypatch):
+    from nos_utils.forcing import adcirc_met as am
+    _cold(tmp_path)
+    ctx = _gfs_ctx(tmp_path, "fcst2")
+    (ops.rerun_dir(ctx) / f"{RUN}_fcst2.221.nc").unlink()
+    ctx.settings.raw["adcirc"]["ops_gfs_wait_s"] = {"fcst2": 77}
+    seen = {}
+    monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k, args=a))
+    ops.run_prep(ctx)
+    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst2"

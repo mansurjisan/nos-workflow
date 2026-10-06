@@ -22,6 +22,10 @@
 #   qsub -l walltime=0:30:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.pbs
 #   qsub -l walltime=0:25:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.pbs
 #   surf: the same three with ADCIRC_STREAM=surf and walltimes 0:15:00, 0:40:00, 0:25:00. MJ (10/05/26)
+#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst/fcst1/fcst2 walltimes). MJ (10/06/26)
+#   qsub -l walltime=0:10:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.pbs
+#   qsub -l walltime=0:30:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst1 jnos_prep_00.pbs
+#   qsub -l walltime=0:10:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst2 jnos_prep_00.pbs
 
 PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
