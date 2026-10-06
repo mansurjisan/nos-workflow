@@ -142,3 +142,5 @@ export ADCIRC_ALLOC_RANKS=${SLURM_NTASKS}
 # Filesystem-sync guard: staged inputs must be visible on every compute node first. MJ (10/04/26)
 sync && sleep 1
 ${HOMEnos}/jobs/JNOS_FORECAST
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1

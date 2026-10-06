@@ -263,7 +263,7 @@ def test_post_ncdiff_commands_match_ops(tmp_path):
     _touch(ctx, "points.cwl.nc", "points.htp.nc", "fields.cwl.nc", "fields.htp.nc")
     rec = Recorder()
     with pytest.raises(FileNotFoundError):
-        post.run_post(ctx, rec)  # the fake NCO wrote no swl file to publish
+        post.run_post(ctx, rec)  # the fake NCO wrote no swl file to publish. MJ (10/06/26)
     assert rec.cmds == [["ncdiff", "cwl.fort.61.nc", "htp.fort.61.nc", "swl.fort.61.nc"],
                         ["ncdiff", "-v", "zeta", "cwl.fort.63.nc", "htp.fort.63.nc", "swl.fort.63.nc"],
                         ["ncks", "-A", "-v", "x,y", "cwl.fort.61.nc", "swl.fort.61.nc"],

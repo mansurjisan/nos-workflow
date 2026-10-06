@@ -21,7 +21,8 @@ SLURM = REPO / "slurm" / "stofs_2d_glo"
 FETCH = REPO / "tools" / "fetch_stofs_2d_glo_fix.sh"
 LAUNCH = PBS / "launch_stofs_2d_glo.sh"
 TAG = "MJ (10/05/26)"
-LAST = {"prep": "esac", "nowcast": "JNOS_NOWCAST", "forecast": "JNOS_FORECAST"}
+GATE = "grep -q 'STAGE_SUMMARY .*status=PASS' \"${_LOG_PREFIX}.out\" || exit 1"
+LAST = {"prep": "JNOS_PREP", "nowcast": "JNOS_NOWCAST", "forecast": "JNOS_FORECAST"}
 
 
 def _lines(path: Path, prefix: str) -> list:
@@ -91,7 +92,7 @@ def test_pbs_card_exports(stage):
                    "stofs_2d_glo_grid stofs_2d_glo_attr", "fetch_stofs_2d_glo_fix.sh", TAG):
         assert needle in text, needle
     assert "OFS:-" not in text and "COMROOT=${COMROOT:-" not in text and "DATAROOT:-" not in text
-    assert text.rstrip().endswith(LAST[stage]) or text.rstrip().endswith(LAST[stage] + "\nexit $?")
+    assert text.rstrip().endswith(GATE) and LAST[stage] in text
 
 
 @pytest.mark.parametrize("stage", STAGES)
@@ -116,7 +117,7 @@ def test_slurm_card_exports(stage):
     for var in ("NCPU", "NUM_WRITERS", "TOT_NCPU", "NTASKS", "USHnos", "SCRIPTSnos", "PARMnos", "FIXofs"):
         assert var in unset_line.split(), var
     assert any(l.startswith("unset COMOUT") for l in text.splitlines())
-    assert text.rstrip().endswith(LAST[stage])
+    assert text.rstrip().endswith(GATE) and LAST[stage] in text
     if stage != "prep":
         assert "I_MPI_EXTRA_FILESYSTEM=ON" in text and "FI_MLX_INJECT_LIMIT=0" in text
         assert "export ADCIRC_ALLOC_RANKS=${SLURM_NTASKS}" in text
@@ -276,6 +277,9 @@ def test_launcher_single_mode_graph_unchanged(tmp_path):
 
 @pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
 def test_prep_card_dispatches_ops_post_jobs(card):
-    last = card.read_text().rstrip().splitlines()[-1]
-    assert last == ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat) ${HOMEnos}/jobs/JNOS_POST ;; '
-                    '*) ${HOMEnos}/jobs/JNOS_PREP ;; esac')
+    text = card.read_text()
+    assert ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat) ${HOMEnos}/jobs/JNOS_POST ;; '
+            '*) ${HOMEnos}/jobs/JNOS_PREP ;; esac\n# JNOS_* exits 0') in text
+    assert "esac\n" in text and text.index("esac") < text.index(GATE)
+    if card.suffix == ".pbs":
+        assert "module load nco/" in text

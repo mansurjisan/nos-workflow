@@ -38,7 +38,7 @@ done
 if [ "${ADCIRC_MODE:-single}" = ops ]; then
   OPSVARS="${VARS},KEEPDATA=NO,ADCIRC_MODE=ops"
   declare -A J
-  # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]
+  # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]; the first job of a stream waits for the spin-up. MJ (10/06/26)
   sub() {
     local label="$1" card="$2" wall="$3" sel="$4" xv="$5" v="${OPSVARS}" dep="" l
     shift 5
@@ -62,7 +62,7 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
     sub cold_spinup "${NOW}" 1:00:00 - ADCIRC_SEGMENT=spinup cold_adcprep
     COLD="cold_spinup"
   fi
-  sub gfs_ncst "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=ncst
+  sub gfs_ncst "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=ncst ${COLD}
   sub gfs_fcst1 "${PREP}" 0:30:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst1
   sub gfs_fcst2 "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst2
   sub tide_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${COLD}
@@ -71,8 +71,8 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
   sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_ncdiff "${PREP}" 0:10:00 - ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
-  sub post_ncrcat "${PREP}" 0:15:00 - ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
+  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:mem=100GB" ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
+  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:mem=100GB" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
   exit 0
 fi
 

@@ -145,7 +145,8 @@ case "${OFS_FRAMEWORK}" in
         esac
         ;;
     adcirc)
-        if [ "${ADCIRC_MODE:-single}" = ops ]; then
+        _am=${ADCIRC_MODE:-single}
+        if [ "${_am,,}" = ops ]; then
             $SCRIPTSnos/exnos_adcirc.sh post
         else
         # ADCIRC post-processing is handled inline during execute_model
