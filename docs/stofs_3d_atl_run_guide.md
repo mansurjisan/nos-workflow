@@ -107,16 +107,16 @@ Do this instead. The maintainer's WCOSS2 package (Mansur Jisan) holds a complete
 
 | What | Path on WCOSS2 |
 |---|---|
-| ATL fix files, including the river files, out2d mask and DATM/UFS templates | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages_dev/nos-workflow/fix/stofs_3d_atl_ufs` |
+| ATL fix files, including the river files, out2d mask and DATM/UFS templates | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/fix/stofs_3d_atl_ufs` |
 | Executables | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec` |
 
 ```bash
 git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
 git submodule update --init ush/python/nos-utils
-MJFIX=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages_dev/nos-workflow/fix/stofs_3d_atl_ufs
+MJFIX=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/fix/stofs_3d_atl_ufs
 MJEXE=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec
 
-# fix: either copy the maintainer's set (about 6 GB; many entries there are symlinks, so -L) ...
+# fix: either copy the maintainer's set (about 6 GB; -L in case any entry is a symlink) ...
 cp -rL $MJFIX/. fix/stofs_3d_atl_ufs/
 git checkout -- fix/stofs_3d_atl_ufs              # keep this clone's tracked files (pond seed, param.nml)
 # ... or fetch it from the operational package instead:  ./tools/fetch_stofs_3d_atl_fix.sh
