@@ -264,6 +264,22 @@ def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
         assert pin > src, card
 
 
+class TestFieldsWorkerGate:
+    class _R:
+        def __init__(self, status):
+            self.name, self.status, self.detail = "fields_nc", status, "worker failed"
+
+    def test_atl_failed_fields_fails_post(self):
+        with pytest.raises(StageFailedError):
+            post._require_fields_worker(_Desc, "stofs_3d_atl_ufs", [self._R("failed")])
+
+    def test_atl_ok_fields_passes(self):
+        post._require_fields_worker(_Desc, "stofs_3d_atl_ufs", [self._R("ok")])
+
+    def test_secofs_failed_fields_only_warns(self):
+        post._require_fields_worker(_Desc, "secofs_ufs", [self._R("failed")])
+
+
 def test_atl_pbs_cards_home_python_and_retry_forwarding():
     # HOMEnos is set before run.ver is sourced, the coupled ParMETIS retry keeps the clone and
     # COMROOT, and the standalone cards restore python_ver after the ops run.ver. MJ (10/06/26)

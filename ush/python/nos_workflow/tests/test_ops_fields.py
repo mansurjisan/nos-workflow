@@ -98,6 +98,21 @@ def test_stamp_stack_masks_stamps_and_is_idempotent(tmp_path):
         assert ds["isolatedPondNode"].dtype == np.int8
 
 
+def test_stamp_stack_masks_out2d_without_elevation(tmp_path):
+    f = tmp_path / "out2d_3.nc"
+    with netCDF4.Dataset(f, "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 6)
+        ds.createVariable("time", "f8", ("time",))
+    ops_fields.stamp_stack(
+        netCDF4.Dataset, f, "out2d", fallback_base_date="2026-09-30 12:00:00",
+        idmask=np.zeros(6, dtype=np.int32),
+    )
+    with netCDF4.Dataset(f) as ds:
+        assert "elevation" not in ds.variables
+        assert ds["idmask"].shape == (6,)
+
+
 def test_stamp_stack_3d_attrs_only(tmp_path):
     f = tmp_path / "salinity_1.nc"
     with netCDF4.Dataset(f, "w") as ds:

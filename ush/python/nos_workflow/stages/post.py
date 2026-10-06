@@ -255,8 +255,22 @@ def _comf_post_body(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
         results=results,
     )
 
+    _require_fields_worker(descriptor, run_name, results)
+
     sl.info("post-processing completed")
     return 0
+
+
+def _require_fields_worker(descriptor: OFSDescriptor, run_name: str, results) -> None:
+    """STOFS-3D-ATL: a failed fields worker fails post; other systems only warn. MJ (10/06/26)"""
+    if not build_staout_1.is_atl_run(run_name):
+        return
+    for r in results:
+        if r.name == "fields_nc" and r.status == "failed":
+            raise StageFailedError(
+                stage=_STAGE, ofs=descriptor.name, returncode=1,
+                msg=f"fields_nc failed: {r.detail}",
+            )
 
 
 #: Products that read the split field stacks, and so must not run before
@@ -1133,7 +1147,7 @@ class FieldsNcProduct(PostProduct):
                 detail="no field stacks staged",
             )
         if failed_phases:
-            # Non-fatal to the stage, but surfaced for monitoring.
+            # Surfaced for monitoring; STOFS-3D-ATL post fails on it in _require_fields_worker. MJ (10/06/26)
             return ProductResult(
                 name=self.name,
                 status="failed",
