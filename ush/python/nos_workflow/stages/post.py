@@ -1147,7 +1147,7 @@ class FieldsNcProduct(PostProduct):
                 detail="no field stacks staged",
             )
         if failed_phases:
-            # Non-fatal to the stage, but surfaced for monitoring.
+            # Surfaced for monitoring; STOFS-3D-ATL post fails on it in _require_fields_worker. MJ (10/06/26)
             return ProductResult(
                 name=self.name,
                 status="failed",

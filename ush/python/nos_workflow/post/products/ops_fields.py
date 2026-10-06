@@ -225,6 +225,7 @@ def stamp_stack(
             elev = ds.variables.get("elevation")
             if elev is None:
                 log(f"ops_fields: {path.name}: no elevation; not masked")
+                return  # an empty stack has no wet/dry state either, so skip the pond step too MJ (10/06/26)
             else:
                 for it in range(elev.shape[0]):
                     row = elev[it, :]
