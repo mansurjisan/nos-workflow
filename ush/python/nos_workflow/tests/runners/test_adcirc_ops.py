@@ -97,6 +97,14 @@ def _cold(tmp_path):
     return ctx
 
 
+def _ncst221(ctx, records):
+    nc = pytest.importorskip("netCDF4")
+    p = ops.rerun_dir(ctx) / f"{RUN}_ncst.221.nc"
+    with nc.Dataset(str(p), "w") as d:
+        d.createDimension("record", None)
+        d.createVariable("pressfc", "f4", ("record",))[:] = [0.0] * records
+
+
 def test_single_is_the_default_and_bad_mode_fails():
     assert AdcircSettings.from_yaml(YAML, {}).mode == "single"
     with pytest.raises(AdcircConfigError, match="single or ops"):
@@ -182,7 +190,8 @@ def test_fcst_rerun_after_success_is_refused(tmp_path):
 
 
 def test_surf_chain_writers_and_forcing(tmp_path):
-    _cold(tmp_path)
+    ctx0 = _cold(tmp_path)
+    _ncst221(ctx0, 7)   # window = chain start .. cycle, hourly, inclusive ends MJ (10/06/26)
     ctx, fa = _go(tmp_path, "surf", "ncst")
     assert fa.argv[0][1:3] == ["-n", "36"] and fa.argv[0][-2:] == ["-W", "32"]
     assert hotstart.file_time(ctx.cycle_dir(CYCLE, "restart")) == 604800
@@ -222,7 +231,7 @@ def test_crash_text_fails_with_rc_zero(tmp_path, line):
 
 
 def test_fcst_needs_its_nowcast_and_ranks_must_fit(tmp_path, monkeypatch):
-    _cold(tmp_path)
+    _ncst221(_cold(tmp_path), 7)
     with pytest.raises(AdcircConfigError, match="run the tide nowcast first"):
         _go(tmp_path, "tide", "fcst1")
     monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "35")
@@ -288,3 +297,12 @@ def test_gfs_prep_wait_comes_from_the_yaml(tmp_path, monkeypatch):
     monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k, args=a))
     ops.run_prep(ctx)
     assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst2"
+
+
+def test_surf_ncst_window_must_match_the_chain_start(tmp_path):
+    ctx0 = _cold(tmp_path)
+    _ncst221(ctx0, 13)
+    with pytest.raises(AdcircConfigError, match="13 records but .* needs 7"):
+        _go(tmp_path, "surf", "ncst")
+    _ncst221(ctx0, 7)
+    _go(tmp_path, "surf", "ncst")

@@ -264,6 +264,17 @@ def _export(ctx: CycleContext, run_dir: Path) -> None:
         _publish(_need(run_dir, src), rerun_dir(ctx) / f"{ctx.run}_{name}")
 
 
+def _check_window(path: Path, want: int) -> None:
+    import netCDF4
+    if not path.is_file():
+        return  # _stage names the missing file
+    with netCDF4.Dataset(str(path)) as d:
+        have = len(d.dimensions["record"])
+    if have != want:
+        raise AdcircConfigError(f"{path.name} has {have} records but the restart chain start needs {want}: the forcing window "
+                                f"does not match it; delete rerun/{path.name[:-6]}22?.nc and re-run the GFS ncst prep")  # MJ (10/06/26)
+
+
 def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     stream, now = ctx.stream, ctx.cycle_time
     chain, state = STREAMS[stream][:2]
@@ -274,6 +285,8 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     h68 = rerun_dir(ctx) / f"{ctx.run}_{stream}.68.nc"
     if h68.exists():
         h68.unlink()
+    if stream == "surf":
+        _check_window(rerun_dir(ctx) / f"{ctx.run}_ncst.221.nc", int((now - beg).total_seconds() // 3600) + 1)
     run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
     argv = _launch(ctx, run_dir, stream, "ncst", launcher, profile)
     _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, WNDH) - 300}.nc"), ctx.cycle_dir(now, chain))
