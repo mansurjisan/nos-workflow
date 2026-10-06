@@ -124,4 +124,5 @@ export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
 ${HOMEnos}/jobs/JNOS_FORECAST
-exit $?
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1

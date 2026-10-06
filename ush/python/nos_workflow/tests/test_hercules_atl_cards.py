@@ -76,8 +76,9 @@ def test_card_env_and_syntax(system, stage):
     assert "export cyc=${CYC:-12}" in text
     assert "versions/run.hercules.ver" in text
     assert "MPICH_" not in text and "mpiexec" not in text and "qsub" not in text
-    assert text.rstrip().endswith({"prep": "JNOS_PREP", "nowcast": "JNOS_NOWCAST",
-                                    "forecast": "JNOS_FORECAST", "post": "JNOS_POST"}[stage])
+    jjob = {"prep": "JNOS_PREP", "nowcast": "JNOS_NOWCAST", "forecast": "JNOS_FORECAST", "post": "JNOS_POST"}[stage]
+    assert f"${{HOMEnos}}/jobs/{jjob}\n" in text
+    assert text.rstrip().endswith("""grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1""")
     assert "export OFS=stofs_3d_atl_ufs\n" in text and "OFS:-" not in text
     assert "import nos_utils" in text and "ush/python/nos-utils" in text
     assert "MJ (10/04/26)" in text

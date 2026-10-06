@@ -10,8 +10,6 @@
 # Required env (sbatch passes the caller's environment): PDY, and for prep DCOMROOT
 # (bundle dcom dir, laid out dcom/YYYYMMDD/...). Optional: CYC (default 12), COMROOT_SA / COMROOT_UFS (per variant),
 # COMROOT_STAGED (stage_comin.py output), PACKAGEROOT, NOS_PTMP, NOS_VENV, COMINrerun.
-# Do NOT chain stages with --dependency=afterok (JNOS_* can exit 0 after a failed stage);
-# submit each stage after the previous one logs STAGE_SUMMARY status=PASS. MJ (10/04/26)
 # ============================================================================
 #SBATCH --job-name=stofs_3d_atl_ufs_fc_00
 #SBATCH --account=nos-surge
@@ -138,3 +136,5 @@ echo "nos_utils: ${_nu} HEAD=${_nu_head} gitlink=${_nu_pin:-unknown}"
 # Filesystem-sync guard: staged inputs must be visible on every compute node first. MJ (10/04/26)
 sync && sleep 1
 ${HOMEnos}/jobs/JNOS_FORECAST
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1

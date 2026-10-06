@@ -111,3 +111,5 @@ export USE_PYTHON_PREP=YES
 export FULL_PYTHON_PREP=YES
 
 ${HOMEnos}/jobs/JNOS_PREP
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1
