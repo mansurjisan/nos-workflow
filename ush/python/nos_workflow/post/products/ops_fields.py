@@ -219,12 +219,18 @@ def stamp_stack(
                 idv.long_name = "Node mask"
                 idv[:] = idmask
             masked = idmask == 1
-            elev = ds.variables["elevation"]
-            for it in range(elev.shape[0]):
-                row = elev[it, :]
-                row[masked] = FILL_VALUE
-                elev[it, :] = row
-            elev.setncattr("missing_value", np.float32(FILL_VALUE))
+            # The coupled split writes an out2d without elevation for a
+            # schout stack that carries none (trailing empty leg); nothing
+            # to mask there. MJ (10/06/26)
+            elev = ds.variables.get("elevation")
+            if elev is None:
+                log(f"ops_fields: {path.name}: no elevation; not masked")
+            else:
+                for it in range(elev.shape[0]):
+                    row = elev[it, :]
+                    row[masked] = FILL_VALUE
+                    elev[it, :] = row
+                elev.setncattr("missing_value", np.float32(FILL_VALUE))
 
         if pond_seed is not None:
             _append_ponds(ds, nnode, pond_seed, path.name, log)

@@ -214,3 +214,23 @@ def test_split_carries_wetdry_and_edge_table_and_ponds_run(tmp_path):
         pond = np.asarray(ds["isolatedPondNode"][:])
     # node 3 (index 2) dry at record 1: node 4 stays joined through node 2. MJ (10/05/26)
     assert pond.sum() == 0
+
+
+def test_empty_trailing_stack_splits_and_stamps_without_elevation(tmp_path):
+    from nos_workflow.post.products import ops_fields
+
+    _write_oldio_schout(tmp_path / "schout_1.nc")
+    with netCDF4.Dataset(tmp_path / "schout_2.nc", "w") as ds:
+        ds.createDimension("time", None)
+        ds.createDimension("nSCHISM_hgrid_node", 4)
+        ds.createVariable("time", "f8", ("time",))
+    _split(tmp_path)
+
+    with netCDF4.Dataset(tmp_path / "out2d_2.nc") as ds:
+        assert "elevation" not in ds.variables
+    for n in (1, 2):
+        ops_fields.stamp_stack(
+            netCDF4.Dataset, tmp_path / f"out2d_{n}.nc", "out2d",
+            fallback_base_date="2026-07-22 06:00:00",
+            idmask=np.zeros(4, dtype=np.int32),
+        )

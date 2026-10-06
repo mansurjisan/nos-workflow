@@ -262,3 +262,19 @@ def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
         src = next(i for i, l in enumerate(lines) if l.startswith(". ${PACKAGEROOT}/nos-workflow/versions/run"))
         pin = next(i for i, l in enumerate(lines) if l.strip() == "export COLDSTART=NO")
         assert pin > src, card
+
+
+class TestFieldsWorkerGate:
+    class _R:
+        def __init__(self, status):
+            self.name, self.status, self.detail = "fields_nc", status, "worker failed"
+
+    def test_atl_failed_fields_fails_post(self):
+        with pytest.raises(StageFailedError):
+            post._require_fields_worker(_Desc, "stofs_3d_atl_ufs", [self._R("failed")])
+
+    def test_atl_ok_fields_passes(self):
+        post._require_fields_worker(_Desc, "stofs_3d_atl_ufs", [self._R("ok")])
+
+    def test_secofs_failed_fields_only_warns(self):
+        post._require_fields_worker(_Desc, "secofs_ufs", [self._R("failed")])
