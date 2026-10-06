@@ -103,7 +103,8 @@ fi
 # ncdiff/ncrcat/anomaly/bias/grib2 are the ops post jobs; they share this card and the launcher overrides select per job.
 # The ops ex-scripts get the modules their ecf files load (python from ve/stofs, so unload the stock one first). MJ (10/06/26)
 case "${ADCIRC_SEGMENT:-}" in
-    anomaly|bias) module unload python 2>/dev/null || true; module load ve/stofs/${ve_stofs} ;;
+    anomaly) module unload python 2>/dev/null || true; module load ve/stofs/${ve_stofs} ;;
+    bias) module unload python 2>/dev/null || true; module load cfp/${cfp_ver} util_shared/${util_shared_ver} ve/stofs/${ve_stofs} ;;
     grib2) module load cfp/${cfp_ver} grib_util/${grib_util_ver} util_shared/${util_shared_ver} ;;
 esac
 [ -z "${_dcom_in}" ] || export DCOMROOT=${_dcom_in}

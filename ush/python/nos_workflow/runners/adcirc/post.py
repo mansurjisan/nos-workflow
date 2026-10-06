@@ -144,7 +144,7 @@ def run_ops_script(ctx: CycleContext, runner: CommandRunner = default_runner) ->
     try:
         _run(runner, [["env"] + ["%s=%s" % kv for kv in env.items()] + ["bash", str(ex)]], work)
     finally:
-        for n in (env["pgmout"], "errfile"):  # DATA is removed with KEEPDATA=NO, so keep the diagnostics in the job log
+        for n in (env["pgmout"], "errfile"):  # DATA is removed with KEEPDATA=NO, so keep the diagnostics in the job log MJ (10/06/26)
             if (work / n).is_file():
                 log.info("%s tail:\n%s", n, "\n".join((work / n).read_text(errors="replace").splitlines()[-20:]))
     absent = ["%s.%s.%s" % (r, cyc, p) for p in products if not (comout / ("%s.%s.%s" % (r, cyc, p))).is_file()]

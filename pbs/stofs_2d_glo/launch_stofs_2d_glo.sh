@@ -14,7 +14,7 @@
 # A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
 # node counts, so they come from the yaml only. MJ (10/05/26)
 # ADCIRC_MODE=ops submits one cycle as the stofs.v3.1.5 job chain (walltimes from ecf/*.ecf; STAGES is ignored);
-# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst2 -> anomaly -> bias -> ncdiff (+ tide_fcst2) -> grib2;
+# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst2 + tide_fcst2 -> anomaly -> bias -> ncdiff -> grib2;
 # gempak is not ported. MJ (10/06/26)
 set -eu
 
