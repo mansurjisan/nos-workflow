@@ -7,8 +7,6 @@
 # Required env (sbatch passes the caller's environment): PDY, PACKAGEROOT, ADCIRC_EXEC_DIR (dir holding
 # padcirc and adcprep; no module exists on Hercules). Optional: CYC (default 12; 00/06/12/18), COMROOT_2DGLO
 # (isolated test COMROOT), COMROOT_STAGED (GFS under <it>/gfs), NOS_PTMP, NOS_VENV.
-# Do NOT chain stages with --dependency=afterok (JNOS_* can exit 0 after a failed stage);
-# submit each stage after the previous one logs STAGE_SUMMARY status=PASS. MJ (10/05/26)
 # ============================================================================
 #SBATCH --job-name=stofs_2d_glo_prep_00
 #SBATCH --account=nos-surge
@@ -136,4 +134,7 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
     python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
 fi
 
-${HOMEnos}/jobs/JNOS_PREP
+# ncdiff/ncrcat are the ops post jobs; they share this 1-node card (ecf: 1 cpu, 100 GB). MJ (10/06/26)
+case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat) ${HOMEnos}/jobs/JNOS_POST ;; *) ${HOMEnos}/jobs/JNOS_PREP ;; esac
+# JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
+grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1
