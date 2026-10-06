@@ -85,12 +85,8 @@ Chain submitted (${STAGES}), each gated on afterok of the previous.
   Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_3d_atl_ufs/stofs_3d_atl_ufs_{prep,nowcast,forecast,post}_00.<jobid>.{out,err}
   COMOUT  : ${COMROOT_UFS:-/lfs/h1/nos/ptmp/${LOGNAME}/com}/nos/stofs_3d_atl_ufs.${PDY}
 
-Note: the coupled path is roughly 5x slower than the standalone variant
-(pbs/stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh) and, being
-OLDIO, adds a per-rank field combine in the run stages. This launcher has
-never been exercised end to end -- the coupled OLDIO chain itself is
-validated on secofs_ufs at 2914 ranks, and the ATL post products on the
-standalone variant. Watch the forecast hour labels on a first run: the
+Note: being OLDIO, the coupled run stages combine per-rank fields before
+archiving. Watch the forecast hour labels on the first coupled post: the
 fields worker derives the phase offset from the data, so it handles a
 continued or a restarted forecast clock either way, but ATL-coupled's
 convention has not been observed yet.
