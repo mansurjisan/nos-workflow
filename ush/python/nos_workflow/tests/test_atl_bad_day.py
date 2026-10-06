@@ -247,7 +247,7 @@ class TestPbsCardsSeparateComroot:
     def test_launchers_forward_the_overrides(self):
         sa = (self.PBS / "stofs_3d_atl_ufs_standalone" / "launch_stofs_standalone.sh").read_text()
         ufs = (self.PBS / "stofs_3d_atl_ufs" / "launch_stofs_3d_atl_ufs.sh").read_text()
-        assert "COMROOT_SA; do" in sa and "COMROOT_UFS; do" in ufs
+        assert "COMROOT_SA STOFS_RUNVER; do" in sa and "COMROOT_UFS; do" in ufs
 
 
 def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
@@ -259,6 +259,22 @@ def test_atl_prep_cards_pin_coldstart_no_after_run_ver():
     assert len(cards) == 4
     for card in cards:
         lines = card.read_text().splitlines()
-        src = next(i for i, l in enumerate(lines) if l.startswith(". ${PACKAGEROOT}/nos-workflow/versions/run"))
+        src = next(i for i, l in enumerate(lines) if l.startswith(". ${HOMEnos}/versions/run" if "pbs/" in str(card) else ". ${PACKAGEROOT}/nos-workflow/versions/run"))
         pin = next(i for i, l in enumerate(lines) if l.strip() == "export COLDSTART=NO")
         assert pin > src, card
+
+
+def test_atl_pbs_cards_home_python_and_retry_forwarding():
+    # HOMEnos is set before run.ver is sourced, the coupled ParMETIS retry keeps the clone and
+    # COMROOT, and the standalone cards restore python_ver after the ops run.ver. MJ (10/06/26)
+    from pathlib import Path
+    root = Path(__file__).resolve().parents[4]
+    for card in sorted(root.glob("pbs/stofs_3d_atl_ufs*/jnos_*_00.pbs")):
+        text = card.read_text()
+        assert text.index("HOMEnos=${HOMEnos:-") < text.index(". ${HOMEnos}/versions/run.ver"), card
+    for stage in ("nowcast", "forecast"):
+        text = (root / "pbs/stofs_3d_atl_ufs" / f"jnos_{stage}_00.pbs").read_text()
+        retry = next(l for l in text.splitlines() if l.lstrip().startswith("qsub -v"))
+        assert "HOMEnos=${HOMEnos}" in retry and "COMROOT_UFS=${COMROOT_UFS:-}" in retry
+        sa = (root / "pbs/stofs_3d_atl_ufs_standalone" / f"jnos_{stage}_00.pbs").read_text()
+        assert sa.index("_py_ver=${python_ver:-}") < sa.index('. "${STOFS_RUNVER}"') < sa.index("python_ver=${_py_ver}")

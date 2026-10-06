@@ -25,9 +25,9 @@ if [ "$#" -lt 1 ]; then
 fi
 PDY="$1"
 CYC="${2:-12}"
-PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)"
 PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs"
-VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
+VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES},PACKAGEROOT=$(dirname "${PKG}"),HOMEnos=${PKG}"
 # qsub -v replaces the job environment wholesale, so a post override
 # exported before calling this script would be silently dropped.
 # PBS splits -v on commas only, so a space-separated product list

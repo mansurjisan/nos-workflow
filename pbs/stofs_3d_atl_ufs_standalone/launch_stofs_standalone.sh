@@ -23,9 +23,9 @@ if [ "$#" -lt 1 ]; then
 fi
 PDY="$1"
 CYC="${2:-12}"
-PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)"
 PBSDIR="${PKG}/pbs/stofs_3d_atl_ufs_standalone"
-VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
+VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES},PACKAGEROOT=$(dirname "${PKG}"),HOMEnos=${PKG}"
 # qsub -v replaces the job environment wholesale, so a post override
 # exported before calling this script would be silently dropped.
 # PBS splits -v on commas only, so a space-separated product list
@@ -38,7 +38,7 @@ VARS="PDY=${PDY},CYC=${CYC},NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}"
 #   grep -rhoE '"(NOS_[A-Z_]+|POST_[A-Z_]+)"' ush/python/nos_workflow/post/
 # PBS splits -v on commas only, so a space-separated value survives whole.
 for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
-          POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT COMROOT_SA; do
+          POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT COMROOT_SA STOFS_RUNVER; do
   eval "_val=\${${_v}:-}"
   if [ -n "${_val}" ]; then
     VARS="${VARS},${_v}=${_val}"

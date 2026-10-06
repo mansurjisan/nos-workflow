@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -87,7 +88,7 @@ def test_pbs_card_exports(stage):
     subprocess.run(["bash", "-n", str(card)], check=True)
     for needle in ("export OFS=stofs_2d_glo\n", "export NET=nos RUN=stofs_2d_glo PREFIXNOS=stofs_2d_glo\n",
                    "export cyc=${CYC:-12}", "export PDY=${PDY:?", "export framework=adcirc",
-                   "COMROOT=${COMROOT_2DGLO:-", "com_2dglo", "export HOMEnos=",
+                   "COMROOT=${COMROOT_2DGLO:-", "com_2dglo", "export HOMEnos\n",
                    "OFS_CONFIG=${HOMEnos}/parm/systems/stofs_2d_glo.yaml", "ADCIRC_EXEC_DIR",
                    "stofs_2d_glo_grid stofs_2d_glo_attr", "fetch_stofs_2d_glo_fix.sh", TAG):
         assert needle in text, needle
@@ -284,3 +285,27 @@ def test_prep_card_dispatches_ops_post_jobs(card):
     assert "esac\n" in text and text.index("esac") < text.index(GATE)
     if card.suffix == ".pbs":
         assert "module load nco/" in text
+
+
+@pytest.mark.parametrize("launcher", [
+    "stofs_3d_atl_ufs/launch_stofs_3d_atl_ufs.sh",
+    "stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh",
+])
+def test_atl_launchers_forward_own_clone(launcher, tmp_path):
+    """With PKG unset, the clone a launcher lives in is the one the jobs run, whatever it is named."""
+    clone = tmp_path / "my_clone"
+    (clone / "pbs").mkdir(parents=True)
+    shutil.copytree(PBS.parent / Path(launcher).parent, clone / "pbs" / Path(launcher).parent)
+    log = tmp_path / "qsub.log"
+    stub = tmp_path / "bin"
+    stub.mkdir()
+    (stub / "qsub").write_text('#!/bin/bash\necho "$@" >> "%s"\necho 1.stub\n' % log)
+    (stub / "qsub").chmod(0o755)
+    env = {k: v for k, v in os.environ.items() if k not in ("PKG", "PACKAGEROOT", "HOMEnos")}
+    env["PATH"] = "%s:%s" % (stub, env["PATH"])
+    env.setdefault("LOGNAME", "tester")
+    subprocess.run(["bash", str(clone / "pbs" / launcher), "20261001", "12"],
+                   env=env, cwd=str(tmp_path), check=True, capture_output=True)
+    vars_ = log.read_text().splitlines()[0]
+    assert "PACKAGEROOT=%s," % tmp_path in vars_
+    assert vars_.split(" ")[-2].endswith("HOMEnos=%s" % clone) or "HOMEnos=%s" % clone in vars_
