@@ -145,10 +145,14 @@ case "${OFS_FRAMEWORK}" in
         esac
         ;;
     adcirc)
+        if [ "${ADCIRC_MODE:-single}" = ops ]; then
+            $SCRIPTSnos/exnos_adcirc.sh post
+        else
         # ADCIRC post-processing is handled inline during execute_model
         # (outputs archived to $COMOUT in nowcast/forecast sub-phases)
         echo "INFO: ADCIRC post-processing completed inline during model execution"
         echo "INFO: Products already in $COMOUT (htp, cwl NetCDF files)"
+        fi
         ;;
     comf|*)
         # nosofs/COMF SCHISM post-processing: generate station NetCDF from staout files

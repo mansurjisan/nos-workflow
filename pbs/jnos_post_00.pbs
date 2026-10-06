@@ -34,7 +34,7 @@ mkdir -p -m 755 $RPTDIR $WORKDIR
 # Per-job log files (PBS jobid as suffix). PBS -o/-e are pointed at
 # /dev/null above; this redirect is what populates post logs.
 _JOBID=${PBS_JOBID%%.*}
-_LOG_PREFIX="$RPTDIR/secofs_ufs_post_00.${_JOBID}"
+_LOG_PREFIX="$RPTDIR/${OFS}_post_00.${_JOBID}"
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== secofs_ufs_post_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
@@ -96,10 +96,10 @@ export envir=dev
 export OFS=${OFS:-secofs_ufs}
 export cyc=${CYC:-00}
 export PDY=${PDY:-$(date +%Y%m%d)}
-export job=secofs_ufs_post_${cyc}_$envir
+export job=${OFS}_post_${cyc}_$envir
 export platform=ptmp
 
-export KEEPDATA=YES
+export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
@@ -110,7 +110,7 @@ export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
-export COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com
+export COMROOT=${COMROOT:-/lfs/h1/nos/ptmp/$LOGNAME/com}
 export DCOMROOT=/lfs/h1/ops/prod/dcom
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 

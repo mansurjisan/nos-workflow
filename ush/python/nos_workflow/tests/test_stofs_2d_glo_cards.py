@@ -141,7 +141,7 @@ def test_launcher():
     text = LAUNCH.read_text()
     assert os.access(LAUNCH, os.X_OK)
     assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast}"' in text
-    assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "")
+    assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "").replace("OFS=stofs_2d_glo,", "")
     for v in ("ATMOSPHERIC_FORCING", "COLDSTART_SPINUP_DAYS", "NOWCAST_HOURS"):
         assert v in text.split("for _v in")[1].split(";")[0], v
 
@@ -206,3 +206,69 @@ def test_keepdata_is_a_submit_time_override():
     for card in list(PBS.glob("jnos_*_00.pbs")) + list(SLURM.glob("jnos_*_00.sh")):
         text = card.read_text()
         assert "export KEEPDATA=${KEEPDATA:-YES}" in text and "KEEPDATA=YES\n" not in text.replace(":-YES}", "")
+
+
+def _ops_launch(tmp_path, **env):
+    qsub = tmp_path / "bin" / "qsub"
+    qsub.parent.mkdir()
+    qsub.write_text('#!/bin/bash\nn=$(cat $QLOG.n 2>/dev/null || echo 0); n=$((n+1)); echo $n > $QLOG.n\n'
+                    'echo "$n.pbs $*" >> $QLOG; echo $n.pbs\n')
+    qsub.chmod(0o755)
+    log = tmp_path / "q.log"
+    e = {**os.environ, "PATH": f"{qsub.parent}:{os.environ['PATH']}", "QLOG": str(log), "PKG": str(REPO),
+         "ADCIRC_MODE": "ops", **env}
+    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env=e, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    jobs = {}
+    for ln in log.read_text().splitlines():
+        jid, rest = ln.split(" ", 1)
+        a = rest.split()
+        v = dict(kv.split("=", 1) for kv in a[a.index("-v") + 1].split(","))
+        dep = a[a.index("-W") + 1].split(":")[1:] if "-W" in a else []
+        jobs[a[1 + a.index("-N")]] = dict(jid=jid, dep=dep, v=v, wall=a[a.index("-l") + 1], card=Path(a[-1]).name)
+    return jobs
+
+
+def test_launcher_ops_job_graph(tmp_path):
+    j = _ops_launch(tmp_path)
+    assert len(j) == 11 and "stofs_2d_glo_cold_adcprep" not in j
+    name = lambda label: j["stofs_2d_glo_" + label]  # noqa: E731
+    deps = {k[len("stofs_2d_glo_"):]: sorted(x["jid"] for x in j.values() if x["jid"] in v["dep"]) for k, v in j.items()}
+    want = {"tide_fcst1": ["tide_ncst"], "tide_fcst2": ["tide_fcst1"], "surf_ncst": ["gfs_ncst"],
+            "surf_fcst1": ["surf_ncst", "gfs_fcst1"], "surf_fcst2": ["surf_fcst1", "gfs_fcst2"],
+            "post_ncdiff": ["tide_fcst2", "surf_fcst2"], "post_ncrcat": ["gfs_ncst", "gfs_fcst1", "gfs_fcst2"],
+            "tide_ncst": [], "gfs_ncst": [], "gfs_fcst1": [], "gfs_fcst2": []}
+    assert deps == {k: sorted(name(x)["jid"] for x in v) for k, v in want.items()}
+    for v in j.values():
+        assert v["v"]["PDY"] == "20261005" and v["v"]["CYC"] == "12" and v["v"]["KEEPDATA"] == "NO"
+        assert v["v"]["ADCIRC_MODE"] == "ops"
+    assert (name("surf_fcst1")["v"]["ADCIRC_STREAM"], name("surf_fcst1")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst1")
+    assert name("gfs_fcst1")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst1")["v"]["ADCIRC_SEGMENT"] == "fcst1"
+    assert name("post_ncdiff")["card"] == "jnos_post_00.pbs" and name("post_ncdiff")["v"]["OFS"] == "stofs_2d_glo"
+    assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_fcst1", "post_ncdiff", "post_ncrcat")} == {
+        "tide_ncst": "walltime=0:15:00", "surf_fcst1": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
+        "post_ncrcat": "walltime=0:15:00"}
+
+
+def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
+    j = _ops_launch(tmp_path, COLDSTART="YES", NOWCAST_HOURS="24")
+    spin, adc = j["stofs_2d_glo_cold_spinup"], j["stofs_2d_glo_cold_adcprep"]
+    assert adc["v"]["COLDSTART"] == "YES" and spin["dep"] == [adc["jid"]] and spin["v"]["ADCIRC_SEGMENT"] == "spinup"
+    for k in ("tide_ncst", "surf_ncst"):
+        assert spin["jid"] in j["stofs_2d_glo_" + k]["dep"]
+        assert j["stofs_2d_glo_" + k]["v"]["NOWCAST_HOURS"] == "24"
+
+
+def test_launcher_single_mode_graph_unchanged(tmp_path):
+    qsub = tmp_path / "bin" / "qsub"
+    qsub.parent.mkdir()
+    qsub.write_text('#!/bin/bash\necho "$*" >> $QLOG; echo j$RANDOM.pbs\n')
+    qsub.chmod(0o755)
+    env = {**os.environ, "PATH": f"{qsub.parent}:{os.environ['PATH']}", "QLOG": str(tmp_path / "q.log"), "PKG": str(REPO)}
+    env.pop("ADCIRC_MODE", None)
+    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env=env, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "q.log").read_text().splitlines()
+    assert [Path(l.split()[-1]).name for l in lines] == [f"jnos_{s}_00.pbs" for s in STAGES]
+    assert "depend" not in lines[0] and all("afterok:j" in l for l in lines[1:])
+    assert not any("ADCIRC_MODE" in l or "-N" in l.split() for l in lines)

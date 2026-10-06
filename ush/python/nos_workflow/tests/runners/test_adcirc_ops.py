@@ -11,7 +11,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(REPO / "ush" / "python"))
 from nos_workflow.machine import MachineProfile  # noqa: E402
-from nos_workflow.runners.adcirc import hotstart, ops  # noqa: E402
+from nos_workflow.runners.adcirc import hotstart, ops, post  # noqa: E402
 from nos_workflow.runners.adcirc.settings import AdcircConfigError, AdcircSettings, CycleContext  # noqa: E402
 from nos_workflow.tests.runners.test_adcirc_prep import YAML, _restart  # noqa: E402
 
@@ -228,3 +228,116 @@ def test_fcst_needs_its_nowcast_and_ranks_must_fit(tmp_path, monkeypatch):
     monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "35")
     with pytest.raises(AdcircConfigError, match="36 ranks.*35 allocated"):
         _go(tmp_path, "surf", "ncst")
+
+
+def _seg(tmp_path, segment, **extra):
+    return _ctx(tmp_path, ADCIRC_SEGMENT=segment, **extra)
+
+
+def _touch(ctx, *names):
+    for n in names:
+        p = ctx.cycle_dir(CYCLE, n)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(n)
+
+
+def _rerun_forcing(ctx, segs=("ncst", "fcst1", "fcst2")):
+    for s in segs:
+        for n in (221, 222, 225):
+            f = ops.rerun_dir(ctx) / f"{RUN}_{s}.{n}.nc"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_text(f.name)
+
+
+class Recorder:
+    def __init__(self, rc=0):
+        self.cmds, self.rc = [], rc
+
+    def __call__(self, cmd, cwd):
+        self.cmds.append(list(cmd))
+        return self.rc
+
+
+def test_post_ncdiff_commands_match_ops(tmp_path):
+    ctx = _seg(tmp_path, "ncdiff")
+    _touch(ctx, "points.cwl.nc", "points.htp.nc", "fields.cwl.nc", "fields.htp.nc")
+    rec = Recorder()
+    with pytest.raises(FileNotFoundError):
+        post.run_post(ctx, rec)  # the fake NCO wrote no swl file to publish
+    assert rec.cmds == [["ncdiff", "cwl.fort.61.nc", "htp.fort.61.nc", "swl.fort.61.nc"],
+                        ["ncdiff", "-v", "zeta", "cwl.fort.63.nc", "htp.fort.63.nc", "swl.fort.63.nc"],
+                        ["ncks", "-A", "-v", "x,y", "cwl.fort.61.nc", "swl.fort.61.nc"],
+                        ["ncks", "-A", "-v", "x,y", "cwl.fort.63.nc", "swl.fort.63.nc"]]
+    assert (tmp_path / "work" / "cwl.fort.63.nc").resolve() == ctx.cycle_dir(CYCLE, "fields.cwl.nc").resolve()
+
+
+def test_post_ncdiff_missing_inputs_fail_like_ops(tmp_path):
+    ctx = _seg(tmp_path, "ncdiff")
+    with pytest.raises(RuntimeError, match="did not existed"):
+        post.run_post(ctx, Recorder())
+    _touch(ctx, "points.cwl.nc", "points.htp.nc", "fields.htp.nc")
+    rec = Recorder(rc=1)
+    with pytest.raises(RuntimeError, match="ncdiff cwl.fort.61.nc"):
+        post.run_post(ctx, rec)
+    assert len(rec.cmds) == 1
+
+
+def test_post_ncrcat_commands_and_inputs(tmp_path):
+    ctx = _seg(tmp_path, "ncrcat")
+    with pytest.raises(RuntimeError, match="GFS surface forcing does not exist"):
+        post.run_post(ctx, Recorder())
+    _rerun_forcing(ctx)
+    rec = Recorder()
+    with pytest.raises(FileNotFoundError):
+        post.run_post(ctx, rec)
+    assert rec.cmds[0] == ["ncrcat", "ncst.221.nc", "fcst1.221.nc", "fcst2.221.nc", "fort.221.nc"]
+    assert rec.cmds[2][-1] == "fort.225.nc"
+
+
+def test_post_segment_is_required(tmp_path):
+    with pytest.raises(AdcircConfigError, match="ncdiff"):
+        post.run_post(_seg(tmp_path, "ncst"), Recorder())
+
+
+def test_post_missing_nco_is_clear(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path))
+    with pytest.raises(AdcircConfigError, match="module load nco"):
+        post.default_runner(["ncdiff"], tmp_path)
+
+
+@pytest.mark.skipif(not (shutil.which("ncdiff") and shutil.which("ncrcat") and shutil.which("ncks")), reason="NCO absent")
+def test_post_with_real_nco(tmp_path):
+    nc = pytest.importorskip("netCDF4")
+
+    def mk(path, zeta, t=2):
+        with nc.Dataset(str(path), "w") as d:
+            d.createDimension("node", 3)
+            d.createDimension("time", t)
+            for v in "xy":
+                d.createVariable(v, "f8", ("node",))[:] = [1.0, 2.0, 3.0]
+            d.createVariable("zeta", "f8", ("time", "node"))[:] = zeta
+            d.createVariable("time", "f8", ("time",))[:] = list(range(t))
+
+    ctx = _seg(tmp_path, "ncdiff")
+    _touch(ctx, "points.cwl.nc", "points.htp.nc", "fields.cwl.nc", "fields.htp.nc")
+    mk(ctx.cycle_dir(CYCLE, "points.cwl.nc"), 5.0)
+    mk(ctx.cycle_dir(CYCLE, "points.htp.nc"), 2.0)
+    mk(ctx.cycle_dir(CYCLE, "fields.cwl.nc"), 5.0)
+    mk(ctx.cycle_dir(CYCLE, "fields.htp.nc"), 2.0)
+    post.run_post(ctx)
+    with nc.Dataset(str(ctx.cycle_dir(CYCLE, "fields.swl.nc"))) as d:
+        assert d["zeta"][:].min() == d["zeta"][:].max() == 3.0 and "x" in d.variables and "y" in d.variables
+    assert ctx.cycle_dir(CYCLE, "points.swl.nc").is_file()
+
+    ctx = _seg(tmp_path, "ncrcat")
+    for s, base in (("ncst", 0), ("fcst1", 2), ("fcst2", 4)):
+        for n in (221, 222, 225):
+            f = ops.rerun_dir(ctx) / f"{RUN}_{s}.{n}.nc"
+            f.parent.mkdir(parents=True, exist_ok=True)
+            with nc.Dataset(str(f), "w") as d:
+                d.createDimension("time", None)
+                d.createVariable("time", "f8", ("time",))[:] = [base, base + 1]
+    post.run_post(ctx)
+    for name in ("pressfc", "uvgrd10m", "icec"):
+        with nc.Dataset(str(ctx.cycle_dir(CYCLE, name + ".nc"))) as d:
+            assert list(d["time"][:]) == [0, 1, 2, 3, 4, 5]

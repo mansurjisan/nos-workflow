@@ -1,6 +1,6 @@
 #!/bin/bash
 ###############################################################################
-#  exnos_adcirc.sh <prep|nowcast|forecast> - ADCIRC (STOFS-2D-GLO) ex-script
+#  exnos_adcirc.sh <prep|nowcast|forecast|post> - ADCIRC (STOFS-2D-GLO) ex-script
 #
 #  Hands off to nos_workflow.stages. Unlike the SCHISM shims it does not source
 #  nos_run.sh: the ADCIRC runner builds its own command lines from the machine
@@ -9,7 +9,7 @@
 
 set -x
 
-STAGE=${1:?usage: exnos_adcirc.sh <prep|nowcast|forecast>}
+STAGE=${1:?usage: exnos_adcirc.sh <prep|nowcast|forecast|post>}
 echo "exnos_adcirc.sh ${STAGE} started at $(date)"
 echo "  OFS=${OFS}  PDY=${PDY}  cyc=${cyc}"
 

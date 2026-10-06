@@ -59,7 +59,13 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if descriptor.framework == "stofs":
         raise NotImplementedError("STOFS-3D-ATL post not yet ported")
     if descriptor.framework == "adcirc":
-        raise NotImplementedError("STOFS-2D-GLO post not yet ported")
+        from ._adcirc import run_model_stage
+
+        if os.environ.get("ADCIRC_MODE", "").strip().lower() != "ops":
+            raise NotImplementedError("STOFS-2D-GLO post not yet ported")
+        from ..runners.adcirc import post as adcirc_post
+
+        return run_model_stage(descriptor, _STAGE, adcirc_post.run_post)
     if descriptor.framework == "comf_standalone":
         raise NotImplementedError(
             "comf_standalone post (ROMS/FVCOM standalone) not yet wired; "
