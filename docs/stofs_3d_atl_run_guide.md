@@ -119,6 +119,27 @@ ls -l exec/
 - The cards submit with `#PBS -A ESTOFS-DEV -q dev`. The launchers and the ParMETIS retry use the card's account. Without that project, ask for access, or change `#PBS -A` in your clone's cards.
 - Your COMROOT, work directories and logs go under your own ptmp (`$LOGNAME`). Inputs come from the shared operational `com` and `dcom`.
 
+### 3.1b Updating an existing clone
+
+```bash
+cd <your nos-workflow clone>
+git status --short | grep -v '^??'          # expect nothing; local card edits are no longer needed
+git pull --ff-only
+git submodule update ush/python/nos-utils
+./tools/fetch_stofs_3d_atl_fix.sh           # stages any fix files added since your last fetch; existing files are skipped
+```
+- **Pull rejected by local changes:** older clones may still carry sed edits to `PACKAGEROOT` in the cards. Those edits are not needed any more. Discard them, then pull:
+  ```bash
+  git checkout -- pbs/stofs_3d_atl_ufs pbs/stofs_3d_atl_ufs_standalone      # add pbs/stofs_2d_glo if your clone has it
+  ```
+- **Pull done with `git stash` / `git stash pop` and conflicts in `pbs/`:** take the cards from the pulled version, then drop the stash:
+  ```bash
+  git checkout HEAD -- pbs/stofs_3d_atl_ufs pbs/stofs_3d_atl_ufs_standalone  # add pbs/stofs_2d_glo if your clone has it
+  git stash drop
+  ```
+- **Account edit:** if you changed `#PBS -A` in your cards (section 3.1a), that is the one card edit to keep. Re-apply it after these commands.
+- **When to update:** only while no job from this clone is queued or running. A queued job reads its card when it starts.
+
 ### 3.2 Seed the first cycle
 
 ```bash
@@ -324,7 +345,7 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 - post2 products (GRIB2, SHEF) and the geopackage are not ported; no post product beyond stations and fields has been compared with operational.
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.
-- Coupled post: a fix for the empty trailing OLDIO field stack is in progress.
+- Coupled (OLDIO) runs leave an empty trailing field stack at the end of each run (e.g. `out2d_3` in the nowcast). Post skips it, so it is never published.
 - Bad-day handling follows operational for ATL: prep checks restart age and size and fails on missing HOTSTART, OBC_QC, NUDGING or OPS_OBC_INPUTS; the previous-cycle fallback reads `$COMOUT_PREV/rerun`. Cases operational handles differently may remain.
 - The launcher does not wait for the previous day; submit the next day only after the forecast has passed.
 
