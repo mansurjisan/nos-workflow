@@ -258,6 +258,7 @@ def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
     for k in ("tide_ncst", "surf_ncst"):
         assert spin["jid"] in j["stofs_2d_glo_" + k]["dep"]
         assert j["stofs_2d_glo_" + k]["v"]["NOWCAST_HOURS"] == "24"
+    assert j["stofs_2d_glo_gfs_ncst"]["dep"] == [spin["jid"]]
 
 
 def test_launcher_single_mode_graph_unchanged(tmp_path):

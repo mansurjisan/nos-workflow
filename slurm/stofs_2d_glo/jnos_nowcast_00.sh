@@ -9,8 +9,6 @@
 # Required env (sbatch passes the caller's environment): PDY, PACKAGEROOT, ADCIRC_EXEC_DIR (dir holding
 # padcirc and adcprep; no module exists on Hercules). Optional: CYC (default 12; 00/06/12/18), COMROOT_2DGLO
 # (isolated test COMROOT), COMROOT_STAGED (GFS under <it>/gfs), NOS_PTMP, NOS_VENV.
-# Do NOT chain stages with --dependency=afterok (JNOS_* can exit 0 after a failed stage);
-# submit each stage after the previous one logs STAGE_SUMMARY status=PASS. MJ (10/05/26)
 # ============================================================================
 #SBATCH --job-name=stofs_2d_glo_nc_00
 #SBATCH --account=nos-surge

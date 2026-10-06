@@ -71,8 +71,8 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
   sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:mem=100GB" ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
-  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:mem=100GB" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
+  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
+  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
   exit 0
 fi
 
