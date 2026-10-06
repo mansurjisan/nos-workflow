@@ -7,7 +7,7 @@ The coupled system uses SCHISM as the ocean model, with a CDEPS data atmosphere 
 ## Supported configurations
 
 - **SECOFS** — Southeast Coastal Ocean Forecast System (UFS-Coastal)
-- **STOFS-3D-ATL** — Surge and Tide Operational Forecast System, 3D Atlantic (UFS-Coastal)
+- **STOFS-3D-ATL** — Surge and Tide Operational Forecast System, 3D Atlantic (UFS-Coastal); run guide for WCOSS2 and Hercules: [docs/stofs_3d_atl_run_guide.md](docs/stofs_3d_atl_run_guide.md)
 
 ## Layout
 
