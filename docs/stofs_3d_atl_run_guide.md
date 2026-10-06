@@ -80,7 +80,7 @@ Executables in `exec/`:
 |---|---|
 | `stofs_3d_atl_pschism_v3.1.5` | `cp /apps/prod/schism/5.14.0/bin/pschism_WCOSS2_VL exec/stofs_3d_atl_pschism_v3.1.5` (the operational binary, built `-DNO_PARMETIS -DPREC_EVAP -DTVD_VL`). |
 | `fv3_stofs_3d_atl.exe` | Coupled build, below. Keep it separate from SECOFS's `fv3_coastalS.exe`. |
-| `nos_ofs_create_tide_fac_schism` | Fortran tide_fac. Copy from an existing nos-workflow `exec/` on WCOSS2. Required: without it nos-utils silently falls back to Python nodal factors and bctides no longer match operational. |
+| `nos_ofs_create_tide_fac_schism` | Fortran tide_fac. Copy from an existing nos-workflow `exec/` on WCOSS2. Required: for ATL a missing Fortran tide_fac fails prep (`STOFS-3D-ATL needs the Fortran tide_fac`); there is no Python fallback. |
 | `schism_combine_hotstart7.exe` | Copy from an existing `exec/`. |
 
 Coupled build: ufs-weather-model clone at oceanmodeling `3e5e83de23ce3b6d16207b0c4f78d7a56110b6b3` with submodules, plus two local patches applied before building:
@@ -138,7 +138,7 @@ STAGES="forecast post" bash launch_stofs_3d_atl_ufs.sh 20261001 12
 ```
 Use `bash <launcher>` if a fresh clone (for example on a Windows-mounted drive) lost the execute bit and you get Permission denied.
 
-The standalone cards load the module stack for `pschism` from a version file: `$PACKAGEROOT/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver` if it exists, otherwise the operational `/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver` (which matches the operational binary). They stop if neither is readable, and the job log prints `STOFS_RUNVER=<file used>`. Set `STOFS_RUNVER` to override.
+The standalone cards load the module stack for `pschism` from a version file: `$PACKAGEROOT/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver` if it exists, otherwise the operational `/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver` (which matches the operational binary). Only the compiler/MPI/hdf5 stack comes from that file; the J-job keeps the nos-workflow python. They stop if neither is readable, and the job log prints `STOFS_RUNVER=<file used>`. Set `STOFS_RUNVER` to override.
 
 Optional settings go in the environment before the launcher and are forwarded: `COMROOT_SA`, `COMROOT_UFS`, `NOS_POST_PRODUCTS`, `NOS_POST_MAX_WORKERS`, `PKG` (override the clone location), `STOFS_RUNVER` (standalone only).
 
@@ -164,7 +164,7 @@ The launcher gates only the stages of one cycle; it does not wait for the previo
 | prep | 1 node, 5 h limit | 1 node (also builds the DATM forcing) |
 | nowcast (24 h) | 41 nodes, 5 h limit | 42 nodes, 1:30 limit |
 | forecast (96 h) | 41 nodes, 5 h limit | 42 nodes, 5:30 limit |
-| post | 1 node, 2 h limit | 1 node |
+| post | 1 node, 2 h limit | 1 node, 4 h limit |
 
 ## 4. Hercules (RDHPCS, Slurm)
 
@@ -188,7 +188,7 @@ The Slurm cards require `PACKAGEROOT` and stop within seconds without it.
 
 Executables (all four in `$EXECnos`):
 ```bash
-# operational source: ops_v315_sorc_pschism_tidefac.tgz unpacked in $A/sorc
+# operational source for both: ask the maintainer for the v3.1.5 sorc tarball, unpacked in $A/sorc
 SRC=$A/sorc/stofs_3d_atl_tide_fac.fd $HW/tools/build_stofs_3d_atl_tide_fac_hercules.sh
 SRC=$A/sorc/stofs_3d_atl_pschism.fd  $HW/tools/build_stofs_3d_atl_pschism_hercules.sh
 # coupled: a SEPARATE ufs clone, never the SECOFS one
@@ -208,7 +208,7 @@ python3 $HW/ush/stage_comin.py --pdy $PDY --cyc 12 --comroot $NOS_PTMP/$LOGNAME/
 ```
 Expected counts for 20261001: GFS 127, HRRR 73, NWM 139, RTOFS 46 files.
 
-dcom files are not public in this form; copy them from WCOSS2 with `My_Scripts/STOFS-3D-ATL-V31-VALIDATION/make_case_bundle.sh` and unpack into `$B`. The prep card stops if any of the dcom files in section 2 are missing.
+dcom files are not public in this form; ask the maintainer for the case bundle (copied from WCOSS2) and unpack it into `$B`. The prep card stops if any of the dcom files in section 2 are missing.
 
 First-cycle seeds (run in `tmux`):
 ```bash
@@ -248,7 +248,7 @@ A healthy prep shows:
 - ADT found for 2 days;
 - `STAGE_SUMMARY ... status=PASS`.
 
-Always check `STAGE_SUMMARY ... status=PASS` for every stage. A failed stage now stops the PBS chain: the later jobs stay held. Clear them with `qdel <jobid>` (see `qstat -u $LOGNAME`), fix the problem, and re-launch with `STAGES=` set to the stages still needed.
+Always check `STAGE_SUMMARY ... status=PASS` for every stage. A failed stage now stops the PBS chain: the later jobs are cancelled. If any remain held, `qdel <jobid>` them (see `qstat -u $LOGNAME`). Fix the problem and re-launch with `STAGES=` set to the stages still needed.
 
 Model progress: `grep "TIME STEP" <DATA>/outputs/mirror.out | tail -1` (576 steps = 24 h nowcast, dt 150 s).
 
@@ -275,7 +275,7 @@ nos-workflow on WCOSS2, day 1, PDY 20261003 (seconds):
 | prep | not measured | 1711 |
 | nowcast (24 h) | 2350 | 3316 |
 | forecast (96 h) | 4825 | 5899 |
-| post | 3485 | 7215 |
+| post | 3485 | 7215 (coupled post limit raised to 4 h) |
 
 Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 min); coupled prep 24 min (DATM build), nowcast stage 28 min.
 
@@ -283,7 +283,7 @@ Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 m
 
 Reference data: the operational COMOUT (about 5 days) has `staout_1` and `rerun/`. The public bucket `noaa-nos-stofs3d-pds/STOFS-3D-Atl/stofs_3d_atl.<PDY>/` (kept indefinitely) has `rerun/`, `points.cwl.nc`, station profiles and 2D fields, but no `staout_1` or `avg_bias`.
 
-Scripts in `My_Scripts/STOFS-3D-ATL-V31-VALIDATION/`: `compare_staout.py`, `plot_staout_compare.py`, `plot_ufs_compare.py` (operational vs standalone vs coupled), `plot_5day_compare.py` (joins nowcast and forecast, compares with operational and CO-OPS observations), `compare_sflux.py`, `plot_river_compare.py`, `make_case_bundle.sh`.
+Comparison scripts (ask the maintainer for the validation set): `compare_staout.py`, `plot_staout_compare.py`, `plot_ufs_compare.py` (operational vs standalone vs coupled), `plot_5day_compare.py` (joins nowcast and forecast, compares with operational and CO-OPS observations), `compare_sflux.py`, `plot_river_compare.py`, `make_case_bundle.sh`.
 
 `staout` column = row order in `station.in` (166 stations). Five (Christiansted, Limetree Bay, Lameshur Bay, Esperanza, Culebra) lie outside the mesh and output 1e7. Exclude them from statistics.
 
@@ -302,7 +302,7 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.
 - Coupled post: a fix for the empty trailing OLDIO field stack is in progress.
-- Bad-day behaviour is softer than operational: no restart age or size check, prep does not stop on missing boundary or nudging inputs, previous-cycle fallbacks need `COMINrerun`.
+- Bad-day handling follows operational for ATL: prep checks restart age and size and fails on missing HOTSTART, OBC_QC, NUDGING or OPS_OBC_INPUTS; the previous-cycle fallback reads `$COMOUT_PREV/rerun`. Cases operational handles differently may remain.
 - The launcher does not wait for the previous day; submit the next day only after the forecast has passed.
 
 ## 9. Troubleshooting
@@ -316,9 +316,9 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 | Seed files vanished from ptmp | ptmp purges by file age and `cp -p` keeps old timestamps. Copy without `-p`; keep seeds on noscrub. |
 | Prep aborts: hotstart not NETCDF4_CLASSIC | Convert the seed with `nccopy -k 'netCDF-4 classic model'`. |
 | `partition.prop` rank error before launch | The file must have 4912 ranks (the operational file). |
-| bctides differ from operational; log says "using Python nodal corrections" | Fortran tide_fac missing. Install `nos_ofs_create_tide_fac_schism` in `exec/`. |
+| Prep fails with "STOFS-3D-ATL needs the Fortran tide_fac" | Install `nos_ofs_create_tide_fac_schism` in `exec/`. |
 | `adj0=0 adj1=0` | Previous-cycle `staout_1` / `avg_bias` not found (section 2). Check the log line "Dynamic adjust previous-cycle inputs". |
-| Later jobs stay held after a failure | Expected. `qdel` them, fix, re-launch with `STAGES=`. |
+| Later jobs still held after a failure | Normally PBS cancels them. `qdel` any that remain, fix, re-launch with `STAGES=`. |
 | A job exited 0 but the stage failed | Always check `STAGE_SUMMARY ... status=PASS`. |
 | Hercules job ran the SECOFS package | `PACKAGEROOT` not set; the ATL cards refuse to run without it. |
 | SECOFS job on Hercules read ATL inputs | `atl_env.sh` was sourced in that shell. Use a fresh shell for SECOFS. |

@@ -102,7 +102,7 @@ OUTPUT.$$
 OUTPUT.[0-9]*
 
 # STOFS-3D-ATL: tools/fetch_stofs_3d_atl_fix.sh stages ~5.6 GB plus the DATM/UFS
-# templates here; only the param.nml templates and the pond seed are tracked.
+# templates here; only the param.nml templates and the pond seed are tracked. MJ (10/06/26)
 fix/stofs_3d_atl_ufs/*
 !fix/stofs_3d_atl_ufs/*.param.nml
 !fix/stofs_3d_atl_ufs/stofs_3d_atl_pond_seed.npz

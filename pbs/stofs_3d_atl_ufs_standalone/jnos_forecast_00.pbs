@@ -23,11 +23,6 @@ HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
 # The pschism module versions come from the IT-STOFS version file it was built
 # against. Override STOFS_RUNVER if your pschism was built against a different stack.
 STOFS_RUNVER=${STOFS_RUNVER:-${PACKAGEROOT}/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver}
-# Outside packages/ the IT-STOFS tree is absent; fall back to the ops file (matches the ops pschism). MJ (10/06/26)
-[ -r "${STOFS_RUNVER}" ] || STOFS_RUNVER=/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver
-[ -r "${STOFS_RUNVER}" ] || { echo "ERROR: no readable STOFS run.ver (set STOFS_RUNVER)" >&2; exit 1; }
-. "${STOFS_RUNVER}"
-echo "STOFS_RUNVER=${STOFS_RUNVER}"
 
 export OFS=${OFS:-stofs_3d_atl_ufs}
 RPTDIR=/lfs/h1/nos/ptmp/$LOGNAME/rpt/${OFS}
@@ -39,6 +34,15 @@ _LOG_PREFIX="$RPTDIR/stofs_3d_atl_ufs_standalone_forecast_00.${_JOBID}"
 exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== stofs_3d_atl_ufs_standalone_forecast_00 — PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
+
+# Outside packages/ the IT-STOFS tree is absent; fall back to the ops file (matches the ops pschism). MJ (10/06/26)
+[ -r "${STOFS_RUNVER}" ] || STOFS_RUNVER=/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver
+[ -r "${STOFS_RUNVER}" ] || { echo "ERROR: no readable STOFS run.ver (set STOFS_RUNVER)" >&2; exit 1; }
+# The ops run.ver also sets python_ver=3.12.0, which has no yaml/netCDF4; keep the nos-workflow python. MJ (10/06/26)
+_py_ver=${python_ver:-}
+. "${STOFS_RUNVER}"
+python_ver=${_py_ver}
+echo "STOFS_RUNVER=${STOFS_RUNVER}"
 
 # MPI efficiency settings (operational IT-STOFS parity)
 export MPICH_OFI_STARTUP_CONNECT=1

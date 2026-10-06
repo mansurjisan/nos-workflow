@@ -10,7 +10,7 @@
 # files stay near-empty; the real logs are the redirect below.
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=02:00:00
+#PBS  -l walltime=04:00:00
 
 # ------------------------------------------------------------------
 # STOFS-3D-ATL UFS Post-Processing PBS Job
