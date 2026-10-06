@@ -13,8 +13,9 @@
 # cpus here only cover the Python side; mem=100GB covers the 7.5 d forecast GFS through cfgrib/xarray (a cold nowcast is tide-only) (ops asks 50 GB for adcprep alone). The decomposition is cached at $COMGES/<RUN>_4064.tar, so
 # only the first cycle pays for the full partition and later cycles run adcprep --prep15. MJ (10/05/26)
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 STOFS_RUNVER=${STOFS_RUNVER:-/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver}
 [ -r "${STOFS_RUNVER}" ] && . "${STOFS_RUNVER}"
@@ -75,14 +76,14 @@ export PACKAGEROOT
 export COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/$LOGNAME/com_2dglo}
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver:-v16.3}}
-export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
 [ -z "${ADCIRC_EXEC_DIR:-}" ] || export ADCIRC_EXEC_DIR
 
 export pbsid=${PBS_JOBID%%.*}
 export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_2d_glo.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

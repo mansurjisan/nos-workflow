@@ -24,10 +24,10 @@ fi
 PDY="$1"
 CYC="${2:-12}"
 case "${CYC}" in 00|06|12|18) ;; *) echo "ERROR: CYC must be 00, 06, 12 or 18 (got ${CYC})" >&2; exit 2 ;; esac
-PKG="${PKG:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow}"
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)"
 PBSDIR="${PKG}/pbs/stofs_2d_glo"
 # qsub -v replaces the job environment wholesale, so anything the cards need must be listed here. MJ (10/05/26)
-VARS="PDY=${PDY},CYC=${CYC}"
+VARS="PDY=${PDY},CYC=${CYC},PACKAGEROOT=$(dirname "${PKG}"),HOMEnos=${PKG}"
 for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER ATMOSPHERIC_FORCING COLDSTART_SPINUP_DAYS NOWCAST_HOURS; do
   eval "_val=\${${_v}:-}"
   if [ -n "${_val}" ]; then

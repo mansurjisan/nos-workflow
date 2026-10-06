@@ -28,8 +28,9 @@
 #        pbs/stofs_3d_atl_ufs_standalone/jnos_post_00.pbs
 # ------------------------------------------------------------------
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-stofs_3d_atl_ufs}
@@ -113,7 +114,7 @@ export SENDSMS=NO
 
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
 # nos_ofs_ver removed (tree unversioned)
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
@@ -131,7 +132,7 @@ export jobid=${jobid:-$job.$PBS_JOBID}
 # YAML configuration for the standalone variant (execution.mode=standalone).
 # Set explicitly rather than from ${OFS} so post reads the same config the
 # run stages used and cannot silently diverge on naming or paths.
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/stofs_3d_atl_ufs_standalone.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

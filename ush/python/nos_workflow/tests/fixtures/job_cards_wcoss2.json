@@ -184,7 +184,7 @@
       "#PBS  -q dev",
       "#PBS  -l select=1:ncpus=8:mpiprocs=8",
       "#PBS  -l place=vscatter",
-      "#PBS  -l walltime=02:00:00"
+      "#PBS  -l walltime=04:00:00"
     ],
     "nodes": 1,
     "total_ranks": 1

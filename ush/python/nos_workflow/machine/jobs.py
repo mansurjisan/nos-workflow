@@ -64,7 +64,7 @@ CATALOG: Dict[Tuple[str, str], StageSpec] = {
         KIND_MODEL, "05:30:00", threads_per_rank=1),
     ("stofs_3d_atl_ufs", "post"): StageSpec(
         "pbs/stofs_3d_atl_ufs/jnos_post_00.pbs", "stofs_3d_atl_ufs_post_00",
-        KIND_SERIAL, "02:00:00", real_logs=True),
+        KIND_SERIAL, "04:00:00", real_logs=True),
 
     ("stofs_3d_atl_ufs_standalone", "prep"): StageSpec(
         "pbs/stofs_3d_atl_ufs_standalone/jnos_prep_00.pbs",

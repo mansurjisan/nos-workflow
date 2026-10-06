@@ -10,7 +10,7 @@
 # files stay near-empty; the real logs are the redirect below.
 #PBS  -l select=1:ncpus=8:mpiprocs=8
 #PBS  -l place=vscatter
-#PBS  -l walltime=02:00:00
+#PBS  -l walltime=04:00:00
 
 # ------------------------------------------------------------------
 # STOFS-3D-ATL UFS Post-Processing PBS Job
@@ -23,8 +23,9 @@
 #        pbs/stofs_3d_atl_ufs/jnos_post_00.pbs
 # ------------------------------------------------------------------
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-stofs_3d_atl_ufs}
@@ -108,7 +109,7 @@ export SENDSMS=NO
 
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
 # nos_ofs_ver removed (tree unversioned)
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
@@ -123,7 +124,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for stofs_3d_atl_ufs
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 
