@@ -73,7 +73,7 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
   sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst2
+  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst2 tide_fcst2
   PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
   sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst2
   PLACE=vscatter:exclhost sub post_grib2 "${PREP}" 0:20:00 "1:ncpus=7:prepost=true:mem=400gb" ADCIRC_SEGMENT=grib2 post_ncdiff

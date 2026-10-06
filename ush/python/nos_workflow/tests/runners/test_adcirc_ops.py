@@ -428,7 +428,8 @@ env | sort > "$DATA/env.rec"; echo "$@" > "$DATA/args.rec"; ls -l "$COMIN" > "$D
 """
 OPS_MAKE = {"anomaly": 'echo anomaly > $COMOUT/${RUN}.${cycle}.points.cwl.nc; echo db > $COMOUT/database.tar.gz',
             "bias": 'echo bias > $COMOUT/${RUN}.${cycle}.fields.cwl.nc',
-            "grib2": 'echo g > $COMOUT/${RUN}.${cycle}.conus.east.cwl.grib2; echo w > $COMOUT/wmo/grib2_x'}
+            "grib2": 'for g in conus.east conus.west puertori alaska hawaii guam northpacific; do for h in 000 180; do '
+                     'echo g > $COMOUT/${RUN}.${cycle}.$g.f$h.grib2; done; done; echo w > $COMOUT/wmo/grib2_x'}
 
 
 def _pkg(tmp_path, monkeypatch, seg, skip=None):
@@ -486,7 +487,7 @@ def test_ops_bias_and_grib2_ranks_and_outputs(tmp_path, monkeypatch):
     shutil.rmtree(str(tmp_path / "tools"))
     _pkg(tmp_path, monkeypatch, "grib2")
     post.run_post(_seg(tmp_path, "grib2"))
-    assert ctx.cycle_dir(CYCLE, "conus.east.cwl.grib2").is_file() and (ctx.cycle_dir(CYCLE, "x").parent / "wmo" / "grib2_x").is_file()
+    assert ctx.cycle_dir(CYCLE, "guam.f180.grib2").is_file() and (ctx.cycle_dir(CYCLE, "x").parent / "wmo" / "grib2_x").is_file()
     env = {l.split("=", 1)[0]: l.split("=", 1)[1] for l in (tmp_path / "work/ops_grib2/env.rec").read_text().splitlines() if "=" in l}
     assert (env["NCPU"], env["PPN"]) == ("7", "7")
 
@@ -515,3 +516,24 @@ def test_ops_script_failure_and_missing_product(tmp_path, monkeypatch):
         post.run_post(ctx, Recorder(rc=1))
     with pytest.raises(RuntimeError, match="made no stofs_2d_glo.t12z.points.cwl.nc"):
         post.run_post(ctx, Recorder())
+
+
+def test_ops_anomaly_database_falls_back_to_previous_day_and_outputs_are_moved(tmp_path, monkeypatch):
+    _pkg(tmp_path, monkeypatch, "anomaly")
+    ctx = _seg(tmp_path, "anomaly")
+    _touch(ctx, "points.cwl.nc", "points.cwl.noanomaly.nc", "points.htp.nc")
+    prev = ctx.comoutroot / (RUN + ".20261004") / "database.tar.gz"
+    prev.parent.mkdir(parents=True)
+    prev.write_text("yesterday")
+    post.run_post(ctx)
+    assert "database.tar.gz -> %s" % prev in (tmp_path / "work/ops_anomaly/comin.rec").read_text()
+    assert not (tmp_path / "work/ops_anomaly/comout" / f"{RUN}.t12z.points.cwl.nc").exists()
+    assert ctx.cycle_dir(CYCLE, "points.cwl.nc").read_text() == "anomaly\n"
+
+
+def test_ops_grib2_needs_every_region_f000_and_f180(tmp_path, monkeypatch):
+    _pkg(tmp_path, monkeypatch, "grib2")
+    pkg = tmp_path / "pkg" / "scripts" / RUN / "exstofs_2d_glo_post_grib2.sh"
+    pkg.write_text(pkg.read_text().replace("000 180", "000 179"))
+    with pytest.raises(RuntimeError, match="made no stofs_2d_glo.t12z.conus.east.f180.grib2"):
+        post.run_post(_seg(tmp_path, "grib2"))

@@ -240,7 +240,7 @@ def test_launcher_ops_job_graph(tmp_path):
     deps = {k[len("stofs_2d_glo_"):]: sorted(x["jid"] for x in j.values() if x["jid"] in v["dep"]) for k, v in j.items()}
     want = {"tide_fcst1": ["tide_ncst"], "tide_fcst2": ["tide_fcst1"], "surf_ncst": ["gfs_ncst"],
             "surf_fcst1": ["surf_ncst", "gfs_fcst1"], "surf_fcst2": ["surf_fcst1", "gfs_fcst2"],
-            "post_anomaly": ["surf_fcst2"], "post_bias": ["post_anomaly"],
+            "post_anomaly": ["surf_fcst2", "tide_fcst2"], "post_bias": ["post_anomaly"],
             "post_ncdiff": ["post_bias", "tide_fcst2"], "post_grib2": ["post_ncdiff"], "post_ncrcat": ["gfs_ncst", "gfs_fcst1", "gfs_fcst2"],
             "tide_ncst": [], "gfs_ncst": [], "gfs_fcst1": [], "gfs_fcst2": []}
     assert deps == {k: sorted(name(x)["jid"] for x in v) for k, v in want.items()}

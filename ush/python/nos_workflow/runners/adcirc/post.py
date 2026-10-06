@@ -2,6 +2,7 @@
 and POST_ANOMALY, POST_BIAS_CORRECTION, POST_GRIB2 (the unchanged ops ex-scripts run from the stofs.v3.1.5 package). MJ (10/06/26)"""
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from datetime import timedelta
@@ -13,6 +14,7 @@ from .decomp import CommandRunner
 from .ops import _data, _publish, rerun_dir
 from .settings import AdcircConfigError, CycleContext
 
+log = logging.getLogger(__name__)
 FORCING_OUT = {"221": "pressfc", "222": "uvgrd10m", "225": "icec"}
 
 
@@ -76,20 +78,20 @@ def run_ncrcat(ctx: CycleContext, runner: CommandRunner = default_runner) -> Lis
 
 OPS_PKG = "/lfs/h1/ops/prod/packages/stofs.v3.1.5"
 REGIONS = ("conus.east", "conus.west", "puertori", "alaska", "hawaii", "guam", "northpacific")
-# segment: (ex-script, scratch-COMIN alias, package files that must exist, commands the script calls, NCPU/PPN, a product it must make)
+# segment: (ex-script, scratch-COMIN alias, package files that must exist, commands the script calls, NCPU/PPN, products it must make) MJ (10/06/26)
 OPS_JOBS = {
     "anomaly": ("anomaly", {"points.cwl.nc": "points.cwl.noanomaly.nc"},
                 ["exec/{r}/{r}_anomaly"] + ["fix/{r}/{r}_" + f for f in ("station.ctl", "cron.bnt", "ft03.dta", "ft07.dta")]
                 + ["ush/{r}/" + f for f in ("archive.py", "etweb_database.py", "etweb_extract.py", "inter.awk", "transpose.awk")],
-                ("mpirun", "ncdump", "ncgen", "python"), None, "points.cwl.nc"),
+                ("mpirun", "ncdump", "ncgen", "python"), None, ["points.cwl.nc"]),
     "bias": ("bias_correction", {"fields.cwl.nc": "fields.cwl.noanomaly.nc"},
              ["ush/{r}/bias_correction_mpi_v6_selective.py", "fix/{r}/cloned_stations.csv", "fix/{r}/extracted_stations.txt"],
-             ("mpirun", "python"), (256, 32), "fields.cwl.nc"),
+             ("mpirun", "python"), (256, 32), ["fields.cwl.nc"]),
     "grib2": ("grib2", {},
               ["exec/{r}/{r}_netcdf2shef", "exec/{r}/{r}_netcdf2grib", "fix/{r}/{r}_msl2mllw", "ush/{r}/make_ntc_file.pl"]
               + ["fix/{r}/{r}_%s.mask" % g for g in REGIONS]
               + ["parm/{r}/grib2_{r}_%s_%s" % (g, t) for g in REGIONS for t in ("cwl", "htp", "swl")],
-              ("mpiexec", "cfp", "tocgrib2", "perl"), (7, 7), "conus.east.cwl.grib2"),
+              ("mpiexec", "cfp", "tocgrib2", "perl"), (7, 7), ["%s.f%03d.grib2" % (g, h) for g in REGIONS for h in (0, 180)]),
 }
 PROD_UTIL = ("postmsg", "err_chk", "prep_step", "startmsg", "cpreq", "cpfs")
 
@@ -97,7 +99,7 @@ PROD_UTIL = ("postmsg", "err_chk", "prep_step", "startmsg", "cpreq", "cpfs")
 def run_ops_script(ctx: CycleContext, runner: CommandRunner = default_runner) -> List[str]:
     """The ops J-job environment around the unchanged ex-script. The scripts call mpirun/mpiexec themselves, with the
     ecf NCPU/PPN, so the machine profile is not used; GRIB2 needs cfp, so Hercules needs a later variant. MJ (10/06/26)"""
-    script, alias, need, tools, ranks, product = OPS_JOBS[ctx.segment]
+    script, alias, need, tools, ranks, products = OPS_JOBS[ctx.segment]
     pkg, r = Path(os.environ.get("STOFS_RUNVER") or OPS_PKG + "/versions/run.ver").parent.parent, ctx.run
     ex = pkg / "scripts" / r / ("exstofs_2d_glo_post_%s.sh" % script)
     missing = [str(f) for f in [ex] + [pkg / n.format(r=r) for n in need] if not f.is_file()]
@@ -120,8 +122,11 @@ def run_ops_script(ctx: CycleContext, runner: CommandRunner = default_runner) ->
     # Ops restores the tar from the previous day only at cyc=00 (script, via COM) and otherwise finds it in COMIN, where
     # it sits from the previous cycle's COMOUT. A first cycle has no tar and starts an empty database; to seed one, put
     # database.tar.gz into <COMOUTroot>/<run>.<PDYm1>/ (cyc 00) or the current day dir (other cycles). MJ (10/06/26)
-    if ctx.segment == "anomaly" and now.hour != 0 and (day / "database.tar.gz").is_file():
-        _link(day / "database.tar.gz", comin / "database.tar.gz")
+    # A once-a-day run (12z) has no earlier cycle today, so it falls back to the previous day's tar. MJ (10/06/26)
+    prev = ctx.comoutroot / ("%s.%s" % (r, (now - timedelta(days=1)).strftime("%Y%m%d"))) / "database.tar.gz"
+    tar = [t for t in (day / "database.tar.gz", prev) if t.is_file()]
+    if ctx.segment == "anomaly" and now.hour != 0 and tar:
+        _link(tar[0], comin / "database.tar.gz")
     pdy, dcom = now.strftime("%Y%m%d"), os.environ.get("DCOMROOT", "/lfs/h1/ops/prod/dcom")
     env = {"NET": "stofs", "RUN": r, "PDY": pdy, "PDYm1": (now - timedelta(days=1)).strftime("%Y%m%d"),
            "cyc": "%02d" % now.hour, "cycle": cyc, "DATA": str(work), "COM": str(ctx.comoutroot), "COMIN": str(comin),
@@ -136,13 +141,24 @@ def run_ops_script(ctx: CycleContext, runner: CommandRunner = default_runner) ->
     if ranks:
         env.update(NCPU=str(ranks[0]), PPN=str(ranks[1]))
     (work / "jlogfile").touch()
-    _run(runner, [["env"] + ["%s=%s" % kv for kv in env.items()] + ["bash", str(ex)]], work)
-    if not (comout / ("%s.%s.%s" % (r, cyc, product))).is_file():
-        raise RuntimeError("FATAL ERROR: post %s made no %s.%s.%s" % (ctx.segment, r, cyc, product))
+    try:
+        _run(runner, [["env"] + ["%s=%s" % kv for kv in env.items()] + ["bash", str(ex)]], work)
+    finally:
+        for n in (env["pgmout"], "errfile"):  # DATA is removed with KEEPDATA=NO, so keep the diagnostics in the job log
+            if (work / n).is_file():
+                log.info("%s tail:\n%s", n, "\n".join((work / n).read_text(errors="replace").splitlines()[-20:]))
+    absent = ["%s.%s.%s" % (r, cyc, p) for p in products if not (comout / ("%s.%s.%s" % (r, cyc, p))).is_file()]
+    if absent:
+        raise RuntimeError("FATAL ERROR: post %s made no %s" % (ctx.segment, ", ".join(absent[:3])))
+    # SENDDBN=NO also skips the SHEF WMO bulletins ops writes to wmo/ (known difference from ops). MJ (10/06/26)
     for f in sorted(comout.rglob("*")):
         if f.is_file():
-            rel = f.relative_to(comout)
-            _publish(f, day / rel)
+            dst = day / f.relative_to(comout)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                os.replace(str(f), str(dst))  # a move on the same filesystem; the outputs are about 11 GB per cycle. MJ (10/06/26)
+            except OSError:
+                _publish(f, dst)
     return [ex.name]
 
 

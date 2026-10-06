@@ -32,6 +32,7 @@ exec > "${_LOG_PREFIX}.out" 2> "${_LOG_PREFIX}.err"
 echo "=== stofs_2d_glo_prep_00 -- PBS jobid ${PBS_JOBID} on $(hostname) at $(date) ==="
 cd ${WORKDIR}
 
+_dcom_in=${DCOMROOT:-}  # prod_envir may reset it; re-exported before the post case. MJ (10/06/26)
 module purge
 module reset
 module load PrgEnv-intel/${PrgEnv_intel_ver}
@@ -99,9 +100,13 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
     python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
 fi
 
-# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post jobs; they share this card and the launcher overrides select per job;
-# the last three run the stofs.v3.1.5 ex-scripts, which need these modules (ecf). MJ (10/06/26)
-[[ "${ADCIRC_SEGMENT:-}" =~ ^(anomaly|bias|grib2)$ ]] && module load cfp/${cfp_ver} grib_util/${grib_util_ver} util_shared/${util_shared_ver} ve/stofs/${ve_stofs}
+# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post jobs; they share this card and the launcher overrides select per job.
+# The ops ex-scripts get the modules their ecf files load (python from ve/stofs, so unload the stock one first). MJ (10/06/26)
+case "${ADCIRC_SEGMENT:-}" in
+    anomaly|bias) module unload python 2>/dev/null || true; module load ve/stofs/${ve_stofs} ;;
+    grib2) module load cfp/${cfp_ver} grib_util/${grib_util_ver} util_shared/${util_shared_ver} ;;
+esac
+[ -z "${_dcom_in}" ] || export DCOMROOT=${_dcom_in}
 case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat|anomaly|bias|grib2) ${HOMEnos}/jobs/JNOS_POST ;; *) ${HOMEnos}/jobs/JNOS_PREP ;; esac
 # JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
 grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1
