@@ -267,7 +267,7 @@ def _export(ctx: CycleContext, run_dir: Path) -> None:
 def _check_window(path: Path, want: int) -> None:
     import netCDF4
     if not path.is_file():
-        return  # _stage names the missing file
+        return  # _stage names the missing file MJ (10/06/26)
     with netCDF4.Dataset(str(path)) as d:
         have = len(d.dimensions["record"])
     if have != want:
