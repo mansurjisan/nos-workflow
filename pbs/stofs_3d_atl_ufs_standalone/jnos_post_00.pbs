@@ -28,7 +28,7 @@
 #        pbs/stofs_3d_atl_ufs_standalone/jnos_post_00.pbs
 # ------------------------------------------------------------------
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # Working directory
@@ -113,7 +113,7 @@ export SENDSMS=NO
 
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
 # nos_ofs_ver removed (tree unversioned)
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos

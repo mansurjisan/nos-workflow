@@ -13,7 +13,7 @@
 # cpus here only cover the Python side; mem=100GB covers the 7.5 d forecast GFS through cfgrib/xarray (a cold nowcast is tide-only) (ops asks 50 GB for adcprep alone). The decomposition is cached at $COMGES/<RUN>_4064.tar, so
 # only the first cycle pays for the full partition and later cycles run adcprep --prep15. MJ (10/05/26)
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 STOFS_RUNVER=${STOFS_RUNVER:-/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver}

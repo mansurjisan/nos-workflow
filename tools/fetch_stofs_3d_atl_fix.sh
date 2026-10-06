@@ -122,6 +122,21 @@ if [ "$failed" -gt 0 ]; then
     exit 1
 fi
 
+# Coupled-only DATM/UFS templates. Five are byte-identical across the tracked
+# SECOFS and AK sets, so copy them (not link: the size checks above would see
+# the link). ufs.configure differs only in the OCN rank span and the coupling
+# step, so derive it from the SECOFS one. MJ (10/06/26)
+TPL="$(cd "$(dirname "$0")/.." && pwd)/fix/secofs_ufs"
+if [ -d "$TPL" ]; then
+    for f in datm_in.template datm.streams.template model_configure.template fd_ufs.yaml noahmptable.tbl; do
+        [ -s "$DEST/$f" ] || cp "$TPL/$f" "$DEST/$f"
+    done
+    [ -s "$DEST/ufs.configure" ] || sed -e "s/^\(OCN_petlist_bounds:[ ]*120 \)[0-9]*/\1$((119 + SCHISM_TASKS))/" \
+        -e 's/^@120$/@150/' "$TPL/ufs.configure" > "$DEST/ufs.configure"
+else
+    echo "SKIP  DATM/UFS templates: $TPL not found (coupled variant only)"
+fi
+
 # The run launches $SCHISM_TASKS SCHISM ranks against this partition, so
 # a rank-count mismatch fails at model start; catch it here instead. MJ (09/28/26)
 read -r ne np_ < <(sed -n 2p "$DEST/stofs_3d_atl_ufs.hgrid.gr3")

@@ -27,7 +27,7 @@
 #   qsub -l walltime=0:30:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst1 jnos_prep_00.pbs
 #   qsub -l walltime=0:10:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst2 jnos_prep_00.pbs
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # ADCIRC module stack from the ops v3.1.5 version file (adcirc/v56.1.0 etc.); override STOFS_RUNVER

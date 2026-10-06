@@ -12,7 +12,7 @@
 # Zach's WCOSS2 180 h test ran inside 2 h; 3 h walltime leaves headroom. Writer ranks (padcirc -W) come from adcirc.ncpu_writer in
 # stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked at launch. MJ (10/05/26)
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # ADCIRC module stack from the ops v3.1.5 version file (adcirc/v56.1.0 etc.); override STOFS_RUNVER

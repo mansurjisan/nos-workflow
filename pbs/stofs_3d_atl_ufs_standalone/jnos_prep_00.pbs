@@ -16,7 +16,7 @@
 # untar_met_sflux consumes (vs the UFS DATM atmo). Same Python forcing stack; prep does
 # not run the model, so no pschism/4920-rank/module.fv3 changes are needed here.
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 # The shared run.ver exports COLDSTART=YES; ATL never cold-starts (production J-job default NO,
 # exstofs_3d_atl_prep_processing.sh refuses YES), so pin it for the ATL prep. MJ (10/05/26)
@@ -80,7 +80,7 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 # Own COMROOT: standalone and coupled share RUN=stofs_3d_atl_ufs and would otherwise write one COMOUT. MJ (10/05/26)

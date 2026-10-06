@@ -14,7 +14,7 @@
 # `mpiexec -n 4920 -ppn 120 $UFS_EXEC_NAME 8`). Resources / module set / MPI tuning
 # mirror operational IT-STOFS (jstofs_3d_atl_now_forecast_v2.ecf).
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 
 # The pschism module versions come from the IT-STOFS version file it was built
@@ -84,7 +84,7 @@ export SENDCOM=NO
 export SENDDBN=NO
 export SENDSMS=NO
 
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos

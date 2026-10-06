@@ -9,7 +9,7 @@
 #PBS  -l walltime=03:00:00
 
 # Source nosofs version file (COMF systems)
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 . ${PACKAGEROOT}/nos-workflow/versions/run.ver
 # The shared run.ver exports COLDSTART=YES; ATL never cold-starts (production J-job default NO,
 # exstofs_3d_atl_prep_processing.sh refuses YES), so pin it for the ATL prep. MJ (10/05/26)
@@ -78,7 +78,7 @@ export SENDSMS=NO
 
 # Unified package root (STOFS + COMF scripts, J-jobs, YAML config)
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 
 # Data and COM paths
 export COMROOT=${COMROOT_UFS:-/lfs/h1/nos/ptmp/$LOGNAME/com}
