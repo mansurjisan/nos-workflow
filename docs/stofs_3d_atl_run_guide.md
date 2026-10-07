@@ -98,26 +98,60 @@ cp fv3_stofs_atl_pe.exe <your nos-workflow>/exec/fv3_stofs_3d_atl.exe
 
 ### 3.1a Starting from a teammate's package
 
-If someone already runs STOFS-3D-ATL on WCOSS2, clone your own copy and borrow only their executables. Don't copy their whole package directory:
+If someone already runs STOFS-3D-ATL on WCOSS2, clone your own copy and copy only their fix files and executables. Don't copy their whole package directory:
 - **Symlinks:** `fix/` and `exec/` in a working package are often symlinks into another package. `cp -r` keeps the links, so your runs would read their files and break when they change them.
 - **Location and access:** a copy may still carry hard-coded paths, or sit somewhere you cannot write.
 - **Updates:** a copy does not get updates with `git pull`.
 
-Do this instead:
+Do this instead. The maintainer's WCOSS2 package (Mansur Jisan) holds a complete, validated fix set and the executables:
+
+| What | Path on WCOSS2 |
+|---|---|
+| ATL fix files, including the river files, out2d mask and DATM/UFS templates | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/fix/stofs_3d_atl_ufs` |
+| Executables | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec` |
+
 ```bash
 git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
 git submodule update --init ush/python/nos-utils
-./tools/fetch_stofs_3d_atl_fix.sh                  # operational fix files, river files, out2d mask, DATM/UFS templates
-OTHER=<their package>/exec                         # ask the maintainer for the path
+MJFIX=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/fix/stofs_3d_atl_ufs
+MJEXE=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec
+
+# fix: either copy the maintainer's set (about 6 GB; -L in case any entry is a symlink) ...
+cp -rL $MJFIX/. fix/stofs_3d_atl_ufs/
+git checkout -- fix/stofs_3d_atl_ufs              # keep this clone's tracked files (pond seed, param.nml)
+# ... or fetch it from the operational package instead:  ./tools/fetch_stofs_3d_atl_fix.sh
+
 mkdir -p exec
-cp -L $OTHER/fv3_stofs_3d_atl.exe $OTHER/nos_ofs_create_tide_fac_schism $OTHER/schism_combine_hotstart7.exe exec/
+cp -L $MJEXE/fv3_stofs_3d_atl.exe $MJEXE/nos_ofs_create_tide_fac_schism $MJEXE/schism_combine_hotstart7.exe exec/
 cp /apps/prod/schism/5.14.0/bin/pschism_WCOSS2_VL exec/stofs_3d_atl_pschism_v3.1.5
-ls -l exec/
+ls -l exec/ && ls fix/stofs_3d_atl_ufs | wc -l
 ```
 - `cp -L` copies the real files, not links.
-- The owner must make those three files group-readable (`chmod g+r`) if you get "Permission denied".
+- If a copy fails with "Permission denied", ask the maintainer to make the files readable (`chmod -R g+rX` on the directory).
+- These are the maintainer's working directories and may move. If a path no longer exists, use the fetch tool for fix and ask for the executable location.
 - The cards submit with `#PBS -A ESTOFS-DEV -q dev`. The launchers and the ParMETIS retry use the card's account. Without that project, ask for access, or change `#PBS -A` in your clone's cards.
 - Your COMROOT, work directories and logs go under your own ptmp (`$LOGNAME`). Inputs come from the shared operational `com` and `dcom`.
+
+### 3.1b Updating an existing clone
+
+```bash
+cd <your nos-workflow clone>
+git status --short | grep -v '^??'          # expect nothing; local card edits are no longer needed
+git pull --ff-only
+git submodule update ush/python/nos-utils
+./tools/fetch_stofs_3d_atl_fix.sh           # stages any fix files added since your last fetch; existing files are skipped
+```
+- **Pull rejected by local changes:** older clones may still carry sed edits to `PACKAGEROOT` in the cards. Those edits are not needed any more. Discard them, then pull:
+  ```bash
+  git checkout -- pbs/stofs_3d_atl_ufs pbs/stofs_3d_atl_ufs_standalone      # add pbs/stofs_2d_glo if your clone has it
+  ```
+- **Pull done with `git stash` / `git stash pop` and conflicts in `pbs/`:** take the cards from the pulled version, then drop the stash:
+  ```bash
+  git checkout HEAD -- pbs/stofs_3d_atl_ufs pbs/stofs_3d_atl_ufs_standalone  # add pbs/stofs_2d_glo if your clone has it
+  git stash drop
+  ```
+- **Account edit:** if you changed `#PBS -A` in your cards (section 3.1a), that is the one card edit to keep. Re-apply it after these commands.
+- **When to update:** only while no job from this clone is queued or running. A queued job reads its card when it starts.
 
 ### 3.2 Seed the first cycle
 
@@ -174,7 +208,7 @@ qsub -v PDY=20261001,CYC=12,NOS_ARCHIVE_MANIFEST=YES,PACKAGEROOT=<parent dir>,HO
 
 ### 3.4 Later cycles
 
-No seed. Submit day N+1 after day N's forecast has passed (its restart and `staout_1` must exist):
+No seed. Submit day N+1 after day N's forecast has passed (its restart and `staout_1` must exist). This was checked on WCOSS2 for 20261003 -> 20261004 in both variants: day 2 started from the day-1 restart and used the day-1 `staout_1` and `avg_bias` for the dynamic adjustment.
 ```bash
 ./launch_stofs_standalone.sh 20261002 12
 ```
@@ -291,14 +325,16 @@ Cleaning up: work directories (`/lfs/h1/nos/ptmp/$LOGNAME/work/...`, `$NOS_PTMP/
 
 Operational v3.1 (one continuous run): prep 0:31, now_forecast 1:24, post1 0:22, post2 0:52.
 
-nos-workflow on WCOSS2, day 1, PDY 20261003 (seconds):
+nos-workflow on WCOSS2, 2-day chained cycle (seconds):
 
-| Stage | Standalone | Coupled |
-|---|---|---|
-| prep | not measured | 1711 |
-| nowcast (24 h) | 2350 | 3316 |
-| forecast (96 h) | 4825 | 5899 |
-| post | 3485 | 7215 (coupled post limit raised to 4 h) |
+| Stage | Standalone 20261003 | Standalone 20261004 | Coupled 20261003 | Coupled 20261004 |
+|---|---|---|---|---|
+| prep | not captured | 731 | 1711 | 2006 |
+| nowcast (24 h) | 2350 | 2322 | 3316 | 3379 |
+| forecast (96 h) | 4825 | 4857 | 5899 | 5896 |
+| post | 3485 | 3591 | 7215 | not captured |
+
+The coupled post walltime limit is 4 h.
 
 Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 min); coupled prep 24 min (DATM build), nowcast stage 28 min.
 
@@ -318,13 +354,23 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 | Coupled | 2.3 mm | 6.1 mm |
 | Hercules vs WCOSS2 | 0.06 mm standalone, 0.10 mm coupled | |
 
+2-day chained cycle on WCOSS2: 20261003 was seeded from operational, and 20261004 ran only from nos-workflow's own 20261003 restart and dynamic-adjust bias. Same statistic:
+
+| Variant | 20261003 nowcast / forecast | 20261004 nowcast / forecast |
+|---|---|---|
+| Standalone | 0.07 / 0.65 mm (first output bit-identical) | 0.17 / 1.01 mm |
+| Coupled | 3.7 / 8.3 mm | 5.0 / 6.9 mm |
+
+The difference from operational does not grow materially on the chained day: there is no runaway, standalone stays near or below 1 mm, and coupled is flat within noise. The largest station differences are a few Gulf of Maine / New England gauges at low water (Wells, Fort Point, Chatham, Boston, Cutler), present on both days.
+
 ## 8. Known limitations
 
 - ecFlow cards are not done yet; use the launchers (WCOSS2) or the Slurm cards (Hercules).
 - post2 products (GRIB2, SHEF) and the geopackage are not ported; no post product beyond stations and fields has been compared with operational.
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.
-- Coupled post: a fix for the empty trailing OLDIO field stack is in progress.
+- Coupled (OLDIO) runs leave an empty trailing field stack at the end of each run (e.g. `out2d_3` in the nowcast). Post skips it, so it is never published.
+- Coupled runs do not write `verticalVelocity` and `diffusivity`, so the coupled variant publishes no `fields.verticalVelocity.*` or `fields.diffusivity.*` products. Standalone and operational do.
 - Bad-day handling follows operational for ATL: prep checks restart age and size and fails on missing HOTSTART, OBC_QC, NUDGING or OPS_OBC_INPUTS; the previous-cycle fallback reads `$COMOUT_PREV/rerun`. Cases operational handles differently may remain.
 - The launcher does not wait for the previous day; submit the next day only after the forecast has passed.
 
