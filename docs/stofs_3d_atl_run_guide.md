@@ -208,7 +208,7 @@ qsub -v PDY=20261001,CYC=12,NOS_ARCHIVE_MANIFEST=YES,PACKAGEROOT=<parent dir>,HO
 
 ### 3.4 Later cycles
 
-No seed. Submit day N+1 after day N's forecast has passed (its restart and `staout_1` must exist):
+No seed. Submit day N+1 after day N's forecast has passed (its restart and `staout_1` must exist). This was checked on WCOSS2 for 20261003 -> 20261004 in both variants: day 2 started from the day-1 restart and used the day-1 `staout_1` and `avg_bias` for the dynamic adjustment.
 ```bash
 ./launch_stofs_standalone.sh 20261002 12
 ```
@@ -325,14 +325,16 @@ Cleaning up: work directories (`/lfs/h1/nos/ptmp/$LOGNAME/work/...`, `$NOS_PTMP/
 
 Operational v3.1 (one continuous run): prep 0:31, now_forecast 1:24, post1 0:22, post2 0:52.
 
-nos-workflow on WCOSS2, day 1, PDY 20261003 (seconds):
+nos-workflow on WCOSS2, 2-day chained cycle (seconds):
 
-| Stage | Standalone | Coupled |
-|---|---|---|
-| prep | not measured | 1711 |
-| nowcast (24 h) | 2350 | 3316 |
-| forecast (96 h) | 4825 | 5899 |
-| post | 3485 | 7215 (coupled post limit raised to 4 h) |
+| Stage | Standalone 20261003 | Standalone 20261004 | Coupled 20261003 | Coupled 20261004 |
+|---|---|---|---|---|
+| prep | not captured | 731 | 1711 | 2006 |
+| nowcast (24 h) | 2350 | 2322 | 3316 | 3379 |
+| forecast (96 h) | 4825 | 4857 | 5899 | 5896 |
+| post | 3485 | 3591 | 7215 | (re-run) |
+
+The coupled post walltime limit is 4 h.
 
 Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 min); coupled prep 24 min (DATM build), nowcast stage 28 min.
 
@@ -359,6 +361,7 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.
 - Coupled (OLDIO) runs leave an empty trailing field stack at the end of each run (e.g. `out2d_3` in the nowcast). Post skips it, so it is never published.
+- Coupled runs do not write `verticalVelocity` and `diffusivity`, so the coupled variant publishes no `fields.verticalVelocity.*` or `fields.diffusivity.*` products. Standalone and operational do.
 - Bad-day handling follows operational for ATL: prep checks restart age and size and fails on missing HOTSTART, OBC_QC, NUDGING or OPS_OBC_INPUTS; the previous-cycle fallback reads `$COMOUT_PREV/rerun`. Cases operational handles differently may remain.
 - The launcher does not wait for the previous day; submit the next day only after the forecast has passed.
 
