@@ -332,7 +332,7 @@ nos-workflow on WCOSS2, 2-day chained cycle (seconds):
 | prep | not captured | 731 | 1711 | 2006 |
 | nowcast (24 h) | 2350 | 2322 | 3316 | 3379 |
 | forecast (96 h) | 4825 | 4857 | 5899 | 5896 |
-| post | 3485 | 3591 | 7215 | (re-run) |
+| post | 3485 | 3591 | 7215 | not captured |
 
 The coupled post walltime limit is 4 h.
 
@@ -353,6 +353,15 @@ Parity achieved, PDY 20261001, 161 stations in the mesh (median station max abso
 | Standalone | 0.09 mm | 0.96 mm (first output bit-identical at all 161 stations) |
 | Coupled | 2.3 mm | 6.1 mm |
 | Hercules vs WCOSS2 | 0.06 mm standalone, 0.10 mm coupled | |
+
+2-day chained cycle on WCOSS2: 20261003 was seeded from operational, and 20261004 ran only from nos-workflow's own 20261003 restart and dynamic-adjust bias. Same statistic:
+
+| Variant | 20261003 nowcast / forecast | 20261004 nowcast / forecast |
+|---|---|---|
+| Standalone | 0.07 / 0.65 mm (first output bit-identical) | 0.17 / 1.01 mm |
+| Coupled | 3.7 / 8.3 mm | 5.0 / 6.9 mm |
+
+The difference from operational does not grow materially on the chained day: there is no runaway, standalone stays near or below 1 mm, and coupled is flat within noise. The largest station differences are a few Gulf of Maine / New England gauges at low water (Wells, Fort Point, Chatham, Boston, Cutler), present on both days.
 
 ## 8. Known limitations
 
