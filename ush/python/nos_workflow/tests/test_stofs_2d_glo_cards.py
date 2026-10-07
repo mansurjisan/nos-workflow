@@ -227,18 +227,22 @@ def _ops_launch(tmp_path, **env):
         a = rest.split()
         v = dict(kv.split("=", 1) for kv in a[a.index("-v") + 1].split(","))
         dep = a[a.index("-W") + 1].split(":")[1:] if "-W" in a else []
-        jobs[a[1 + a.index("-N")]] = dict(jid=jid, dep=dep, v=v, wall=a[a.index("-l") + 1], card=Path(a[-1]).name)
+        ls = [a[i + 1] for i, x in enumerate(a) if x == "-l"]
+        pick = lambda k: next((x.split("=", 1)[1] for x in ls if x.startswith(k + "=")), "")  # noqa: E731
+        jobs[a[1 + a.index("-N")]] = dict(jid=jid, dep=dep, v=v, wall=ls[0], sel=pick("select"), place=pick("place"),
+                                          card=Path(a[-1]).name)
     return jobs
 
 
 def test_launcher_ops_job_graph(tmp_path):
     j = _ops_launch(tmp_path)
-    assert len(j) == 11 and "stofs_2d_glo_cold_adcprep" not in j
+    assert len(j) == 14 and "stofs_2d_glo_cold_adcprep" not in j
     name = lambda label: j["stofs_2d_glo_" + label]  # noqa: E731
     deps = {k[len("stofs_2d_glo_"):]: sorted(x["jid"] for x in j.values() if x["jid"] in v["dep"]) for k, v in j.items()}
     want = {"tide_fcst1": ["tide_ncst"], "tide_fcst2": ["tide_fcst1"], "surf_ncst": ["gfs_ncst"],
             "surf_fcst1": ["surf_ncst", "gfs_fcst1"], "surf_fcst2": ["surf_fcst1", "gfs_fcst2"],
-            "post_ncdiff": ["tide_fcst2", "surf_fcst2"], "post_ncrcat": ["gfs_ncst", "gfs_fcst1", "gfs_fcst2"],
+            "post_anomaly": ["surf_fcst2", "tide_fcst2"], "post_bias": ["post_anomaly"],
+            "post_ncdiff": ["post_bias", "tide_fcst2"], "post_grib2": ["post_ncdiff"], "post_ncrcat": ["gfs_ncst", "gfs_fcst1", "gfs_fcst2"],
             "tide_ncst": [], "gfs_ncst": [], "gfs_fcst1": [], "gfs_fcst2": []}
     assert deps == {k: sorted(name(x)["jid"] for x in v) for k, v in want.items()}
     for v in j.values():
@@ -247,9 +251,14 @@ def test_launcher_ops_job_graph(tmp_path):
     assert (name("surf_fcst1")["v"]["ADCIRC_STREAM"], name("surf_fcst1")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst1")
     assert name("gfs_fcst1")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst1")["v"]["ADCIRC_SEGMENT"] == "fcst1"
     assert name("post_ncdiff")["card"] == "jnos_prep_00.pbs" and name("post_ncrcat")["v"]["ADCIRC_SEGMENT"] == "ncrcat"
+    assert [name(k)["v"]["ADCIRC_SEGMENT"] for k in ("post_anomaly", "post_bias", "post_grib2")] == ["anomaly", "bias", "grib2"]
+    assert name("post_bias")["sel"] == "8:ncpus=32:prepost=true:mem=800gb" and name("post_bias")["place"] == "vscatter:exclhost"
+    assert name("post_grib2")["sel"].startswith("1:ncpus=7:") and name("post_anomaly")["place"] == ""
     assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_fcst1", "post_ncdiff", "post_ncrcat")} == {
         "tide_ncst": "walltime=0:15:00", "surf_fcst1": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
         "post_ncrcat": "walltime=0:15:00"}
+    assert [name(k)["wall"] for k in ("post_anomaly", "post_bias", "post_grib2")] == [
+        "walltime=0:15:00", "walltime=2:00:00", "walltime=0:20:00"]
 
 
 def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
@@ -280,7 +289,7 @@ def test_launcher_single_mode_graph_unchanged(tmp_path):
 @pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
 def test_prep_card_dispatches_ops_post_jobs(card):
     text = card.read_text()
-    assert ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat) ${HOMEnos}/jobs/JNOS_POST ;; '
+    assert ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat|anomaly|bias|grib2) ${HOMEnos}/jobs/JNOS_POST ;; '
             '*) ${HOMEnos}/jobs/JNOS_PREP ;; esac\n# JNOS_* exits 0') in text
     assert "esac\n" in text and text.index("esac") < text.index(GATE)
     if card.suffix == ".pbs":

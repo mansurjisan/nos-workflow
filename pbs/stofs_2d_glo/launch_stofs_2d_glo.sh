@@ -14,7 +14,8 @@
 # A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
 # node counts, so they come from the yaml only. MJ (10/05/26)
 # ADCIRC_MODE=ops submits one cycle as the stofs.v3.1.5 job chain (walltimes from ecf/*.ecf; STAGES is ignored);
-# COLDSTART=YES prepends cold_adcprep and the spin-up. MJ (10/06/26)
+# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst2 + tide_fcst2 -> anomaly -> bias -> ncdiff -> grib2;
+# gempak is not ported. MJ (10/06/26)
 set -eu
 
 if [ "$#" -lt 1 ]; then
@@ -28,7 +29,7 @@ PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)"
 PBSDIR="${PKG}/pbs/stofs_2d_glo"
 # qsub -v replaces the job environment wholesale, so anything the cards need must be listed here. MJ (10/05/26)
 VARS="PDY=${PDY},CYC=${CYC},PACKAGEROOT=$(dirname "${PKG}"),HOMEnos=${PKG}"
-for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER ATMOSPHERIC_FORCING COLDSTART_SPINUP_DAYS NOWCAST_HOURS; do
+for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER DCOMROOT ATMOSPHERIC_FORCING COLDSTART_SPINUP_DAYS NOWCAST_HOURS; do
   eval "_val=\${${_v}:-}"
   if [ -n "${_val}" ]; then
     VARS="${VARS},${_v}=${_val}"
@@ -40,12 +41,13 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   declare -A J
   # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]; the first job of a stream waits for the spin-up. MJ (10/06/26)
   sub() {
-    local label="$1" card="$2" wall="$3" sel="$4" xv="$5" v="${OPSVARS}" dep="" l
+    local label="$1" card="$2" wall="$3" sel="$4" xv="$5" v="${OPSVARS}" dep="" l place="${PLACE:-}"
     shift 5
     [ "${xv}" = "-" ] || v="${v},${xv}"
     for l in "$@"; do dep="${dep}:${J[$l]}"; done
     local args=(-N "stofs_2d_glo_${label}" -l "walltime=${wall}")
     [ "${sel}" = "-" ] || args+=(-l "select=${sel}")
+    [ -z "${place}" ] || args+=(-l "place=${place}")
     [ -z "${dep}" ] || args+=(-W "depend=afterok${dep}")
     J[$label]=$(qsub "${args[@]}" -v "${v}" "${card}")
     printf '%-14s: %s%s\n' "${label}" "${J[$label]}" "${dep:+   (afterok${dep})}"
@@ -71,7 +73,10 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
   sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff tide_fcst2 surf_fcst2
+  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst2 tide_fcst2
+  PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
+  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst2
+  PLACE=vscatter:exclhost sub post_grib2 "${PREP}" 0:20:00 "1:ncpus=7:prepost=true:mem=400gb" ADCIRC_SEGMENT=grib2 post_ncdiff
   sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
   exit 0
 fi
