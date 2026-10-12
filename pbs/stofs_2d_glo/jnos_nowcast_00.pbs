@@ -20,8 +20,8 @@
 #   qsub -l walltime=1:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.pbs         (cold_spinup)
 #   qsub -l walltime=0:15:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.pbs
 #   qsub -l walltime=0:55:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.pbs
-#   surf: the same two with ADCIRC_STREAM=surf and walltimes 0:15:00, 1:05:00. MJ (10/05/26)
-#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/06/26)
+#   surf: the same two with ADCIRC_STREAM=surf and walltimes 0:15:00, 1:05:00. MJ (10/11/26)
+#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/11/26)
 #   qsub -l walltime=0:10:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.pbs
 #   qsub -l walltime=0:40:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst jnos_prep_00.pbs
 

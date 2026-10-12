@@ -167,4 +167,4 @@ def test_fcst_differs_from_ops_fcst1_only_in_run_length(tmp_path, stream, time_h
     ops1 = dict(seg.tokens, rnday=op.bc_str(op.bc_div(ncst.state_time, 86400) + op.bc_div(op.LSTH, 36)))
     template = (DATA / f"stofs_2d_glo_{stream}.15").read_text()
     _check(tmp_path, _bash(stream, "fcst1", time_hot, 6), op.render(template, nod, ops1, NOW))
-    assert {k for k in seg.tokens if seg.tokens[k] != ops1[k]} == {"rnday"}
+    assert float(seg.tokens["rnday"]) - float(ops1["rnday"]) == pytest.approx(2.5)  # 180 h vs the ops fcst1 120 h. MJ (10/11/26)

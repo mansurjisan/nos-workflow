@@ -4,7 +4,7 @@ Tide (NWS=0, chain file .hotstart) and surf (NWS=14014, chain file .restart) str
 ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep and
 cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
 chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
-$COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/06/26)
+$COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/11/26)
 """
 from __future__ import annotations
 
@@ -145,7 +145,7 @@ def _publish(src: Path, dst: Path) -> None:
 
 def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str], cycle: str,
            nod: Dict[str, str], runner: CommandRunner, hot: Path = None, ihot: int = 0, copies=()) -> Path:
-    """Stage one segment in $DATA (not COMOUT: four run dirs a cycle are ~150 GB) and decompose it. MJ (10/05/26)"""
+    """Stage one segment in $DATA (not COMOUT: four run dirs a cycle are ~150 GB) and decompose it. MJ (10/11/26)"""
     s = ctx.settings
     run_dir = _data(ctx) / f"{stream}_{segment}"
     shutil.rmtree(str(run_dir), ignore_errors=True)
