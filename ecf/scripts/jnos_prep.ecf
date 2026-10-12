@@ -1,0 +1,40 @@
+#PBS -N nos_%OFS%_prep_%CYC%
+#PBS -j oe
+#PBS -S /bin/bash
+#PBS -q %QUEUE%
+#PBS -A %PROJ%-%PROJENVIR%
+#PBS -l walltime=%WALLTIME%
+#PBS -l select=1:ncpus=8:mpiprocs=8
+#PBS -l place=vscatter
+#PBS -l debug=true
+
+model=nosofs
+%include <head.h>
+%include <envir-p1.h>
+
+%include <nos_env.h>
+%include <nos_modules_prep.h>
+
+export NOS_STAGE=prep
+export NOS_JJOB=JNOS_PREP
+# Python prep through nos-utils (forcing, ufs.configure, param.nml).
+export USE_PYTHON_PREP=YES
+export FULL_PYTHON_PREP=YES
+%include <nos_run_stage.h>
+
+%include <tail.h>
+%manual
+######################################################################
+# Task: jnos_prep
+# Prepares forcing and model control files for the cycle.
+#
+# Runs ${HOMEnos}/jobs/JNOS_PREP for the system in %OFS% and cycle %CYC%.
+# The task completes only if the J-job exits 0 AND writes
+#   STAGE_SUMMARY stage=prep ofs=<OFS> status=PASS
+# (see ecf/include/nos_run_stage.h).
+#
+# Troubleshooting: read the task output for the STAGE_SUMMARY line and the
+# step that failed before it. Requeue the task (ecflow_client --requeue) once the
+# cause (missing upstream data, HPC fault) is cleared.
+######################################################################
+%end

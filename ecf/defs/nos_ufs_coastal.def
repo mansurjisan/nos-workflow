@@ -1,0 +1,223 @@
+# nos_ufs_coastal.def - development ecFlow suite for nos-workflow on WCOSS2.
+#
+# Systems:  secofs_ufs        DATM + SCHISM, four cycles a day
+#           stofs_3d_atl_ufs  DATM + SCHISM, 12z daily
+#           secofs_ufs_ww3    DATM + SCHISM + WW3, four cycles a day (suspended
+#                             by default; resume when wanted)
+#
+# Each cycle family runs jnos_prep -> jnos_nowcast -> jnos_forecast -> jnos_post.
+# A nowcast also waits for the previous cycle's nowcast, whose restart it reads.
+# Resources match the development PBS cards in pbs/; launch times match the
+# cron schedule in pbs/launch_secofs_ufs.sh (cycle + 1 h 15 min).
+#
+# Load:   ecflow_client --load=nos_ufs_coastal.def
+#         ecflow_client --begin=nos_ufs_coastal
+# Before loading, set PACKAGEROOT, ECF_FILES, ECF_INCLUDE, COMROOT, DATAROOT,
+# QUEUE and PROJ/PROJENVIR below for your account.
+
+suite nos_ufs_coastal
+  edit PACKAGEROOT '/lfs/h1/nos/estofs/noscrub/USER/packages'
+  edit ECF_FILES   '/lfs/h1/nos/estofs/noscrub/USER/packages/nos-workflow/ecf/scripts'
+  # NCO include directory first (if used), this package's includes last.
+  edit ECF_INCLUDE '/lfs/h1/nos/estofs/noscrub/USER/packages/nos-workflow/ecf/include'
+  edit ECF_TRIES   1
+  edit ENVIR       'dev'
+  edit QUEUE       'dev'
+  edit PROJ        'ESTOFS'
+  edit PROJENVIR   'DEV'
+  edit COMROOT     '/lfs/h1/nos/ptmp/USER/com'
+  edit DATAROOT    '/lfs/h1/nos/ptmp/USER/work'
+  edit KEEPDATA    'YES'
+  edit SENDCOM     'YES'
+  edit SENDDBN     'NO'
+  repeat date PDY 20261101 20991231
+
+  #---------------------------------------------------------------- SECOFS-UFS
+  family secofs_ufs
+    edit OFS 'secofs_ufs'
+    family 00
+      edit CYC '00'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 01:15
+      task jnos_nowcast
+        # Nowcast needs the previous day's 18z restart; not expressed across
+        # the PDY repeat. Cold start or a manual set-complete covers day one.
+        trigger jnos_prep == complete
+        edit NODES 25
+        edit WALLTIME '01:30:00'
+        edit ECF_TRIES 3      # ParMETIS partition crash, nos-workflow #98
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '05:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 06
+      edit CYC '06'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 07:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../00/jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '01:30:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '05:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 12
+      edit CYC '12'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 13:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../06/jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '01:30:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '05:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 18
+      edit CYC '18'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 19:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../12/jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '01:30:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 25
+        edit WALLTIME '05:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+  endfamily
+
+  #---------------------------------------------------------- STOFS-3D-ATL-UFS
+  family stofs_3d_atl_ufs
+    edit OFS 'stofs_3d_atl_ufs'
+    family 12
+      edit CYC '12'
+      task jnos_prep
+        edit WALLTIME '03:00:00'
+        time 13:15            # set to the operational start time
+      task jnos_nowcast
+        trigger jnos_prep == complete
+        edit NODES 42
+        edit WALLTIME '01:30:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 42
+        edit WALLTIME '05:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '04:00:00'
+    endfamily
+  endfamily
+
+  #------------------------------------------------------------ SECOFS-UFS-WW3
+  family secofs_ufs_ww3
+    defstatus suspended
+    edit OFS 'secofs_ufs_ww3'
+    family 00
+      edit CYC '00'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 01:15
+      task jnos_nowcast
+        trigger jnos_prep == complete
+        edit NODES 46
+        edit WALLTIME '04:00:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '06:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 06
+      edit CYC '06'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 07:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../00/jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '04:00:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '06:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 12
+      edit CYC '12'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 13:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../06/jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '04:00:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '06:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+    family 18
+      edit CYC '18'
+      task jnos_prep
+        edit WALLTIME '02:00:00'
+        time 19:15
+      task jnos_nowcast
+        trigger jnos_prep == complete and ../12/jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '04:00:00'
+        edit ECF_TRIES 3
+      task jnos_forecast
+        trigger jnos_nowcast == complete
+        edit NODES 46
+        edit WALLTIME '06:30:00'
+        edit ECF_TRIES 3
+      task jnos_post
+        trigger jnos_forecast == complete
+        edit WALLTIME '02:00:00'
+    endfamily
+  endfamily
+endsuite

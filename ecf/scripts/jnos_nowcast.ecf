@@ -1,0 +1,37 @@
+#PBS -N nos_%OFS%_nowcast_%CYC%
+#PBS -j oe
+#PBS -S /bin/bash
+#PBS -q %QUEUE%
+#PBS -A %PROJ%-%PROJENVIR%
+#PBS -l walltime=%WALLTIME%
+#PBS -l place=vscatter:excl,select=%NODES%:ncpus=128:mpiprocs=120:ompthreads=1
+#PBS -l debug=true
+
+model=nosofs
+%include <head.h>
+%include <envir-p1.h>
+
+%include <nos_env.h>
+%include <nos_modules_model.h>
+
+export NOS_STAGE=nowcast
+export NOS_JJOB=JNOS_NOWCAST
+
+%include <nos_run_stage.h>
+
+%include <tail.h>
+%manual
+######################################################################
+# Task: jnos_nowcast
+# Runs the nowcast from the previous cycle's restart and writes the restart for the forecast.
+#
+# Runs ${HOMEnos}/jobs/JNOS_NOWCAST for the system in %OFS% and cycle %CYC%.
+# The task completes only if the J-job exits 0 AND writes
+#   STAGE_SUMMARY stage=nowcast ofs=<OFS> status=PASS
+# (see ecf/include/nos_run_stage.h).
+#
+# Troubleshooting: read the task output for the STAGE_SUMMARY line and the
+# step that failed before it. Requeue the task (ecflow_client --requeue) once the
+# cause (missing upstream data, HPC fault) is cleared.
+######################################################################
+%end
