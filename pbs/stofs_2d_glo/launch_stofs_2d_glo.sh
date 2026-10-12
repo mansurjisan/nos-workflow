@@ -14,7 +14,7 @@
 # A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
 # node counts, so they come from the yaml only. MJ (10/05/26)
 # ADCIRC_MODE=ops submits one cycle as the stofs.v3.1.5 job chain (walltimes from ecf/*.ecf; STAGES is ignored);
-# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst2 + tide_fcst2 -> anomaly -> bias -> ncdiff -> grib2;
+# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst + tide_fcst -> anomaly -> bias -> ncdiff -> grib2;
 # gempak is not ported. MJ (10/06/26)
 set -eu
 
@@ -65,19 +65,16 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
     COLD="cold_spinup"
   fi
   sub gfs_ncst "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=ncst ${COLD}
-  sub gfs_fcst1 "${PREP}" 0:30:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst1
-  sub gfs_fcst2 "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst2
+  sub gfs_fcst "${PREP}" 0:40:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst
   sub tide_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${COLD}
-  sub tide_fcst1 "${FC}" 0:30:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 tide_ncst
-  sub tide_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 tide_fcst1
+  sub tide_fcst "${FC}" 0:55:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
   sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
-  sub surf_fcst1 "${FC}" 0:40:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst1 surf_ncst gfs_fcst1
-  sub surf_fcst2 "${FC}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst2 surf_fcst1 gfs_fcst2
-  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst2 tide_fcst2
+  sub surf_fcst "${FC}" 1:05:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst gfs_fcst
+  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst tide_fcst
   PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
-  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst2
+  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst
   PLACE=vscatter:exclhost sub post_grib2 "${PREP}" 0:20:00 "1:ncpus=7:prepost=true:mem=400gb" ADCIRC_SEGMENT=grib2 post_ncdiff
-  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst1 gfs_fcst2
+  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst
   exit 0
 fi
 

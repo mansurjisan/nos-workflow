@@ -66,10 +66,11 @@ def run_ncrcat(ctx: CycleContext, runner: CommandRunner = default_runner) -> Lis
     now, work, rr = ctx.cycle_time, _work(ctx), rerun_dir(ctx)
     if not (rr / ("%s_ncst.221.nc" % ctx.run)).is_file():
         raise RuntimeError("FATAL ERROR: GFS surface forcing does not exist")
-    for seg in ("ncst", "fcst1", "fcst2"):
+    # The single fcst forcing is hourly to 180 h, so the published pressfc/uvgrd10m/icec are hourly after 120 h, where ops has 3-hourly. MJ (10/11/26)
+    for seg in ("ncst", "fcst"):
         for n in FORCING_OUT:
             _link(rr / ("%s_%s.%s.nc" % (ctx.run, seg, n)), work / ("%s.%s.nc" % (seg, n)))
-    _run(runner, [["ncrcat", "ncst.%s.nc" % n, "fcst1.%s.nc" % n, "fcst2.%s.nc" % n, "fort.%s.nc" % n]
+    _run(runner, [["ncrcat", "ncst.%s.nc" % n, "fcst.%s.nc" % n, "fort.%s.nc" % n]
                   for n in FORCING_OUT], work)
     for n in FORCING_OUT:
         _publish(work / ("fort.%s.nc" % n), ctx.cycle_dir(now, FORCING_OUT[n] + ".nc"))

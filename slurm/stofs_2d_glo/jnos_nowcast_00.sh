@@ -22,19 +22,17 @@
 #SBATCH --error=%x.%j.err
 
 # Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
-# from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst1 launch 4064 + 32 writers = 4096 ranks, which needs
+# from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst launch 4064 + 32 writers = 4096 ranks, which needs
 # 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
-# surf ncst -> fcst1 -> fcst2:
+# surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
 #   sbatch -t 2:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
 #   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
 #   sbatch -t 0:15:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
-#   sbatch -t 0:30:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst1 jnos_forecast_00.sh
-#   sbatch -t 0:25:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst2 jnos_forecast_00.sh
-#   surf: the same three with ADCIRC_STREAM=surf, -t 0:15:00 -N 52, 0:40:00 -N 52, 0:25:00. MJ (10/05/26)
-#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst/fcst1/fcst2 walltimes). MJ (10/06/26)
+#   sbatch -t 0:55:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.sh
+#   surf: the same two with ADCIRC_STREAM=surf, -t 0:15:00 -N 52, 1:05:00 -N 52. MJ (10/11/26)
+#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/11/26)
 #   sbatch -t 0:10:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.sh
-#   sbatch -t 0:30:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst1 jnos_prep_00.sh
-#   sbatch -t 0:10:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst2 jnos_prep_00.sh
+#   sbatch -t 0:40:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst jnos_prep_00.sh
 
 # PACKAGEROOT must be set explicitly: a default could pick up the SECOFS or ATL package and run its code silently. MJ (10/05/26)
 PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the 2D-Global nos-workflow clone>}

@@ -237,26 +237,26 @@ def _ops_launch(tmp_path, **env):
 
 def test_launcher_ops_job_graph(tmp_path):
     j = _ops_launch(tmp_path)
-    assert len(j) == 14 and "stofs_2d_glo_cold_adcprep" not in j
+    assert len(j) == 11 and "stofs_2d_glo_cold_adcprep" not in j
     name = lambda label: j["stofs_2d_glo_" + label]  # noqa: E731
     deps = {k[len("stofs_2d_glo_"):]: sorted(x["jid"] for x in j.values() if x["jid"] in v["dep"]) for k, v in j.items()}
-    want = {"tide_fcst1": ["tide_ncst"], "tide_fcst2": ["tide_fcst1"], "surf_ncst": ["gfs_ncst"],
-            "surf_fcst1": ["surf_ncst", "gfs_fcst1"], "surf_fcst2": ["surf_fcst1", "gfs_fcst2"],
-            "post_anomaly": ["surf_fcst2", "tide_fcst2"], "post_bias": ["post_anomaly"],
-            "post_ncdiff": ["post_bias", "tide_fcst2"], "post_grib2": ["post_ncdiff"], "post_ncrcat": ["gfs_ncst", "gfs_fcst1", "gfs_fcst2"],
-            "tide_ncst": [], "gfs_ncst": [], "gfs_fcst1": [], "gfs_fcst2": []}
+    want = {"tide_fcst": ["tide_ncst"], "surf_ncst": ["gfs_ncst"], "surf_fcst": ["surf_ncst", "gfs_fcst"],
+            "post_anomaly": ["surf_fcst", "tide_fcst"], "post_bias": ["post_anomaly"],
+            "post_ncdiff": ["post_bias", "tide_fcst"], "post_grib2": ["post_ncdiff"], "post_ncrcat": ["gfs_ncst", "gfs_fcst"],
+            "tide_ncst": [], "gfs_ncst": [], "gfs_fcst": []}
     assert deps == {k: sorted(name(x)["jid"] for x in v) for k, v in want.items()}
     for v in j.values():
         assert v["v"]["PDY"] == "20261005" and v["v"]["CYC"] == "12" and v["v"]["KEEPDATA"] == "NO"
         assert v["v"]["ADCIRC_MODE"] == "ops"
-    assert (name("surf_fcst1")["v"]["ADCIRC_STREAM"], name("surf_fcst1")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst1")
-    assert name("gfs_fcst1")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst1")["v"]["ADCIRC_SEGMENT"] == "fcst1"
+    assert (name("surf_fcst")["v"]["ADCIRC_STREAM"], name("surf_fcst")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst")
+    assert name("gfs_fcst")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst")["v"]["ADCIRC_SEGMENT"] == "fcst"
     assert name("post_ncdiff")["card"] == "jnos_prep_00.pbs" and name("post_ncrcat")["v"]["ADCIRC_SEGMENT"] == "ncrcat"
     assert [name(k)["v"]["ADCIRC_SEGMENT"] for k in ("post_anomaly", "post_bias", "post_grib2")] == ["anomaly", "bias", "grib2"]
     assert name("post_bias")["sel"] == "8:ncpus=32:prepost=true:mem=800gb" and name("post_bias")["place"] == "vscatter:exclhost"
     assert name("post_grib2")["sel"].startswith("1:ncpus=7:") and name("post_anomaly")["place"] == ""
-    assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_fcst1", "post_ncdiff", "post_ncrcat")} == {
-        "tide_ncst": "walltime=0:15:00", "surf_fcst1": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
+    assert {k: name(k)["wall"] for k in ("tide_ncst", "tide_fcst", "surf_fcst", "gfs_fcst", "post_ncdiff", "post_ncrcat")} == {
+        "tide_ncst": "walltime=0:15:00", "tide_fcst": "walltime=0:55:00", "surf_fcst": "walltime=1:05:00",
+        "gfs_fcst": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
         "post_ncrcat": "walltime=0:15:00"}
     assert [name(k)["wall"] for k in ("post_anomaly", "post_bias", "post_grib2")] == [
         "walltime=0:15:00", "walltime=2:00:00", "walltime=0:20:00"]

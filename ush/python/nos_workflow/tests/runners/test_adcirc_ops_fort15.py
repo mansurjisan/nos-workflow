@@ -108,10 +108,9 @@ RNDAY=$rnday_hotstart
 def _bash(stream, segment, time_hot, ncsth):
     sed = SED_TIDE if stream == "tide" else SED_SURF
     body = NCST
-    if segment in ("fcst1", "fcst2"):
-        body += FCST % {"div": 36, "nhsinc": 3600, "winc": 3600, "sc": 0 if stream == "tide" else 5}
-    if segment == "fcst2":
-        body += FCST % {"div": 72, "nhsinc": 7200, "winc": 10800, "sc": 0 if stream == "tide" else 5}
+    if segment != "ncst":  # fcst: the ops fcst1 lines with the run length lsth/24 (one 180 h run), or lsth/36 as in ops. MJ (10/11/26)
+        body += FCST % {"div": 24 if segment == "fcst" else 36, "nhsinc": 3600, "winc": 3600,
+                        "sc": 0 if stream == "tide" else 5}
     template = DATA / f"stofs_2d_glo_{stream}.15"
     script = ("set -e\nRUN=stofs_2d_glo\ntime_now=%s\ntime_hotstart=%s\nncsth=%s\n" % (NOW, time_hot, ncsth)
               + body + "cp %s ${RUN}_fort.15\n" % template + READ_NOD + sed)
@@ -141,13 +140,12 @@ def _check(tmp_path, script, got):
 # ihot parity: 368 for 583200 and 594000 at 3 h, 367 for 572400 and 561600 MJ (10/05/26)
 @pytest.mark.parametrize("stream,segment,time_hot,ncsth", [
     ("tide", "ncst", 583200, 6), ("surf", "ncst", 572400, 6),
-    ("tide", "fcst1", 583200, 6), ("surf", "fcst1", 572400, 6),
-    ("tide", "fcst2", 594000, 12), ("surf", "fcst2", 561600, 6)])
+    ("tide", "fcst", 583200, 6), ("surf", "fcst", 572400, 6)])
 def test_segment_matches_ops_sed(tmp_path, stream, segment, time_hot, ncsth):
     nod = _nod(tmp_path)
     seg = op.ncst_segment(stream, str(time_hot), ncsth)
-    for name in ("fcst1", "fcst2")[:("ncst", "fcst1", "fcst2").index(segment)]:
-        seg = op.fcst_segment(stream, name, seg.state_time, seg.tokens["touts"], seg.tokens["toutf"])
+    if segment == "fcst":
+        seg = op.fcst_segment(stream, seg.state_time, seg.tokens["touts"], seg.tokens["toutf"])
     got = op.render((DATA / f"stofs_2d_glo_{stream}.15").read_text(), nod, seg.tokens, NOW)
     _check(tmp_path, _bash(stream, segment, time_hot, ncsth), got)
     assert [ln for ln in got.splitlines() if ln.endswith("! IHOT")][0].split()[0] == seg.tokens["ihot"]
@@ -159,3 +157,14 @@ def test_spinup_matches_ops_sed(tmp_path):
               + "cp %s ${RUN}_fort.15\n" % (DATA / "stofs_2d_glo_tide.15") + READ_NOD + SED_ADCPREP)
     _check(tmp_path, script, op.render((DATA / "stofs_2d_glo_tide.15").read_text(), nod, op.spinup_tokens(),
                                        "2026092806"))
+
+
+@pytest.mark.parametrize("stream,time_hot", [("tide", 583200), ("surf", 572400)])
+def test_fcst_differs_from_ops_fcst1_only_in_run_length(tmp_path, stream, time_hot):
+    nod = _nod(tmp_path)
+    ncst = op.ncst_segment(stream, str(time_hot), 6)
+    seg = op.fcst_segment(stream, ncst.state_time, ncst.tokens["touts"], ncst.tokens["toutf"])
+    ops1 = dict(seg.tokens, rnday=op.bc_str(op.bc_div(ncst.state_time, 86400) + op.bc_div(op.LSTH, 36)))
+    template = (DATA / f"stofs_2d_glo_{stream}.15").read_text()
+    _check(tmp_path, _bash(stream, "fcst1", time_hot, 6), op.render(template, nod, ops1, NOW))
+    assert float(seg.tokens["rnday"]) - float(ops1["rnday"]) == pytest.approx(2.5)  # 180 h vs the ops fcst1 120 h. MJ (10/11/26)
