@@ -94,6 +94,7 @@ def test_pbs_card_exports(stage):
         assert needle in text, needle
     assert "OFS:-" not in text and "COMROOT=${COMROOT:-" not in text and "DATAROOT:-" not in text
     assert text.rstrip().endswith(GATE) and LAST[stage] in text
+    assert text.index("_py_ver=${python_ver:-}") < text.index('. "${STOFS_RUNVER}"') < text.index("python_ver=${_py_ver}")
 
 
 @pytest.mark.parametrize("stage", STAGES)
