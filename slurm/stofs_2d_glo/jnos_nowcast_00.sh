@@ -25,7 +25,7 @@
 # from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst launch 4064 + 32 writers = 4096 ranks, which needs
 # 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
 # surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
-#   sbatch -t 2:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
+#   sbatch -t 3:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
 #   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
 #   sbatch -t 0:15:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
 #   sbatch -t 0:55:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.sh

@@ -97,10 +97,16 @@ def test_crash_text_fails_even_with_rc_zero(tmp_path, mesh, text):
         run.run_nowcast(ctx, launcher, _profile("wcoss2"))
 
 
-def test_nonzero_rc_fails(tmp_path, mesh):
+def test_nonzero_rc_fails(tmp_path, mesh, caplog):
     ctx = _prepped(tmp_path, None)
+
+    def launcher(argv, cwd):
+        (cwd / "adcirc.err").write_text("".join("line %d\n" % i for i in range(50)) + "forrtl: severe (174)\n")
+        return 9
+
     with pytest.raises(RuntimeError, match="return code 9"):
-        run.run_nowcast(ctx, lambda a, c: 9, _profile("wcoss2"))
+        run.run_nowcast(ctx, launcher, _profile("wcoss2"))
+    assert "forrtl: severe (174)" in caplog.text and "line 21\n" in caplog.text and "line 20\n" not in caplog.text
 
 
 def test_missing_pe_dirs_fail_before_launch(tmp_path, mesh):

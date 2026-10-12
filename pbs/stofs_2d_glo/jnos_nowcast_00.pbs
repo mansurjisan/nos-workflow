@@ -16,7 +16,7 @@
 # Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
 # from ecf/jstofs_2d_glo_*.ecf, and surf/tide only differ by ADCIRC_STREAM. The cold-start pair runs once per
 # restart (cold_adcprep, then spinup), then each cycle runs tide and surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
-#   qsub -l walltime=2:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.pbs                    (cold_adcprep)
+#   qsub -l walltime=3:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.pbs                    (cold_adcprep)
 #   qsub -l walltime=1:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.pbs         (cold_spinup)
 #   qsub -l walltime=0:15:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.pbs
 #   qsub -l walltime=0:55:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.pbs

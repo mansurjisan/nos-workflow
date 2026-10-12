@@ -16,6 +16,8 @@
 # ADCIRC_MODE=ops submits one cycle as the stofs.v3.1.5 job chain (walltimes from ecf/*.ecf; STAGES is ignored);
 # COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst + tide_fcst -> anomaly -> bias -> ncdiff -> grib2;
 # gempak is not ported. MJ (10/06/26)
+# Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
+# (hourly fcst past 120 h). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/12/26)
 set -eu
 
 if [ "$#" -lt 1 ]; then
@@ -37,7 +39,7 @@ for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER DCOMROOT
 done
 
 if [ "${ADCIRC_MODE:-single}" = ops ]; then
-  OPSVARS="${VARS},KEEPDATA=NO,ADCIRC_MODE=ops"
+  OPSVARS="${VARS},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops"
   declare -A J
   # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]; the first job of a stream waits for the spin-up. MJ (10/06/26)
   sub() {
@@ -60,7 +62,7 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   echo "=== STOFS-2D-Global ops-mode chain: PDY=${PDY} CYC=${CYC} PKG=${PKG} ==="
   COLD=""
   if [ "${COLDSTART:-NO}" = YES ]; then
-    sub cold_adcprep "${PREP}" 2:00:00 "1:ncpus=1:prepost=true:mem=50gb" COLDSTART=YES
+    sub cold_adcprep "${PREP}" 3:00:00 "1:ncpus=1:prepost=true:mem=50gb" COLDSTART=YES
     sub cold_spinup "${NOW}" 1:00:00 - ADCIRC_SEGMENT=spinup cold_adcprep
     COLD="cold_spinup"
   fi
@@ -74,7 +76,7 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
   sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst
   PLACE=vscatter:exclhost sub post_grib2 "${PREP}" 0:20:00 "1:ncpus=7:prepost=true:mem=400gb" ADCIRC_SEGMENT=grib2 post_ncdiff
-  sub post_ncrcat "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst
+  sub post_ncrcat "${PREP}" 0:25:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst
   exit 0
 fi
 

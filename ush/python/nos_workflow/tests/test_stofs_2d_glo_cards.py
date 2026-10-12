@@ -257,14 +257,15 @@ def test_launcher_ops_job_graph(tmp_path):
     assert {k: name(k)["wall"] for k in ("tide_ncst", "tide_fcst", "surf_fcst", "gfs_fcst", "post_ncdiff", "post_ncrcat")} == {
         "tide_ncst": "walltime=0:15:00", "tide_fcst": "walltime=0:55:00", "surf_fcst": "walltime=1:05:00",
         "gfs_fcst": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
-        "post_ncrcat": "walltime=0:15:00"}
+        "post_ncrcat": "walltime=0:25:00"}
     assert [name(k)["wall"] for k in ("post_anomaly", "post_bias", "post_grib2")] == [
         "walltime=0:15:00", "walltime=2:00:00", "walltime=0:20:00"]
 
 
 def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
-    j = _ops_launch(tmp_path, COLDSTART="YES", NOWCAST_HOURS="24")
+    j = _ops_launch(tmp_path, COLDSTART="YES", NOWCAST_HOURS="24", KEEPDATA="YES")
     spin, adc = j["stofs_2d_glo_cold_spinup"], j["stofs_2d_glo_cold_adcprep"]
+    assert adc["wall"] == "walltime=3:00:00" and all(v["v"]["KEEPDATA"] == "YES" for v in j.values())
     assert adc["v"]["COLDSTART"] == "YES" and spin["dep"] == [adc["jid"]] and spin["v"]["ADCIRC_SEGMENT"] == "spinup"
     for k in ("tide_ncst", "surf_ncst"):
         assert spin["jid"] in j["stofs_2d_glo_" + k]["dep"]

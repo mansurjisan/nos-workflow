@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import subprocess
+from collections import deque
 from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
@@ -76,6 +77,16 @@ def crash_lines(run_dir: Path) -> List[str]:
     return hits
 
 
+def log_tails(run_dir: Path, n: int = 30) -> None:
+    """Copy the ADCIRC log tails into the job log; $DATA (and these logs) is removed when KEEPDATA=NO. MJ (10/12/26)"""
+    for name in LOG_FILES:
+        p = Path(run_dir) / name
+        if p.is_file():
+            with open(p, errors="replace") as fh:
+                tail = "".join(deque(fh, maxlen=n)).rstrip()
+            log.error("last %d lines of %s:\n%s", n, name, tail)
+
+
 def default_launcher(argv: Sequence[str], cwd: Path) -> int:
     with open(Path(cwd) / LOG_FILES[0], "w") as out, open(Path(cwd) / LOG_FILES[1], "w") as err:
         return subprocess.run(list(argv), cwd=str(cwd), stdout=out, stderr=err,
@@ -102,9 +113,11 @@ def run_padcirc(ctx: CycleContext, run_dir: Path, hotstart: bool,
                                 " allocated; raise the node count at submit time")
     log.info("padcirc: %s (cwd %s)", " ".join(argv), run_dir)
     rc = launcher(argv, Path(run_dir))
+    hits = crash_lines(run_dir) if rc == 0 else []
+    if rc != 0 or hits:
+        log_tails(run_dir)
     if rc != 0:
         raise RuntimeError(f"ADCIRC execution failed with return code {rc}")
-    hits = crash_lines(run_dir)
     if hits:
         raise RuntimeError("ADCIRC crashed (rc=0 but log reports): " + "; ".join(hits[:3]))
     return argv
