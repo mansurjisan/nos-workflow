@@ -1,11 +1,10 @@
 """STOFS-2D-GLO ops mode (ADCIRC_MODE=ops): the stofs.v3.1.5 run structure, one call per ops job.
 
 Tide (NWS=0, chain file .hotstart) and surf (NWS=14014, chain file .restart) streams, each run as
-ncst, fcst1 (+120 h), fcst2 (+60 h); cold_adcprep (nod_equi + decomposition) runs in prep and
+ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep and
 cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
 chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
-$COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst1,fcst2}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst1|fcst2
-as the ops GFS_NCST/FCST1/FCST2 jobs do. MJ (10/06/26)
+$COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/06/26)
 """
 from __future__ import annotations
 
@@ -83,14 +82,13 @@ def ncst_segment(stream: str, time_hotstart, ncsth: int) -> Segment:
     return Segment(tok, "%.0f" % (ncstd * 86400))
 
 
-def fcst_segment(stream: str, segment: str, time_hotstart, touts: str, toutf: str) -> Segment:
-    div, nhsinc, winc = (36, "3600", "3600") if segment == "fcst1" else (72, "7200", "10800")
+def fcst_segment(stream: str, time_hotstart, touts: str, toutf: str) -> Segment:
     ihot = parity_ihot(time_hotstart, NOWH)
-    rnday = bc_div(time_hotstart, 86400) + bc_div(LSTH, div)
+    rnday = bc_div(time_hotstart, 86400) + bc_div(LSTH, 24)  # ops fcst1 has lsth/36; one run for both gives lsth/24
     tok = {"ihot": str(ihot), "rnday": bc_str(rnday), "nout": "3", "touts": touts, "toutf": toutf,
-           "nhstar": "3", "nhsinc": nhsinc}
+           "nhstar": "3", "nhsinc": "3600"}
     if stream == "surf":
-        tok["winc"] = winc
+        tok["winc"] = "3600"
     return Segment(tok, "%.0f" % (rnday * 86400))
 
 
@@ -177,7 +175,7 @@ def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str],
 
 def _launch(ctx: CycleContext, run_dir: Path, stream: str, segment: str, launcher, profile) -> List[str]:
     writers = int(ctx.settings.raw["adcirc"].get("ops_surf_writers", 0)) \
-        if stream == "surf" and segment in ("ncst", "fcst1") else 0
+        if stream == "surf" and segment in ("ncst", "fcst") else 0
     argv = execute.run_padcirc(ctx, run_dir, False, launcher, profile, writers)
     for pe in pe_dirs(run_dir):
         shutil.rmtree(str(pe), ignore_errors=True)
@@ -252,7 +250,13 @@ def find_chain_start(ctx: CycleContext, kind: str) -> Tuple[datetime, Path]:
     raise AdcircConfigError(f"FATAL ERROR: there are no {kind} files, please restart with COLDSTART=YES")
 
 
+def _check_retired(ctx: CycleContext) -> None:
+    if ctx.segment in ("fcst1", "fcst2"):
+        raise AdcircConfigError(f"ADCIRC_SEGMENT={ctx.segment} is retired: the forecast is one 180 h run, use ADCIRC_SEGMENT=fcst")
+
+
 def _check(ctx: CycleContext, segments: Tuple[str, ...]) -> None:
+    _check_retired(ctx)
     if ctx.stream not in STREAMS:
         raise AdcircConfigError(f"ADCIRC_STREAM must be one of {tuple(STREAMS)}, got {ctx.stream!r}")
     if ctx.segment not in segments:
@@ -281,10 +285,6 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     _base, nod = _load_nod(ctx)
     beg, hfile = find_chain_start(ctx, chain)
     seg = ncst_segment(stream, "%.15g" % _time(hfile), int((now - beg).total_seconds() // 3600))
-    # A stale fcst1-end hotstart from an earlier run of this cycle must not reach fcst1/fcst2. MJ (10/05/26)
-    h68 = rerun_dir(ctx) / f"{ctx.run}_{stream}.68.nc"
-    if h68.exists():
-        h68.unlink()
     if stream == "surf":
         _check_window(rerun_dir(ctx) / f"{ctx.run}_ncst.221.nc", int((now - beg).total_seconds() // 3600) + 1)
     run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
@@ -305,21 +305,16 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     st = sp.read_text().split() if sp.is_file() else []
     if len(st) < 4:
         raise AdcircConfigError(f"missing or empty {sp}; run the {stream} nowcast first")
-    seg = fcst_segment(stream, segment, st[1], st[2], st[3])
-    hot = ctx.cycle_dir(now, chain) if segment == "fcst1" else rr / f"{ctx.run}_{stream}.68.nc"
+    seg = fcst_segment(stream, st[1], st[2], st[3])
+    hot = ctx.cycle_dir(now, chain)
     if abs(_time(hot) - float(st[1])) > 1:
         raise AdcircConfigError(f"FATAL ERROR: {sp} has advanced past this {segment} (its start is {st[1]} s, "
                                 f"{hot.name} is at {_time(hot):g} s); redo the cycle from ncst")
     run_dir = _stage(ctx, stream, segment, seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hot, int(seg.tokens["ihot"]),
                      [(rr / f"{ctx.run}_{name}", src) for src, name in RERUN[stream]])
     argv = _launch(ctx, run_dir, stream, segment, launcher, profile)
-    if segment == "fcst1":
-        _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, NOWH) - 300}.nc"),
-                 rr / f"{ctx.run}_{stream}.68.nc")
-        _export(ctx, run_dir)
-    else:
-        for src, name in PRODUCTS[stream]:
-            _publish(_need(run_dir, src), ctx.cycle_dir(now, name))
+    for src, name in PRODUCTS[stream]:
+        _publish(_need(run_dir, src), ctx.cycle_dir(now, name))
     sp.write_text("0 %s %s %s\n" % (seg.state_time, st[2], st[3]))
     return argv
 
@@ -340,7 +335,8 @@ def gfs_forcing(ctx: CycleContext) -> None:
 
 
 def run_prep(ctx: CycleContext, runner: CommandRunner = default_runner) -> int:
-    if ctx.segment in ("ncst", "fcst1", "fcst2"):
+    _check_retired(ctx)
+    if ctx.segment in ("ncst", "fcst"):
         gfs_forcing(ctx)
     elif ctx.coldstart:
         cold_adcprep(ctx, runner)
@@ -359,5 +355,5 @@ def run_nowcast(ctx: CycleContext, launcher=execute.default_launcher, profile=No
 
 def run_forecast(ctx: CycleContext, launcher=execute.default_launcher, profile=None,
                  runner: CommandRunner = default_runner) -> List[str]:
-    _check(ctx, ("fcst1", "fcst2"))
+    _check(ctx, ("fcst",))
     return _fcst(ctx, launcher, profile, runner)

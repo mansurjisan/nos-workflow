@@ -1,4 +1,4 @@
-"""STOFS-2D-GLO ops mode: cold start and the tide/surf ncst, fcst1, fcst2 chain. MJ (10/05/26)"""
+"""STOFS-2D-GLO ops mode: cold start and the tide/surf ncst, fcst chain. MJ (10/05/26)"""
 from __future__ import annotations
 
 import os
@@ -90,7 +90,7 @@ def _cold(tmp_path):
     ops.cold_adcprep(ctx, FakeAdcprep())
     cs = _ctx(tmp_path, ADCIRC_SEGMENT="spinup")
     ops.run_nowcast(cs, FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
-    for seg in ("ncst", "fcst1", "fcst2"):
+    for seg in ("ncst", "fcst"):
         for n in ("221", "222", "225"):
             p = ops.rerun_dir(ctx) / f"{RUN}_{seg}.{n}.nc"
             p.parent.mkdir(parents=True, exist_ok=True)
@@ -170,24 +170,23 @@ def test_tide_chain(tmp_path):
     assert fa.argv[0][1:3] == ["-n", "4"] and "-W" not in fa.argv[0]
     assert hotstart.file_time(ctx.cycle_dir(CYCLE, "hotstart")) == 604800
     assert (rr / f"{RUN}_hottime.out").read_text().split()[1:] == ["604800", "6.75000", "14.50000"]
-    _go(tmp_path, "tide", "fcst1")
-    assert (rr / f"{RUN}_tide.68.nc").is_file()
-    assert (rr / f"{RUN}_tide.61.nc").read_text().count(";") == 2  # fcst1 appended to the ncst output MJ (10/05/26)
-    _go(tmp_path, "tide", "fcst2")
-    assert ctx.cycle_dir(CYCLE, "points.htp.nc").read_text().count(";") == 3
+    _go(tmp_path, "tide", "fcst")
+    assert not (rr / f"{RUN}_tide.68.nc").exists()
+    assert ctx.cycle_dir(CYCLE, "points.htp.nc").read_text().count(";") == 2  # fcst appended to the ncst output MJ (10/11/26)
     assert ctx.cycle_dir(CYCLE, "fields.htp.nc").is_file()
-    assert not list((tmp_path / "work" / "tide_fcst2").glob("PE[0-9]*"))
+    assert not list((tmp_path / "work" / "tide_fcst").glob("PE[0-9]*"))
+    assert (rr / f"{RUN}_hottime.out").read_text().split()[1] == "1252800"  # ncst end 604800 s + 180 h
 
 
 def test_fcst_rerun_after_success_is_refused(tmp_path):
     _cold(tmp_path)
     _go(tmp_path, "tide", "ncst")
-    _go(tmp_path, "tide", "fcst1")
+    _go(tmp_path, "tide", "fcst")
     with pytest.raises(AdcircConfigError, match="advanced.*redo the cycle from ncst"):
-        _go(tmp_path, "tide", "fcst1")
-    _go(tmp_path, "tide", "fcst2")
-    with pytest.raises(AdcircConfigError, match="advanced"):
-        _go(tmp_path, "tide", "fcst2")
+        _go(tmp_path, "tide", "fcst")
+    for old in ("fcst1", "fcst2"):
+        with pytest.raises(AdcircConfigError, match="retired.*ADCIRC_SEGMENT=fcst"):
+            _go(tmp_path, "tide", old)
 
 
 def test_surf_chain_writers_and_forcing(tmp_path):
@@ -196,27 +195,22 @@ def test_surf_chain_writers_and_forcing(tmp_path):
     ctx, fa = _go(tmp_path, "surf", "ncst")
     assert fa.argv[0][1:3] == ["-n", "36"] and fa.argv[0][-2:] == ["-W", "32"]
     assert hotstart.file_time(ctx.cycle_dir(CYCLE, "restart")) == 604800
-    f222 = ops.rerun_dir(ctx) / f"{RUN}_fcst1.222.nc"
+    f222 = ops.rerun_dir(ctx) / f"{RUN}_fcst.222.nc"
     f222.unlink()
-    with pytest.raises(AdcircConfigError, match="fcst1.222.nc"):
-        _go(tmp_path, "surf", "fcst1")
-    f222.write_text("fcst1")
-    _, fa = _go(tmp_path, "surf", "fcst1")
+    with pytest.raises(AdcircConfigError, match="fcst.222.nc"):
+        _go(tmp_path, "surf", "fcst")
+    f222.write_text("fcst")
+    _, fa = _go(tmp_path, "surf", "fcst")
     assert fa.argv[0][-2:] == ["-W", "32"]
-    assert (tmp_path / "work" / "surf_fcst1" / "fort.221.nc").read_text() == "fcst1"
-    _, fa = _go(tmp_path, "surf", "fcst2")
-    assert "-W" not in fa.argv[0]
+    assert (tmp_path / "work" / "surf_fcst" / "fort.221.nc").read_text() == "fcst"
     assert ctx.cycle_dir(CYCLE, "fields.cwl.maxwvel.nc").is_file()
 
 
-def test_multistart_and_stale_68(tmp_path):
+def test_multistart(tmp_path):
     ctx = _cold(tmp_path)
     _go(tmp_path, "tide", "ncst")
-    _go(tmp_path, "tide", "fcst1")
-    h68 = ops.rerun_dir(ctx) / f"{RUN}_tide.68.nc"
-    assert h68.is_file()
-    _go(tmp_path, "tide", "ncst")   # a re-run deletes the fcst1-end hotstart before running MJ (10/05/26)
-    assert not h68.exists()
+    _go(tmp_path, "tide", "fcst")
+    _go(tmp_path, "tide", "ncst")
     nxt, _ = _go(tmp_path, "tide", "ncst", cyc="18")   # 18z steps back 6 h to the 12z chain file MJ (10/05/26)
     assert nxt.cycle_dir(nxt.cycle_time, "hotstart").is_file()
     _go(tmp_path, "tide", "ncst", cyc="00", PDY="20261006", COMOUT=str(tmp_path / "com" / f"{RUN}.20261006"))
@@ -234,7 +228,7 @@ def test_crash_text_fails_with_rc_zero(tmp_path, line):
 def test_fcst_needs_its_nowcast_and_ranks_must_fit(tmp_path, monkeypatch):
     _ncst221(_cold(tmp_path), 7)
     with pytest.raises(AdcircConfigError, match="run the tide nowcast first"):
-        _go(tmp_path, "tide", "fcst1")
+        _go(tmp_path, "tide", "fcst")
     monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "35")
     with pytest.raises(AdcircConfigError, match="36 ranks.*35 allocated"):
         _go(tmp_path, "surf", "ncst")
@@ -251,7 +245,7 @@ def _touch(ctx, *names):
         p.write_text(n)
 
 
-def _rerun_forcing(ctx, segs=("ncst", "fcst1", "fcst2")):
+def _rerun_forcing(ctx, segs=("ncst", "fcst")):
     for s in segs:
         for n in (221, 222, 225):
             f = ops.rerun_dir(ctx) / f"{RUN}_{s}.{n}.nc"
@@ -300,7 +294,7 @@ def test_post_ncrcat_commands_and_inputs(tmp_path):
     rec = Recorder()
     with pytest.raises(FileNotFoundError):
         post.run_post(ctx, rec)
-    assert rec.cmds[0] == ["ncrcat", "ncst.221.nc", "fcst1.221.nc", "fcst2.221.nc", "fort.221.nc"]
+    assert rec.cmds[0] == ["ncrcat", "ncst.221.nc", "fcst.221.nc", "fort.221.nc"]
     assert rec.cmds[2][-1] == "fort.225.nc"
 
 
@@ -340,7 +334,7 @@ def test_post_with_real_nco(tmp_path):
     assert ctx.cycle_dir(CYCLE, "points.swl.nc").is_file()
 
     ctx = _seg(tmp_path, "ncrcat")
-    for s, base in (("ncst", 0), ("fcst1", 2), ("fcst2", 4)):
+    for s, base in (("ncst", 0), ("fcst", 2)):
         for n in (221, 222, 225):
             f = ops.rerun_dir(ctx) / f"{RUN}_{s}.{n}.nc"
             f.parent.mkdir(parents=True, exist_ok=True)
@@ -350,7 +344,7 @@ def test_post_with_real_nco(tmp_path):
     post.run_post(ctx)
     for name in ("pressfc", "uvgrd10m", "icec"):
         with nc.Dataset(str(ctx.cycle_dir(CYCLE, name + ".nc"))) as d:
-            assert list(d["time"][:]) == [0, 1, 2, 3, 4, 5]
+            assert list(d["time"][:]) == [0, 1, 2, 3]
 
 
 def _sfcf(comin, cycle, fhr):
@@ -392,25 +386,27 @@ def test_gfs_ncst_prep_starts_at_the_restart_chain_time(tmp_path):
 def test_gfs_prep_skips_existing_and_fails_clearly(tmp_path):
     _cold(tmp_path)
     rr = ops.rerun_dir(_ctx(tmp_path))
-    ops.run_prep(_gfs_ctx(tmp_path, "fcst1"))  # the placeholder is kept, as ops does
-    assert (rr / f"{RUN}_fcst1.221.nc").read_text() == "fcst1"
-    (rr / f"{RUN}_fcst1.221.nc").unlink()
+    ops.run_prep(_gfs_ctx(tmp_path, "fcst"))  # the placeholder is kept, as ops does
+    assert (rr / f"{RUN}_fcst.221.nc").read_text() == "fcst"
+    (rr / f"{RUN}_fcst.221.nc").unlink()
     with pytest.raises(Exception, match="no GFS sfcf"):
-        ops.run_prep(_gfs_ctx(tmp_path, "fcst1"))
+        ops.run_prep(_gfs_ctx(tmp_path, "fcst"))
+    with pytest.raises(AdcircConfigError, match="retired"):
+        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="fcst2"))
     with pytest.raises(AdcircConfigError, match="COMINgfs"):
-        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="fcst1"))
+        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="fcst"))
 
 
 def test_gfs_prep_wait_comes_from_the_yaml(tmp_path, monkeypatch):
     from nos_utils.forcing import adcirc_met as am
     _cold(tmp_path)
-    ctx = _gfs_ctx(tmp_path, "fcst2")
-    (ops.rerun_dir(ctx) / f"{RUN}_fcst2.221.nc").unlink()
-    ctx.settings.raw["adcirc"]["ops_gfs_wait_s"] = {"fcst2": 77}
+    ctx = _gfs_ctx(tmp_path, "fcst")
+    (ops.rerun_dir(ctx) / f"{RUN}_fcst.221.nc").unlink()
+    ctx.settings.raw["adcirc"]["ops_gfs_wait_s"] = {"fcst": 77}
     seen = {}
     monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k, args=a))
     ops.run_prep(ctx)
-    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst2"
+    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst"
 
 
 def test_surf_ncst_window_must_match_the_chain_start(tmp_path):
