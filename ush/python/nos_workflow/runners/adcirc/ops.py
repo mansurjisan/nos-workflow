@@ -84,7 +84,7 @@ def ncst_segment(stream: str, time_hotstart, ncsth: int) -> Segment:
 
 def fcst_segment(stream: str, time_hotstart, touts: str, toutf: str) -> Segment:
     ihot = parity_ihot(time_hotstart, NOWH)
-    rnday = bc_div(time_hotstart, 86400) + bc_div(LSTH, 24)  # ops fcst1 has lsth/36; one run for both gives lsth/24
+    rnday = bc_div(time_hotstart, 86400) + bc_div(LSTH, 24)  # ops fcst1 has lsth/36; one run for both gives lsth/24. MJ (10/11/26)
     tok = {"ihot": str(ihot), "rnday": bc_str(rnday), "nout": "3", "touts": touts, "toutf": toutf,
            "nhstar": "3", "nhsinc": "3600"}
     if stream == "surf":
@@ -145,7 +145,7 @@ def _publish(src: Path, dst: Path) -> None:
 
 def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str], cycle: str,
            nod: Dict[str, str], runner: CommandRunner, hot: Path = None, ihot: int = 0, copies=()) -> Path:
-    """Stage one segment in $DATA (not COMOUT: six run dirs a cycle are ~150 GB) and decompose it. MJ (10/05/26)"""
+    """Stage one segment in $DATA (not COMOUT: four run dirs a cycle are ~150 GB) and decompose it. MJ (10/05/26)"""
     s = ctx.settings
     run_dir = _data(ctx) / f"{stream}_{segment}"
     shutil.rmtree(str(run_dir), ignore_errors=True)

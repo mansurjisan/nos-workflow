@@ -108,7 +108,7 @@ RNDAY=$rnday_hotstart
 def _bash(stream, segment, time_hot, ncsth):
     sed = SED_TIDE if stream == "tide" else SED_SURF
     body = NCST
-    if segment != "ncst":  # fcst: the ops fcst1 lines with the run length lsth/24 (one 180 h run), or lsth/36 as in ops
+    if segment != "ncst":  # fcst: the ops fcst1 lines with the run length lsth/24 (one 180 h run), or lsth/36 as in ops. MJ (10/11/26)
         body += FCST % {"div": 24 if segment == "fcst" else 36, "nhsinc": 3600, "winc": 3600,
                         "sc": 0 if stream == "tide" else 5}
     template = DATA / f"stofs_2d_glo_{stream}.15"

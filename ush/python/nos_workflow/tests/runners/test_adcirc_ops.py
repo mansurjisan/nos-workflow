@@ -175,7 +175,7 @@ def test_tide_chain(tmp_path):
     assert ctx.cycle_dir(CYCLE, "points.htp.nc").read_text().count(";") == 2  # fcst appended to the ncst output MJ (10/11/26)
     assert ctx.cycle_dir(CYCLE, "fields.htp.nc").is_file()
     assert not list((tmp_path / "work" / "tide_fcst").glob("PE[0-9]*"))
-    assert (rr / f"{RUN}_hottime.out").read_text().split()[1] == "1252800"  # ncst end 604800 s + 180 h
+    assert (rr / f"{RUN}_hottime.out").read_text().split()[1] == "1252800"  # ncst end 604800 s + 180 h. MJ (10/11/26)
 
 
 def test_fcst_rerun_after_success_is_refused(tmp_path):
@@ -386,7 +386,7 @@ def test_gfs_ncst_prep_starts_at_the_restart_chain_time(tmp_path):
 def test_gfs_prep_skips_existing_and_fails_clearly(tmp_path):
     _cold(tmp_path)
     rr = ops.rerun_dir(_ctx(tmp_path))
-    ops.run_prep(_gfs_ctx(tmp_path, "fcst"))  # the placeholder is kept, as ops does
+    ops.run_prep(_gfs_ctx(tmp_path, "fcst"))  # the placeholder is kept, as ops does. MJ (10/11/26)
     assert (rr / f"{RUN}_fcst.221.nc").read_text() == "fcst"
     (rr / f"{RUN}_fcst.221.nc").unlink()
     with pytest.raises(Exception, match="no GFS sfcf"):
