@@ -76,8 +76,8 @@ export SENDSMS=NO
 
 export PACKAGEROOT
 
-# Separate COMROOT keeps this system away from SECOFS and ATL. MJ (10/05/26)
-export COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/$LOGNAME/com_2dglo}
+# Shared com like SECOFS and coupled ATL; every directory is RUN-prefixed, so nothing collides. COMROOT_2DGLO overrides for experiments. MJ (10/13/26)
+export COMROOT=${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/$LOGNAME/com}
 export DATAROOT=/lfs/h1/nos/ptmp/$LOGNAME/work/${OFS}
 export COMINgfs=${COMINgfs:-/lfs/h1/ops/prod/com/gfs/${gfs_ver:-v16.3}}
 export EXECnos=${EXECnos:-${HOMEnos}/exec}

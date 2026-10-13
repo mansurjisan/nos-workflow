@@ -88,7 +88,7 @@ def test_pbs_card_exports(stage):
     subprocess.run(["bash", "-n", str(card)], check=True)
     for needle in ("export OFS=stofs_2d_glo\n", "export NET=nos RUN=stofs_2d_glo PREFIXNOS=stofs_2d_glo\n",
                    "export cyc=${CYC:-12}", "export PDY=${PDY:?", "export framework=adcirc",
-                   "COMROOT=${COMROOT_2DGLO:-", "com_2dglo", "export HOMEnos\n",
+                   "COMROOT=${COMROOT_2DGLO:-", "$LOGNAME/com}", "export HOMEnos\n",
                    "OFS_CONFIG=${HOMEnos}/parm/systems/stofs_2d_glo.yaml", "ADCIRC_EXEC_DIR",
                    "stofs_2d_glo_grid stofs_2d_glo_attr", "fetch_stofs_2d_glo_fix.sh", TAG):
         assert needle in text, needle
@@ -105,7 +105,7 @@ def test_slurm_card_exports(stage):
     for needle in ("PACKAGEROOT=${PACKAGEROOT:?", "slurm/stofs_2d_glo", "versions/run.hercules.ver",
                    "export NOS_MACHINE=hercules", "export OFS=stofs_2d_glo\n",
                    "export NET=nos RUN=stofs_2d_glo PREFIXNOS=stofs_2d_glo\n", "export cyc=${CYC:-12}",
-                   "export PDY=${PDY:?", "COMROOT=${COMROOT_2DGLO:-", "com_2dglo",
+                   "export PDY=${PDY:?", "COMROOT=${COMROOT_2DGLO:-", "$LOGNAME/com}",
                    "ADCIRC_EXEC_DIR=${ADCIRC_EXEC_DIR:?", "stofs_2d_glo.yaml",
                    "export NOS_UTILS_DIR=${HOMEnos}/ush/python/nos-utils\n",
                    "export NOS_WORKFLOW_DIR=${HOMEnos}/ush/python\n",
