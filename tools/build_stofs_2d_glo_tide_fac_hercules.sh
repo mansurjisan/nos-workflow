@@ -4,9 +4,9 @@
 #
 # Build the ops stofs_2d_glo_tide_fac (Fortran nodal factors and equilibrium
 # arguments for the ADCIRC fort.15 templates) on Hercules and install it into
-# $EXECnos. The 2D-Global cards refuse to run without it: the runner has no
+# <repo>/exec, the EXECnos of the 2D-Global cards. The cards refuse to run without it: the runner has no
 # Python fallback (a float32/float64 difference would freeze different FFT/FACET
-# values into every segment for 365 days).
+# values into every segment for 365 days). MJ (10/13/26)
 #
 # Source: stofs_2d_glo_tide_fac.f from the public NCO mirror of stofs.v3.1.5
 # (sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd). The ops sorc makefile builds it
@@ -14,20 +14,20 @@
 # with ifort.
 #
 # Usage:
-#   [SRC=<dir>] [EXECnos=<exec dir>] tools/build_stofs_2d_glo_tide_fac_hercules.sh [download|build|all]
+#   [SRC=<dir>] [TIDE_FAC_EXEC_DIR=<exec dir>] tools/build_stofs_2d_glo_tide_fac_hercules.sh [download|build|all]
 #     download  fetch the source only; needs no compiler
 #     build     compile, install and smoke-test from the source already in SRC; login or compute node
 #     all       download, then build in the same run; the default
 #   Compute nodes have no internet: download and all (with no source yet) need a login node.
 #
 # Env:
-#   SRC      source dir, default <parent of the repo>/tide_fac_src
-#   EXECnos  install dir, default <repo>/exec
-#   BUILD    scratch build dir, default <parent of the repo>/tide_fac_build
+#   SRC                source dir, default <parent of the repo>/tide_fac_src
+#   TIDE_FAC_EXEC_DIR  install dir, default <repo>/exec; an inherited EXECnos (another package's shell) is ignored, with a warning
+#   BLD                scratch build dir (wiped on each build), default <parent of the repo>/tide_fac_build
 # Build modes load the cards' module set (modulefiles/nos_hercules.intel with versions/run.hercules.ver)
-# when `module` is available; otherwise load nos_hercules.intel first.
+# when `module` is available; otherwise load nos_hercules.intel first. MJ (10/13/26)
 #
-# The install is then smoke-tested from EXECnos: ldd resolves, and a 365 day run for 2026-10-05 00z
+# The install is then smoke-tested from the install dir: ldd resolves, and a 365 day run for 2026-10-05 00z
 # writes 16 lines (header with four integers, then K1 O1 P1 Q1 M2 S2 N2 K2 ...). MJ (10/13/26)
 # ======================================================================
 set -euo pipefail
@@ -42,10 +42,15 @@ case "${MODE}" in
   *) usage >&2; echo "FATAL: unknown mode '${MODE}' (download, build or all)" >&2; exit 2 ;;
 esac
 
-PKG=$(dirname "${HOMEWF}")
-SRC=${SRC:-${PKG}/tide_fac_src}
-EXECnos=${EXECnos:-${HOMEWF}/exec}
-BUILD=${BUILD:-${PKG}/tide_fac_build}
+PARENT=$(dirname "${HOMEWF}")  # the directory holding the nos-workflow clone. MJ (10/13/26)
+SRC=${SRC:-${PARENT}/tide_fac_src}
+BLD=${BLD:-${PARENT}/tide_fac_build}
+# An inherited EXECnos (the ATL or SECOFS shell) would install into another package; only TIDE_FAC_EXEC_DIR overrides <repo>/exec. MJ (10/13/26)
+TIDE_FAC_EXEC_DIR=${TIDE_FAC_EXEC_DIR:-${HOMEWF}/exec}
+if [ -n "${EXECnos:-}" ] && [ "$(realpath -m "${EXECnos}")" != "$(realpath -m "${TIDE_FAC_EXEC_DIR}")" ]; then
+  echo "WARNING: inherited EXECnos=${EXECnos} ignored; installing into ${TIDE_FAC_EXEC_DIR}" >&2
+fi
+EXECnos=${TIDE_FAC_EXEC_DIR}
 URL=${URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd}
 F=stofs_2d_glo_tide_fac.f
 
@@ -79,9 +84,9 @@ else
 fi
 command -v ifort >/dev/null 2>&1 || { echo "FATAL: ifort not on PATH (module load nos_hercules.intel)" >&2; exit 1; }
 
-rm -rf "${BUILD}"; mkdir -p "${BUILD}"
-cp "${SRC}/${F}" "${BUILD}/"
-cd "${BUILD}"
+rm -rf "${BLD}"; mkdir -p "${BLD}"
+cp "${SRC}/${F}" "${BLD}/"
+cd "${BLD}"
 ifort -O2 -fp-model strict -o stofs_2d_glo_tide_fac "${F}"
 [ -x stofs_2d_glo_tide_fac ] || { echo "FATAL: build failed" >&2; exit 1; }
 

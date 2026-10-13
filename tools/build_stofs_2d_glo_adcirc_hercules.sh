@@ -20,7 +20,8 @@
 #     build     configure, compile, install and verify from the source already in SRC; a compute
 #               node (srun) keeps the compile off the login nodes
 #     all       download, then build in the same run on the login node (make -j 4); the default
-#   Compute nodes have no internet: download and all (with no source yet) need a login node.
+#   Compute nodes have no internet: download and all (with no source yet) need a login node. build and all need an
+#   unlimited stack (ulimit -s); where the shell cannot raise it, run download here and build under srun. MJ (10/13/26)
 #
 # Env:
 #   ADCIRC_EXEC_DIR  install dir, default <parent of the repo>/adcirc_v56.1.0_exec; export the same
@@ -50,11 +51,11 @@ case "${MODE}" in
   *) usage >&2; echo "FATAL: unknown mode '${MODE}' (download, build or all)" >&2; exit 2 ;;
 esac
 
-PKG=$(dirname "${HOMEWF}")
-ADCIRC_EXEC_DIR=$(realpath -m "${ADCIRC_EXEC_DIR:-${PKG}/adcirc_v56.1.0_exec}")
-SRC=$(realpath -m "${SRC:-${PKG}/adcirc_v56.1.0_src}")
-BLD=$(realpath -m "${BLD:-${PKG}/adcirc_v56.1.0_build}")
-OPS_FLAGS=${OPS_FLAGS:-${PKG}/ops_padcirc_flags.make}
+PARENT=$(dirname "${HOMEWF}")  # the directory holding the nos-workflow clone. MJ (10/13/26)
+ADCIRC_EXEC_DIR=$(realpath -m "${ADCIRC_EXEC_DIR:-${PARENT}/adcirc_v56.1.0_exec}")
+SRC=$(realpath -m "${SRC:-${PARENT}/adcirc_v56.1.0_src}")
+BLD=$(realpath -m "${BLD:-${PARENT}/adcirc_v56.1.0_build}")
+OPS_FLAGS=${OPS_FLAGS:-${PARENT}/ops_padcirc_flags.make}
 MAKE_JOBS=${MAKE_JOBS:-$([ -n "${SLURM_JOB_ID:-}" ] && echo 8 || echo 4)}
 ADC_VERSION=v56.1.0
 ADC_HASH=6e667fc9dcc759116f0620f4d9ac76cfd1361fbd
@@ -110,6 +111,10 @@ chmod +x "${SRC}"/scripts/*.py
 echo "source ok: ${SRC} (ADCIRC ${ADC_VERSION})"
 [ "${MODE}" != download ] || exit 0
 
+# As ops: with an unlimited stack cmake adds no -heap-arrays, so refuse a stack that cannot be raised before any module or cmake step. MJ (10/13/26)
+ulimit -s unlimited 2>/dev/null || true
+[ "$(ulimit -s)" = unlimited ] || { echo "FATAL: stack $(ulimit -s): cmake would add -heap-arrays; run 'build' under srun" >&2; exit 1; }
+
 # Same module set as the cards, plus cmake at the version run.hercules.ver pins. MJ (10/13/26)
 if type module >/dev/null 2>&1; then
   set +u
@@ -153,8 +158,6 @@ for f in "${NCI}/netcdf.h" "${NCL}/libnetcdf.so" "${NFP}/include/netcdf.mod" "${
   [ -e "${f}" ] || { echo "FATAL: ${f} missing" >&2; exit 1; }
 done
 
-# As ops: with an unlimited stack cmake adds no -heap-arrays (the flags check below catches a mismatch). MJ (10/13/26)
-ulimit -s unlimited 2>/dev/null || echo "WARNING: cannot set ulimit -s unlimited; cmake will add -heap-arrays" >&2
 rm -rf "${BLD}"; mkdir -p "${BLD}"; cd "${BLD}"
 cmake "${SRC}" -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   -DBUILD_PADCIRC=ON -DBUILD_ADCPREP=ON -DENABLE_DATETIME=ON -DENABLE_OUTPUT_NETCDF=ON \

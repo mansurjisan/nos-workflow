@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import resource
 import shutil
 import stat
 import subprocess
@@ -55,7 +56,7 @@ def test_scripts_parse_tag_and_usage(script, env):
 
 @pytest.mark.parametrize("script,var", [(ADCIRC, "SRC"), (TIDE_FAC, "SRC")])
 def test_no_internet_inside_slurm_job_and_build_needs_download(script, var, env, tmp_path):
-    env = {**env, var: str(tmp_path / "src"), "OPS_FLAGS": str(tmp_path / "ops.make"), "EXECnos": str(tmp_path / "x")}
+    env = {**env, var: str(tmp_path / "src"), "OPS_FLAGS": str(tmp_path / "ops.make"), "TIDE_FAC_EXEC_DIR": str(tmp_path / "x")}
     for mode in ("download", "all"):
         r = _run(script, [mode], {**env, "SLURM_JOB_ID": "123"})
         assert r.returncode == 1 and "compute nodes have no internet" in r.stderr
@@ -72,7 +73,7 @@ def test_adcirc_source_must_be_outside_git_checkout(env, tmp_path):
 
 def _tide_fac_env(env, tmp_path, bad=False):
     stubs = tmp_path / "stubs"
-    # the stub "ifort" writes an executable that mimics the Fortran simple output (header + 15 constituents)
+    # the stub "ifort" writes an executable that mimics the Fortran simple output (header + 15 constituents) MJ (10/13/26)
     rows = "".join(f'echo " {c}    1.00000       0.00    0.0000"\n' for c in ORDER[:15 - (1 if bad else 0)])
     exe = ('while [ $# -gt 0 ]; do case "$1" in --outputdir) d=$2;; --outputname) n=$2;; esac; shift; done\n'
            f'{{ echo "  0  5 10 2026"\n{rows}}} > "$d/$n"\n')
@@ -81,8 +82,8 @@ def _tide_fac_env(env, tmp_path, bad=False):
     upstream = tmp_path / "upstream"
     upstream.mkdir()
     (upstream / "stofs_2d_glo_tide_fac.f").write_text("      PROGRAM TIDE_FAC\n      END\n")
-    return {**env, "URL": f"file://{upstream}", "SRC": str(tmp_path / "tf_src"), "BUILD": str(tmp_path / "tf_build"),
-            "EXECnos": str(tmp_path / "exec")}
+    return {**env, "URL": f"file://{upstream}", "SRC": str(tmp_path / "tf_src"), "BLD": str(tmp_path / "tf_build"),
+            "TIDE_FAC_EXEC_DIR": str(tmp_path / "exec")}
 
 
 def test_tide_fac_download_build_install_and_smoke(env, tmp_path):
@@ -96,12 +97,46 @@ def test_tide_fac_download_build_install_and_smoke(env, tmp_path):
     assert os.access(exe, os.X_OK) and "source present" in r.stdout and "smoke test passed: 16 lines" in r.stdout
 
 
+def _tide_fac_clone(tmp_path):
+    """The script copied into <tmp>/pk/nos-workflow/tools, so its default <repo>/exec is inside the temp dir. MJ (10/13/26)"""
+    tools = tmp_path / "pk" / "nos-workflow" / "tools"
+    tools.mkdir(parents=True)
+    shutil.copy(TIDE_FAC, tools)
+    return tools / TIDE_FAC.name, tmp_path / "pk" / "nos-workflow" / "exec" / "stofs_2d_glo_tide_fac"
+
+
+def test_tide_fac_installs_into_the_repo_exec_whatever_execnos_is_inherited(env, tmp_path):
+    script, repo_exe = _tide_fac_clone(tmp_path)
+    e = {k: v for k, v in _tide_fac_env(env, tmp_path).items() if k != "TIDE_FAC_EXEC_DIR"}
+    other = tmp_path / "atl_exec"
+    r = _run(script, ["all"], {**e, "EXECnos": str(other)})
+    assert r.returncode == 0, r.stderr
+    assert os.access(repo_exe, os.X_OK) and not other.exists()
+    assert f"WARNING: inherited EXECnos={other} ignored; installing into {repo_exe.parent}" in r.stderr
+    repo_exe.unlink()
+    r = _run(script, ["build"], {**e, "EXECnos": str(repo_exe.parent)})  # the same dir: no warning MJ (10/13/26)
+    assert r.returncode == 0 and os.access(repo_exe, os.X_OK) and "WARNING" not in r.stderr
+    repo_exe.unlink()
+    r = _run(script, ["build"], e)
+    assert r.returncode == 0 and os.access(repo_exe, os.X_OK) and "WARNING" not in r.stderr
+
+
+def test_tide_fac_exec_dir_override_wins_over_execnos(env, tmp_path):
+    script, repo_exe = _tide_fac_clone(tmp_path)
+    e = _tide_fac_env(env, tmp_path)
+    r = _run(script, ["all"], {**e, "EXECnos": str(tmp_path / "atl_exec")})
+    assert r.returncode == 0, r.stderr
+    assert os.access(tmp_path / "exec" / "stofs_2d_glo_tide_fac", os.X_OK) and not repo_exe.exists() and "WARNING" in r.stderr
+
+
 def test_tide_fac_smoke_fails_loudly_on_bad_output(env, tmp_path):
     r = _run(TIDE_FAC, ["all"], _tide_fac_env(env, tmp_path, bad=True))
     assert r.returncode == 1 and "expected 16" in r.stderr
 
 
 def _adcirc_env(env, tmp_path, fetch=False, **flags):
+    if resource.getrlimit(resource.RLIMIT_STACK)[1] != resource.RLIM_INFINITY:
+        pytest.skip("hard stack limit: ulimit -s unlimited cannot be raised, the script refuses to build")
     stubs = tmp_path / "stubs"
     _compiler_stubs(stubs)
     nc, nf = tmp_path / "nc", tmp_path / "nf"
@@ -136,7 +171,7 @@ def _adcirc_env(env, tmp_path, fetch=False, **flags):
         shutil.copytree(fixture, e["SRC"])
         shutil.copy(tmp_path / "ops_fixture.make", e["OPS_FLAGS"])
         return e
-    # stub network: wget drops the source tree without execute bits (as the real one), curl the ops flags.make
+    # stub network: wget drops the source tree without execute bits (as the real one), curl the ops flags.make MJ (10/13/26)
     _stub(stubs / "wget", f'echo "$@" > "{tmp_path}/wget.args"\nwhile [ $# -gt 0 ]; do [ "$1" = -P ] && d=$2; shift; done\n'
           f'cp -r "{fixture}/." "$d/"; chmod -x "$d"/scripts/*.py\n')
     _stub(stubs / "curl", f'while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; last=$1; shift; done\n'
@@ -164,6 +199,18 @@ def test_adcirc_build_configures_installs_and_verifies(env, tmp_path):
 def test_adcirc_verification_fails_loudly(flag, message, env, tmp_path):
     r = _run(ADCIRC, ["build"], _adcirc_env(env, tmp_path, **{flag: True}))
     assert r.returncode == 1 and message in r.stderr
+
+
+def test_adcirc_build_refuses_a_stack_that_cannot_be_raised_before_cmake(env, tmp_path):
+    e = _adcirc_env(env, tmp_path)
+    eight_mb = 8 * 1024 * 1024
+    lower = lambda: resource.setrlimit(resource.RLIMIT_STACK, (eight_mb, eight_mb))  # hard limit too, so ulimit -s unlimited fails MJ (10/13/26)
+    for mode in ("build", "all"):
+        r = _run(ADCIRC, [mode], e, preexec_fn=lower)
+        assert r.returncode == 1 and "FATAL: stack 8192: cmake would add -heap-arrays; run 'build' under srun" in r.stderr, mode
+    assert not (tmp_path / "cmake.args").exists() and not (tmp_path / "adc_exec").exists()
+    r = _run(ADCIRC, ["download"], e, preexec_fn=lower)  # download needs no stack MJ (10/13/26)
+    assert r.returncode == 0, r.stderr
 
 
 def test_adcirc_all_downloads_with_the_ops_wget_then_builds(env, tmp_path):
