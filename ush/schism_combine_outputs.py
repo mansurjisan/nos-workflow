@@ -603,6 +603,9 @@ def convert_schout_to_split():
         'temp': ('temperature', 'temperature'),
         'salt': ('salinity', 'salinity'),
         'zcor': ('zCoordinates', 'zCoordinates'),
+        # OLDIO names (schism_step.F90 writeout_nc); the scribe spelling is the split name. MJ (10/13/26)
+        'vertical_velocity': ('verticalVelocity', 'verticalVelocity'),
+        'diffusivity': ('diffusivity', 'diffusivity'),
         'horizontalVelX': ('horizontalVelX', 'horizontalVelX'),
         'horizontalVelY': ('horizontalVelY', 'horizontalVelY'),
     }
