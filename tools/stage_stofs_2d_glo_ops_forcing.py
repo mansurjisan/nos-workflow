@@ -29,7 +29,7 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")  # Lustre rejects HDF5 f
 import numpy as np
 
 PREFIX = "stofs_2d_glo"
-N_FCST1, N_FCST2, N_FCST = 121, 21, 181  # fcst1 f000..f120 hourly, fcst2 f120..f180 every 3 h, merged hourly
+N_FCST1, N_FCST2, N_FCST = 121, 21, 181  # fcst1 f000..f120 hourly, fcst2 f120..f180 every 3 h, merged hourly MJ (10/13/26)
 NUMS = ("221", "222", "225")
 _MEAN = "time: mean"
 _NCO_ATTRS = ("history", "NCO")

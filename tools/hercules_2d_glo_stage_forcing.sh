@@ -16,6 +16,8 @@
 # Run it on a LOGIN node (compute nodes have no internet), in tmux: the download takes 45-90 min and
 # resumes. A file whose size already matches the HEAD Content-Length is skipped; when the HEAD fails the
 # file is fetched anyway (resumed with curl -C -). Re-running after an interrupt or a failed stage is safe.
+# When the six rerun files already exist the forcing download and the staging are skipped (the record-count check and the reference
+# files still run), so a re-run after --rm-raw does not fetch the 39 GB again; STAGE_FORCE=1 redoes both. MJ (10/13/26)
 # The staging (about 8 min, under 1 GB memory, I/O bound, no internet) runs on the node you are on;
 # STAGE_SRUN puts it on a compute node instead, e.g.
 #   STAGE_SRUN="srun -A nos-surge -p hercules --qos=batch -N 1 -n 1 --mem=16G -t 2:00:00"
@@ -28,7 +30,7 @@
 #   RERUN_DIR (output, default under COMROOT_2DGLO as above),
 #   OPS_WORK (download area, default ${NOS_PTMP}/${LOGNAME}/ops_s3/${PDY}${CYC}; forcing/ and products/ below it),
 #   NCST_RECORDS (default 7), DL_JOBS (parallel downloads, default 4), STAGE_SRUN (default none),
-#   STAGE_FORCE=1 (rebuild outputs that exist), NOS_VENV (default ${VENV_PATH:-$HOME/nos-venv}).
+#   STAGE_FORCE=1 (download and rebuild even when the six outputs exist), NOS_VENV (default ${VENV_PATH:-$HOME/nos-venv}).
 # Python comes from module nos_hercules.intel plus the venv, as in slurm/stofs_2d_glo/jnos_prep_00.sh.
 # Exit 3: forcing staged, but a reference station file could not be downloaded. MJ (10/13/26)
 # ======================================================================
@@ -70,7 +72,7 @@ STAGE_SRUN=${STAGE_SRUN:-}
 export HDF5_USE_FILE_LOCKING=FALSE
 
 S3=https://noaa-gestofs-pds.s3.amazonaws.com/stofs_2d_glo.${PDY}
-mkdir -p "${OPSIN}" "${OPSP}" "${RERUN_DIR}"
+mkdir -p "${OPSP}" "${RERUN_DIR}"
 
 # dl <url> <dest>: resumable; skipped only when the HEAD worked and the sizes already match. MJ (10/13/26)
 dl() {
@@ -101,10 +103,23 @@ for p in htp cwl.noanomaly swl; do
   products+=("${S3}/${f}" "${OPSP}/${f}")
 done
 
-echo "=== ${PDY}${CYC}: downloading 9 forcing files to ${OPSIN} ($(date)) ==="
-printf '%s\0' "${forcing[@]}" | xargs -0 -n 2 -P "${DL_JOBS}" bash -c 'dl "$0" "$1"' \
-  || { echo "FATAL: forcing download failed (see FAIL lines; re-run to resume)" >&2; exit 1; }
-du -sh "${OPSIN}"
+# The helper writes each output through .partial, so a present file is a complete one. MJ (10/13/26)
+HAVE_ALL=1
+for seg in ncst fcst; do
+  for n in 221 222 225; do [ -s "${RERUN_DIR}/stofs_2d_glo_${seg}.${n}.nc" ] || HAVE_ALL=0; done
+done
+STAGE_SKIP=0
+if [ "${HAVE_ALL}" = 1 ] && [ "${STAGE_FORCE:-0}" != 1 ]; then STAGE_SKIP=1; fi
+
+if [ "${STAGE_SKIP}" = 1 ]; then
+  echo "=== ${PDY}${CYC}: the six rerun files exist in ${RERUN_DIR}; skipping the forcing download and staging (STAGE_FORCE=1 to redo) ==="
+else
+  mkdir -p "${OPSIN}"
+  echo "=== ${PDY}${CYC}: downloading 9 forcing files to ${OPSIN} ($(date)) ==="
+  printf '%s\0' "${forcing[@]}" | xargs -0 -n 2 -P "${DL_JOBS}" bash -c 'dl "$0" "$1"' \
+    || { echo "FATAL: forcing download failed (see FAIL lines; re-run to resume)" >&2; exit 1; }
+  du -sh "${OPSIN}"
+fi
 
 NPROD_FAIL=0
 echo "=== reference station files to ${OPSP} ==="
@@ -132,15 +147,17 @@ python3 -c 'import numpy, netCDF4' 2>/dev/null || { echo "FATAL: python3 lacks n
 
 HARGS=(--ops-dir "${OPSIN}" --out "${RERUN_DIR}" --nos-utils "${NU}" --ncst-records "${NCST_RECORDS}")
 if [ "${STAGE_FORCE:-0}" = 1 ]; then HARGS+=(--force); fi
-echo "=== checking the ops inputs ==="
-python3 "${HELPER}" "${HARGS[@]}" --check
-echo "=== staging into ${RERUN_DIR} ($(date)) ==="
-# STAGE_SRUN is a command prefix, left unquoted to split. MJ (10/13/26)
-# shellcheck disable=SC2086
-time ${STAGE_SRUN} python3 "${HELPER}" "${HARGS[@]}"
+if [ "${STAGE_SKIP}" != 1 ]; then
+  echo "=== checking the ops inputs ==="
+  python3 "${HELPER}" "${HARGS[@]}" --check
+  echo "=== staging into ${RERUN_DIR} ($(date)) ==="
+  # STAGE_SRUN is a command prefix, left unquoted to split. MJ (10/13/26)
+  # shellcheck disable=SC2086
+  time ${STAGE_SRUN} python3 "${HELPER}" "${HARGS[@]}"
+fi
 
 echo "=== record counts ==="
-python3 - "${RERUN_DIR}" "${NCST_RECORDS}" <<'PY' || { echo "FATAL: record counts differ, the 180 h run needs ncst ${NCST_RECORDS} and fcst 181; raw downloads kept" >&2; exit 1; }
+python3 - "${RERUN_DIR}" "${NCST_RECORDS}" <<'PY' || { echo "FATAL: record counts differ, the 180 h run needs ncst ${NCST_RECORDS} and fcst 181; raw downloads kept, STAGE_FORCE=1 rebuilds the outputs" >&2; exit 1; }
 import sys
 from netCDF4 import Dataset
 out, want, bad = sys.argv[1], {"ncst": int(sys.argv[2]), "fcst": 181}, 0
@@ -159,7 +176,7 @@ PY
 
 if [ "${RM_RAW}" = 1 ]; then
   for ((i = 1; i < ${#forcing[@]}; i += 2)); do rm -f "${forcing[i]}"; done
-  rmdir --ignore-fail-on-non-empty "${OPSIN}"
+  [ ! -d "${OPSIN}" ] || rmdir --ignore-fail-on-non-empty "${OPSIN}"
   echo "raw forcing downloads deleted"
 fi
 ls -l "${RERUN_DIR}"

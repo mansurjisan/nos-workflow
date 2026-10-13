@@ -65,7 +65,7 @@ def mk_sfcf(comin, cycle, fhr):
         a = (1e5 if name == "pressfc" else 0.0) + rng.standard_normal((NY, NX)) * (1e3 if name == "pressfc" else 10.0)
         if name == "icec":
             a = rng.uniform(0, 1, (NY, NX))
-            if fhr in (123, 126, 0):  # fill in both brackets of 121-125 and in f000
+            if fhr in (123, 126, 0):  # fill in both brackets of 121-125 and in f000 MJ (10/13/26)
                 a[0, 0] = FILL
             if fhr == 126:
                 a[1, 1] = FILL
@@ -170,7 +170,7 @@ def rd(path, v):
 
 def test_outputs_equal_nos_utils_reference_bitwise(world, staged):
     names = sorted(p.name for p in staged["out"].iterdir())
-    assert names == sorted(p.name for p in world["ref"].iterdir())  # six .nc and two manifests, no .partial
+    assert names == sorted(p.name for p in world["ref"].iterdir())  # six .nc and two manifests, no .partial MJ (10/13/26)
     for n in S.NUMS:
         for seg in ("ncst", "fcst"):
             f = "stofs_2d_glo_{}.{}.nc".format(seg, n)
@@ -205,17 +205,17 @@ def test_fcst_record_mapping_and_interpolation(world, staged):
                 assert np.array_equal(got[fh], want), (n, v, fh)
     p = rd(out / "stofs_2d_glo_fcst.221.nc", "pressfc")
     f2 = rd(ops / "stofs_2d_glo_fcst2.221.nc", "pressfc")
-    assert np.allclose(p[121], f2[0] * (2 / 3) + f2[1] * (1 / 3), rtol=1e-6)  # 121 is 1/3 of the way to f123
+    assert np.allclose(p[121], f2[0] * (2 / 3) + f2[1] * (1 / 3), rtol=1e-6)  # 121 is 1/3 of the way to f123 MJ (10/13/26)
     assert np.allclose(p[122], f2[0] * (1 / 3) + f2[1] * (2 / 3), rtol=1e-6)
 
 
 def test_fill_values_kept(staged):
     i = rd(staged["out"] / "stofs_2d_glo_fcst.225.nc", "icec")
-    # f123 and f126 both hold fill at [0,0], only f126 at [1,1]
+    # f123 and f126 both hold fill at [0,0], only f126 at [1,1] MJ (10/13/26)
     assert all(i[h][0, 0] == FILL for h in range(121, 126))
     assert all(i[h][1, 1] == FILL for h in (124, 125)) and i[121][1, 1] != FILL and i[122][1, 1] != FILL
     assert i[121][0, 1] < 2 and i[0][0, 0] == FILL
-    v = rd(staged["out"] / "stofs_2d_glo_fcst.222.nc", "vgrd10m")  # fill only in f150, whose neighbours interpolate against it
+    v = rd(staged["out"] / "stofs_2d_glo_fcst.222.nc", "vgrd10m")  # fill only in f150, whose neighbours interpolate against it MJ (10/13/26)
     assert all(v[h][2, 3] == FILL for h in (148, 149, 150, 151, 152)) and v[147][2, 3] != FILL and v[153][2, 3] != FILL
 
 
@@ -231,7 +231,7 @@ def test_interp_is_nos_utils_formula_bitwise():
             continue
         lo, hi, w = br
         assert (lo, hi) == (fh // 3 * 3, fh // 3 * 3 + 3) and w == (fh - lo) / 3.0
-        r = a0.astype(np.float64) * (1.0 - w) + a1.astype(np.float64) * w  # the build_sfcf_forcing lines, copied
+        r = a0.astype(np.float64) * (1.0 - w) + a1.astype(np.float64) * w  # the build_sfcf_forcing lines, copied MJ (10/13/26)
         r = np.where((a0 == FILL) | (a1 == FILL), FILL, r).astype(a0.dtype)
         assert np.array_equal(S.interp(a0, a1, w, FILL), r) and r[3, 3] == FILL and r[4, 4] == FILL
         assert S.interp(a0, a1, w, None).dtype == np.float32
@@ -272,7 +272,7 @@ def test_missing_input_fails_cleanly(world, tmp_path, capsys):
 
 
 def test_unexpected_record_counts_fail(world, tmp_path, capsys):
-    src = [am.sfcf_path(world["tank"], CYC, h) for h in range(120, 178, 3)]  # 20 records
+    src = [am.sfcf_path(world["tank"], CYC, h) for h in range(120, 178, 3)]  # 20 records MJ (10/13/26)
     ops = tmp_path / "ops"
     shutil.copytree(world["ops"], ops)
     mk_ops(ops / "stofs_2d_glo_fcst2.225.nc", src, ("icec",))
@@ -301,7 +301,7 @@ def test_grid_mismatch_leaves_nothing_behind(world, tmp_path, capsys):
         d.variables["lon"][5] = d.variables["lon"][5] + 0.5
     with pytest.raises(S.StageError, match="grid differs"):
         S.stage(str(ops), tmp_path / "o", NU, out=lambda s: None)
-    # ncst finished before fcst failed; nothing of fcst remains, not even a .partial
+    # ncst finished before fcst failed; nothing of fcst remains, not even a .partial MJ (10/13/26)
     assert sorted(p.name for p in (tmp_path / "o").iterdir() if "fcst" in p.name) == []
 
 
@@ -399,26 +399,44 @@ def test_shell_tool_downloads_stages_skips_and_resumes(world, shell_env):
     assert sum(x.startswith("GET ") for x in log) == 12 and sum(x.startswith("HEAD ") for x in log) == 12
     assert_same(snapshot(rerun / "stofs_2d_glo_fcst.222.nc"), snapshot(world["ref"] / "stofs_2d_glo_fcst.222.nc"))
 
-    # second run: every size matches its HEAD, so nothing is fetched and the staged outputs are kept. MJ (10/13/26)
+    # second run: the six outputs exist, so the forcing is neither fetched nor HEADed and the staged outputs are kept; only the
+    # three reference files are checked, and the record counts still print. MJ (10/13/26)
     se["log"].unlink()
     before = {p.name: p.stat().st_mtime_ns for p in rerun.iterdir()}
     r = run_shell(se, "20261004", "00")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert r.stdout.count("SKIP ") == 12 and not any(x.startswith("GET ") for x in curl_log(se))
+    assert "skipping the forcing download and staging" in r.stdout and r.stdout.count("SKIP ") == 3
+    assert sorted(curl_log(se)) == sorted("HEAD stofs_2d_glo.t00z.points.{}.nc".format(k) for k in ("cwl.noanomaly", "htp", "swl"))
+    assert "stofs_2d_glo_fcst.221.nc record = 181" in r.stdout and "=== staging into" not in r.stdout
     assert {p.name: p.stat().st_mtime_ns for p in rerun.iterdir()} == before
+
+    # STAGE_FORCE=1 downloads again (every size matches its HEAD, so nothing is fetched) and rebuilds the outputs. MJ (10/13/26)
+    se["log"].unlink()
+    r = run_shell(se, "20261004", "00", STAGE_FORCE="1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.count("SKIP ") == 12 and not any(x.startswith("GET ") for x in curl_log(se)) and "=== staging into" in r.stdout
+    assert_same(snapshot(rerun / "stofs_2d_glo_fcst.222.nc"), snapshot(world["ref"] / "stofs_2d_glo_fcst.222.nc"))
 
     # a failing HEAD must not skip: all twelve are fetched again, then --rm-raw drops the forcing only. MJ (10/13/26)
     se["log"].unlink()
-    r = run_shell(se, "--rm-raw", "20261004", "00", FAKE_HEAD_FAIL="1")
+    r = run_shell(se, "--rm-raw", "20261004", "00", FAKE_HEAD_FAIL="1", STAGE_FORCE="1")
     assert r.returncode == 0, r.stdout + r.stderr
     assert sum(x.startswith("GET ") for x in curl_log(se)) == 12 and "SKIP " not in r.stdout
     assert not (se["work"] / "forcing").exists() and len(list((se["work"] / "products").iterdir())) == 3
     assert not list(rerun.glob("*.partial"))
 
+    # the point of the skip: a re-run after --rm-raw fetches no forcing again, only the reference files. MJ (10/13/26)
+    se["log"].unlink()
+    r = run_shell(se, "--rm-raw", "20261004", "00")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not any(x.startswith("GET ") for x in curl_log(se)) and len(curl_log(se)) == 3
+    assert not (se["work"] / "forcing").exists() and "stofs_2d_glo_ncst.221.nc record = 7" in r.stdout
+    assert_same(snapshot(rerun / "stofs_2d_glo_fcst.222.nc"), snapshot(world["ref"] / "stofs_2d_glo_fcst.222.nc"))
+
 
 def test_shell_tool_keeps_raw_and_fails_on_wrong_record_counts(world, shell_env):
     se, rerun = shell_env, shell_env["rerun"]
-    shutil.copytree(str(world["ref"]), str(rerun))
+    assert run_shell(se, "20261004", "00").returncode == 0
     shutil.copy(str(rerun / "stofs_2d_glo_ncst.221.nc"), str(rerun / "stofs_2d_glo_fcst.221.nc"))  # 7 records where 181 belong. MJ (10/13/26)
     r = run_shell(se, "--rm-raw", "20261004", "00")
     assert r.returncode == 1 and "stofs_2d_glo_fcst.221.nc record = 7   EXPECTED 181" in r.stdout
