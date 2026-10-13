@@ -18,6 +18,7 @@
 # gempak is not ported. MJ (10/06/26)
 # Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
 # (hourly fcst past 120 h). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/12/26)
+# ncst 0:25: the first WCOSS2 cycle took 750 s (tide) and 821 s (surf) of the ecf 0:15, mostly decomposition extract and staging. MJ (10/13/26)
 set -eu
 
 if [ "$#" -lt 1 ]; then
@@ -68,9 +69,9 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   fi
   sub gfs_ncst "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=ncst ${COLD}
   sub gfs_fcst "${PREP}" 0:40:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst
-  sub tide_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${COLD}
+  sub tide_ncst "${NOW}" 0:25:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${COLD}
   sub tide_fcst "${FC}" 0:55:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
-  sub surf_ncst "${NOW}" 0:15:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
+  sub surf_ncst "${NOW}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
   sub surf_fcst "${FC}" 1:05:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst gfs_fcst
   sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst tide_fcst
   PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
