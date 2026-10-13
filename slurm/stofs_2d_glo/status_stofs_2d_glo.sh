@@ -10,7 +10,8 @@
 # cards' rpt dir $NOS_PTMP/$LOGNAME/rpt/stofs_2d_glo. A job without a log has not started. MJ (10/13/26)
 set -u
 LOGNAME="${LOGNAME:-$(id -un)}"
-NOS_PTMP="${NOS_PTMP:-/work2/noaa/nos-surge/${LOGNAME}/nos-run/ptmp}"
+# Same default as the cards, the launcher and tools/hercules_2d_glo_stage_forcing.sh (a test compares them). MJ (10/13/26)
+NOS_PTMP="${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}"
 case "$#" in
   1) JOBS="$1" ;;
   2) JOBS="${NOS_PTMP}/${LOGNAME}/slurm_2dglo/jobs_$1$2.txt" ;;

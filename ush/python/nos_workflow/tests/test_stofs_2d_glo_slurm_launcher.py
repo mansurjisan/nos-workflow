@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -12,6 +13,10 @@ REPO = Path(__file__).resolve().parents[4]
 SLURM = REPO / "slurm" / "stofs_2d_glo"
 LAUNCH = SLURM / "launch_stofs_2d_glo.sh"
 STATUS = SLURM / "status_stofs_2d_glo.sh"
+FIX_FILES = [f"stofs_2d_glo_{n}" for n in ("grid", "attr", "body", "tide.15", "surf.15")]
+CARDS = [SLURM / f"jnos_{x}_00.sh" for x in ("prep", "nowcast", "forecast")]
+STAGE_TOOL = REPO / "tools" / "hercules_2d_glo_stage_forcing.sh"
+GES_FILES = ["stofs_2d_glo_nod_equi", "stofs_2d_glo_4064.tar", "stofs_2d_glo_4064.tar.json"]
 # Variables the launcher drops from the caller's shell, so sbatch cannot export another package's layout. MJ (10/13/26)
 DIRTY = ("HOMEstofs EXECnos FIXnos FIXofs NOS_WORKFLOW_DIR NOS_UTILS_DIR PYTHONPATH OFS_CONFIG COMROOT DATAROOT COMIN COMINgfs "
          "COMOUT COMOUTroot COMGES DATA ADCIRC_STREAM ADCIRC_SEGMENT COLDSTART NCPU NUM_WRITERS TOT_NCPU NOWCAST_HOURS "
@@ -28,10 +33,13 @@ def _stub(path: Path, body: str) -> None:
 
 @pytest.fixture()
 def cycle(tmp_path):
-    """A clone named nos-workflow with the real cards, a stub sbatch, staged ops forcing and ADCIRC executables."""
+    """A clone named nos-workflow with the real cards, a stub sbatch, staged ops forcing, fix files, the cold-start products in
+    COMGES, the previous cycle's chain files and ADCIRC executables. MJ (10/13/26)"""
     clone = tmp_path / "pk" / "nos-workflow"
     shutil.copytree(SLURM, clone / "slurm" / "stofs_2d_glo")
     _stub(clone / "exec" / "stofs_2d_glo_tide_fac", "#!/bin/bash\n")
+    for f in FIX_FILES:
+        _stub(clone / "fix" / "stofs_2d_glo" / f, "x")
     for exe in ("padcirc", "adcprep"):
         _stub(tmp_path / "adcirc" / exe, "#!/bin/bash\n")
     com = tmp_path / "com"
@@ -40,12 +48,16 @@ def cycle(tmp_path):
     for seg in ("ncst", "fcst"):
         for n in (221, 222, 225):
             (rr / f"stofs_2d_glo_{seg}.{n}.nc").write_text("x")
+    for f in GES_FILES:
+        _stub(com / "nos" / "stofs_2d_glo" / f, "x")
+    for kind in ("hotstart", "restart"):  # the chain files of 20261005 06z, 6 h before the cycle. MJ (10/13/26)
+        _stub(com / "nos" / "stofs_2d_glo.20261005" / f"stofs_2d_glo.t06z.{kind}", "x")
     _stub(tmp_path / "bin" / "sbatch", SBATCH)
     env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "QLOG": str(tmp_path / "q.log"),
            "NOS_PTMP": str(tmp_path / "ptmp"), "LOGNAME": "tester", "COMROOT_2DGLO": str(com),
            "ADCIRC_EXEC_DIR": str(tmp_path / "adcirc")}
     for k in ("PKG", "COLD", "SERIAL", "KEEPDATA", "SUBMIT_GFS", "PACKAGEROOT", "HOMEnos", "ADCIRC_MODE", *DIRTY) + tuple(
-            k for k in os.environ if k.startswith("W_")):
+            k for k in os.environ if k.startswith(("W_", "SLURM_"))):
         env.pop(k, None)
     return tmp_path, clone, env
 
@@ -199,7 +211,85 @@ def test_preflight_names_every_missing_piece_and_queues_nothing(cycle):
     assert not (tmp / "q.log").exists() and not (tmp / "ptmp").exists()
     env = {k: v for k, v in cycle[2].items() if k != "ADCIRC_EXEC_DIR"}
     r = _launch((tmp, clone, env))
-    assert r.returncode != 0 and "ADCIRC_EXEC_DIR" in r.stderr
+    assert r.returncode == 1 and all(f"pk/adcirc_v56.1.0_exec/{x}" in r.stderr for x in ("padcirc", "adcprep"))
+
+
+def test_adcirc_exec_dir_defaults_to_the_build_tools_install_dir(cycle):
+    tmp, clone, env = cycle
+    for exe in ("padcirc", "adcprep"):
+        _stub(tmp / "pk" / "adcirc_v56.1.0_exec" / exe, "#!/bin/bash\n")
+    env = {k: v for k, v in env.items() if k != "ADCIRC_EXEC_DIR"}
+    assert _launch((tmp, clone, env)).returncode == 0
+    sbatch_env = dict(ln.split("=", 1) for ln in (tmp / "q.log.env").read_text().splitlines() if "=" in ln)
+    assert sbatch_env["ADCIRC_EXEC_DIR"] == str(tmp / "pk" / "adcirc_v56.1.0_exec")
+
+
+def test_refuses_inside_a_slurm_allocation(cycle):
+    r = _launch(cycle, SLURM_JOB_ID="123")
+    assert r.returncode == 1 and "SLURM_JOB_ID=123" in r.stderr and "exit the allocation" in r.stderr
+    assert not (cycle[0] / "q.log").exists() and not (cycle[0] / "ptmp").exists()
+
+
+def test_preflight_checks_the_fix_files_of_the_runner(cycle):
+    tmp, clone, _ = cycle
+    for f in ("stofs_2d_glo_body", "stofs_2d_glo_tide.15"):
+        (clone / "fix" / "stofs_2d_glo" / f).unlink()
+    (clone / "fix" / "stofs_2d_glo" / "stofs_2d_glo_attr").write_text("")  # an empty file is as good as none. MJ (10/13/26)
+    r = _launch(cycle)
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 3 and not (tmp / "q.log").exists()
+    for want in ("fix/stofs_2d_glo/stofs_2d_glo_body", "fix/stofs_2d_glo/stofs_2d_glo_tide.15", "fix/stofs_2d_glo/stofs_2d_glo_attr"):
+        assert want in r.stderr
+
+
+def test_cold_start_needs_none_of_the_later_cycle_files(cycle):
+    tmp, _, _ = cycle
+    shutil.rmtree(tmp / "com" / "nos" / "stofs_2d_glo")
+    for kind in ("hotstart", "restart"):
+        (tmp / "com" / "nos" / "stofs_2d_glo.20261005" / f"stofs_2d_glo.t06z.{kind}").unlink()
+    assert _launch(cycle).returncode == 0 and len(_jobs(tmp)) == 8
+
+
+def test_spinup_preflight_lists_the_missing_cold_start_products(cycle):
+    tmp = cycle[0]
+    ges = tmp / "com" / "nos" / "stofs_2d_glo"
+    (ges / "stofs_2d_glo_nod_equi").unlink()
+    (ges / "stofs_2d_glo_4064.tar.json").unlink()
+    r = _launch(cycle, COLD="spinup")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 2 and not (tmp / "q.log").exists()
+    assert "stofs_2d_glo_nod_equi" in r.stderr and "stofs_2d_glo_4064.tar.json" in r.stderr
+    # the previous cycle's chain files are not needed for a spin-up, but nod_equi and the tar are. MJ (10/13/26)
+    for kind in ("hotstart", "restart"):
+        (tmp / "com" / "nos" / "stofs_2d_glo.20261005" / f"stofs_2d_glo.t06z.{kind}").unlink()
+    _stub(ges / "stofs_2d_glo_nod_equi", "x")
+    _stub(ges / "stofs_2d_glo_4064.tar.json", "x")
+    assert _launch(cycle, COLD="spinup").returncode == 0 and "cold_spinup" in _jobs(tmp)
+
+
+def test_cold0_preflight_needs_the_cold_start_products_and_the_previous_chain_files(cycle):
+    tmp = cycle[0]
+    ges, day = tmp / "com" / "nos" / "stofs_2d_glo", tmp / "com" / "nos" / "stofs_2d_glo.20261005"
+    (ges / "stofs_2d_glo_4064.tar").unlink()
+    (day / "stofs_2d_glo.t06z.restart").unlink()
+    r = _launch(cycle, COLD="0")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 2 and not (tmp / "q.log").exists()
+    assert "stofs_2d_glo_4064.tar" in r.stderr and "stofs_2d_glo.20261005/stofs_2d_glo.t06z.restart" in r.stderr
+    (day / "stofs_2d_glo.t06z.hotstart").unlink()
+    (ges / "stofs_2d_glo_nod_equi").unlink()
+    r = _launch(cycle, COLD="0")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 4 and "t06z.hotstart" in r.stderr and "nod_equi" in r.stderr
+    assert not (tmp / "q.log").exists() and not (tmp / "ptmp").exists()
+
+
+def test_cold0_previous_cycle_crosses_midnight(cycle):
+    tmp = cycle[0]
+    rr = tmp / "com" / "nos" / "stofs_2d_glo.20261005" / "00" / "rerun"
+    shutil.copytree(tmp / "com" / "nos" / "stofs_2d_glo.20261005" / "12" / "rerun", rr)
+    r = _run(cycle, ("20261005", "00"), COLD="0")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 2
+    assert "stofs_2d_glo.20261004/stofs_2d_glo.t18z.hotstart" in r.stderr and "stofs_2d_glo.20261004/stofs_2d_glo.t18z.restart" in r.stderr
+    for kind in ("hotstart", "restart"):
+        _stub(tmp / "com" / "nos" / "stofs_2d_glo.20261004" / f"stofs_2d_glo.t18z.{kind}", "x")
+    assert _run(cycle, ("20261005", "00"), COLD="0").returncode == 0
 
 
 def test_clone_must_be_named_nos_workflow(cycle):
@@ -265,3 +355,15 @@ def test_status_without_sacct_and_with_bad_arguments(tmp_path):
 def test_nowcast_card_points_at_the_launcher():
     text = (SLURM / "jnos_nowcast_00.sh").read_text()
     assert "launch_stofs_2d_glo.sh <PDY> <CYC>" in text and "status_stofs_2d_glo.sh" in text
+
+
+def test_ptmp_and_comroot_defaults_are_the_same_string_everywhere():
+    """The staging tool, the cards, the launcher and the status script find each other's files only through these defaults. MJ (10/13/26)"""
+    ptmp = {f: set(re.findall(r"NOS_PTMP:-([^}]+)\}", f.read_text())) for f in (*CARDS, LAUNCH, STATUS, STAGE_TOOL)}
+    assert all(len(v) == 1 for v in ptmp.values()), ptmp
+    assert {next(iter(v)) for v in ptmp.values()} == {"/work2/noaa/nos-surge/mjisan/nos-run/ptmp"}
+    # $LOGNAME, ${LOGNAME} and the staging tool's ${U} are one user. MJ (10/13/26)
+    comroot = {f: {re.sub(r"\$\{(LOGNAME|U)\}", "$LOGNAME", m) for m in re.findall(r"COMROOT_2DGLO:-(.*?com_2dglo)\}", f.read_text())}
+               for f in (*CARDS, LAUNCH, STAGE_TOOL)}
+    assert all(len(v) == 1 for v in comroot.values()), comroot
+    assert {next(iter(v)) for v in comroot.values()} == {"${NOS_PTMP}/$LOGNAME/com_2dglo"}
