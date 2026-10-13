@@ -27,9 +27,9 @@
 # surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
 #   sbatch -t 3:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
 #   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
-#   sbatch -t 0:15:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
+#   sbatch -t 0:25:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
 #   sbatch -t 0:55:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.sh
-#   surf: the same two with ADCIRC_STREAM=surf, -t 0:15:00 -N 52, 1:05:00 -N 52. MJ (10/11/26)
+#   surf: the same two with ADCIRC_STREAM=surf, -t 0:25:00 -N 52, 1:05:00 -N 52. MJ (10/13/26)
 #   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/11/26)
 #   sbatch -t 0:10:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.sh
 #   sbatch -t 0:40:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst jnos_prep_00.sh

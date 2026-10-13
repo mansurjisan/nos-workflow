@@ -254,8 +254,8 @@ def test_launcher_ops_job_graph(tmp_path):
     assert [name(k)["v"]["ADCIRC_SEGMENT"] for k in ("post_anomaly", "post_bias", "post_grib2")] == ["anomaly", "bias", "grib2"]
     assert name("post_bias")["sel"] == "8:ncpus=32:prepost=true:mem=800gb" and name("post_bias")["place"] == "vscatter:exclhost"
     assert name("post_grib2")["sel"].startswith("1:ncpus=7:") and name("post_anomaly")["place"] == ""
-    assert {k: name(k)["wall"] for k in ("tide_ncst", "tide_fcst", "surf_fcst", "gfs_fcst", "post_ncdiff", "post_ncrcat")} == {
-        "tide_ncst": "walltime=0:15:00", "tide_fcst": "walltime=0:55:00", "surf_fcst": "walltime=1:05:00",
+    assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_ncst", "tide_fcst", "surf_fcst", "gfs_fcst", "post_ncdiff", "post_ncrcat")} == {
+        "tide_ncst": "walltime=0:25:00", "surf_ncst": "walltime=0:25:00", "tide_fcst": "walltime=0:55:00", "surf_fcst": "walltime=1:05:00",
         "gfs_fcst": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
         "post_ncrcat": "walltime=0:25:00"}
     assert [name(k)["wall"] for k in ("post_anomaly", "post_bias", "post_grib2")] == [
