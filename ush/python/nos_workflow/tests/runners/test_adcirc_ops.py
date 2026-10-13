@@ -294,8 +294,10 @@ def test_post_ncrcat_commands_and_inputs(tmp_path):
     rec = Recorder()
     with pytest.raises(FileNotFoundError):
         post.run_post(ctx, rec)
-    assert rec.cmds[0] == ["ncrcat", "ncst.221.nc", "fcst.221.nc", "fort.221.nc"]
-    assert rec.cmds[2][-1] == "fort.225.nc"
+    assert rec.cmds[:3] == [["ncks", "-O", "-d", "record,0,120", "fcst.221.nc", "fcst1.221.nc"],
+                            ["ncks", "-O", "-d", "record,120,180,3", "fcst.221.nc", "fcst2.221.nc"],
+                            ["ncrcat", "-O", "ncst.221.nc", "fcst1.221.nc", "fcst2.221.nc", "fort.221.nc"]]
+    assert len(rec.cmds) == 9 and rec.cmds[-1][-1] == "fort.225.nc"  # ops fcst1/fcst2 pieces for each of 221/222/225. MJ (10/13/26)
 
 
 def test_post_segment_is_required(tmp_path):
@@ -334,17 +336,20 @@ def test_post_with_real_nco(tmp_path):
     assert ctx.cycle_dir(CYCLE, "points.swl.nc").is_file()
 
     ctx = _seg(tmp_path, "ncrcat")
-    for s, base in (("ncst", 0), ("fcst", 2)):
+    for s, hours in (("ncst", range(-6, 1)), ("fcst", range(181))):
         for n in (221, 222, 225):
             f = ops.rerun_dir(ctx) / f"{RUN}_{s}.{n}.nc"
             f.parent.mkdir(parents=True, exist_ok=True)
             with nc.Dataset(str(f), "w") as d:
-                d.createDimension("time", None)
-                d.createVariable("time", "f8", ("time",))[:] = [base, base + 1]
+                d.createDimension("record", None)
+                d.createVariable("hour", "f8", ("record",))[:] = list(hours)
     post.run_post(ctx)
+    # ops record layout: ncst 7 + fcst1 hours 0..120 (121) + fcst2 hours 120..180 every 3 h (21), f000 and f120 twice. MJ (10/13/26)
+    want = list(range(-6, 1)) + list(range(121)) + list(range(120, 181, 3))
     for name in ("pressfc", "uvgrd10m", "icec"):
         with nc.Dataset(str(ctx.cycle_dir(CYCLE, name + ".nc"))) as d:
-            assert list(d["time"][:]) == [0, 1, 2, 3]
+            assert len(want) == 149 and list(d["hour"][:]) == want and d.dimensions["record"].isunlimited()
+    assert sorted(p.name for p in (tmp_path / "work").glob("fcst[12].*")) == []
 
 
 def _sfcf(comin, cycle, fhr):

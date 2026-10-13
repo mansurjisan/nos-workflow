@@ -16,6 +16,7 @@ from .settings import AdcircConfigError, CycleContext
 
 log = logging.getLogger(__name__)
 FORCING_OUT = {"221": "pressfc", "222": "uvgrd10m", "225": "icec"}
+HEAD_RECS, TAIL_RECS = (0, 120), (120, 180)  # fcst records for ops fcst1 (hourly) and fcst2 (3-hourly). MJ (10/13/26)
 
 
 def default_runner(cmd: Sequence[str], cwd: Path) -> int:
@@ -66,12 +67,17 @@ def run_ncrcat(ctx: CycleContext, runner: CommandRunner = default_runner) -> Lis
     now, work, rr = ctx.cycle_time, _work(ctx), rerun_dir(ctx)
     if not (rr / ("%s_ncst.221.nc" % ctx.run)).is_file():
         raise RuntimeError("FATAL ERROR: GFS surface forcing does not exist")
-    # The single fcst forcing is hourly to 180 h, so the published pressfc/uvgrd10m/icec are hourly after 120 h, where ops has 3-hourly. MJ (10/11/26)
+    # Ops joins ncst + fcst1 (hours 0..120 hourly) + fcst2 (120..180 every 3 h), 7 + 121 + 21 = 149 records. The single hourly
+    # fcst (181 records) is cut to the same two pieces by ncks hyperslabs, so f120 is in twice as in ops. MJ (10/13/26)
     for seg in ("ncst", "fcst"):
         for n in FORCING_OUT:
             _link(rr / ("%s_%s.%s.nc" % (ctx.run, seg, n)), work / ("%s.%s.nc" % (seg, n)))
-    _run(runner, [["ncrcat", "ncst.%s.nc" % n, "fcst.%s.nc" % n, "fort.%s.nc" % n]
-                  for n in FORCING_OUT], work)
+    for n in FORCING_OUT:
+        _run(runner, [["ncks", "-O", "-d", "record,%d,%d" % HEAD_RECS, "fcst.%s.nc" % n, "fcst1.%s.nc" % n],
+                      ["ncks", "-O", "-d", "record,%d,%d,3" % TAIL_RECS, "fcst.%s.nc" % n, "fcst2.%s.nc" % n],
+                      ["ncrcat", "-O", "ncst.%s.nc" % n, "fcst1.%s.nc" % n, "fcst2.%s.nc" % n, "fort.%s.nc" % n]], work)
+        for tmp in ("fcst1", "fcst2"):  # the cut pieces are as large as the forcing. MJ (10/13/26)
+            (work / ("%s.%s.nc" % (tmp, n))).unlink(missing_ok=True)
     for n in FORCING_OUT:
         _publish(work / ("fort.%s.nc" % n), ctx.cycle_dir(now, FORCING_OUT[n] + ".nc"))
     return ["ncrcat"]
