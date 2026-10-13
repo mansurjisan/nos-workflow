@@ -74,6 +74,8 @@ git submodule update --init ush/python/nos-utils
 ```
 No card edits are needed. The cards default `PACKAGEROOT` to `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages`, and each launcher works out its own clone location and passes `PACKAGEROOT` to the jobs. Running a launcher from your clone uses your clone: it passes `PACKAGEROOT` and `HOMEnos` (the clone path) to every job. If you run a card directly with `qsub` (not through a launcher), add `-v PACKAGEROOT=<parent dir>,HOMEnos=<clone path>`.
 
+If `~/.bashrc` sets `PACKAGEROOT` or `HOMEnos`, write them as defaults (`PACKAGEROOT=${PACKAGEROOT:-/path}`, `HOMEnos=${HOMEnos:-/path}`). PBS jobs source `~/.bashrc` after the `qsub -v` values are set, so a plain assignment there overrides the clone the launcher passes (section 9).
+
 Executables in `exec/`:
 
 | File | How to get it |
@@ -382,6 +384,7 @@ The difference from operational does not grow materially on the chained day: the
 | Coupled run cannot find `ufs.configure` or `datm_in.template` | The fetch tool was not run from a clone that has `fix/secofs_ufs/`. Re-run it from the repo. |
 | `Permission denied` running a launcher | Execute bit lost on the clone. Run `bash launch_<name>.sh <PDY> 12`. |
 | Jobs run the wrong clone | `PKG`, `PACKAGEROOT` or `HOMEnos` set in your shell. Unset them or set them deliberately. |
+| Jobs run another package's code although the launcher was run from your clone | A plain `PACKAGEROOT=...` or `HOMEnos=...` in `~/.bashrc`. PBS jobs start through a login shell that sources it after the `qsub -v` values are set, so it overrides the clone path the launcher passes. Find it with `grep -nE 'PACKAGEROOT\|HOMEnos' ~/.bashrc` and write both as defaults: `PACKAGEROOT=${PACKAGEROOT:-/path}`, `HOMEnos=${HOMEnos:-/path}`. |
 | Seed files vanished from ptmp | ptmp purges by file age and `cp -p` keeps old timestamps. Copy without `-p`; keep seeds on noscrub. |
 | Prep aborts: hotstart not NETCDF4_CLASSIC | Convert the seed with `nccopy -k 'netCDF-4 classic model'`. |
 | `partition.prop` rank error before launch | The file must have 4912 ranks (the operational file). |
