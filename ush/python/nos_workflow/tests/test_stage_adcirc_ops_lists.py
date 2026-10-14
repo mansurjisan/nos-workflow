@@ -56,10 +56,13 @@ def test_nowcast_list_runs_spinup_once_then_every_stream(run_stage):
     assert "--- step: surf_ncst ---" in run_stage.log()
 
 
-def test_forecast_list_runs_every_stream_in_the_order_given(run_stage):
-    step, _ = run_stage("forecast", "fcst", "surf, tide")
-    assert step.calls == [("fcst", "surf"), ("fcst", "tide")]
-    assert "steps=surf_fcst:" in _summary(run_stage) and ",tide_fcst:" in _summary(run_stage)
+def test_forecast_list_runs_every_stream_and_takes_spaces_or_commas(run_stage):
+    for streams in ("tide surf", "tide,surf", "tide, surf", " tide   surf "):
+        step, _ = run_stage("forecast", "fcst", streams)
+        assert step.calls == [("fcst", "tide"), ("fcst", "surf")], streams
+    assert "steps=tide_fcst:" in _summary(run_stage) and ",surf_fcst:" in _summary(run_stage)
+    step, _ = run_stage("nowcast", "spinup ncst", "tide surf")
+    assert step.calls == [("spinup", ""), ("ncst", "tide"), ("ncst", "surf")]
 
 
 def test_prep_and_post_lists_do_not_iterate_over_streams(run_stage):
@@ -81,7 +84,7 @@ def test_a_single_value_is_one_step_as_before(run_stage):
 def test_first_failure_stops_the_job_and_names_the_step(run_stage):
     step = Steps(fail="surf_fcst")
     with pytest.raises(StageFailedError, match=r"ADCIRC forecast failed: surf_fcst: boom"):
-        run_stage("forecast", "fcst", "tide,surf,tide", step)
+        run_stage("forecast", "fcst", "tide surf", step)
     assert step.calls == [("fcst", "tide"), ("fcst", "surf")]
     line = _summary(run_stage)
     assert re.search(r"status=FAIL runtime_s=\d+\.\d steps=tide_fcst:\d+ reason=surf_fcst: boom$", line)
@@ -99,21 +102,44 @@ def test_retired_segments_are_rejected_anywhere_in_a_list_before_any_step(run_st
         assert step.calls == []
 
 
+SEG_MSG, STREAM_MSG = "ADCIRC_SEGMENT must be one or more of", "ADCIRC_STREAM must be one or more of"
+
+
 @pytest.mark.parametrize("stage,seg,stream,msg", [
-    ("nowcast", "spinup,bogus", "tide", "ADCIRC_SEGMENT must be one value or a comma list"),
-    ("nowcast", "fcst", "tide", "ADCIRC_SEGMENT must be one value or a comma list"),
-    ("forecast", "", "tide", "ADCIRC_SEGMENT must be one value or a comma list"),
-    ("forecast", "fcst", "tide,sea", "ADCIRC_STREAM must be one value or a comma list"),
-    ("nowcast", "spinup,ncst", "", "ADCIRC_STREAM must be one value or a comma list"),
-    ("prep", "ncst,cold", "", "ADCIRC_SEGMENT must be one value or a comma list"),
-    ("post", "ncdiff,grib3", "", "ADCIRC_SEGMENT must be one value or a comma list"),
+    ("nowcast", "spinup bogus", "tide", SEG_MSG),
+    ("nowcast", "fcst", "tide", SEG_MSG),
+    ("forecast", "", "tide", SEG_MSG),
+    ("forecast", "fcst", "tide sea", STREAM_MSG),
+    ("nowcast", "spinup ncst", "", STREAM_MSG),
+    ("prep", "ncst cold", "", SEG_MSG),
+    ("post", "ncdiff grib3", "", SEG_MSG),
+    # a list must follow the canonical order of its job and have no repeats. MJ (10/14/26)
+    ("post", "ncdiff anomaly", "", SEG_MSG),
+    ("post", "anomaly bias bias ncdiff", "", SEG_MSG),
+    ("post", "ncrcat grib2", "", SEG_MSG),
+    ("prep", "ncst adcprep fcst", "", SEG_MSG),
+    ("prep", "fcst fcst", "", SEG_MSG),
+    ("nowcast", "ncst spinup", "tide", SEG_MSG),
+    ("nowcast", "ncst", "tide tide", STREAM_MSG),
+    ("forecast", "fcst", "surf tide", STREAM_MSG),
+    ("forecast", "fcst", "tide surf surf", STREAM_MSG),
 ])
 def test_the_whole_list_is_checked_before_the_first_step(run_stage, stage, seg, stream, msg):
     step = Steps()
     with pytest.raises(StageFailedError, match=msg):
         run_stage(stage, seg, stream, step)
     assert step.calls == []
-    assert "reason=%s" % msg in _summary(run_stage) or msg in _summary(run_stage)
+    assert msg in _summary(run_stage) and "status=FAIL" in _summary(run_stage)
+
+
+def test_the_error_gives_the_required_order(run_stage):
+    with pytest.raises(StageFailedError, match=r"\('anomaly', 'bias', 'ncdiff', 'grib2', 'ncrcat'\), in that order and without repeats, got 'ncdiff anomaly'"):
+        run_stage("post", "ncdiff anomaly", "", Steps())
+
+
+def test_the_post_order_lists_exactly_the_post_jobs():
+    from nos_workflow.runners.adcirc import ops, post
+    assert sorted(ops.SEGMENTS["post"]) == sorted(post.JOBS)
 
 
 def test_single_mode_runs_the_step_once_with_the_old_summary(run_stage):

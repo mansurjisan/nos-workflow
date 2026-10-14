@@ -20,25 +20,27 @@ def load_context(descriptor: OFSDescriptor):
 
 
 def _items(value: str) -> List[str]:
-    return [x.strip() for x in value.split(",") if x.strip()]
+    """A list value is space separated (qsub -v and sbatch --export split at commas); commas are accepted too. MJ (10/14/26)"""
+    return value.replace(",", " ").split()
 
 
 def ops_steps(ctx, stage: str) -> List[Tuple[str, object]]:
-    """The (label, ctx) steps of one ops job. ADCIRC_SEGMENT and ADCIRC_STREAM take one value or a comma list: the segments
-    run in the order given, ncst and fcst once per stream, the tide-only spin-up once. The whole list is checked before the
-    first step starts, so a typo cannot cost a spin-up first. MJ (10/14/26)"""
-    from ..runners.adcirc import ops, post
+    """The (label, ctx) steps of one ops job. ADCIRC_SEGMENT and ADCIRC_STREAM take one value or a space (or comma) separated list:
+    the segments run in the order given, ncst and fcst once per stream, the tide-only spin-up once. A list must follow the
+    canonical order of its job and have no duplicates, and it is checked whole before the first step starts, so a typo cannot
+    cost a spin-up first. MJ (10/14/26)"""
+    from ..runners.adcirc import ops
     from ..runners.adcirc.settings import AdcircConfigError
 
     segs, streams = _items(ctx.segment), _items(ctx.stream)
-    allowed = tuple(post.JOBS) if stage == "post" else ops.SEGMENTS[stage]
+    allowed = ops.SEGMENTS[stage]
     for seg in segs:
         ops.check_retired(seg)
-    if not segs or [s for s in segs if s not in allowed]:
-        raise AdcircConfigError(f"ADCIRC_SEGMENT must be one value or a comma list of {allowed} here, got {ctx.segment!r}")
+    if not segs or segs != [s for s in allowed if s in segs]:
+        raise AdcircConfigError(f"ADCIRC_SEGMENT must be one or more of {allowed}, in that order and without repeats, got {ctx.segment!r}")
     per_stream = ops.PER_STREAM.get(stage, ())
-    if any(s in per_stream for s in segs) and (not streams or [s for s in streams if s not in ops.STREAMS]):
-        raise AdcircConfigError(f"ADCIRC_STREAM must be one value or a comma list of {tuple(ops.STREAMS)}, got {ctx.stream!r}")
+    if any(s in per_stream for s in segs) and (not streams or streams != [s for s in ops.STREAMS if s in streams]):
+        raise AdcircConfigError(f"ADCIRC_STREAM must be one or more of {tuple(ops.STREAMS)}, in that order and without repeats, got {ctx.stream!r}")
     steps = []
     for seg in segs:
         if seg in per_stream:
