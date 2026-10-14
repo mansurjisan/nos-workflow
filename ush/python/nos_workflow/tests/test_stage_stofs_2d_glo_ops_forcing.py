@@ -459,6 +459,159 @@ def test_shell_tool_stops_when_a_forcing_file_cannot_be_fetched(shell_env):
     assert not se["rerun"].exists() or not list(se["rerun"].iterdir())
 
 
+IDX = "\n".join(["1:0:d=2026100400:TMP:2 m above ground:anl:", "2:100:d=2026100400:PRES:surface:anl:",
+                 "3:250:d=2026100400:UGRD:10 m above ground:anl:", "4:400:d=2026100400:VGRD:10 m above ground:anl:",
+                 "5:520:d=2026100400:HGT:surface:anl:", "6:700:d=2026100400:ICEC:surface:anl:"]) + "\n"
+KEYS = ["PRES:surface", "UGRD:10 m above ground", "VGRD:10 m above ground", "ICEC:surface"]
+
+
+def test_idx_ranges_start_to_next_message_and_last_to_eof():
+    assert S.idx_ranges(IDX, KEYS) == [(100, 249), (250, 399), (400, 519), (700, None)]
+    assert S.idx_ranges(IDX, ["ICEC:surface", "PRES:surface"]) == [(700, None), (100, 249)]  # key order, not file order MJ (10/14/26)
+    assert S.idx_ranges(IDX, ["TMP:2 m above ground"]) == [(0, 99)]
+    with pytest.raises(S.StageError, match="PRES:surface"):
+        S.idx_ranges("1:0:d=2026100400:TMP:2 m above ground:anl:\n", KEYS)
+
+
+FAKE_NU = """from pathlib import Path
+SFLUX_FIELDS = {"PRES:surface": "pressfc", "UGRD:10 m above ground": "ugrd10m", "VGRD:10 m above ground": "vgrd10m", "ICEC:surface": "icec"}
+def gfs_input_files(comin_gfs, cycle, segment, start=None, source="sfcf"):
+    ext = "sfluxgrbf%03d.grib2" if source == "sflux" else "sfcf%03d.nc"
+    def p(c, fh):
+        return Path(comin_gfs) / ("gfs.%s" % c.strftime("%Y%m%d")) / c.strftime("%H") / "atmos" / ("gfs.t%sz." % c.strftime("%H") + ext % fh)
+    return [p(start, 0), p(cycle, 0)] if segment == "ncst" else [p(cycle, 0), p(cycle, 1), p(cycle, 3)]
+_open_sfcf_output = _interp_bracket = sfcf_valid_times = _write_sfcf_manifest = SFC_OUTPUTS = None
+"""
+
+
+@pytest.fixture()
+def fake_nu(tmp_path):
+    f = tmp_path / "nu" / "nos_utils" / "forcing" / "adcirc_met.py"
+    f.parent.mkdir(parents=True)
+    f.write_text(FAKE_NU)
+    return str(tmp_path / "nu")
+
+
+def test_gfs_files_dedup_ncst_window_and_source(fake_nu):
+    cyc = datetime(2026, 10, 4, 0)
+    fl = S.gfs_files(fake_nu, "/c/gfs", cyc, ["ncst", "fcst"], 7)
+    assert fl == ["/c/gfs/gfs.20261003/18/atmos/gfs.t18z.sfluxgrbf000.grib2", "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf000.grib2",
+                  "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf001.grib2", "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf003.grib2"]
+    assert S.gfs_files(fake_nu, "/c/gfs", cyc, ["fcst"], 7, "sfcf")[0].endswith("gfs.t00z.sfcf000.nc")
+
+
+def test_cli_idx_ranges_and_gfs_files(fake_nu, tmp_path, capsys):
+    (tmp_path / "x.idx").write_text(IDX)
+    assert S.main(["--idx-ranges", str(tmp_path / "x.idx"), "--nos-utils", fake_nu]) == 0
+    assert capsys.readouterr().out.split() == ["100-249", "250-399", "400-519", "700-"]
+    assert S.main(["--gfs-files", "/c/gfs", "--cycle", "2026100400", "--segments", "fcst", "--nos-utils", fake_nu]) == 0
+    assert len(capsys.readouterr().out.split()) == 3
+    with pytest.raises(SystemExit):
+        S.main(["--gfs-files", "/c/gfs", "--nos-utils", fake_nu])  # no --cycle
+    with pytest.raises(SystemExit):
+        S.main(["--gfs-files", "/c/gfs", "--cycle", "2026100400", "--segments", "bogus", "--nos-utils", fake_nu])
+
+
+FAKE_CURL_GFS = """#!/bin/bash
+# the GFS bucket and the reference files, by basename from $FAKE_SRV; -r a-b / a- serve that byte range. MJ (10/14/26)
+head=0; out=; url=; rng=
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out=$2; shift ;;
+    -r) rng=$2; shift ;;
+    --retry|--retry-delay|--speed-limit|--speed-time|-C) shift ;;
+    -*I*) head=1 ;;
+    -*) ;;
+    *) url=$1 ;;
+  esac
+  shift
+done
+name=$(basename "$url"); f=$FAKE_SRV/$name
+if [ $head = 1 ]; then
+  [ -f "$f" ] || exit 22
+  printf 'HTTP/1.1 200 OK\\r\\nContent-Length: %s\\r\\n\\r\\n' "$(stat -c %s "$f")"
+  exit 0
+fi
+echo "GET $name ${rng}" >> "$FAKE_LOG"
+[ -f "$f" ] || exit 22
+if [ -n "$rng" ]; then
+  a=${rng%-*}; b=${rng#*-}
+  if [ -z "$b" ]; then data=$(tail -c +$((a+1)) "$f"; echo x); else data=$(tail -c +$((a+1)) "$f" | head -c $((b-a+1)); echo x); fi
+  data=${data%x}
+  if [ -n "$out" ]; then printf '%s' "$data" > "$out"; else printf '%s' "$data"; fi
+elif [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
+"""
+# a "GRIB2 file" is MSG lines; wgrib2 -s prints one line per MSG. MJ (10/14/26)
+FAKE_WGRIB2 = """#!/bin/bash
+grep '^MSG' "$1" | sed 's/^/1:0:/'
+"""
+
+
+def mk_grib(path):
+    """Six messages with the offsets of IDX (message i is 'MSG<i>' padded to its idx length)."""
+    sizes = [100, 150, 150, 120, 180]
+    body = b"".join((b"MSG%d" % (i + 1)).ljust(n - 1, b".") + b"\n" for i, n in enumerate(sizes)) + b"MSG6 tail-of-the-file\n"
+    path.write_bytes(body)
+    return body
+
+
+@pytest.fixture()
+def gfs_env(shell_env, fake_nu, tmp_path):
+    se = shell_env
+    srv = Path(se["env"]["FAKE_SRV"])
+    bindir = tmp_path / "bin"
+    (bindir / "curl").write_text(FAKE_CURL_GFS)
+    (bindir / "wgrib2").write_text(FAKE_WGRIB2)
+    (bindir / "wgrib2").chmod(0o755)
+    bodies = {}
+    for nm in ("gfs.t18z.sfluxgrbf000", "gfs.t00z.sfluxgrbf000", "gfs.t00z.sfluxgrbf001", "gfs.t00z.sfluxgrbf003"):
+        bodies[nm] = mk_grib(srv / (nm + ".grib2"))
+        (srv / (nm + ".grib2.idx")).write_text(IDX)
+    se["env"].update(STAGE_NOS_UTILS=fake_nu, COMROOT_STAGED=str(tmp_path / "stg"))
+    se["bodies"], se["srv"], se["comin"] = bodies, srv, tmp_path / "stg" / "gfs"
+    return se
+
+
+def test_shell_tool_source_argument_handling(shell_env):
+    assert run_shell(shell_env, "--source", "bogus", "20261004", "00").returncode == 2
+    assert run_shell(shell_env, "20261004", "00", "--source").returncode == 2
+    assert "--source gfs" in run_shell(shell_env, "-h").stdout
+    assert not shell_env["work"].exists() and not shell_env["rerun"].exists() and not curl_log(shell_env)
+
+
+def test_shell_tool_source_gfs_downloads_four_messages_by_range(gfs_env):
+    se = gfs_env
+    r = run_shell(se, "--source", "gfs", "20261004", "00", DL_JOBS="2")
+    assert r.returncode == 0, r.stdout + r.stderr
+    b = se["bodies"]["gfs.t00z.sfluxgrbf001"]
+    f = se["comin"] / "gfs.20261004" / "00" / "atmos" / "gfs.t00z.sfluxgrbf001.grib2"
+    assert f.read_bytes() == b[100:520] + b[700:]  # PRES, UGRD, VGRD (offsets 100..519) and the last message ICEC. MJ (10/14/26)
+    assert (se["comin"] / "gfs.20261003" / "18" / "atmos" / "gfs.t18z.sfluxgrbf000.grib2").is_file()
+    assert not list(se["comin"].rglob("*.partial*")) and not se["rerun"].exists()  # the rerun files are the prep job's. MJ (10/14/26)
+    assert len(list((se["work"] / "products").iterdir())) == 3 and not (se["work"] / "forcing").exists()
+    log = curl_log(se)
+    assert "GET gfs.t00z.sfluxgrbf003.grib2 100-249" in log and "GET gfs.t00z.sfluxgrbf003.grib2 700-" in log
+    assert sum(x.startswith("GET gfs.t00z.sfluxgrbf000.grib2 ") and x[-1] != " " for x in log) == 4  # four ranges ...
+    assert not [x for x in log if x.endswith(".grib2 ")]  # ... and the whole file never. MJ (10/14/26)
+    # a re-run skips the complete files; a damaged one (two messages) is fetched again. MJ (10/14/26)
+    se["log"].unlink()
+    f.write_bytes(b"MSG1\nMSG2\n")
+    r = run_shell(se, "--source", "gfs", "20261004", "00")
+    assert r.returncode == 0 and r.stdout.count("SKIP ") == 3 + 3 and "OK   gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf001.grib2" in r.stdout
+    assert sum(x.startswith("GET gfs.t00z.sfluxgrbf001.grib2 ") and x[-1] != " " for x in curl_log(se)) == 4
+
+
+def test_shell_tool_source_gfs_fails_on_a_missing_file_and_a_short_file(gfs_env):
+    se = gfs_env
+    (se["srv"] / "gfs.t00z.sfluxgrbf003.grib2.idx").unlink()
+    r = run_shell(se, "--source", "gfs", "20261004", "00")
+    assert r.returncode == 1 and "FAIL gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf003.grib2" in r.stderr
+    assert "FATAL: GFS download failed" in r.stderr and not list(se["comin"].rglob("*.partial*"))
+    (se["srv"] / "gfs.t00z.sfluxgrbf003.grib2.idx").write_text(IDX)
+    (se["srv"] / "gfs.t00z.sfluxgrbf003.grib2").write_bytes(b"MSG1\n" * 3)  # idx says 700 bytes, the file has none: no four messages. MJ (10/14/26)
+    assert run_shell(se, "--source", "gfs", "20261004", "00").returncode == 1
+
+
 @pytest.mark.skipif(not os.environ.get("STAGE_TEST_NET"), reason="needs the public S3 bucket")
 def test_real_ops_headers_over_http():
     base = "https://noaa-gestofs-pds.s3.amazonaws.com/stofs_2d_glo.20261012/00/rerun"

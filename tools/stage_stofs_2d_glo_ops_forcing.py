@@ -11,7 +11,8 @@ and a nos-utils checkout (main >= 5496da0). Streams one record at a time. MJ (10
     tools/stage_stofs_2d_glo_ops_forcing.py --ops-dir <dir with the 9 ops files> --out <rerun dir> [--nos-utils <checkout>]
 
 --nos-utils defaults to this repo's ush/python/nos-utils, then $NOS_UTILS_DIR. tools/hercules_2d_glo_stage_forcing.sh
-downloads the nine files and runs this. MJ (10/13/26)
+downloads the nine files and runs this. Two helper modes serve its --source gfs: --idx-ranges (byte ranges of the SFLUX_FIELDS messages
+in a GFS .idx) and --gfs-files (the files nos-utils' gfs_input_files lists; also used by the Slurm launcher preflight). MJ (10/14/26)
 """
 from __future__ import annotations
 
@@ -283,16 +284,69 @@ def stage(ops_dir, out_dir, nos_utils=None, ncst_records=7, force=False, check_o
         build_group(am, nc, ops_dir, out_dir, segment, cycle, force, out)
 
 
+def idx_ranges(idx_text, keys):
+    """Byte ranges of the wanted GRIB2 messages from a wgrib2 .idx ("n:offset:d=...:VAR:level:..."): one (start, end) per key, in
+    key order, end inclusive (the next message's offset - 1) or None for the last message of the file (read to the end). Raises
+    StageError for a missing key. MJ (10/14/26)"""
+    rows = []
+    for ln in idx_text.splitlines():
+        f = ln.strip().split(":")
+        if len(f) >= 5 and f[1].isdigit():
+            rows.append((int(f[1]), "{}:{}".format(f[3], f[4])))
+    rows.sort()
+    out = []
+    for key in keys:
+        i = next((i for i, (_, k) in enumerate(rows) if k == key), None)
+        if i is None:
+            raise StageError("message {!r} is not in the idx".format(key))
+        out.append((rows[i][0], rows[i + 1][0] - 1 if i + 1 < len(rows) else None))
+    return out
+
+
+def gfs_files(nos_utils, comin_gfs, cycle, segments, ncst_records=7, source="sflux"):
+    """The GFS files (sflux or sfcf) the nos-utils builder reads for the given segments (ncst window = ncst_records hourly records). MJ (10/14/26)"""
+    am = load_nos_utils(nos_utils)
+    start = cycle - timedelta(hours=ncst_records - 1)
+    files = []
+    for seg in segments:
+        files += am.gfs_input_files(comin_gfs, cycle, seg, start=start if seg == "ncst" else None, source=source)
+    return list(dict.fromkeys(str(f) for f in files))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--ops-dir", required=True, help="directory holding the 9 ops files (an https prefix is read by byte range)")
-    ap.add_argument("--out", required=True, help="the rerun directory nos-workflow reads")
+    ap.add_argument("--idx-ranges", metavar="IDXFILE", help="print the byte ranges (start-end, end empty = to EOF) of the nos-utils "
+                    "SFLUX_FIELDS messages in a GFS .idx file and stop (tools/hercules_2d_glo_stage_forcing.sh --source gfs)")
+    ap.add_argument("--gfs-files", metavar="COMIN_GFS", help="print the GFS sflux files the builder reads under COMIN_GFS and stop; "
+                    "needs --cycle and --segments")
+    ap.add_argument("--cycle", help="YYYYMMDDHH for --gfs-files")
+    ap.add_argument("--gfs-source", default="sflux", choices=("sflux", "sfcf"), help="file family for --gfs-files")
+    ap.add_argument("--segments", default="ncst,fcst", help="comma list of ncst, fcst for --gfs-files")
+    ap.add_argument("--ops-dir", required=False, help="directory holding the 9 ops files (an https prefix is read by byte range)")
+    ap.add_argument("--out", required=False, help="the rerun directory nos-workflow reads")
     ap.add_argument("--nos-utils", help="nos-utils checkout (default: this repo's ush/python/nos-utils, then $NOS_UTILS_DIR)")
     ap.add_argument("--ncst-records", type=int, default=7, help="ops ncst records (default 7: cycle-6h..cycle)")
     ap.add_argument("--force", action="store_true", help="rebuild a group whose outputs already exist")
     ap.add_argument("--check", action="store_true", help="validate the ops inputs and stop")
     a = ap.parse_args(argv)
     try:
+        if a.idx_ranges:
+            keys = list(load_nos_utils(a.nos_utils).SFLUX_FIELDS)
+            for b, e in idx_ranges(Path(a.idx_ranges).read_text(), keys):
+                print("{}-{}".format(b, "" if e is None else e))
+            return 0
+        if a.gfs_files:
+            if not a.cycle:
+                ap.error("--gfs-files needs --cycle")
+            segs = [x for x in a.segments.split(",") if x]
+            bad = [x for x in segs if x not in ("ncst", "fcst")]
+            if not segs or bad:
+                ap.error("--segments must be ncst, fcst or ncst,fcst")
+            for f in gfs_files(a.nos_utils, a.gfs_files, datetime.strptime(a.cycle, "%Y%m%d%H"), segs, a.ncst_records, a.gfs_source):
+                print(f)
+            return 0
+        if not (a.ops_dir and a.out):
+            ap.error("--ops-dir and --out are required")
         stage(a.ops_dir, a.out, a.nos_utils, a.ncst_records, a.force, a.check, lambda s: print(s, flush=True))
     except (StageError, OSError) as exc:
         print("ERROR: {}".format(exc), file=sys.stderr)
