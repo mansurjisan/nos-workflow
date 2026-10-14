@@ -58,7 +58,7 @@ def _compare_var(name: str, a, b, tol: float):
 
 
 def compare_file(ref_path: Path, out_path: Path, tol) -> tuple:
-    """(ok, text) for one file pair. tol is a float, or a {variable: tol} dict (a variable not in it must be bitwise). MJ (10/13/26)"""
+    """(ok, text) for one file pair. tol is a float, or a {variable: tol} dict (a variable not in it must be bitwise). MJ (10/14/26)"""
     if not out_path.is_file():
         return False, "missing in this run"
     per_var = isinstance(tol, dict)  # per-variable tolerances, used by compare_atl.py. MJ (10/14/26)

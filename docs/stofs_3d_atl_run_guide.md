@@ -278,7 +278,7 @@ $HW/tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $COMROOT_SA $PDY $
 
 ### 4.3 Run
 
-Submit the stages in order, each after the previous one (Jenkins chains them with `--dependency=afterok`: each card exits non-zero unless its stage logged PASS, so an afterok chain stops at the first failure):
+Submit each card after the previous one logs PASS, or chain them with `--dependency=afterok:<jobid>` (each card exits non-zero unless its stage logged PASS, so an afterok chain stops at the first failure; Jenkins chains them this way):
 ```bash
 cd $NOS_PTMP/$LOGNAME
 sbatch --export=ALL,CYC=12,DCOMROOT=$B/dcom $HW/slurm/stofs_3d_atl_ufs_standalone/jnos_prep_00.sh
@@ -336,7 +336,7 @@ nos-workflow on WCOSS2, 2-day chained cycle (seconds):
 | forecast (96 h) | 4825 | 4857 | 5899 | 5896 |
 | post | 3485 | 3591 | 7215 | not captured |
 
-The coupled post walltime limit is 4 h (card limit 4 h; the Hercules post is not yet measured).
+The coupled post walltime limit is 4 h; the Hercules post is not yet measured.
 
 Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 min); coupled prep 24 min (DATM build), nowcast stage 28 min.
 

@@ -18,7 +18,7 @@
 #   full   prep nowcast forecast post     4    36000   regress --level cycle, then ops (report only)
 # The waits are about 3x the expected healthy time (Hercules: prep 8 min standalone / 24 min coupled, nowcast stage 25-28 min,
 # forecast and post not yet measured on Hercules, about 1.5 h and 1-2 h on WCOSS2) plus queue time for the 62/63-node jobs.
-# The cards' own walltimes (3 h, 2.5 h, 6 h, 2 h) stop a hung job, and a job in FAILED, CANCELLED, TIMEOUT or any other bad state, or
+# The cards' own walltimes (3 h, 2.5 h, 6 h, 2 h; the coupled post 4 h) stop a hung job, and a job in FAILED, CANCELLED, TIMEOUT or any other bad state, or
 # without STAGE_SUMMARY status=PASS in its log, fails the run stage. MJ (10/14/26)
 #
 # CI root ${ATL_CI_ROOT}: com/ (the variant's COMROOT), comin/ (COMROOT_STAGED), dcom/ (DCOMROOT), rpt/ (the cards' RPTDIR),
@@ -141,6 +141,7 @@ clean_work() {
   local w p id
   w=$(realpath -m -- "${NOS_PTMP}/${LOGNAME}/work/${CARDS}")
   p=$(realpath -m -- "${NOS_PTMP}")
+  [ "${w##*/}" = "${CARDS}" ] || { echo "FATAL: refusing to clean ${w}: it is not <work>/${CARDS} (symlink?)" >&2; exit 1; }
   case "${w}" in
     "${p}"/?*/?*/?*) ;;
     *) echo "FATAL: refusing to clean ${w}: not at least three levels under NOS_PTMP (${p})" >&2; exit 1 ;;
@@ -183,7 +184,7 @@ cmd_stage() {
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
       done
       for s in gfs hrrr rtofs nwm; do
-        [ -n "$(ls -A "${DS}/input/comin/${s}" 2>/dev/null)" ] || { echo "MISSING: ${DS}/input/comin/${s}/ (empty)" >&2; miss=1; }
+        [ -n "$(find "${DS}/input/comin/${s}" -type f -print -quit 2>/dev/null)" ] || { echo "MISSING: ${DS}/input/comin/${s}/ (no files)" >&2; miss=1; }
       done
       compgen -G "${DS}/input/dcom/${PDY}/coops_waterlvlobs/*.xml" >/dev/null || { echo "MISSING: ${DS}/input/dcom/${PDY}/coops_waterlvlobs/*.xml" >&2; miss=1; }
       compgen -G "${DS}/input/dcom/*/can_streamgauge/02OA016_hydrometric.csv" >/dev/null || { echo "MISSING: ${DS}/input/dcom/<day>/can_streamgauge/02OA016_hydrometric.csv" >&2; miss=1; }
@@ -357,7 +358,8 @@ cmd_seed() {
   local src_comin=${4:-${ptmp}/${user}/comin_atl}
   local src_dcom=${5:-${DCOMROOT:-}}
   [ -n "${src_dcom}" ] || { echo "FATAL: give the source dcom dir (the bundle's dcom/) as the fifth argument or DCOMROOT" >&2; exit 2; }
-  local seed_rt=${SEED_RT:-/work2/noaa/nos-surge/mjisan/nos-workflow-rt}
+  local seed_rt
+  seed_rt=$(realpath -m -- "${SEED_RT:-/work2/noaa/nos-surge/mjisan/nos-workflow-rt}")   # an absolute path: --link-dest resolves a relative one against the destination. MJ (10/14/26)
   local top="${seed_rt}/stofs_3d_atl" dest="${seed_rt}/stofs_3d_atl/${VARIANT}/${PDY}${CYC}"
   local f s miss=0 refs
   refs=$(python3 "${cmp}" files --variant "${VARIANT}" --level cycle --pdy "${PDY}") || { echo "FATAL: compare_atl.py files failed" >&2; exit 1; }
@@ -365,7 +367,7 @@ cmd_seed() {
     [ -s "${src_com}/${f}" ] || { echo "MISSING: ${src_com}/${f}" >&2; miss=1; }
   done
   for s in gfs hrrr rtofs nwm; do
-    [ -n "$(ls -A "${src_comin}/${s}" 2>/dev/null)" ] || { echo "MISSING: ${src_comin}/${s}/ (empty)" >&2; miss=1; }
+    [ -n "$(find "${src_comin}/${s}" -type f -print -quit 2>/dev/null)" ] || { echo "MISSING: ${src_comin}/${s}/ (no files)" >&2; miss=1; }
   done
   for f in $(dcom_required); do
     [ -s "${src_dcom}/${f}" ] || { echo "MISSING: ${src_dcom}/${f}" >&2; miss=1; }
@@ -388,7 +390,8 @@ cmd_seed() {
   fi
   mkdir -p "${dest}/input/com" "${dest}/input/comin" "${dest}/input/dcom" "${dest}/ref"
   echo "seeding ${dest} from ${src_com}, ${src_comin}, ${src_dcom}"
-  local lcom=() lcomin=() list
+  # --files-from turns off the recursion -a implies, so -r is explicit; the fixed modes match what the final chmod -R o+rX gives, so the second variant can hard-link against this one. MJ (10/14/26)
+  local lcom=() lcomin=() list PERM=(--chmod=Do+rx,Fo+r)
   if [ -d "${top}/${SIBLING}/${PDY}${CYC}/input" ]; then
     lcom=(--link-dest="${top}/${SIBLING}/${PDY}${CYC}/input/com")
     lcomin=(--link-dest="${top}/${SIBLING}/${PDY}${CYC}/input/comin")
@@ -396,19 +399,19 @@ cmd_seed() {
   list=$(com_state_files)
   [ ! -s "${src_com}/nos/${RUN}.${PDYM1}/rerun/${RUN}.t${CYC}z.param.nml" ] || list+=$'\n'"nos/${RUN}.${PDYM1}/rerun/${RUN}.t${CYC}z.param.nml"
   # -L: the coupled init file is a symlink to the standalone one. MJ (10/14/26)
-  echo "${list}" | rsync -aL --files-from=- ${lcom[@]+"${lcom[@]}"} "${src_com}/" "${dest}/input/com/"
+  echo "${list}" | rsync -arL "${PERM[@]}" --files-from=- ${lcom[@]+"${lcom[@]}"} "${src_com}/" "${dest}/input/com/"
   # only the day directories of PDY-1 and PDY (<source>.<day>), the cycle's whole input window. MJ (10/14/26)
   for s in gfs hrrr rtofs nwm; do
     for f in "${PDYM1}" "${PDY}"; do
       [ ! -d "${src_comin}/${s}/${s}.${f}" ] || echo "${s}/${s}.${f}/"
     done
-  done | rsync -a --files-from=- ${lcomin[@]+"${lcomin[@]}"} "${src_comin}/" "${dest}/input/comin/"
+  done | rsync -ar "${PERM[@]}" --files-from=- ${lcomin[@]+"${lcomin[@]}"} "${src_comin}/" "${dest}/input/comin/"
   for s in gfs hrrr rtofs nwm; do
     [ -d "${dest}/input/comin/${s}" ] || { echo "FATAL: no ${s}.${PDYM1} or ${s}.${PDY} directory under ${src_comin}/${s}" >&2; exit 1; }
   done
-  # a trailing slash makes --files-from copy the directory contents. MJ (10/14/26)
-  dcom_groups | while read -r f; do [ ! -e "${src_dcom}/${f}" ] || echo "${f}"; done | rsync -a --files-from=- "${src_dcom}/" "${dest}/input/dcom/"
-  echo "${refs}" | rsync -aL --files-from=- "${src_com}/" "${dest}/ref/"
+  # a trailing slash plus -r makes --files-from copy the directory contents. MJ (10/14/26)
+  dcom_groups | while read -r f; do [ ! -e "${src_dcom}/${f}" ] || echo "${f}"; done | rsync -ar "${PERM[@]}" --files-from=- "${src_dcom}/" "${dest}/input/dcom/"
+  echo "${refs}" | rsync -arL "${PERM[@]}" --files-from=- "${src_com}/" "${dest}/ref/"
   fetch_ops "${dest}/ref/ops"
   touch "${dest}/.seeded_ok"
   chmod -R o+rX "${dest}" || true

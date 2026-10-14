@@ -14,6 +14,8 @@ SCRIPTS = REPO / ".cicd" / "scripts"
 JENKINSFILE = REPO / ".cicd" / "Jenkinsfile"
 SCRIPT = SCRIPTS / "stofs_3d_atl.sh"
 PDY, PDYM1, CYC, RUN = "20261001", "20260930", "12", "stofs_3d_atl_ufs"
+# the staged comin trees are nested below the day directory (what stage_comin.py lays out). MJ (10/14/26)
+NEST = {"gfs": "12/atmos", "hrrr": "conus", "rtofs": "", "nwm": "medium_range_mem1"}
 AMBIENT = ("ATL_CI_ROOT", "WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
            "RT_DATA_ROOT", "DATA_MODE", "LEVEL", "CI_OFS", "SLURM_CI_ACCOUNT", "SLURM_CI_QOS", "PACKAGEROOT", "NOS_PTMP", "DCOMROOT",
            "DCOM_BUNDLE", "COMPARE_ATL", "STUB_DIR", "COMROOT_SA", "COMROOT_UFS")
@@ -90,7 +92,7 @@ class Ci:
         _touch(i / "com" / "nos" / f"{RUN}.{PDYM1}" / "staout_1", "staout")
         _touch(i / "com" / "nos" / f"{RUN}.{PDYM1}" / "rerun" / f"{RUN}.t12z.avg_bias", "bias")
         for s in ("gfs", "hrrr", "rtofs", "nwm"):
-            _touch(i / "comin" / s / f"{s}.{PDY}" / "f000", s)
+            _touch(i / "comin" / s / f"{s}.{PDY}" / NEST[s] / "f000", s)
         for d in (PDY, PDYM1):
             _touch(i / "dcom" / d / "validation_data/marine/cmems/ssh" / f"nrt_global_allsat_phy_l4_{d}_{d}.nc", "adt")
             _touch(i / "dcom" / d / "can_streamgauge" / "02OA016_hydrometric.csv", "csv")
@@ -165,7 +167,8 @@ def test_frozen_stage_links_the_dataset_into_a_clean_root(ci):
     assert _tree(ci.root) == _tree(ci.ds / "input")
     init = f"com/nos/{RUN}.{PDY}/{RUN}.t12z.{PDY}.init.nowcast.nc"
     assert (ci.root / init).samefile(ci.ds / "input" / init)
-    assert (ci.root / "comin/gfs" / f"gfs.{PDY}" / "f000").samefile(ci.ds / "input/comin/gfs" / f"gfs.{PDY}" / "f000")
+    g = Path("comin/gfs") / f"gfs.{PDY}" / NEST["gfs"] / "f000"
+    assert (ci.root / g).samefile(ci.ds / "input" / g)
 
 
 def test_frozen_stage_lists_what_is_missing_and_needs_the_sentinel(ci):
@@ -355,7 +358,7 @@ def _source(ci: Ci, coupled_link=False):
     _touch(com / "nos" / f"{RUN}.{PDY}" / f"{RUN}.t12z.forecast_outputs" / "staout_1", "f")
     _touch(com / "nos" / f"{RUN}.{PDY}" / "junk.nc", "must not be copied")
     for s in ("gfs", "hrrr", "rtofs", "nwm"):
-        _touch(comin / s / f"{s}.{PDY}" / "f000", s)
+        _touch(comin / s / f"{s}.{PDY}" / NEST[s] / "f000", s)
     for d in (PDY, PDYM1):
         _touch(dcom / d / "validation_data/marine/cmems/ssh" / f"nrt_global_allsat_phy_l4_{d}_{d}.nc", "adt")
         _touch(dcom / d / "can_streamgauge" / "02OA016_hydrometric.csv", "csv")
@@ -390,7 +393,8 @@ def test_seed_of_the_second_variant_hard_links_the_shared_inputs(ci):
     assert ci.run("seed", PDY, "coupled", str(com), str(comin), str(dcom), **env).returncode == 0
     a = ci.rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}" / "input"
     b = ci.rt / "stofs_3d_atl" / "coupled" / f"{PDY}{CYC}" / "input"
-    assert (a / "comin/gfs" / f"gfs.{PDY}" / "f000").samefile(b / "comin/gfs" / f"gfs.{PDY}" / "f000")
+    g = Path("comin/gfs") / f"gfs.{PDY}" / NEST["gfs"] / "f000"
+    assert (ci.rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}" / "input" / g).samefile(ci.rt / "stofs_3d_atl" / "coupled" / f"{PDY}{CYC}" / "input" / g)
 
 
 def test_seed_uses_ops_dir_and_reports_an_unfinished_source(ci):
@@ -472,7 +476,7 @@ def test_live_stage_loads_the_modules_first(ci):
 
 
 def _comin_day(root: Path, s: str, d: str):
-    _touch(root / s / f"{s}.{d}" / "f", s)
+    _touch(root / s / f"{s}.{d}" / NEST[s] / "f", s)
 
 
 def test_seed_copies_only_the_two_day_directories_and_rejects_the_wrong_variant(ci):
@@ -486,7 +490,8 @@ def test_seed_copies_only_the_two_day_directories_and_rejects_the_wrong_variant(
     r = ci.run("seed", PDY, "coupled", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
     assert r.returncode == 0, r.stderr
     got = _tree(ci.rt / "stofs_3d_atl" / "coupled" / f"{PDY}{CYC}" / "input" / "comin")
-    assert sorted(got) == sorted([f"{s}/{s}.{PDYM1}/f" for s in ("gfs", "hrrr", "rtofs", "nwm")] + [f"{s}/{s}.{PDY}/f000" for s in ("gfs", "hrrr", "rtofs", "nwm")])
+    want = [str(Path(s) / f"{s}.{PDYM1}" / NEST[s] / "f") for s in NEST] + [str(Path(s) / f"{s}.{PDY}" / NEST[s] / "f000") for s in NEST]
+    assert sorted(got) == sorted(want)
     assert oct((ci.rt / "stofs_3d_atl" / "coupled").stat().st_mode & 0o001) == "0o1"
     _touch(com / "nos" / f"{RUN}.{PDY}" / "rerun" / f"{RUN}.t12z.param.nml", "  nws = 2\n")
     r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
