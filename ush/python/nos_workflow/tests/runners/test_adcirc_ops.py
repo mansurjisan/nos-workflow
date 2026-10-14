@@ -431,6 +431,8 @@ def test_gfs_ncst_prep_on_a_cold_start_ignores_an_older_chain_file_in_the_lookba
     stale.write_text("stale")
     assert ops.find_chain_start(ctx, "restart")[0] == CYCLE - timedelta(hours=12)
     _tank_for_ncst(tmp_path)
+    for h in range(6):  # the stale start's own sfcf files exist, so the old window builds with 13 records instead of failing on a missing file. MJ (10/14/26)
+        _sfcf(tmp_path / "gfs", CYCLE - timedelta(hours=12), h)
     assert ops.run_prep(_gfs_ctx(tmp_path, "ncst")) == 0
     with nc.Dataset(str(ops.rerun_dir(ctx) / f"{RUN}_ncst.221.nc")) as d:
         assert d.variables["pressfc"].shape[0] == 7

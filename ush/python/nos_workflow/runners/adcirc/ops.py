@@ -237,7 +237,7 @@ def cold_spinup(ctx: CycleContext, launcher, profile, runner: CommandRunner) -> 
     base, nod = _load_nod(ctx)
     if base != beg - timedelta(hours=SPINH):
         raise AdcircConfigError(f"nod_equi starts {base} but this cycle's spin-up starts "
-                                f"{beg - timedelta(hours=SPINH)}; run cold_adcprep for this cycle first")
+                                f"{beg - timedelta(hours=SPINH)}; run the adcprep segment for this cycle first (COLDSTART=YES / COLD=1)")
     run_dir = _stage(ctx, "tide", "spinup", spinup_tokens(), ctx.cycle_time.strftime("%Y%m%d%H"), nod, runner)
     argv = _launch(ctx, run_dir, "tide", "spinup", launcher, profile)
     ihot = parity_ihot(bc_div(SPINH, 24) * 86400, WNDH)

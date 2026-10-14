@@ -36,7 +36,9 @@
 # There are no done-markers: redo a failed step by resubmitting its job with a narrower list. After a failed nowcast step resubmit
 # COLD=0 STAGES="nowcast forecast post" (one launch; tide_ncst re-runs from the same input chain file and adds about 13 min, which is
 # safe). To redo only a stream in two launches, COLD=0 STAGES=nowcast STREAMS=surf first and COLD=0 STAGES="forecast post" only after that
-# job finishes. After a failed surf fcst: COLD=0 STAGES="forecast post" STREAMS=surf (a fcst cannot run twice). The CI smoke test
+# job finishes. After a failed surf fcst: COLD=0 STAGES="forecast post" STREAMS=surf (a fcst cannot run twice). On a cold cycle where
+# adcprep passed and the spin-up or the rest of prep failed, one COLD=spinup launch redoes the cycle (STAGES="nowcast forecast post" skips
+# prep; the preflight needs this cycle's nod_equi and the decomposition tar). The CI smoke test
 # is STAGES=nowcast; the preflight then needs only the ncst forcing. SLURM_CI_ACCOUNT and SLURM_CI_QOS, when set, are passed to every
 # sbatch as --account and --qos and override the cards' #SBATCH values (the Jenkins pipeline sets them, as for the SECOFS cards). MJ (10/14/26)
 set -eu

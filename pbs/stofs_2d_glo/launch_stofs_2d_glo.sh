@@ -29,6 +29,9 @@
 # STAGES="nowcast forecast post" (one launch; tide_ncst re-runs from the same input chain file and adds about 13 min, which is safe).
 # To redo only a stream in two launches, STAGES=nowcast STREAMS=surf first and STAGES="forecast post" only after that job finishes.
 # After a failed surf fcst: STAGES="forecast post" STREAMS=surf (a fcst cannot run twice). GFS prep skips forcing that exists. MJ (10/14/26)
+# Cold start: adcprep runs only in a prep job and spinup only in a nowcast job. After a failed spin-up (adcprep passed) resubmit
+# COLDSTART=YES STAGES="nowcast forecast post". After a cold prep that failed once adcprep had passed, STAGES=prep first (no COLDSTART, so
+# only the GFS steps) and, once that job finishes, COLDSTART=YES STAGES="nowcast forecast post". A failed adcprep repeats the whole launch. MJ (10/14/26)
 # Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
 # (ncks cuts of the hourly fcst before ncrcat). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/13/26)
 # ncst 0:25: the first WCOSS2 cycle took 750 s (tide) and 821 s (surf) of the ecf 0:15, mostly decomposition extract and staging. MJ (10/13/26)

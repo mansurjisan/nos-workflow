@@ -203,7 +203,7 @@ def test_ops_mode_is_chosen_at_submit_time(card):
         for needle in ("four jobs", "adcprep", "spinup", "ADCIRC_STREAM", "done-markers", "-t 3:50:00" if card.suffix == ".sh" else "walltime=3:50:00"):
             assert needle in text, needle
         assert "ADCIRC_STREAM=tide,ADCIRC_SEGMENT" not in text  # the 11-job per-step examples are gone MJ (10/14/26)
-        # a hand-typed list is space separated and the whole -v / --export value is double-quoted, or the shell cuts it at the first space. MJ (10/14/26)
+        # a hand-typed list is space separated and the whole -v / --export value is double-quoted, or qsub / sbatch refuse the stray words. MJ (10/14/26)
         forms = [l for l in text.splitlines() if l.startswith("#   ") and ("qsub " in l or "sbatch " in l)]
         assert len(forms) == 4 and not [l for l in forms if "'" in l]
         assert all(('-v "PDY=' in l) if card.suffix == ".pbs" else ('--export="ALL,PDY=' in l) for l in forms)
