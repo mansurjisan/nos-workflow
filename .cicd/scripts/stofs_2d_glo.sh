@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds only). MJ (10/13/26)
-#   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = copy the dataset for PDY/CYC from the RT root into a clean
-#                            CI COMROOT_2DGLO; live = tools/hercules_2d_glo_stage_forcing.sh on this login/front-end node, which is
-#                            where the SECOFS live staging (stage_comin.py) runs too, since compute nodes have no internet
+#   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = link (hard links, copy across file systems) the dataset for
+#                            PDY/CYC from the RT root into a clean CI COMROOT_2DGLO; live = tools/hercules_2d_glo_stage_forcing.sh
+#                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too,
+#                            since compute nodes have no internet
 #   stofs_2d_glo.sh run      Run 2D-GLO: slurm/stofs_2d_glo/launch_stofs_2d_glo.sh with the CI account/qos, then wait for the chain
 #   stofs_2d_glo.sh verify   Verify 2D-GLO: compare_2dglo.py against the dataset's reference / ops products
 #   stofs_2d_glo.sh seed <PDY> <CYC> [cold]   one-time, by hand: build the frozen dataset from a finished run (see below)
@@ -13,11 +14,11 @@
 # LEVEL   launcher                  jobs  verify
 #   smoke  COLD=0 STAGES=ncst         2    rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference (bitwise, else <= CMP_TOL)
 #   cycle  COLD=0                     6    the same plus points.*.nc against the reference; ops comparison reported
-#   full   COLD=1                     8    points.{htp,cwl.noanomaly,swl}.nc against the ops products, reported only
+#   full   COLD=1                     8    the same as cycle (a cold start is deterministic); ops comparison reported
 # smoke and cycle continue from the previous cycle's hotstart/restart, so they use the 06z-type dataset; full cold-starts and uses the
 # 00z-type dataset. A job in FAILED, CANCELLED, TIMEOUT or any other bad state, or without STAGE_SUMMARY status=PASS, fails the run
 # stage. DATA_MODE=live continues from the state already in COMROOT_2DGLO (LEVEL=full first, then cycle at +6 h) and does not clear it;
-# frozen clears it and starts from the dataset. MJ (10/13/26)
+# the smoke/cycle stage checks that state before it downloads. frozen clears it and starts from the dataset. MJ (10/13/26)
 #
 # Dataset ${RT_DATA_ROOT}/stofs_2d_glo/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/stofs_2d_glo/<PDY><CYC>/ in frozen mode):
 #   .seeded_ok
@@ -101,7 +102,7 @@ cmd_stage() {
         echo "Seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC}$([ "${LEVEL}" = full ] && echo ' cold') (see the script header), or set DATA_MODE=live."
         exit 1
       }
-      local segs=(ncst fcst) with_state=1 f miss=0
+      local segs=(ncst fcst) with_state=1 f miss=0 files
       [ "${LEVEL}" != smoke ] || segs=(ncst)
       [ "${LEVEL}" != full ] || with_state=0
       for f in $(input_files "${with_state}" "${segs[@]}"); do
@@ -110,20 +111,29 @@ cmd_stage() {
       [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs (a cold dataset has no COMGES/previous-cycle files; use the dataset of a COLD=0 cycle)"; exit 1; }
       reset_comroot
       echo "staging ${DS}/input -> ${COMROOT_2DGLO} (LEVEL=${LEVEL})"
-      input_files "${with_state}" "${segs[@]}" | rsync -a --files-from=- "${DS}/input/" "${COMROOT_2DGLO}/"
+      # The run only reads these files (ADCIRC works on copies in $DATA; the forcing is symlinked), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied. MJ (10/13/26)
+      files=$(input_files "${with_state}" "${segs[@]}")
+      { grep -v '\.json$' <<<"${files}" || true; } | rsync -a --files-from=- --link-dest="${DS}/input" "${DS}/input/" "${COMROOT_2DGLO}/"
+      { grep '\.json$' <<<"${files}" || true; } | rsync -a --files-from=- "${DS}/input/" "${COMROOT_2DGLO}/"
       du -sh "${COMROOT_2DGLO}"
       ;;
     live)
+      local rc=0 f miss=0
+      # Before the 39 GB download: the COLD=0 levels continue from the chain state already in COMROOT_2DGLO. MJ (10/13/26)
+      if [ "${LEVEL}" != full ]; then
+        for f in $(input_files 1); do
+          [ -s "${COMROOT_2DGLO}/${f}" ] || { echo "MISSING: ${COMROOT_2DGLO}/${f}" >&2; miss=1; }
+        done
+        [ "${miss}" = 0 ] || { echo "FATAL: LEVEL=${LEVEL} continues from the chain state in ${COMROOT_2DGLO}, which lacks the files above; run LEVEL=full DATA_MODE=live for the previous 6-hourly cycle first, or use DATA_MODE=frozen"; exit 1; }
+      fi
       mkdir -p "${COMROOT_2DGLO}"
-      local rc=0
       echo "staging the ops forcing for ${PDY}${CYC} into ${COMROOT_2DGLO} (login node, no clearing: the chain state stays)"
-      bash "${HOMEnos}/tools/hercules_2d_glo_stage_forcing.sh" "${PDY}" "${CYC}" || rc=$?
+      bash "${HOMEnos}/tools/hercules_2d_glo_stage_forcing.sh" --rm-raw "${PDY}" "${CYC}" || rc=$?
       case "${rc}" in
         0) ;;
         3) echo "WARN: the ops reference station files were not downloaded; Verify skips the ops comparison" ;;
         *) echo "FATAL: hercules_2d_glo_stage_forcing.sh failed (rc=${rc})"; exit 1 ;;
       esac
-      [ "${LEVEL}" = full ] || echo "NOTE: LEVEL=${LEVEL} continues from the chain files already in ${COMROOT_2DGLO}; the launcher preflight lists what is missing"
       ;;
     *) echo "FATAL: unknown DATA_MODE '${DATA_MODE}' (expected frozen|live)"; exit 1 ;;
   esac
@@ -143,12 +153,12 @@ cmd_run() {
   bash "${HOMEnos}/slurm/stofs_2d_glo/launch_stofs_2d_glo.sh" "${PDY}" "${CYC}"
 
   [ -s "${JOBS}" ] || { echo "FATAL: the launcher left no job list at ${JOBS}"; exit 1; }
+  # post/unsuccessful in the Jenkinsfile scancels whatever is in this file, space separated; written before the count check so a mismatch still cancels what was queued. MJ (10/13/26)
+  awk 'NF>=2{printf "%s ", $2}' "${JOBS}" > "${LOGDIR}/current_jobid"
   local n idlist
   n=$(awk 'NF>=2' "${JOBS}" | wc -l)
   [ "${n}" -eq "${EXPECT}" ] || { echo "FATAL: ${n} jobs queued, LEVEL=${LEVEL} expects ${EXPECT} (${JOBS})"; exit 1; }
   idlist=$(awk 'NF>=2{printf "%s%s", sep, $2; sep=","}' "${JOBS}")
-  # post/unsuccessful in the Jenkinsfile scancels whatever is in this file, space separated. MJ (10/13/26)
-  awk 'NF>=2{printf "%s ", $2}' "${JOBS}" > "${LOGDIR}/current_jobid"
 
   local t0 snap verdict last="" elapsed
   t0=$(date +%s)
@@ -200,15 +210,14 @@ cmd_verify() {
   # The group runs in the pipeline's subshell, so it hands its verdict back through its exit status. MJ (10/13/26)
   {
     grc=0
-    if [ "${LEVEL}" != full ]; then
-      if [ -d "${DS}/ref" ]; then
-        python3 "${cmp}" regress --ref "${DS}/ref" --out "${COMROOT_2DGLO}" --pdy "${PDY}" --cyc "${CYC}" --level "${LEVEL}" --tol "${CMP_TOL:-1e-3}" || grc=1
-      elif [ "${DATA_MODE}" = frozen ]; then
-        echo "FAIL: ${DS}/ref is missing; the frozen dataset has no reference outputs"
-        grc=1
-      else
-        echo "no frozen reference for ${PDY}${CYC} (live mode): regression comparison skipped"
-      fi
+    # full compares the same files as cycle, against the ref/ the cold seed stored: tide_fac, adcprep and ADCIRC on the same inputs reproduce. MJ (10/13/26)
+    if [ -d "${DS}/ref" ]; then
+      python3 "${cmp}" regress --ref "${DS}/ref" --out "${COMROOT_2DGLO}" --pdy "${PDY}" --cyc "${CYC}" --level "${LEVEL/full/cycle}" --tol "${CMP_TOL:-1e-3}" || grc=1
+    elif [ "${DATA_MODE}" = frozen ]; then
+      echo "FAIL: ${DS}/ref is missing; the frozen dataset has no reference outputs"
+      grc=1
+    else
+      echo "no frozen reference for ${PDY}${CYC} (live mode): regression comparison skipped"
     fi
     if [ "${LEVEL}" != smoke ]; then
       python3 "${cmp}" ops --out "${COMROOT_2DGLO}" --ops-dir "${ops_dir}" --pdy "${PDY}" --cyc "${CYC}" --warn-mm "${OPS_WARN_MM:-500}" || grc=1
@@ -259,8 +268,8 @@ cmd_seed() {
       echo "WARN: no ops product ${ops_dir}/stofs_2d_glo.t${CYC}z.points.${f}.nc (OPS_DIR=...); the ops comparison will skip it" >&2
     fi
   done
-  chmod -R o+rX "${dest}" || true
   touch "${dest}/.seeded_ok"
+  chmod -R o+rX "${dest}" || true
   du -sh "${dest}"/* | sed 's/^/  /'
   echo "seed PASS: ${dest}"
   echo "the CI account reads it only if the parent directories are traversable: chmod o+x ${seed_rt} ${seed_rt}/stofs_2d_glo"

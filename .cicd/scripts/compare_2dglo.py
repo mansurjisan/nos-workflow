@@ -3,9 +3,9 @@
 
 regress: station files of this run against the frozen reference of the dataset. Per file: bitwise identical, else the largest
   |diff| over the time-dependent variables (zeta, u-vel, v-vel) must be <= --tol (default 1e-3, in the variable's unit: m or m/s);
-  every other variable (time, x, y, station names) must be identical. A missing or unreadable file, a shape change or a different
-  mask fails. Exit 1 if any file fails. Files: rerun/stofs_2d_glo_{tide,surf}.61.nc (ncst) and, at LEVEL=cycle, the reference's
-  stofs_2d_glo.t<CYC>z.points.*.nc.
+  every other variable (time, x, y, station names) must be identical. A missing or unreadable file, a shape change, a different
+  mask or a NaN in only one of the two files fails. Exit 1 if any file fails. Files: rerun/stofs_2d_glo_{tide,surf}.61.nc (ncst) and, at LEVEL=cycle
+  (and full), the reference's stofs_2d_glo.t<CYC>z.points.*.nc.
 ops: points.{htp,cwl.noanomaly,swl}.nc against the ops products (the cmp_points comparison: per-station max |dWL| over the common
   times, stations with ops |WL| > 20 m skipped). Reported only: a median above --warn-mm prints WARN and still exits 0; only a missing
   output of this run fails.
@@ -47,8 +47,14 @@ def _compare_var(name: str, a, b, tol: float):
         return (True, 0.0, "") if np.array_equal(da, db) else (False, 0.0, f"{name}: values differ")
     if np.array_equal(da, db, equal_nan=True):
         return True, 0.0, ""
-    diff = np.abs(da.astype("f8") - db.astype("f8"))
-    return False, float(np.nanmax(diff)) if diff.size else 0.0, ""
+    fa, fb = da.astype("f8"), db.astype("f8")
+    na, nb = np.isnan(fa), np.isnan(fb)
+    if (na != nb).any():  # a NaN on one side only would vanish from a nan-ignoring maximum. MJ (10/13/26)
+        return False, 0.0, f"{name}: NaN in only one of the two files at {int((na != nb).sum())} points"
+    fa, fb = fa[~na], fb[~na]
+    with np.errstate(invalid="ignore"):
+        diff = np.where(fa == fb, 0.0, np.abs(fa - fb))
+    return False, float(diff.max()) if diff.size else 0.0, ""
 
 
 def compare_file(ref_path: Path, out_path: Path, tol: float) -> tuple:

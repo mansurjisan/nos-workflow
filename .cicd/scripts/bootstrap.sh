@@ -15,9 +15,17 @@ EXEC_DEST="${HOMEnos}/exec"
 # SECOFS keeps its sentinel and executable; STOFS-2D-Global has its own exec sentinel (exec/ is shared) and also needs the ADCIRC build, which lives beside the clone. MJ (10/13/26)
 EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok"
 EXEC_NEED=(fv3_coastalS.exe)
+# SECOFS copies the whole fix/ and exec/ trees; STOFS-2D-Global only its own fix directory and executable, so it can never overwrite the SECOFS files in the shared tree. MJ (10/13/26)
+FIX_SRC="${SEED_SRC}/fix"
+FIX_TO="${HOMEnos}/fix"
+EXEC_SRC="${SEED_SRC}/exec"
+EXEC_FILTER=()
 if [ "${OFS}" = stofs_2d_glo ]; then
   EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok.${OFS}"
   EXEC_NEED=(stofs_2d_glo_tide_fac)
+  FIX_SRC="${SEED_SRC}/fix/${OFS}"
+  FIX_TO="${FIX_DEST}"
+  EXEC_FILTER=(--include="stofs_2d_glo_tide_fac" --exclude="*")
   ADCIRC_SRC="${SEED_ADCIRC:-$(dirname "${SEED_SRC}")/adcirc_v56.1.0_exec}"
   ADCIRC_DEST="${PACKAGEROOT}/adcirc_v56.1.0_exec"
 fi
@@ -49,17 +57,18 @@ fi
 
 # Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
 if [ "${need_fix}" -eq 1 ]; then
-  ls "${SEED_SRC}/fix" >/dev/null 2>&1 || {
-    echo "FATAL: ${SEED_SRC}/fix not readable as $(whoami)."
-    echo "Ask the tree owner to run: chmod -R o+rX ${SEED_SRC}/fix"
+  ls "${FIX_SRC}" >/dev/null 2>&1 || {
+    echo "FATAL: ${FIX_SRC} not readable as $(whoami)."
+    [ "${OFS}" != stofs_2d_glo ] || echo "It must hold the 2D-Global fix files (tools/fetch_stofs_2d_glo_fix.sh), and SEED_SRC must be the tree that has them."
+    echo "Ask the tree owner to run: chmod -R o+rX ${FIX_SRC}"
     echo "and chmod o+x (not -R) on every parent directory above it, e.g.:"
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
 fi
 if [ "${need_exec}" -eq 1 ]; then
-  ls "${SEED_SRC}/exec" >/dev/null 2>&1 || {
-    echo "FATAL: ${SEED_SRC}/exec not readable as $(whoami)."
+  ls "${EXEC_SRC}" >/dev/null 2>&1 || {
+    echo "FATAL: ${EXEC_SRC} not readable as $(whoami)."
     echo "Ask the tree owner to run: chmod -R o+rX ${SEED_SRC}/exec"
     echo "and chmod o+x (not -R) on every parent directory above it, e.g.:"
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
@@ -88,9 +97,9 @@ mkdir -p "${PACKAGEROOT}"
 
 # deploy.sh's own --exclude='/fix' means it never touches this dir once seeded, regardless of whether Bootstrap or Deploy runs first.
 if [ "${need_fix}" -eq 1 ]; then
-  echo "bootstrap: seeding fix/ from ${SEED_SRC}/fix/"
-  mkdir -p "${HOMEnos}/fix"
-  rsync -a "${SEED_SRC}/fix/" "${HOMEnos}/fix/"
+  echo "bootstrap: seeding ${FIX_TO}/ from ${FIX_SRC}/"
+  mkdir -p "${FIX_TO}"
+  rsync -a "${FIX_SRC}/" "${FIX_TO}/"
   touch "${FIX_DEST}/.seeded_ok"
 else
   echo "bootstrap: ${FIX_DEST}/.seeded_ok already present, skipping fix/ seed"
@@ -98,9 +107,9 @@ fi
 
 # Same anchored-exclude protection as fix/ above.
 if [ "${need_exec}" -eq 1 ]; then
-  echo "bootstrap: seeding exec/ from ${SEED_SRC}/exec/"
+  echo "bootstrap: seeding exec/ from ${EXEC_SRC}/ ${EXEC_FILTER[*]:-}"
   mkdir -p "${EXEC_DEST}"
-  rsync -a "${SEED_SRC}/exec/" "${EXEC_DEST}/"
+  rsync -a ${EXEC_FILTER[@]+"${EXEC_FILTER[@]}"} "${EXEC_SRC}/" "${EXEC_DEST}/"
   touch "${EXEC_SENTINEL}"
 else
   echo "bootstrap: ${EXEC_SENTINEL} already present, skipping exec/ seed"

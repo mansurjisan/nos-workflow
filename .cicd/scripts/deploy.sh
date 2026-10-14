@@ -31,6 +31,9 @@ if [ "${OFS}" = stofs_2d_glo ]; then
   }
   mkdir -p "${HOMEnos}/ush/python/nos-utils"
   rsync -a --delete --exclude='.git' "${NU_SRC}/" "${HOMEnos}/ush/python/nos-utils/"
+else
+  # scripts/exnos_*.sh put ${USHnos}/python/nos-utils first on PYTHONPATH and the rsync above never deletes it, so a copy left by an earlier 2D-Global deploy would shadow the SECOFS submodule. MJ (10/13/26)
+  rm -rf "${HOMEnos}/ush/python/nos-utils"
 fi
 
 echo "deploy PASS: $(date -u +%FT%TZ)"

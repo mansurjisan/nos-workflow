@@ -92,8 +92,8 @@ pipeline {
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
-        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo'], description: 'System to run. stofs_2d_glo is manual only (Build with Parameters / Build Now), never from the PR label')
-        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo only. smoke: COLD=0 tide+surf nowcasts, compared with the frozen reference. cycle: COLD=0 full 6-job chain, compared with the frozen reference. full: COLD=1 cold start + cycle, ops comparison reported')
+        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo (never the PR label); Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
+        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo only. smoke: COLD=0 tide+surf nowcasts, compared with the frozen reference. cycle: COLD=0 full 6-job chain, compared with the frozen reference. full: COLD=1 cold start + cycle, compared with the frozen reference, ops comparison reported. Frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full; use DATA_MODE=frozen')
     }
 
     environment {

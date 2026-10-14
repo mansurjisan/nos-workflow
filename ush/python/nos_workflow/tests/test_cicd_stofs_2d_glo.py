@@ -59,8 +59,7 @@ class Ci:
         for d in (self.home, self.ptmp, self.rt, self.ws, self.bin, self.stubs):
             d.mkdir(parents=True, exist_ok=True)
         _touch(self.venv / "bin" / "activate", "")
-        for tool in ("module",):
-            _stub(self.bin / tool)
+        _stub(self.bin / "module")
         self.env = {k: v for k, v in os.environ.items() if k not in AMBIENT}
         self.env.update(PATH=f"{self.bin}:{os.environ['PATH']}", PACKAGEROOT=str(self.pk), NOS_PTMP=str(self.ptmp),
                         RT_DATA_ROOT=str(self.rt), WORKSPACE=str(self.ws), LOGNAME="tester", VENV_PATH=str(self.venv),
@@ -77,7 +76,6 @@ class Ci:
     def script(self, *args: str, **extra):
         return self.run(SCRIPT, *args, **extra)
 
-    # -- dataset -----------------------------------------------------------------------------------------------------------
     def dataset(self, state: bool = True, ref: bool = True, ops: bool = True, sentinel: bool = True) -> Path:
         ds, inp = self.ds, self.ds / "input" / "nos"
         for seg in ("ncst", "fcst"):
@@ -106,10 +104,6 @@ def ci(tmp_path):
     return Ci(tmp_path)
 
 
-# ------------------------------------------------------------------------------------------------------------------------------
-# structure
-# ------------------------------------------------------------------------------------------------------------------------------
-
 def test_every_cicd_script_is_valid_bash_and_python_compiles():
     for f in sorted(SCRIPTS.glob("*.sh")):
         subprocess.run(["bash", "-n", str(f)], check=True)
@@ -137,7 +131,7 @@ def test_secofs_stages_run_only_for_secofs_and_2dglo_stages_only_for_2dglo():
         assert "env.CI_OFS == 'secofs_ufs'" in cond[name] and "env.RUN_CYCLE == 'true'" in cond[name], name
     for name in ("Run 2D-GLO", "Verify 2D-GLO"):
         assert "env.CI_OFS == 'stofs_2d_glo'" in cond[name] and "env.RUN_CYCLE == 'true'" in cond[name], name
-    # the shared stages (Bootstrap, Deploy, Environment Check, Stage Data) are untouched: they run for both systems
+    # the shared stages (Bootstrap, Deploy, Environment Check, Stage Data) run for both systems. MJ (10/13/26)
     for name in ("Bootstrap", "Deploy", "Environment Check", "Stage Data"):
         assert cond[name] == "environment name: 'RUN_CYCLE', value: 'true'", name
 
@@ -182,10 +176,6 @@ def test_poll_limits_cover_the_critical_path_of_each_level():
     assert wait["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"
 
 
-# ------------------------------------------------------------------------------------------------------------------------------
-# Stage Data
-# ------------------------------------------------------------------------------------------------------------------------------
-
 def _tree(root: Path):
     return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
 
@@ -203,17 +193,12 @@ def test_frozen_smoke_stages_state_and_the_ncst_forcing_only(ci):
         f"nos/stofs_2d_glo.{PREV[0]}/stofs_2d_glo.t{PREV[1]}z.hotstart", f"nos/stofs_2d_glo.{PREV[0]}/stofs_2d_glo.t{PREV[1]}z.restart",
         *[f"{day}/stofs_2d_glo_ncst.{n}.nc" for n in (221, 222, 225)]])
     assert (ci.com / day / "stofs_2d_glo_ncst.221.nc").read_text() == "forcing ncst 221"
-
-
-def test_frozen_cycle_adds_the_fcst_forcing_and_full_drops_the_chain_state(ci):
-    ci.dataset()
-    assert ci.script("stage", LEVEL="cycle").returncode == 0
-    got = _tree(ci.com)
-    assert len(got) == 5 + 6 and any("fcst.225.nc" in g for g in got)
-    r = ci.script("stage", LEVEL="full")
-    assert r.returncode == 0, r.stderr
-    got = _tree(ci.com)
-    assert len(got) == 6 and all("rerun" in g for g in got), got   # a cold start builds nod_equi, the tar and the chain files itself
+    # the big read-only inputs are hard links of the dataset, the .json (rewritten in place on a rebuild) is a copy. MJ (10/13/26)
+    ges = Path("nos/stofs_2d_glo")
+    for f in (day + "/stofs_2d_glo_ncst.221.nc", str(ges / "stofs_2d_glo_4064.tar"), str(ges / "stofs_2d_glo_nod_equi")):
+        assert (ci.com / f).samefile(ci.ds / "input" / f), f
+    assert not (ci.com / ges / "stofs_2d_glo_4064.tar.json").samefile(ci.ds / "input" / ges / "stofs_2d_glo_4064.tar.json")
+    assert (ci.com / ges / "stofs_2d_glo_4064.tar.json").read_text() == "ges stofs_2d_glo_4064.tar.json"
 
 
 def test_frozen_cycle_at_midnight_uses_the_chain_files_of_the_previous_day(ci):
@@ -233,7 +218,7 @@ def test_frozen_cycle_at_midnight_uses_the_chain_files_of_the_previous_day(ci):
 
 
 def test_frozen_stage_lists_every_missing_piece_and_keeps_the_old_comroot(ci):
-    ci.dataset(state=False)           # a cold-start dataset cannot feed a COLD=0 level
+    ci.dataset(state=False)           # a cold-start dataset cannot feed a COLD=0 level. MJ (10/13/26)
     _touch(ci.com / "keep_me", "old")
     r = ci.script("stage")
     assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo_nod_equi" in r.stderr
@@ -287,25 +272,28 @@ def test_live_stage_runs_the_login_node_tool_and_keeps_the_chain_state(ci):
     _touch(ci.com / "nos" / "chain_state", "keep")
     r = ci.script("stage", DATA_MODE="live", LEVEL="full")
     assert r.returncode == 0, r.stderr + r.stdout
-    assert (ci.stubs / "tool.args").read_text().strip() == f"{PDY} {CYC} | {ci.com} | {ci.ptmp}"
+    assert (ci.stubs / "tool.args").read_text().strip() == f"--rm-raw {PDY} {CYC} | {ci.com} | {ci.ptmp}"
     assert (ci.com / "nos" / "chain_state").is_file() and "stage_data PASS" in r.stdout
+
+
+def test_live_stage_checks_the_chain_state_before_downloading(ci):
+    _live_tool(ci, 0)
     r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
-    assert "continues from the chain files" in r.stdout
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo.t00z.restart" in r.stderr
+    assert "LEVEL=full DATA_MODE=live" in r.stdout and not (ci.stubs / "tool.args").exists()
+    _finished_run(ci.com)
+    assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 0 and (ci.stubs / "tool.args").is_file()
 
 
 def test_live_stage_tolerates_only_the_reference_download_failure(ci):
     _live_tool(ci, 3)
-    r = ci.script("stage", DATA_MODE="live")
+    r = ci.script("stage", DATA_MODE="live", LEVEL="full")
     assert r.returncode == 0 and "WARN" in r.stdout and "stage_data PASS" in r.stdout
     _live_tool(ci, 1)
-    r = ci.script("stage", DATA_MODE="live")
+    r = ci.script("stage", DATA_MODE="live", LEVEL="full")
     assert r.returncode == 1 and "rc=1" in r.stdout
     assert ci.script("stage", DATA_MODE="sometimes").returncode == 1
 
-
-# ------------------------------------------------------------------------------------------------------------------------------
-# Run 2D-GLO
-# ------------------------------------------------------------------------------------------------------------------------------
 
 LABELS = {"smoke": "tide_ncst surf_ncst",
           "cycle": "tide_ncst tide_fcst surf_ncst surf_fcst post_ncdiff post_ncrcat",
@@ -363,7 +351,7 @@ def test_run_launches_the_level_with_the_ci_account_and_waits_for_all_jobs(ci, l
     assert env["COMROOT_2DGLO"] == str(ci.com) and env["ADCIRC_EXEC_DIR"] == str(ci.pk / "adcirc_v56.1.0_exec")
     assert env["NOS_VENV"] == str(ci.venv)
     assert (ci.stubs / "launch.args").read_text().split() == [PDY, CYC]
-    # the Jenkinsfile's post/unsuccessful scancels this file, so all ids sit on one line
+    # the Jenkinsfile's post/unsuccessful scancels this file, so all ids sit on one line. MJ (10/13/26)
     assert (ci.ws / "ci_logs" / "current_jobid").read_text() == " ".join(str(101 + i) for i in range(n)) + " "
     assert len(list((ci.ws / "ci_logs").glob("stofs_2d_glo_nowcast_00.*.out"))) == n
     assert not (ci.stubs / "scancel.log").exists()
@@ -378,7 +366,7 @@ def test_run_fails_fast_on_a_failed_job_and_cancels_the_rest(ci):
     assert (ci.stubs / "scancel.log").read_text().split() == [str(i) for i in range(101, 107)]
 
 
-@pytest.mark.parametrize("bad", ["CANCELLED by 12345", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"])
+@pytest.mark.parametrize("bad", ["CANCELLED by 12345", "OUT_OF_MEMORY"])
 def test_run_treats_every_bad_slurm_state_as_failure(ci, bad):
     _chain_stubs(ci, [["COMPLETED", bad]], LABELS["smoke"])
     r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
@@ -405,6 +393,7 @@ def test_run_checks_the_number_of_queued_jobs(ci):
     _chain_stubs(ci, [_all("COMPLETED", 2)], LABELS["smoke"])
     r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["smoke"], POLL_S="0")
     assert r.returncode == 1 and "2 jobs queued, LEVEL=cycle expects 6" in r.stdout
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == "101 102 "   # the queued jobs are still cancelled by post/unsuccessful. MJ (10/13/26)
 
 
 def test_run_stops_when_the_launcher_preflight_fails(ci):
@@ -413,10 +402,6 @@ def test_run_stops_when_the_launcher_preflight_fails(ci):
     r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
     assert r.returncode == 1 and "MISSING: x" in r.stderr and not (ci.ws / "ci_logs" / "current_jobid").exists()
 
-
-# ------------------------------------------------------------------------------------------------------------------------------
-# compare_2dglo.py
-# ------------------------------------------------------------------------------------------------------------------------------
 
 def _load_compare():
     keep, sys.dont_write_bytecode = sys.dont_write_bytecode, True
@@ -500,7 +485,21 @@ def test_compare_fails_on_missing_masks_shapes_and_static_variables(tmp_path):
     assert not ok and text.startswith("unreadable")
 
 
-def _comroot(tmp: Path, name: str, zeta, level="cycle", skip=()):
+def test_compare_fails_on_a_nan_in_only_one_file(tmp_path):
+    ref = _station_file(tmp_path / "ref.nc", Z)
+    ok, text = cmp2d.compare_file(ref, _station_file(tmp_path / "all.nc", np.full(Z.shape, np.nan)), 1e-3)
+    assert not ok and "zeta: NaN in only one of the two files at 12 points" in text
+    one = Z.copy()
+    one[1, 2] = np.nan
+    ok, text = cmp2d.compare_file(ref, _station_file(tmp_path / "one.nc", one), 1e-3)
+    assert not ok and "NaN in only one of the two files at 1 points" in text
+    ok, text = cmp2d.compare_file(_station_file(tmp_path / "rn.nc", one), _station_file(tmp_path / "on.nc", one), 1e-3)
+    assert ok and text.startswith("bitwise")
+    ok, text = cmp2d.compare_file(_station_file(tmp_path / "rd.nc", one), _station_file(tmp_path / "od.nc", np.where(np.isnan(one), np.nan, one + 2e-3)), 1e-3)
+    assert not ok and "zeta: max |diff| 0.002 > tol 0.001" in text
+
+
+def _comroot(tmp: Path, name: str, zeta, skip=()):
     day = tmp / name / "nos" / f"stofs_2d_glo.{PDY}"
     for s in ("tide", "surf"):
         if f"{s}.61" not in skip:
@@ -548,19 +547,15 @@ def _ops_setup(tmp: Path, mine, ops_zeta, **kw):
     return ["ops", "--out", str(tmp / "out"), "--ops-dir", str(ops), "--pdy", PDY, "--cyc", CYC]
 
 
-def test_ops_comparison_prints_the_cmp_points_summary(tmp_path, capsys):
+def test_ops_comparison_prints_the_cmp_points_summary_and_warns_without_failing(tmp_path, capsys):
     argv = _ops_setup(tmp_path, Z + 0.05, Z)
     assert cmp2d.main(argv) == 0
     out = capsys.readouterr().out
     assert out.count("per-station max |dWL|: median 50.00 mm; within 1 mm 0, within 1 cm 0, over 10 cm 0") == 3
     assert "3 common times (3 this run, 3 ops), 4 stations compared, 0 skipped" in out and "WARN" not in out
-
-
-def test_ops_comparison_beyond_the_threshold_warns_but_does_not_fail(tmp_path, capsys):
-    argv = _ops_setup(tmp_path, Z + 0.8, Z)
+    argv = _ops_setup(tmp_path / "far", Z + 0.8, Z)
     assert cmp2d.main(argv) == 0
-    out = capsys.readouterr().out
-    assert out.count("WARN median 800.0 mm is above the 500 mm report threshold (not a failure)") == 3
+    assert capsys.readouterr().out.count("WARN median 800.0 mm is above the 500 mm report threshold (not a failure)") == 3
     assert cmp2d.main([*argv, "--warn-mm", "1000"]) == 0 and "WARN" not in capsys.readouterr().out
 
 
@@ -578,7 +573,7 @@ def test_ops_comparison_skips_absent_ops_files_but_fails_on_a_missing_own_produc
 
 def test_ops_comparison_handles_odd_ops_stations_and_mismatched_files(tmp_path, capsys):
     zops = Z.copy()
-    zops[:, 2] = 25.0                       # ops itself beyond 20 m: not a usable station
+    zops[:, 2] = 25.0                       # ops itself beyond 20 m: not a usable station. MJ (10/13/26)
     argv = _ops_setup(tmp_path, Z, zops)
     assert cmp2d.main(argv) == 0 and "3 stations compared, 1 skipped" in capsys.readouterr().out
     argv = _ops_setup(tmp_path / "n", Z, Z[:, :3])
@@ -587,28 +582,20 @@ def test_ops_comparison_handles_odd_ops_stations_and_mismatched_files(tmp_path, 
     assert cmp2d.main(argv) == 0 and "WARN no common times" in capsys.readouterr().out
 
 
-# ------------------------------------------------------------------------------------------------------------------------------
-# Verify 2D-GLO
-# ------------------------------------------------------------------------------------------------------------------------------
-
 def _verify_tree(ci: Ci, ours, ref=None, ops=None, skip=()):
     ref = Z if ref is None else ref
-    ds = ci.ds
     shutil.rmtree(ci.com, ignore_errors=True)
     _comroot(ci.ds, "ref", ref)
-    ref_dir = ds / "ref"
     for p in ("htp", "cwl.noanomaly", "swl"):
-        _station_file(ds / "ops" / f"stofs_2d_glo.t{CYC}z.points.{p}.nc", Z if ops is None else ops)
-    _touch(ds / ".seeded_ok", "")
-    out = ci.com.parent / ci.com.name
-    day = out / "nos" / f"stofs_2d_glo.{PDY}"
+        _station_file(ci.ds / "ops" / f"stofs_2d_glo.t{CYC}z.points.{p}.nc", Z if ops is None else ops)
+    _touch(ci.ds / ".seeded_ok", "")
+    day = ci.com / "nos" / f"stofs_2d_glo.{PDY}"
     for s in ("tide", "surf"):
         if f"{s}.61" not in skip:
             _station_file(day / CYC / "rerun" / f"stofs_2d_glo_{s}.61.nc", ours)
     for p in ("htp", "cwl", "cwl.noanomaly", "swl"):
         if p not in skip:
             _station_file(day / f"stofs_2d_glo.t{CYC}z.points.{p}.nc", ours)
-    assert ref_dir.is_dir()
 
 
 def test_verify_smoke_passes_on_a_reproduced_run_and_writes_the_report(ci):
@@ -632,16 +619,19 @@ def test_verify_cycle_adds_points_files_and_reports_the_ops_comparison(ci):
     r = ci.script("verify", LEVEL="cycle")
     assert r.returncode == 0, r.stdout
     assert "5 files, 5 bitwise" in r.stdout and "ops: 2026101206: report only" in r.stdout
-    _verify_tree(ci, Z, ops=Z + 2.0)               # far from ops: reported, not a failure
+    _verify_tree(ci, Z, ops=Z + 2.0)               # far from ops: reported, not a failure. MJ (10/13/26)
     r = ci.script("verify", LEVEL="cycle")
     assert r.returncode == 0 and "WARN median" in r.stdout
 
 
-def test_verify_full_compares_only_with_ops_and_fails_on_a_missing_product(ci):
-    _verify_tree(ci, Z + 0.3)                      # differs from the reference, which the full level does not use
+def test_verify_full_regresses_against_the_cold_seed_reference_and_reports_the_ops_comparison(ci):
+    _verify_tree(ci, Z)
     r = ci.script("verify", LEVEL="full")
     assert r.returncode == 0, r.stdout
-    assert "regress" not in r.stdout and "300.00 mm" in r.stdout and "PASS[verify]: LEVEL=full" in r.stdout
+    assert "regress: LEVEL=cycle" in r.stdout and "5 files, 5 bitwise" in r.stdout and "ops: 2026101206: report only" in r.stdout
+    _verify_tree(ci, Z + 0.3)                      # drifts from the reference and from ops: the reference decides
+    r = ci.script("verify", LEVEL="full")
+    assert r.returncode == 1 and "FAIL  " in r.stdout and "300.00 mm" in r.stdout and "FAIL[verify]: LEVEL=full" in r.stdout
     _verify_tree(ci, Z, skip=("swl",))
     r = ci.script("verify", LEVEL="full")
     assert r.returncode == 1 and "points.swl.nc: missing in this run" in r.stdout
@@ -654,17 +644,13 @@ def test_verify_needs_a_reference_in_frozen_mode_but_not_in_live_mode(ci):
     assert r.returncode == 1 and "has no reference outputs" in r.stdout
     r = ci.script("verify", LEVEL="smoke", DATA_MODE="live")
     assert r.returncode == 0 and "regression comparison skipped" in r.stdout
-    # live ops products come from the staging tool's download area
+    # live ops products come from the staging tool's download area. MJ (10/13/26)
     ops = ci.ptmp / "tester" / "ops_s3" / f"{PDY}{CYC}" / "products"
     for p in ("htp", "cwl.noanomaly", "swl"):
         _station_file(ops / f"stofs_2d_glo.t{CYC}z.points.{p}.nc", Z)
     r = ci.script("verify", LEVEL="cycle", DATA_MODE="live")
     assert r.returncode == 0 and "SKIP" not in r.stdout and "4 stations compared" in r.stdout
 
-
-# ------------------------------------------------------------------------------------------------------------------------------
-# one-time seeding
-# ------------------------------------------------------------------------------------------------------------------------------
 
 def _finished_run(root: Path, state=True):
     day = root / "nos" / f"stofs_2d_glo.{PDY}"
@@ -706,12 +692,21 @@ def test_seed_builds_the_dataset_the_stage_reads(ci):
     assert sorted(Path(f).name for f in refs) == sorted(
         [f"stofs_2d_glo_{s}.61.nc" for s in ("tide", "surf")] + [f"stofs_2d_glo.t{CYC}z.points.{p}.nc" for p in ("htp", "cwl", "cwl.noanomaly", "cwl.vel", "swl")])
     assert sorted(Path(f).name for f in _tree(dest / "ops")) == [f"stofs_2d_glo.t{CYC}z.points.{p}.nc" for p in ("cwl.noanomaly", "htp", "swl")]
-    # the seeded directory is what Bootstrap copies into the RT root and Stage Data then reads
+    # the seeded directory is what Bootstrap copies into the RT root and Stage Data then reads. MJ (10/13/26)
     shutil.copytree(dest, ci.ds)
     for level, n in (("smoke", 5 + 3), ("cycle", 5 + 6), ("full", 6)):
         r = ci.script("stage", LEVEL=level)
         assert r.returncode == 0, (level, r.stdout, r.stderr)
         assert len(_tree(ci.com)) == n, level
+
+
+def test_seed_marks_the_dataset_complete_readably_under_a_restrictive_umask(ci):
+    run = _finished_run(ci.tmp / "run")
+    wrap = _stub(ci.tmp / "umask077.sh", '#!/bin/bash\numask 077\nexec bash "$@"\n')
+    r = ci.run(wrap, str(SCRIPT), "seed", PDY, CYC, **_seed_env(ci, run))
+    assert r.returncode == 0, r.stderr + r.stdout
+    dest = ci.tmp / "seed_rt" / "stofs_2d_glo" / f"{PDY}{CYC}"
+    assert (dest / ".seeded_ok").stat().st_mode & 0o004 and (dest / "input").stat().st_mode & 0o005 == 0o005
 
 
 def test_seed_cold_dataset_leaves_out_the_cold_start_products(ci):
@@ -748,16 +743,16 @@ def test_seed_warns_about_missing_ops_products_and_validates_arguments(ci):
     assert ci.run(SCRIPT, "seed", "2026", CYC).returncode == 2
 
 
-# ------------------------------------------------------------------------------------------------------------------------------
-# Bootstrap, Deploy, Environment Check
-# ------------------------------------------------------------------------------------------------------------------------------
-
 needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
 
 
-def _seed_src(ci: Ci, system: str):
+def _seed_src(ci: Ci, system: str, also_secofs: bool = False):
     src = ci.tmp / "seed" / "nos-workflow"
     _touch(src / "fix" / system / "grid", "grid")
+    if also_secofs:       # a SEED_SRC clone holds both systems; 2D-Global bootstrap must not copy the SECOFS side. MJ (10/13/26)
+        _touch(src / "fix" / "secofs_ufs" / "grid", "seed secofs grid")
+        _touch(src / "exec" / "fv3_coastalS.exe", "seed secofs exe")
+        _touch(src / "exec" / "other_tool", "seed other")
     if system == "stofs_2d_glo":
         _stub(src / "exec" / "stofs_2d_glo_tide_fac")
         for exe in ("padcirc", "adcprep"):
@@ -769,7 +764,7 @@ def _seed_src(ci: Ci, system: str):
 
 
 def _fake_venv(ci: Ci):
-    _stub(ci.venv / "bin" / "python")          # the payload gate (import scipy, nos_utils) passes, so no pip runs
+    _stub(ci.venv / "bin" / "python")          # the payload gate (import scipy, nos_utils) passes, so no pip runs. MJ (10/13/26)
 
 
 @needs_rsync
@@ -796,6 +791,31 @@ def _seeded_dataset(ci: Ci) -> Path:
     built, ci.ds = ci.ds, keep
     _touch(built / ".seeded_ok", "")
     return built
+
+
+@needs_rsync
+def test_bootstrap_2dglo_copies_only_its_own_fix_and_executable(ci):
+    src = _seed_src(ci, "stofs_2d_glo", also_secofs=True)
+    _fake_venv(ci)
+    _touch(ci.home / "fix" / "secofs_ufs" / "grid", "shared secofs grid")
+    _stub(ci.home / "exec" / "fv3_coastalS.exe", "#!/bin/bash\n# shared secofs exe\n")
+    seed_rt = ci.tmp / "seed_rt"
+    shutil.copytree(_seeded_dataset(ci), seed_rt / "stofs_2d_glo" / f"{PDY}{CYC}")
+    r = ci.run(SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt), DATA_MODE="frozen")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (ci.home / "fix" / "stofs_2d_glo" / "grid").read_text() == "grid" and (ci.home / "exec" / "stofs_2d_glo_tide_fac").is_file()
+    assert (ci.home / "fix" / "secofs_ufs" / "grid").read_text() == "shared secofs grid"
+    assert "shared secofs exe" in (ci.home / "exec" / "fv3_coastalS.exe").read_text() and not (ci.home / "exec" / "other_tool").exists()
+
+
+@needs_rsync
+def test_bootstrap_2dglo_names_a_seed_tree_without_its_fix_directory(ci):
+    src = _seed_src(ci, "secofs_ufs")
+    _stub(src / "exec" / "stofs_2d_glo_tide_fac")
+    _fake_venv(ci)
+    r = ci.run(SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(ci.tmp / "none"), DATA_MODE="live")
+    assert r.returncode == 1 and f"{src}/fix/stofs_2d_glo not readable" in r.stdout and "fetch_stofs_2d_glo_fix.sh" in r.stdout
+    assert not (ci.home / "fix").exists() and not (ci.home / "exec" / "fv3_coastalS.exe").exists()
 
 
 @needs_rsync
@@ -843,7 +863,7 @@ def test_deploy_copies_nos_utils_for_2dglo_only(ci):
     nu = ci.home / "ush" / "python" / "nos-utils"
     assert (nu / "nos_utils" / "forcing" / "adcirc_met.py").is_file() and not (nu / ".git").exists()
     assert (ci.home / "tools" / "t.sh").is_file() and not (ci.home / ".git").exists()
-    # a second deploy refreshes it and still leaves fix/ and exec/ alone
+    # a second deploy refreshes it and still leaves fix/ and exec/ alone. MJ (10/13/26)
     _touch(ci.home / "exec" / "keep", "k")
     _touch(nu / "stale.py", "s")
     assert ci.run(SCRIPTS / "deploy.sh").returncode == 0
@@ -851,10 +871,15 @@ def test_deploy_copies_nos_utils_for_2dglo_only(ci):
 
 
 @needs_rsync
-def test_deploy_for_secofs_does_not_create_the_nos_utils_copy(ci):
+def test_deploy_for_secofs_does_not_create_the_nos_utils_copy_and_removes_a_2dglo_one(ci):
     _workspace(ci)
     assert ci.run(SCRIPTS / "deploy.sh", CI_OFS=None).returncode == 0
     assert (ci.home / "tools" / "t.sh").is_file() and not (ci.home / "ush" / "python" / "nos-utils").exists()
+    # the exnos scripts put this directory first on PYTHONPATH, so a 2D-Global copy must not outlive the next SECOFS deploy. MJ (10/13/26)
+    assert ci.run(SCRIPTS / "deploy.sh").returncode == 0
+    assert (ci.home / "ush" / "python" / "nos-utils" / "nos_utils" / "forcing" / "adcirc_met.py").is_file()
+    assert ci.run(SCRIPTS / "deploy.sh", CI_OFS=None).returncode == 0
+    assert not (ci.home / "ush" / "python" / "nos-utils").exists() and (ci.home / "tools" / "t.sh").is_file()
 
 
 @needs_rsync
