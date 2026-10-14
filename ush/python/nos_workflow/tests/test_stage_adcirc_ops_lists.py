@@ -10,7 +10,9 @@ import pytest
 from nos_workflow.errors import StageFailedError
 from nos_workflow.registry import OFSDescriptor
 from nos_workflow.stages import _adcirc, prep as prep_stage
-from nos_workflow.tests.runners.test_adcirc_ops import _ctx
+from nos_workflow.machine import MachineProfile
+from nos_workflow.runners.adcirc import hotstart, ops
+from nos_workflow.tests.runners.test_adcirc_ops import RUN, FakeAdcirc, FakeAdcprep, _ctx, _ncst221, _rerun_forcing
 
 DESC = OFSDescriptor(name="stofs_2d_glo", framework="adcirc", canonical_stages=("prep", "nowcast", "forecast", "post"),
                      stage_aliases={}, yaml_path=Path("parm/systems/stofs_2d_glo.yaml"), runner_module="", notes="test fixture")
@@ -146,3 +148,37 @@ def test_prep_stage_in_ops_mode_runs_the_segment_list(tmp_path, monkeypatch, cap
     monkeypatch.setattr(ops, "run_prep", lambda c: (_ for _ in ()).throw(RuntimeError("no GFS")))
     with pytest.raises(StageFailedError, match="adcprep: no GFS"):
         prep_stage.run(DESC, object())
+
+
+def test_a_cold_cycle_runs_prep_nowcast_forecast_through_the_list_dispatch(tmp_path, monkeypatch, caplog):
+    """The prep, nowcast and forecast jobs as the launchers submit them (cold start), real step functions, fake padcirc and adcprep. MJ (10/14/26)"""
+    caplog.set_level(logging.INFO)
+    prof = MachineProfile.load("wcoss2", validate=False)
+    steps = {"prep": lambda c: ops.run_prep(c, FakeAdcprep()),
+             "nowcast": lambda c: ops.run_nowcast(c, FakeAdcirc(), prof, FakeAdcprep()),
+             "forecast": lambda c: ops.run_forecast(c, FakeAdcirc(), prof, FakeAdcprep())}
+
+    def job(stage, segment, stream=""):
+        ctx = _ctx(tmp_path, ADCIRC_SEGMENT=segment, ADCIRC_STREAM=stream)
+        monkeypatch.setattr(_adcirc, "load_context", lambda d: ctx)
+        caplog.clear()
+        assert _adcirc.run_model_stage(DESC, stage, steps[stage]) == 0
+        return ctx, [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]
+
+    ctx = _ctx(tmp_path)
+    _rerun_forcing(ctx)  # staged ops forcing: the GFS steps skip, as on Hercules
+    _ncst221(ctx, 7)
+    ctx, line = job("prep", "adcprep,ncst,fcst")
+    assert (ctx.comges / f"{RUN}_nod_equi").is_file() and "steps=adcprep:" in line and ",gfs_fcst:" in line
+    ctx, line = job("nowcast", "spinup,ncst", "tide,surf")
+    assert re.search(r"steps=spinup:\d+,tide_ncst:\d+,surf_ncst:\d+", line)
+    for kind in ("hotstart", "restart"):
+        assert hotstart.file_time(ctx.cycle_dir(ctx.cycle_time, kind)) == 604800
+    ctx, line = job("forecast", "fcst", "tide,surf")
+    assert re.search(r"status=PASS .*steps=tide_fcst:\d+,surf_fcst:\d+", line)
+    for name in ("points.htp.nc", "points.cwl.nc", "points.cwl.noanomaly.nc", "fields.cwl.maxele.nc"):
+        assert ctx.cycle_dir(ctx.cycle_time, name).is_file(), name
+    # a forecast cannot run twice: the job stops at the first stream and names the step
+    with pytest.raises(StageFailedError, match=r"tide_fcst: .*advanced past"):
+        job("forecast", "fcst", "tide,surf")
+    assert "status=FAIL" in [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]
