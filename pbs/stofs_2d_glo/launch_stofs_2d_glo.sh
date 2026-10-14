@@ -17,7 +17,7 @@
 # COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst + tide_fcst -> anomaly -> bias -> ncdiff -> grib2;
 # gempak is not ported. MJ (10/06/26)
 # Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
-# (hourly fcst past 120 h). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/12/26)
+# (ncks cuts of the hourly fcst before ncrcat). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/13/26)
 # ncst 0:25: the first WCOSS2 cycle took 750 s (tide) and 821 s (surf) of the ecf 0:15, mostly decomposition extract and staging. MJ (10/13/26)
 set -eu
 
