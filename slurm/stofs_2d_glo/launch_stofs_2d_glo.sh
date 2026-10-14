@@ -17,7 +17,8 @@
 #   nowcast   [spinup], tide ncst, surf ncst             -N 52
 #   forecast  tide fcst, surf fcst                       -N 52
 #   post      ncdiff, ncrcat                             -N 1 -n 1 --mem=100G
-# 52 nodes because the surf runs launch 4064 + 32 writer ranks = 4096, which needs 52 x 80 slots. The launcher passes the lists in the
+# 52 nodes because the surf runs launch 4064 + 32 writer ranks = 4096, which needs 52 x 80 slots. The tide stream (4064 ranks) uses 51 of
+# the 52 nodes (srun -N 51, set by the ADCIRC runner), the same layout as before, so results match the separate-job layout. MJ (10/14/26) The launcher passes the lists in the
 # environment of sbatch (--export=ALL), space separated: sbatch --export splits values at commas. MJ (10/14/26)
 # Cycle options: COLD=1 (default) adds adcprep to prep and the spin-up to nowcast; COLD=spinup only the spin-up (nod_equi and the decomposition
 # tar exist); COLD=0 neither (the previous 6-hourly cycle is in COMOUT). The preflight checks the files each option needs. COLD=spinup
