@@ -435,14 +435,14 @@ def test_gfs_ncst_prep_on_a_cold_start_ignores_an_older_chain_file_in_the_lookba
     with nc.Dataset(str(ops.rerun_dir(ctx) / f"{RUN}_ncst.221.nc")) as d:
         assert d.variables["pressfc"].shape[0] == 7
     ops.run_nowcast(_seg(tmp_path, "spinup"), FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
-    _go(tmp_path, "surf", "ncst")  # the window check passes after the spin-up
+    _go(tmp_path, "surf", "ncst")  # the window check passes after the spin-up MJ (10/14/26)
 
 
 def test_a_later_cycle_starts_the_ncst_window_at_the_newest_chain_file(tmp_path):
-    _cold(tmp_path)  # nod_equi of the 12z cycle; the spin-up published the 06z chain files
+    _cold(tmp_path)  # nod_equi of the 12z cycle; the spin-up published the 06z chain files MJ (10/14/26)
     nxt = _gfs_ctx(tmp_path, "ncst", cyc="18")
     nxt.cycle_dir(CYCLE, "restart").write_text("x")
-    assert ops._ncst_start(nxt) == CYCLE  # the 12z restart, not the cold-start rule: nod_equi is not the 18z cycle's
+    assert ops._ncst_start(nxt) == CYCLE  # the 12z restart, not the cold-start rule: nod_equi is not the 18z cycle's MJ (10/14/26)
     assert ops._ncst_start(_gfs_ctx(tmp_path, "ncst")) == CYCLE - timedelta(hours=6)
 
 
@@ -451,7 +451,7 @@ def test_gfs_ncst_prep_without_a_chain_file_or_this_cycles_nod_equi_keeps_the_er
     with pytest.raises(AdcircConfigError, match="there are no restart files.*run a cold start"):
         ops.run_prep(_gfs_ctx(tmp_path, "ncst"))
     ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
-    # a nod_equi from another cycle (here the 18z one's would start 6 h later) does not make a cold start of this cycle
+    # a nod_equi from another cycle (here the 18z one's would start 6 h later) does not make a cold start of this cycle MJ (10/14/26)
     with pytest.raises(AdcircConfigError, match="there are no restart files"):
         ops.run_prep(_gfs_ctx(tmp_path, "ncst", cyc="18"))
     with pytest.raises(AdcircConfigError, match="there are no restart files"):

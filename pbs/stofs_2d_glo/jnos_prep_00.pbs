@@ -106,18 +106,18 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
 fi
 
 # ncdiff/ncrcat/anomaly/bias/grib2 are the ops post steps; they share this card and the launcher overrides select per job.
-# ADCIRC_SEGMENT is one segment or a comma list. A list is all prep or all post; the post list gets the union of the modules the ops
-# ecf files load, once (python from ve/stofs, so unload the stock one first). MJ (10/14/26)
+# ADCIRC_SEGMENT is one segment or a space (or comma) separated list. A list is all prep or all post; the post list gets the union of
+# the modules the ops ecf files load, once (python from ve/stofs, so unload the stock one first). MJ (10/14/26)
 _pre=0; _post=0
 for _s in ${ADCIRC_SEGMENT//,/ }; do
     case "${_s}" in ncdiff|ncrcat|anomaly|bias|grib2) _post=1 ;; *) _pre=1 ;; esac
 done
 [ "${_pre}${_post}" != 11 ] || { echo "FATAL: ADCIRC_SEGMENT=${ADCIRC_SEGMENT} mixes prep and post segments"; exit 1; }
-_seg=",${ADCIRC_SEGMENT:-},"
-case "${_seg}" in *,anomaly,*|*,bias,*) module unload python 2>/dev/null || true ;; esac
-case "${_seg}" in *,bias,*|*,grib2,*) module load cfp/${cfp_ver} util_shared/${util_shared_ver} ;; esac
-case "${_seg}" in *,grib2,*) module load grib_util/${grib_util_ver} ;; esac
-case "${_seg}" in *,anomaly,*|*,bias,*) module load ve/stofs/${ve_stofs} ;; esac
+_seg=" ${ADCIRC_SEGMENT//,/ } "
+case "${_seg}" in *" anomaly "*|*" bias "*) module unload python 2>/dev/null || true ;; esac
+case "${_seg}" in *" bias "*|*" grib2 "*) module load cfp/${cfp_ver} util_shared/${util_shared_ver} ;; esac
+case "${_seg}" in *" grib2 "*) module load grib_util/${grib_util_ver} ;; esac
+case "${_seg}" in *" anomaly "*|*" bias "*) module load ve/stofs/${ve_stofs} ;; esac
 [ -z "${_dcom_in}" ] || export DCOMROOT=${_dcom_in}
 if [ "${_post}" = 1 ]; then ${HOMEnos}/jobs/JNOS_POST; else ${HOMEnos}/jobs/JNOS_PREP; fi
 # JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)

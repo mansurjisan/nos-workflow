@@ -23,16 +23,18 @@
 
 # launch_stofs_2d_glo.sh <PDY> <CYC> (this directory) submits the whole ops chain with afterok dependencies and Hercules walltimes
 # (the sums of the former per-job ones, not the ecf values); status_stofs_2d_glo.sh <PDY> <CYC> reports it. A cycle is four jobs, prep ->
-# nowcast -> forecast -> post, and each runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM comma list one after the other (tide, then
+# nowcast -> forecast -> post, and each runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list one after the other (tide, then
 # surf) on its own allocation. The surf runs launch 4064 + 32 writers = 4096 ranks, which needs 52 x 80 slots, so nowcast and forecast add
-# -N 52. --export cannot carry a value with a comma, so the lists go in the environment of sbatch (the default --export=ALL). The single-job
-# forms (the cold start adds adcprep to the prep list, '-t 3:50:00', and spinup to the nowcast list, '-t 2:20:00'):
-#   ADCIRC_SEGMENT=ncst,fcst sbatch -t 0:50:00 -N 1 -n 1 --mem=64G --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops jnos_prep_00.sh
-#   ADCIRC_SEGMENT=ncst ADCIRC_STREAM=tide,surf sbatch -t 1:20:00 -N 52 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops jnos_nowcast_00.sh
-#   ADCIRC_SEGMENT=fcst ADCIRC_STREAM=tide,surf sbatch -t 2:00:00 -N 52 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops jnos_forecast_00.sh
-#   ADCIRC_SEGMENT=ncdiff,ncrcat sbatch -t 1:15:00 -N 1 -n 1 --mem=100G --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops jnos_prep_00.sh
-# A cold start is only ever the segment names, never the COLDSTART variable. There are no done-markers: redo a failed step by resubmitting
-# its job with a narrower list (ADCIRC_STREAM=surf, ADCIRC_SEGMENT=ncst). MJ (10/14/26)
+# -N 52. --export splits values at commas, so the lists are space separated and go in the environment of sbatch (the default
+# --export=ALL), and a hand-typed --export value goes in one pair of quotes. A list is in the order of the examples (spinup ncst; tide surf;
+# ncdiff ncrcat) and has no repeats, or the job stops before its first step. The single-job forms (the cold start adds adcprep to the prep
+# list, '-t 3:50:00', and spinup to the nowcast list, '-t 2:20:00'):
+#   ADCIRC_SEGMENT="ncst fcst" sbatch -t 0:50:00 -N 1 -n 1 --mem=64G --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_prep_00.sh
+#   ADCIRC_SEGMENT=ncst ADCIRC_STREAM="tide surf" sbatch -t 1:20:00 -N 52 --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_nowcast_00.sh
+#   ADCIRC_SEGMENT=fcst ADCIRC_STREAM="tide surf" sbatch -t 2:00:00 -N 52 --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_forecast_00.sh
+#   ADCIRC_SEGMENT="ncdiff ncrcat" sbatch -t 1:15:00 -N 1 -n 1 --mem=100G --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_prep_00.sh
+# A cold start is only ever the segment names, never the COLDSTART variable. There are no done-markers: redo a failed step by
+# resubmitting its job with a narrower list (ADCIRC_STREAM=surf, ADCIRC_SEGMENT=ncst). MJ (10/14/26)
 
 # PACKAGEROOT must be set explicitly: a default could pick up the SECOFS or ATL package and run its code silently. MJ (10/05/26)
 PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the 2D-Global nos-workflow clone>}

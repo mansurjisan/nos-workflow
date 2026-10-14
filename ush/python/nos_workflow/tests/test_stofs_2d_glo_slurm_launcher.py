@@ -23,7 +23,7 @@ DIRTY = ("HOMEstofs EXECnos FIXnos FIXofs NOS_WORKFLOW_DIR NOS_UTILS_DIR PYTHONP
          "COLDSTART_SPINUP_DAYS ATMOSPHERIC_FORCING RPTDIR").split()
 SBATCH = ('#!/bin/bash\nn=$(cat "$QLOG.n" 2>/dev/null || echo 0); n=$((n+1)); echo $n > "$QLOG.n"\n'
           '[ "$n" = 1 ] && { env > "$QLOG.env"; pwd > "$QLOG.pwd"; }\n'
-          'echo "$n SEG=$ADCIRC_SEGMENT STREAM=$ADCIRC_STREAM $*" >> "$QLOG"; echo "$n;hercules"\n')
+          'printf "%s\\t%s\\t%s\\t%s\\n" "$n" "$ADCIRC_SEGMENT" "$ADCIRC_STREAM" "$*" >> "$QLOG"; echo "$n;hercules"\n')
 
 
 def _stub(path: Path, body: str) -> None:
@@ -76,15 +76,15 @@ def _launch(cycle, **extra):
 def _jobs(tmp):
     out = {}
     for ln in (tmp / "q.log").read_text().splitlines():
-        jid, rest = ln.split(" ", 1)
-        seg, stream, *a = rest.split()
+        jid, seg, stream, rest = ln.split("\t")
+        a = rest.split()
         exp = next(x for x in a if x.startswith("--export=")).split("=", 1)[1].split(",")
         dep = next((x for x in a if x.startswith("--dependency=")), "")
         flags = [x for x in a[a.index("-t") + 2:-1] if not x.startswith(("--export=", "--dependency="))]
-        # the lists travel in sbatch's environment, as --export would split them at the commas. MJ (10/14/26)
+        # the lists travel in sbatch's environment, space separated, as --export would split them at commas. MJ (10/14/26)
         out[a[a.index("-J") + 1][len("stofs_2d_glo_"):]] = dict(
             jid=jid, v=dict(kv.split("=", 1) for kv in exp[1:]), dep=dep.split(":")[1:] if dep else [],
-            wall=a[a.index("-t") + 1], card=Path(a[-1]).name, sbatch=a, flags=flags, seg=seg[len("SEG="):], stream=stream[len("STREAM="):])
+            wall=a[a.index("-t") + 1], card=Path(a[-1]).name, sbatch=a, flags=flags, seg=seg, stream=stream)
     return out
 
 
@@ -128,8 +128,8 @@ def test_default_chain_is_four_jobs_with_a_cold_start_and_hercules_walltimes(cyc
         assert (v["v"]["PDY"], v["v"]["CYC"], v["v"]["KEEPDATA"], v["v"]["ADCIRC_MODE"]) == ("20261005", "12", "NO", "ops"), k
         assert "COLDSTART" not in v["v"] and "ADCIRC_SEGMENT" not in v["v"], k
     assert {k: (v["seg"], v["stream"]) for k, v in j.items()} == {
-        "prep": ("adcprep,ncst,fcst", ""), "nowcast": ("spinup,ncst", "tide,surf"), "forecast": ("fcst", "tide,surf"),
-        "post": ("ncdiff,ncrcat", "")}
+        "prep": ("adcprep ncst fcst", ""), "nowcast": ("spinup ncst", "tide surf"), "forecast": ("fcst", "tide surf"),
+        "post": ("ncdiff ncrcat", "")}
     assert not {"post_anomaly", "post_bias", "post_grib2", "gfs_ncst", "gfs_fcst", "cold_adcprep"} & set(j)
     assert "afterok" in r.stdout and "status_stofs_2d_glo.sh 20261005 12" in r.stdout
     assert "anomaly, bias and grib2 are not run on Hercules" in r.stdout
@@ -154,7 +154,7 @@ def test_environment_is_sanitised_and_pinned_to_the_own_clone(cycle):
     env = dict(ln.split("=", 1) for ln in (tmp / "q.log.env").read_text().splitlines() if "=" in ln)
     assert [k for k in DIRTY if k in env and not k.startswith("ADCIRC_S")] == []
     # the lists are the launcher's own (the first job is prep), not the caller's /bad. MJ (10/14/26)
-    assert (env["ADCIRC_SEGMENT"], env["ADCIRC_STREAM"]) == ("adcprep,ncst,fcst", "")
+    assert (env["ADCIRC_SEGMENT"], env["ADCIRC_STREAM"]) == ("adcprep ncst fcst", "")
     assert env["PACKAGEROOT"] == str(clone.parent) and env["HOMEnos"] == str(clone)
     assert env["COMROOT_2DGLO"] == str(tmp / "com") and env["ADCIRC_EXEC_DIR"] == str(tmp / "adcirc")
     assert env["NOS_PTMP"] == str(tmp / "ptmp") and "ADCIRC_MODE" not in env
@@ -165,13 +165,13 @@ def test_cold_variants(cycle):
     assert _launch(cycle, COLD="0").returncode == 0
     j = _jobs(tmp)
     assert list(j) == ["prep", "nowcast", "forecast", "post"]
-    assert (j["prep"]["seg"], j["nowcast"]["seg"]) == ("ncst,fcst", "ncst")
+    assert (j["prep"]["seg"], j["nowcast"]["seg"]) == ("ncst fcst", "ncst")
     assert (j["prep"]["wall"], j["nowcast"]["wall"]) == ("0:50:00", "1:20:00")
     assert _deps(j) == {"prep": [], "nowcast": ["prep"], "forecast": ["nowcast"], "post": ["forecast"]}
     (tmp / "q.log").unlink()
     assert _launch(cycle, COLD="spinup").returncode == 0
     j = _jobs(tmp)
-    assert (j["prep"]["seg"], j["nowcast"]["seg"]) == ("ncst,fcst", "spinup,ncst")
+    assert (j["prep"]["seg"], j["nowcast"]["seg"]) == ("ncst fcst", "spinup ncst")
     assert (j["prep"]["wall"], j["nowcast"]["wall"]) == ("0:50:00", "2:20:00")
     assert not any("COLDSTART" in v["v"] for v in j.values())
 
@@ -185,19 +185,21 @@ def test_keepdata_streams_and_walltime_overrides(cycle):
     assert [j[k]["wall"] for k in ("prep", "nowcast", "forecast", "post")] == ["0:20:00", "0:30:00", "1:00:00", "2:00:00"]
     assert (j["nowcast"]["stream"], j["forecast"]["stream"]) == ("surf", "surf")
     (tmp / "q.log").unlink()
-    for streams, want in (("tide surf", "tide,surf"), ("surf,tide", "surf,tide"), ("tide", "tide")):
+    for streams, want in (("tide surf", "tide surf"), ("tide,surf", "tide surf"), ("tide, surf", "tide surf"), ("tide", "tide")):
         assert _launch(cycle, COLD="0", STREAMS=streams).returncode == 0
         assert _jobs(tmp)["forecast"]["stream"] == want
         (tmp / "q.log").unlink()
     assert _launch(cycle, COLD="0").returncode == 0
-    assert _jobs(tmp)["nowcast"]["stream"] == "tide,surf"
+    assert _jobs(tmp)["nowcast"]["stream"] == "tide surf"
 
 
-def test_serial_is_gone_and_the_old_job_overrides_do_nothing(cycle):
-    tmp = cycle[0]
-    assert "SERIAL" not in LAUNCH.read_text() and "W_COLD" not in LAUNCH.read_text()
-    assert _launch(cycle, COLD="0", SERIAL="1", W_SNC="9:00:00", W_CAT="9:00:00").returncode == 0
-    assert {v["wall"] for v in _jobs(tmp).values()} == {"0:50:00", "1:20:00", "2:00:00", "1:15:00"}
+@pytest.mark.parametrize("var", "W_COLD W_SPIN W_TNC W_TFC W_SNC W_SFC W_DIFF W_CAT W_GN W_GF SERIAL".split())
+def test_the_retired_variables_stop_the_launcher(cycle, var):
+    assert "SERIAL=" not in LAUNCH.read_text().replace("no SERIAL", "")
+    r = _launch(cycle, COLD="0", **{var: "0" if var == "SERIAL" else "0:30:00"})
+    assert r.returncode == 2 and f"{var} is retired" in r.stderr and "W_PREP, W_NOWCAST, W_FORECAST and W_POST" in r.stderr
+    assert "always run one after the other" in r.stderr and not (cycle[0] / "q.log").exists()
+    assert _launch(cycle, COLD="0", **{var: ""}).returncode == 2  # set but empty counts as set MJ (10/14/26)
 
 
 def test_gfs_build_is_optional_and_replaces_the_staged_forcing_check(cycle):
@@ -208,7 +210,7 @@ def test_gfs_build_is_optional_and_replaces_the_staged_forcing_check(cycle):
     assert _launch(cycle, SUBMIT_GFS="1").returncode == 0
     j = _jobs(tmp)
     # prep runs adcprep, ncst and fcst in one job; with SUBMIT_GFS=1 it keeps the card's whole node for the GFS read. MJ (10/14/26)
-    assert list(j) == ["prep", "nowcast", "forecast", "post"] and j["prep"]["seg"] == "adcprep,ncst,fcst" and j["prep"]["flags"] == []
+    assert list(j) == ["prep", "nowcast", "forecast", "post"] and j["prep"]["seg"] == "adcprep ncst fcst" and j["prep"]["flags"] == []
     assert _deps(j)["nowcast"] == ["prep"] and j["prep"]["wall"] == "3:50:00"
 
 
@@ -276,7 +278,7 @@ def test_spinup_preflight_lists_the_missing_cold_start_products(cycle):
         (tmp / "com" / "nos" / "stofs_2d_glo.20261005" / f"stofs_2d_glo.t06z.{kind}").unlink()
     _stub(ges / "stofs_2d_glo_nod_equi", "x")
     _stub(ges / "stofs_2d_glo_4064.tar.json", "x")
-    assert _launch(cycle, COLD="spinup").returncode == 0 and _jobs(tmp)["nowcast"]["seg"] == "spinup,ncst"
+    assert _launch(cycle, COLD="spinup").returncode == 0 and _jobs(tmp)["nowcast"]["seg"] == "spinup ncst"
 
 
 def test_cold0_preflight_needs_the_cold_start_products_and_the_previous_chain_files(cycle):
@@ -328,7 +330,7 @@ def test_stages_nowcast_submits_only_the_nowcast(cycle):
     assert r.returncode == 0, r.stderr
     j = _jobs(tmp)
     assert list(j) == ["nowcast"] and _deps(j) == {"nowcast": []}
-    assert (j["nowcast"]["wall"], j["nowcast"]["seg"], j["nowcast"]["stream"]) == ("1:20:00", "ncst", "tide,surf")
+    assert (j["nowcast"]["wall"], j["nowcast"]["seg"], j["nowcast"]["stream"]) == ("1:20:00", "ncst", "tide surf")
     assert " ".join(j["nowcast"]["flags"]) == "-N 52"
     jobs = tmp / "ptmp" / "tester" / "slurm_2dglo" / "jobs_2026100512.txt"
     assert [ln.split()[0] for ln in jobs.read_text().splitlines()] == ["nowcast"]
@@ -345,11 +347,31 @@ def test_stages_link_only_the_submitted_jobs(cycle):
         (tmp / "q.log").unlink()
 
 
-def test_stages_nowcast_with_a_cold_start_runs_the_spinup_without_prep(cycle):
+def test_stages_nowcast_with_the_spinup_only_runs_it_without_prep(cycle):
     tmp = cycle[0]
-    assert _launch(cycle, STAGES="nowcast").returncode == 0
+    assert _launch(cycle, STAGES="nowcast", COLD="spinup").returncode == 0
     j = _jobs(tmp)
-    assert list(j) == ["nowcast"] and j["nowcast"]["seg"] == "spinup,ncst" and j["nowcast"]["wall"] == "2:20:00"
+    assert list(j) == ["nowcast"] and j["nowcast"]["seg"] == "spinup ncst" and j["nowcast"]["wall"] == "2:20:00"
+
+
+@pytest.mark.parametrize("stages", ["nowcast", "nowcast forecast", "nowcast forecast post"])
+def test_cold_1_needs_the_prep_job_when_the_nowcast_is_submitted(cycle, stages):
+    for cold in ({}, {"COLD": "1"}):
+        r = _launch(cycle, STAGES=stages, **cold)
+        assert r.returncode == 2 and "COLD=1" in r.stderr and "COLD=spinup or COLD=0" in r.stderr and not (cycle[0] / "q.log").exists()
+    assert _launch(cycle, STAGES=stages, COLD="0").returncode == 0
+    (cycle[0] / "q.log").unlink()
+    assert _launch(cycle, STAGES="prep " + stages).returncode == 0  # with prep the cold start is allowed MJ (10/14/26)
+
+
+def test_cold_1_without_a_nowcast_job_is_not_refused(cycle):
+    assert _launch(cycle, STAGES="forecast post").returncode == 0
+
+
+@pytest.mark.parametrize("streams", ["surf tide", "tide tide", "tide surf surf", "ocean", "tide sea"])
+def test_streams_must_be_tide_and_surf_in_order(cycle, streams):
+    r = _launch(cycle, COLD="0", STREAMS=streams)
+    assert r.returncode == 2 and "STREAMS must be" in r.stderr and not (cycle[0] / "q.log").exists()
 
 
 def test_preflight_needs_the_forcing_of_the_submitted_stages_only(cycle):

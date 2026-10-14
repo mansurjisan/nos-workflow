@@ -21,9 +21,9 @@ STOFS-2D-Global is ADCIRC v56.1 (`padcirc`, `adcprep`) on the 12.8 M node global
 Run identity: `NET=nos`, `RUN=OFS=PREFIXNOS=stofs_2d_glo`, pinned by the cards. COMOUT is `${COMROOT}/nos/stofs_2d_glo.<PDY>`.
 
 **Ops mode in detail.**
-- **Jobs and steps:** a job runs the steps of its `ADCIRC_SEGMENT` and `ADCIRC_STREAM` lists one after the other (the segments in the order given, `ncst` and `fcst` once per stream) and stops at the first failure. The log and the `STAGE_SUMMARY` line name each step and its seconds (`steps=tide_ncst:671,surf_ncst:791`), and a failure names its step (`reason=surf_fcst: ...`). The steps are: prep `adcprep` (cold start only), `gfs_ncst`, `gfs_fcst`; nowcast `spinup` (cold start only), `tide_ncst`, `surf_ncst`; forecast `tide_fcst`, `surf_fcst`; post `anomaly`, `bias`, `ncdiff`, `grib2`, `ncrcat`. A single value in either variable still runs one step, which is how a step is redone (section 2.5). A cold start is only ever the `adcprep` and `spinup` segment names: the ops `run.ver` exports `COLDSTART=YES` into every job, so the jobs never read that variable.
+- **Jobs and steps:** a job runs the steps of its `ADCIRC_SEGMENT` and `ADCIRC_STREAM` lists one after the other (`ncst` and `fcst` once per stream) and stops at the first failure. A list is space separated (commas are accepted), in the order of the steps below and without repeats; anything else stops the job before its first step. The log and the `STAGE_SUMMARY` line name each step and its seconds (`steps=tide_ncst:671,surf_ncst:791`), and a failure names its step (`reason=surf_fcst: ...`). The steps are: prep `adcprep` (cold start only), `gfs_ncst`, `gfs_fcst`; nowcast `spinup` (cold start only), `tide_ncst`, `surf_ncst`; forecast `tide_fcst`, `surf_fcst`; post `anomaly`, `bias`, `ncdiff`, `grib2`, `ncrcat`. A single value in either variable still runs one step, which is how a step is redone (section 2.5). The tide stream always runs before the surf stream. A cold start is only ever the `adcprep` and `spinup` segment names: the ops `run.ver` exports `COLDSTART=YES` into every job, so the jobs never read that variable.
 - **Forecast:** operational runs the forecast as fcst1 + fcst2. nos-workflow runs one 180 h run with hourly forcing, so the fort.15 differs from ops only in the run length, and the forcing is interpolated to hourly after f120 (below).
-- **Surface forcing:** the `gfs_ncst` and `gfs_fcst` steps of the prep job write `<CC>/rerun/stofs_2d_glo_{ncst,fcst}.{221,222,225}.nc` (pressure, 10 m wind, ice) from the GFS `sfcf` files. After f120 GFS is 3-hourly, so the hourly records of hours 121-179 that fall between GFS files are linearly interpolated, which is what ADCIRC does between the ops fcst2 snapshots. On a cold start prep runs before the spin-up, so the `ncst` window ends at the restart the spin-up will publish (cycle minus 6 h), which this cycle's `nod_equi` confirms. On 2026-10-12 00z the forcing was bitwise identical to ops: ncst 7/7 records, fcst1 121/121, fcst2 21/21.
+- **Surface forcing:** the `gfs_ncst` and `gfs_fcst` steps of the prep job write `<CC>/rerun/stofs_2d_glo_{ncst,fcst}.{221,222,225}.nc` (pressure, 10 m wind, ice) from the GFS `sfcf` files. After f120 GFS is 3-hourly, so the hourly records of hours 121-179 that fall between GFS files are linearly interpolated, which is what ADCIRC does between the ops fcst2 snapshots. On a cold start prep runs before the spin-up, so the `ncst` window starts at the restart the spin-up will publish (cycle minus 6 h, 7 records to the cycle), which this cycle's `nod_equi` confirms; an older chain file does not move it. On 2026-10-12 00z the forcing was bitwise identical to ops: ncst 7/7 records, fcst1 121/121, fcst2 21/21.
 - **Tide factors:** `nod_equi` comes from the ops Fortran `stofs_2d_glo_tide_fac` only (365 days from the spin-up start). There is no Python fallback, because a float32/float64 difference would freeze different factors into every segment.
 - **Post:** the anomaly, bias and GRIB2 steps run the unchanged ops ex-scripts from the ops package; ncdiff and ncrcat are the same NCO calls as ops, run by nos-workflow.
 
@@ -140,7 +140,7 @@ COLDSTART=YES ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 20261012 00 | tee $HOME/2
 ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 20261012 06
 KEEPDATA=YES ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 20261012 12      # keep every job's work directory (about 150 GB a cycle)
 ```
-In ops mode `KEEPDATA` defaults to `NO` and is forwarded, and the launcher prints one line per job. `COLDSTART=YES` (a launcher-side switch, not forwarded) adds `adcprep` to the prep job and `spinup` to the nowcast job. `STAGES` is a subset of `"prep nowcast forecast post"` in that order (default all); only the submitted jobs are linked with `afterok`. `STREAMS` (default `"tide surf"`) is passed as `ADCIRC_STREAM`. Because `qsub -v` splits at commas, the launcher single-quotes each list value (`ADCIRC_SEGMENT='ncst,fcst'`).
+In ops mode `KEEPDATA` defaults to `NO` and is forwarded, and the launcher prints one line per job. `COLDSTART=YES` (a launcher-side switch, not forwarded) adds `adcprep` to the prep job and `spinup` to the nowcast job. `STAGES` is a subset of `"prep nowcast forecast post"` in that order (default all); only the submitted jobs are linked with `afterok`. `STREAMS` (default `"tide surf"`; only `tide`, `surf` or both, in that order) is passed as `ADCIRC_STREAM`. The launcher prints the stages it submits and a `NOTE` when they are a subset, so a `STAGES` left in your shell from single mode is visible. `qsub -v` splits at commas, so the list values the jobs receive are space separated (`ADCIRC_SEGMENT=ncst fcst`); typed by hand, the whole `-v` value goes in one pair of quotes (the forms are in the comment block of `jnos_nowcast_00.pbs`), because a list cut at its first space would run only its first step.
 
 | Job | Resources | Walltime | Steps | Waits for |
 |---|---|---|---|---|
@@ -151,11 +151,20 @@ In ops mode `KEEPDATA` defaults to `NO` and is forwarded, and the launcher print
 
 The walltimes are the sums of the former per-job values, which were the ops ecf values except `adcprep` 3:00 (full adcprep with fort.24, plus the cache tar), `ncst` 0:25 (the first WCOSS2 cycle took 750 and 821 s of the ecf 0:15) and `ncrcat` 0:25: prep 0:10 + 0:40 (+ 3:00); nowcast 2 x 0:25 (+ 1:00 spin-up); forecast 0:55 + 1:05; post 0:15 + 2:00 + 0:10 + 0:20 + 0:25. The post job takes the bias shape (8 x 32 cores, exclusive), which also covers the 7 cores of `grib2` and the one-core steps. That is 4 jobs, with or without a cold start. If `qsub` rejects a job, the launcher stops partway: `qdel` the ids it printed and fix the message.
 
-**Redoing a step.** There are no done-markers. A failed job names its failing step in the `STAGE_SUMMARY` reason, and the steps before it passed. Resubmit the failed job with a narrower list and its downstream jobs behind it. A forecast step cannot run twice (`advanced past this fcst`), so after a failed `surf_fcst`:
+**Redoing a step.** There are no done-markers. A failed job names its failing step in the `STAGE_SUMMARY` reason, and the steps before it passed. Resubmit the failed job with a narrower list and its downstream jobs behind it:
+- After a failed nowcast step (`tide_ncst` or `surf_ncst`), one launch redoes it and everything behind it:
+```bash
+STAGES="nowcast forecast post" ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 20261012 12
+```
+  Re-running `tide_ncst` after it passed is safe: an `ncst` step starts from the same input chain file and publishes the same result, and it costs about 13 min. To redo only the surf stream use two launches, `STAGES=nowcast STREAMS=surf` first and `STAGES="forecast post"` only after that job has finished (the launcher does not wait for it).
+- A forecast step cannot run twice (`advanced past this fcst`), so after a failed `surf_fcst` redo only that stream:
 ```bash
 STAGES="forecast post" STREAMS=surf ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 20261012 12
 ```
-An `ncst` step can run again from the same chain file, so after a failed `surf_ncst` resubmit the nowcast whole, or `STAGES=nowcast STREAMS=surf` and then `STAGES="forecast post"`. The GFS steps skip forcing that already exists, so a failed prep is resubmitted whole. Do not add `COLDSTART=YES` to a resubmission unless you want the cold start again. A different list, or a single step, is a `qsub` of the card with `ADCIRC_SEGMENT` and `ADCIRC_STREAM` set (the comment block at the top of `pbs/stofs_2d_glo/jnos_nowcast_00.pbs` has the forms).
+- The GFS steps skip forcing that already exists, so a failed prep is resubmitted whole. Do not add `COLDSTART=YES` to a resubmission unless you want the cold start again.
+- A different list, or a single step, is a `qsub` of the card with `ADCIRC_SEGMENT` and `ADCIRC_STREAM` set (the comment block at the top of `pbs/stofs_2d_glo/jnos_nowcast_00.pbs` has the forms).
+
+Trade-offs of the four-job layout: the post job holds 8 exclusive prepost nodes for its whole 3:10 walltime (about twice the prepost node-hours of the former separate post jobs), the streams run one after the other, so a cycle's latency is the sum of its steps, and on Hercules the tide stream now also runs on 52 nodes.
 
 ### 2.6 Starting from the ops state
 
@@ -267,11 +276,11 @@ Run from the clone you want the cards to use. The launcher unsets package-select
 
 | Option | Meaning |
 |---|---|
-| `COLD=1` (default) | add `adcprep` to the prep job and `spinup` to the nowcast job |
+| `COLD=1` (default) | add `adcprep` to the prep job and `spinup` to the nowcast job; refused when `STAGES` has `nowcast` and no `prep` |
 | `COLD=spinup` | only the spin-up (`nod_equi` and the decomposition tar exist); only for the same PDY and CYC as the `adcprep` that made `nod_equi` |
 | `COLD=0` | neither; the previous 6-hourly cycle's `hotstart` and `restart` must be in COMOUT |
 | `STAGES="prep nowcast forecast post"` | a subset of the four jobs, in that order (default all); only the submitted jobs are linked. The preflight needs the `ncst` forcing for a nowcast job, the `fcst` forcing for a forecast job and both for prep or post |
-| `STREAMS="tide surf"` | the streams each nowcast and forecast job runs, one after the other (passed as `ADCIRC_STREAM`) |
+| `STREAMS="tide surf"` | the streams each nowcast and forecast job runs, one after the other (passed as `ADCIRC_STREAM`); `tide`, `surf` or both in that order |
 | `KEEPDATA=YES` | keep each job's `$DATA` (default `NO`) |
 | `W_PREP W_NOWCAST W_FORECAST W_POST` | override the walltimes below |
 | `ADCIRC_EXEC_DIR`, `COMROOT_2DGLO`, `NOS_PTMP`, `NOS_VENV`, `COMROOT_STAGED` | locations (defaults in section 4) |
@@ -285,7 +294,7 @@ Run from the clone you want the cards to use. The launcher unsets package-select
 | forecast | 52 nodes x 80 | 2:00:00 | `tide_fcst`, `surf_fcst` | nowcast |
 | post | 1 node, 1 task, 100 GB | 1:15:00 | `ncdiff`, `ncrcat` | forecast |
 
-The streams run one after the other, so only 52 nodes are busy at a time. The launcher passes the segment and stream lists in the environment of `sbatch` (Slurm's `--export` cannot carry a value with a comma). There are no done-markers: after a failure resubmit the failed job with a narrower list, as in section 2.5 (for example `COLD=0 STAGES="forecast post" STREAMS=surf` after a failed `surf_fcst`).
+The streams run one after the other, so only 52 nodes are busy at a time. The launcher passes the segment and stream lists, space separated, in the environment of `sbatch` (`--export` splits values at commas). There are no done-markers: after a failure resubmit the failed job with a narrower list, as in section 2.5, with `COLD=0` (for example `COLD=0 STAGES="nowcast forecast post"` after a failed nowcast step and `COLD=0 STAGES="forecast post" STREAMS=surf` after a failed `surf_fcst`). `COLD=1`, the default, adds `adcprep` to the prep job, so the launcher refuses it when `STAGES` has `nowcast` but no `prep`; use `COLD=spinup` or `COLD=0`. The old `W_COLD`, `W_SPIN`, `W_TNC`, `W_TFC`, `W_SNC`, `W_SFC`, `W_DIFF`, `W_CAT`, `W_GN`, `W_GF` and `SERIAL` stop the launcher with a message naming `W_PREP`, `W_NOWCAST`, `W_FORECAST` and `W_POST`.
 
 Walltimes are the sums of the former per-job Hercules values (measurements plus margin, not the ecf values). A failure cancels the jobs behind it (`--kill-on-invalid-dep=yes`). The launcher writes the job ids to `$NOS_PTMP/$LOGNAME/slurm_2dglo/jobs_<PDY><CYC>.txt`; cancel a chain with `scancel $(awk '{print $2}' <that file>)`. The empty `#SBATCH --output` files land in that directory; the real logs are in `$NOS_PTMP/$LOGNAME/rpt/stofs_2d_glo/`.
 
@@ -435,9 +444,9 @@ The close comparison is a start from the ops state (section 2.6): same chain fil
 | `FATAL: <clone>/fix/stofs_2d_glo/stofs_2d_glo_grid missing (tools/fetch_stofs_2d_glo_fix.sh)` (or `stofs_2d_glo_attr`) | Fix files not staged in this clone. Run the fetch tool from the clone root (`WITH_BODY=1` for ops mode). |
 | `FATAL: padcirc not found (module adcirc or ADCIRC_EXEC_DIR)` or `FATAL: adcprep not found (module adcirc or ADCIRC_EXEC_DIR)` | No ops adcirc module on this login. Export `ADCIRC_EXEC_DIR` (and `ADCIRC_MODULE_PATH`) before the launcher, or on Hercules build with `tools/build_stofs_2d_glo_adcirc_hercules.sh`. |
 | `FATAL: stofs_2d_glo_tide_fac not found in EXECnos (...)` | Copy it into `exec/` (section 2.3) or build it on Hercules (section 3.1). |
-| `FATAL ERROR: there are no restart files, please restart with COLDSTART=YES` (or `hotstart`) | No chain file in the last 21 x 6 h. The previous cycle did not finish, the ptmp copy aged out, or the section 2.6 copy is missing. Start with `COLDSTART=YES` (WCOSS2) or `COLD=1` (Hercules). |
-| `FATAL ERROR: no .../stofs_2d_glo_nod_equi; there are no tidal spin-up files, please restart with COLDSTART=YES` | `nod_equi` is missing from COMGES: no cold start was run in this COMROOT, it aged out of ptmp, or the section 2.6 copy is missing. |
-| `FATAL ERROR: ... is a single-mode decomposition (no fort.24); delete it and its .json to rebuild, or run cold_adcprep with COLDSTART=YES` | A tar made in single mode is in this COMROOT. Delete `stofs_2d_glo_4064.tar` and its `.json`, or use a separate `COMROOT_2DGLO`. |
+| `FATAL ERROR: there are no restart files, run a cold start (...)` (or `hotstart`) | No chain file in the last 21 x 6 h. The previous cycle did not finish, the ptmp copy aged out, or the section 2.6 copy is missing. Start with `COLDSTART=YES` (WCOSS2) or `COLD=1` (Hercules). |
+| `FATAL ERROR: no .../stofs_2d_glo_nod_equi; there are no tidal spin-up files, run a cold start (...)` | `nod_equi` is missing from COMGES: no cold start was run in this COMROOT, it aged out of ptmp, or the section 2.6 copy is missing. |
+| `FATAL ERROR: ... is a single-mode decomposition (no fort.24); delete it and its .json to rebuild, or run a cold start (...)` | A tar made in single mode is in this COMROOT. Delete `stofs_2d_glo_4064.tar` and its `.json`, or use a separate `COMROOT_2DGLO`. |
 | `GFS file did not appear before the wait expired: <path>` | The GFS `sfcf` file is missing or purged (the WCOSS2 tank keeps about 10 days). Pick another cycle or launch later; the GFS steps wait up to 420 s (ncst) and 1800 s (fcst) in total. |
 | `<file> has N records but the restart chain start needs M: the forcing window does not match it; delete rerun/...22?.nc and re-run the GFS ncst prep` | The cycle was launched before the previous cycle's nowcasts finished, or a cycle was skipped. Delete the named `rerun` forcing files and relaunch. On Hercules, stage the forcing with the matching `NCST_RECORDS`. |
 | `FATAL ERROR: GFS surface forcing does not exist: <path>` | The surf segment ran without its forcing. WCOSS2: the prep job did not pass. Hercules: run `tools/hercules_2d_glo_stage_forcing.sh <PDY> <CYC>` first. |

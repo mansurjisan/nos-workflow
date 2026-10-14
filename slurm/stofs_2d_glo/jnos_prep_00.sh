@@ -136,7 +136,7 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
 fi
 
 # ncdiff/ncrcat/anomaly/bias/grib2 are the ops post steps; they share this card; size each job at submit time (sbatch -N/-n/--mem/-t).
-# ADCIRC_SEGMENT is one segment or a comma list; a list is all prep or all post. MJ (10/14/26)
+# ADCIRC_SEGMENT is one segment or a space (or comma) separated list; a list is all prep or all post. MJ (10/14/26)
 _pre=0; _post=0
 for _s in ${ADCIRC_SEGMENT//,/ }; do
     case "${_s}" in ncdiff|ncrcat|anomaly|bias|grib2) _post=1 ;; *) _pre=1 ;; esac

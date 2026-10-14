@@ -1,4 +1,4 @@
-"""STOFS-2D-GLO ops mode: ADCIRC_SEGMENT / ADCIRC_STREAM comma lists run as the steps of one prep, nowcast, forecast or post job. MJ (10/14/26)"""
+"""STOFS-2D-GLO ops mode: ADCIRC_SEGMENT / ADCIRC_STREAM lists run as the steps of one prep, nowcast, forecast or post job. MJ (10/14/26)"""
 from __future__ import annotations
 
 import logging
@@ -77,7 +77,7 @@ def test_prep_and_post_lists_do_not_iterate_over_streams(run_stage):
 def test_a_single_value_is_one_step_as_before(run_stage):
     step, _ = run_stage("nowcast", "ncst", "tide")
     assert step.calls == [("ncst", "tide")] and "steps=tide_ncst:" in _summary(run_stage)
-    step, _ = run_stage("nowcast", "spinup")  # no stream needed; the spin-up is tide-only
+    step, _ = run_stage("nowcast", "spinup")  # no stream needed; the spin-up is tide-only MJ (10/14/26)
     assert step.calls == [("spinup", "")]
 
 
@@ -155,7 +155,7 @@ def test_the_summary_keeps_the_pass_gate_and_the_status_script_fields(run_stage)
     run_stage("nowcast", "ncst", "tide,surf")
     line = _summary(run_stage)
     assert re.search(r"STAGE_SUMMARY .*status=PASS", line)
-    assert re.search(r"status=[A-Za-z]* runtime_s=[0-9.]*", line)  # what slurm/stofs_2d_glo/status_stofs_2d_glo.sh prints
+    assert re.search(r"status=[A-Za-z]* runtime_s=[0-9.]*", line)  # what slurm/stofs_2d_glo/status_stofs_2d_glo.sh prints MJ (10/14/26)
 
 
 def test_prep_stage_in_ops_mode_runs_the_segment_list(tmp_path, monkeypatch, caplog):
@@ -192,7 +192,7 @@ def test_a_cold_cycle_runs_prep_nowcast_forecast_through_the_list_dispatch(tmp_p
         return ctx, [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]
 
     ctx = _ctx(tmp_path)
-    _rerun_forcing(ctx)  # staged ops forcing: the GFS steps skip, as on Hercules
+    _rerun_forcing(ctx)  # staged ops forcing: the GFS steps skip, as on Hercules MJ (10/14/26)
     _ncst221(ctx, 7)
     ctx, line = job("prep", "adcprep,ncst,fcst")
     assert (ctx.comges / f"{RUN}_nod_equi").is_file() and "steps=adcprep:" in line and ",gfs_fcst:" in line
@@ -204,7 +204,7 @@ def test_a_cold_cycle_runs_prep_nowcast_forecast_through_the_list_dispatch(tmp_p
     assert re.search(r"status=PASS .*steps=tide_fcst:\d+,surf_fcst:\d+", line)
     for name in ("points.htp.nc", "points.cwl.nc", "points.cwl.noanomaly.nc", "fields.cwl.maxele.nc"):
         assert ctx.cycle_dir(ctx.cycle_time, name).is_file(), name
-    # a forecast cannot run twice: the job stops at the first stream and names the step
+    # a forecast cannot run twice: the job stops at the first stream and names the step MJ (10/14/26)
     with pytest.raises(StageFailedError, match=r"tide_fcst: .*advanced past"):
         job("forecast", "fcst", "tide,surf")
     assert "status=FAIL" in [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]

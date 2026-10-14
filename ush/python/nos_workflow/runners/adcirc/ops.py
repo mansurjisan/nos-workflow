@@ -5,7 +5,7 @@ ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3
 ADCIRC_SEGMENT=adcprep and cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
 chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
 $COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/11/26)
-A job runs one step per ADCIRC_SEGMENT / ADCIRC_STREAM value (comma lists, see stages/_adcirc.py); the functions here run one. MJ (10/14/26)
+A job runs one step per ADCIRC_SEGMENT / ADCIRC_STREAM value (space separated lists, see stages/_adcirc.py); the functions here run one. MJ (10/14/26)
 """
 from __future__ import annotations
 
