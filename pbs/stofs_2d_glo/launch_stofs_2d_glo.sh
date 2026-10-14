@@ -13,9 +13,25 @@
 # NOWCAST_HOURS (default 6; use 24 for a once-a-day 12z run so the restart is the previous day's 12z).
 # A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
 # node counts, so they come from the yaml only. MJ (10/05/26)
-# ADCIRC_MODE=ops submits one cycle as the stofs.v3.1.5 job chain (walltimes from ecf/*.ecf; STAGES is ignored);
-# COLDSTART=YES prepends cold_adcprep and the spin-up. Post chain as ops: surf_fcst + tide_fcst -> anomaly -> bias -> ncdiff -> grib2;
-# gempak is not ported. MJ (10/06/26)
+# Ops mode:  ADCIRC_MODE=ops [COLDSTART=YES] [STAGES="prep nowcast forecast post"] [STREAMS="tide surf"] ./launch_stofs_2d_glo.sh <PDY> [CYC]. MJ (10/14/26)
+# ADCIRC_MODE=ops submits one cycle as four jobs, prep -> nowcast -> forecast -> post, each afterok on the one before. The tide and surf
+# streams run one after the other inside a job, on the same 32 nodes. Each job runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list
+# in order (the stofs.v3.1.5 jobs it replaces, with their walltimes summed: the ecf values except ncst 0:25, adcprep 3:00 and ncrcat 0:25):
+#   prep      [adcprep], GFS ncst, GFS fcst forcing                  0:50 (cold 3:50)   1 cpu, 400 GB
+#   nowcast   [spinup], tide ncst, surf ncst                         0:50 (cold 1:50)   the card's 32 nodes
+#   forecast  tide fcst, surf fcst                                   2:00               the card's 32 nodes
+#   post      anomaly, bias, ncdiff, grib2, ncrcat                   3:10               8 x 32 cpus exclusive, 800 GB (the bias shape)
+# COLDSTART=YES (launcher side only: the jobs never read it) adds adcprep to prep and the spin-up to nowcast. STAGES is a subset of
+# "prep nowcast forecast post" in that order (default all); only the submitted jobs are linked. STREAMS (default "tide surf") is
+# passed as ADCIRC_STREAM, in the order tide surf. The jobs get their lists as space separated values (qsub -v splits at commas), so type
+# them by hand inside one pair of quotes around the whole -v value; see the comment block in jnos_nowcast_00.pbs. Gempak is not ported. MJ (10/14/26)
+# There are no done-markers: recover a failed job by resubmitting it with a narrower list. After a failed nowcast step resubmit
+# STAGES="nowcast forecast post" (one launch; tide_ncst re-runs from the same input chain file and adds about 13 min, which is safe).
+# To redo only a stream in two launches, STAGES=nowcast STREAMS=surf first and STAGES="forecast post" only after that job finishes.
+# After a failed surf fcst: STAGES="forecast post" STREAMS=surf (a fcst cannot run twice). GFS prep skips forcing that exists. MJ (10/14/26)
+# Cold start: adcprep runs only in a prep job and spinup only in a nowcast job. After a failed spin-up (adcprep passed) resubmit
+# COLDSTART=YES STAGES="nowcast forecast post". After a cold prep that failed once adcprep had passed, STAGES=prep first (no COLDSTART, so
+# only the GFS steps) and, once that job finishes, COLDSTART=YES STAGES="nowcast forecast post". A failed adcprep repeats the whole launch. MJ (10/14/26)
 # Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
 # (ncks cuts of the hourly fcst before ncrcat). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/13/26)
 # ncst 0:25: the first WCOSS2 cycle took 750 s (tide) and 821 s (surf) of the ecf 0:15, mostly decomposition extract and staging. MJ (10/13/26)
@@ -42,7 +58,7 @@ done
 if [ "${ADCIRC_MODE:-single}" = ops ]; then
   OPSVARS="${VARS},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops"
   declare -A J
-  # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]; the first job of a stream waits for the spin-up. MJ (10/06/26)
+  # sub <label> <card> <walltime> <select|-> <extra vars|-> [dep labels...]. qsub -v splits at commas, so a list value is space separated. MJ (10/14/26)
   sub() {
     local label="$1" card="$2" wall="$3" sel="$4" xv="$5" v="${OPSVARS}" dep="" l place="${PLACE:-}"
     shift 5
@@ -59,25 +75,31 @@ if [ "${ADCIRC_MODE:-single}" = ops ]; then
   for _c in "${PREP}" "${NOW}" "${FC}"; do
     [ -f "${_c}" ] || { echo "ERROR: missing ${_c} -- is the branch checked out and pulled?" >&2; exit 1; }
   done
+  STAGES="${STAGES:-prep nowcast forecast post}"
+  _want=""
+  for _s in prep nowcast forecast post; do
+    case " ${STAGES} " in *" ${_s} "*) _want="${_want:+${_want} }${_s}" ;; esac
+  done
+  [ "${_want}" = "$(echo ${STAGES})" ] || { echo "ERROR: STAGES must be a subset of 'prep nowcast forecast post' in that order (got '${STAGES}')" >&2; exit 2; }
+  STAGES="${_want}"
+  STREAMS="$(echo ${STREAMS:-tide surf} | tr -s ' ,' ' ' | sed 's/^ //;s/ $//')"
+  case "${STREAMS}" in "tide surf"|tide|surf) ;; *) echo "ERROR: STREAMS must be tide, surf or 'tide surf' in that order (got '${STREAMS}')" >&2; exit 2 ;; esac
   PREPSEL="1:ncpus=1:prepost=true:mem=400gb"
-  echo "=== STOFS-2D-Global ops-mode chain: PDY=${PDY} CYC=${CYC} PKG=${PKG} ==="
-  COLD=""
-  if [ "${COLDSTART:-NO}" = YES ]; then
-    sub cold_adcprep "${PREP}" 3:00:00 "1:ncpus=1:prepost=true:mem=50gb" COLDSTART=YES
-    sub cold_spinup "${NOW}" 1:00:00 - ADCIRC_SEGMENT=spinup cold_adcprep
-    COLD="cold_spinup"
-  fi
-  sub gfs_ncst "${PREP}" 0:10:00 "${PREPSEL}" ADCIRC_SEGMENT=ncst ${COLD}
-  sub gfs_fcst "${PREP}" 0:40:00 "${PREPSEL}" ADCIRC_SEGMENT=fcst
-  sub tide_ncst "${NOW}" 0:25:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${COLD}
-  sub tide_fcst "${FC}" 0:55:00 - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
-  sub surf_ncst "${NOW}" 0:25:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst gfs_ncst ${COLD}
-  sub surf_fcst "${FC}" 1:05:00 - ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst gfs_fcst
-  sub post_anomaly "${PREP}" 0:15:00 "1:ncpus=1:prepost=true:mem=400gb" ADCIRC_SEGMENT=anomaly surf_fcst tide_fcst
-  PLACE=vscatter:exclhost sub post_bias "${PREP}" 2:00:00 "8:ncpus=32:prepost=true:mem=800gb" ADCIRC_SEGMENT=bias post_anomaly
-  sub post_ncdiff "${PREP}" 0:10:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncdiff post_bias tide_fcst
-  PLACE=vscatter:exclhost sub post_grib2 "${PREP}" 0:20:00 "1:ncpus=7:prepost=true:mem=400gb" ADCIRC_SEGMENT=grib2 post_ncdiff
-  sub post_ncrcat "${PREP}" 0:25:00 "1:ncpus=1:prepost=true:mem=100gb" ADCIRC_SEGMENT=ncrcat gfs_ncst gfs_fcst
+  POSTSEL="8:ncpus=32:prepost=true:mem=800gb"
+  echo "=== STOFS-2D-Global ops-mode chain: PDY=${PDY} CYC=${CYC} PKG=${PKG} STAGES='${STAGES}' STREAMS='${STREAMS}' ==="
+  [ "${STAGES}" = "prep nowcast forecast post" ] || echo "NOTE: STAGES is a subset, so only these jobs are submitted: ${STAGES}"
+  PSEG="ncst fcst"; PWALL=0:50:00; NSEG=ncst; NWALL=0:50:00
+  [ "${COLDSTART:-NO}" != YES ] || { PSEG="adcprep ${PSEG}"; PWALL=3:50:00; NSEG="spinup ${NSEG}"; NWALL=1:50:00; }
+  PREV=""
+  for _s in ${STAGES}; do
+    case "${_s}" in
+      prep)     sub prep "${PREP}" "${PWALL}" "${PREPSEL}" "ADCIRC_SEGMENT=${PSEG}" ${PREV} ;;
+      nowcast)  sub nowcast "${NOW}" "${NWALL}" - "ADCIRC_SEGMENT=${NSEG},ADCIRC_STREAM=${STREAMS}" ${PREV} ;;
+      forecast) sub forecast "${FC}" 2:00:00 - "ADCIRC_SEGMENT=fcst,ADCIRC_STREAM=${STREAMS}" ${PREV} ;;
+      post)     PLACE=vscatter:exclhost sub post "${PREP}" 3:10:00 "${POSTSEL}" "ADCIRC_SEGMENT=anomaly bias ncdiff grib2 ncrcat" ${PREV} ;;
+    esac
+    PREV="${_s}"
+  done
   exit 0
 fi
 

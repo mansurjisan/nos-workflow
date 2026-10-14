@@ -12,9 +12,10 @@
 # OPS_WARN_MM (default 500). MJ (10/13/26)
 #
 # LEVEL   launcher                  jobs  verify
-#   smoke  COLD=0 STAGES=ncst         2    rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference (bitwise, else <= CMP_TOL)
-#   cycle  COLD=0                     6    the same plus points.*.nc against the reference; ops comparison reported
-#   full   COLD=1                     8    the same as cycle (a cold start is deterministic); ops comparison reported
+#   smoke  COLD=0 STAGES=nowcast      1    rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference (bitwise, else <= CMP_TOL)
+#   cycle  COLD=0                     4    the same plus points.*.nc against the reference; ops comparison reported
+#   full   COLD=1                     4    the same as cycle (a cold start is deterministic); ops comparison reported
+# The jobs are the launcher's prep, nowcast, forecast and post; the tide and surf streams run one after the other inside each, and a cold start adds adcprep to prep and the spin-up to nowcast. MJ (10/14/26)
 # smoke and cycle continue from the previous cycle's hotstart/restart, so they use the 06z-type dataset; full cold-starts and uses the
 # 00z-type dataset. A job in FAILED, CANCELLED, TIMEOUT or any other bad state, or without STAGE_SUMMARY status=PASS, fails the run
 # stage. DATA_MODE=live continues from the state already in COMROOT_2DGLO (LEVEL=full first, then cycle at +6 h) and does not clear it;
@@ -68,9 +69,9 @@ level_setup() {
   check_cycle_args
   LEVEL=${LEVEL:-smoke}
   case "${LEVEL}" in
-    smoke) COLD=0; STAGES=ncst; EXPECT=2; WAIT_DEFAULT=14400 ;;
-    cycle) COLD=0; STAGES=all;  EXPECT=6; WAIT_DEFAULT=28800 ;;
-    full)  COLD=1; STAGES=all;  EXPECT=8; WAIT_DEFAULT=43200 ;;
+    smoke) COLD=0; STAGES=nowcast; EXPECT=1; WAIT_DEFAULT=14400 ;;
+    cycle) COLD=0; STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=28800 ;;
+    full)  COLD=1; STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=43200 ;;
     *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;;
   esac
   DATA_MODE=${DATA_MODE:-frozen}
@@ -159,7 +160,7 @@ cmd_run() {
   mkdir -p "${LOGDIR}"
   local wait_s=${WAIT_S:-${WAIT_DEFAULT}} poll_s=${POLL_S:-60}
   export NOS_VENV="${VENV_PATH:-}" ADCIRC_EXEC_DIR="${PACKAGEROOT}/adcirc_v56.1.0_exec"
-  export COLD STAGES KEEPDATA=NO SERIAL=0 SUBMIT_GFS=0
+  export COLD STAGES KEEPDATA=NO SUBMIT_GFS=0
   echo "launching LEVEL=${LEVEL} (COLD=${COLD} STAGES=${STAGES}) for ${PDY}${CYC}, account=${SLURM_CI_ACCOUNT:-card} qos=${SLURM_CI_QOS:-card}"
   bash "${HOMEnos}/slurm/stofs_2d_glo/launch_stofs_2d_glo.sh" "${PDY}" "${CYC}"
 

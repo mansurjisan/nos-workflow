@@ -165,11 +165,12 @@ def _hms(text: str) -> int:
 def test_poll_limits_cover_the_critical_path_of_each_level():
     """A limit below the chain's own walltimes would only ever mislabel a healthy run (same rule as run_stage.sh's TIMEOUT_S). MJ (10/13/26)"""
     launcher = LAUNCHER.read_text()
-    w = {k: _hms(re.search(rf"\$\{{W_{k}:-([0-9:]+)\}}", launcher).group(1)) for k in ("COLD", "SPIN", "TNC", "SNC", "SFC", "CAT")}
+    warm = [_hms(x) for x in re.search(r"PW=([0-9:]+); NSEG=ncst; NW=([0-9:]+)\n", launcher).groups()]
+    cold = [_hms(x) for x in re.search(r"1\)\s+PSEG=.*?PW=([0-9:]+);.*?NW=([0-9:]+) ;;", launcher).groups()]
+    fcst, post = (_hms(re.search(rf"W_{k}:-([0-9:]+)\}}", launcher).group(1)) for k in ("FORECAST", "POST"))
     script = SCRIPT.read_text()
-    wait = {lv: int(re.search(rf"{lv}\) +COLD=\d; STAGES=\w+; +EXPECT=\d; WAIT_DEFAULT=(\d+)", script).group(1)) for lv in ("smoke", "cycle", "full")}
-    crit = {"smoke": max(w["TNC"], w["SNC"]), "cycle": w["SNC"] + w["SFC"] + w["CAT"]}
-    crit["full"] = w["COLD"] + w["SPIN"] + crit["cycle"]
+    wait = {lv: int(re.search(rf'{lv}\) +COLD=\d; STAGES=(?:\w+|"[^"]*"); +EXPECT=\d; WAIT_DEFAULT=(\d+)', script).group(1)) for lv in ("smoke", "cycle", "full")}
+    crit = {"smoke": warm[1], "cycle": sum(warm) + fcst + post, "full": sum(cold) + fcst + post}
     for lv in wait:
         assert wait[lv] >= crit[lv] + 3600, (lv, wait[lv], crit[lv])
     pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
@@ -303,9 +304,8 @@ def test_live_stage_tolerates_only_the_reference_download_failure(ci):
     assert ci.script("stage", DATA_MODE="sometimes").returncode == 1
 
 
-LABELS = {"smoke": "tide_ncst surf_ncst",
-          "cycle": "tide_ncst tide_fcst surf_ncst surf_fcst post_ncdiff post_ncrcat",
-          "full": "cold_adcprep cold_spinup tide_ncst tide_fcst surf_ncst surf_fcst post_ncdiff post_ncrcat"}
+LABELS = {"smoke": "nowcast", "cycle": "prep nowcast forecast post", "full": "prep nowcast forecast post"}
+ALL_STAGES = "prep nowcast forecast post"
 
 
 def _chain_stubs(ci: Ci, states, labels: str, passed=None):
@@ -314,7 +314,7 @@ def _chain_stubs(ci: Ci, states, labels: str, passed=None):
     sl = ci.home / "slurm" / "stofs_2d_glo"
     _stub(sl / "launch_stofs_2d_glo.sh", r'''#!/bin/bash
 echo "$@" > "$STUB_DIR/launch.args"
-env | grep -E '^(COLD|STAGES|SERIAL|SUBMIT_GFS|KEEPDATA|SLURM_CI_ACCOUNT|SLURM_CI_QOS|ADCIRC_EXEC_DIR|COMROOT_2DGLO|NOS_VENV)=' | sort > "$STUB_DIR/launch.env"
+env | grep -E '^(COLD|STAGES|SUBMIT_GFS|KEEPDATA|SLURM_CI_ACCOUNT|SLURM_CI_QOS|ADCIRC_EXEC_DIR|COMROOT_2DGLO|NOS_VENV)=' | sort > "$STUB_DIR/launch.env"
 J="$NOS_PTMP/$LOGNAME/slurm_2dglo/jobs_$1$2.txt"; mkdir -p "$(dirname "$J")"; : > "$J"
 i=100; for l in $STUB_LABELS; do i=$((i+1)); echo "$l $i" >> "$J"; done
 ''')
@@ -345,7 +345,7 @@ def _all(state: str, n: int):
     return [state] * n
 
 
-@pytest.mark.parametrize("level,cold,stages", [("smoke", "0", "ncst"), ("cycle", "0", "all"), ("full", "1", "all")])
+@pytest.mark.parametrize("level,cold,stages", [("smoke", "0", "nowcast"), ("cycle", "0", ALL_STAGES), ("full", "1", ALL_STAGES)])
 def test_run_launches_the_level_with_the_ci_account_and_waits_for_all_jobs(ci, level, cold, stages):
     labels = LABELS[level]
     n = len(labels.split())
@@ -354,7 +354,8 @@ def test_run_launches_the_level_with_the_ci_account_and_waits_for_all_jobs(ci, l
     assert r.returncode == 0, r.stdout + r.stderr
     assert f"PASS[run]: LEVEL={level}, {n} jobs COMPLETED with status=PASS" in r.stdout
     env = dict(ln.split("=", 1) for ln in (ci.stubs / "launch.env").read_text().splitlines())
-    assert (env["COLD"], env["STAGES"], env["SERIAL"], env["SUBMIT_GFS"], env["KEEPDATA"]) == (cold, stages, "0", "0", "NO")
+    assert (env["COLD"], env["STAGES"], env["SUBMIT_GFS"], env["KEEPDATA"]) == (cold, stages, "0", "NO")
+    assert "SERIAL" not in env
     assert (env["SLURM_CI_ACCOUNT"], env["SLURM_CI_QOS"]) == ("nosofs", "batch")
     assert env["COMROOT_2DGLO"] == str(ci.com) and env["ADCIRC_EXEC_DIR"] == str(ci.pk / "adcirc_v56.1.0_exec")
     assert env["NOS_VENV"] == str(ci.venv)
@@ -367,45 +368,45 @@ def test_run_launches_the_level_with_the_ci_account_and_waits_for_all_jobs(ci, l
 
 def test_run_fails_fast_on_a_failed_job_and_cancels_the_rest(ci):
     labels = LABELS["cycle"]
-    states = [["RUNNING"] * 6, ["COMPLETED", "FAILED", "COMPLETED", "PENDING", "PENDING", "PENDING"]]
-    _chain_stubs(ci, states, labels, passed={"tide_fcst": False})
+    states = [["RUNNING"] * 4, ["COMPLETED", "FAILED", "PENDING", "PENDING"]]
+    _chain_stubs(ci, states, labels, passed={"nowcast": False})
     r = ci.script("run", LEVEL="cycle", STUB_LABELS=labels, POLL_S="0")
     assert r.returncode == 1 and "chain verdict: BAD 102:FAILED" in r.stdout and "FAIL[run]" in r.stdout
-    assert (ci.stubs / "scancel.log").read_text().split() == [str(i) for i in range(101, 107)]
+    assert (ci.stubs / "scancel.log").read_text().split() == [str(i) for i in range(101, 105)]
 
 
 @pytest.mark.parametrize("bad", ["CANCELLED by 12345", "OUT_OF_MEMORY"])
 def test_run_treats_every_bad_slurm_state_as_failure(ci, bad):
-    _chain_stubs(ci, [["COMPLETED", bad]], LABELS["smoke"])
-    r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
+    _chain_stubs(ci, [["COMPLETED", bad, "PENDING", "PENDING"]], LABELS["cycle"])
+    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
     assert r.returncode == 1 and "chain verdict: BAD 102:" in r.stdout
 
 
 def test_run_requires_status_pass_in_the_log_not_just_completed(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 2)], LABELS["smoke"], passed={"surf_ncst": False})
-    r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
-    assert r.returncode == 1 and "not COMPLETED with status=PASS: surf_ncst" in r.stdout
+    _chain_stubs(ci, [_all("COMPLETED", 4)], LABELS["cycle"], passed={"forecast": False})
+    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
+    assert r.returncode == 1 and "not COMPLETED with status=PASS: forecast" in r.stdout
     (ci.ptmp / "tester" / "rpt" / "stofs_2d_glo" / "stofs_2d_glo_nowcast_00.101.out").write_text("no summary at all\n")
-    r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
-    assert r.returncode == 1 and "tide_ncst surf_ncst" in r.stdout
+    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
+    assert r.returncode == 1 and "prep forecast" in r.stdout
 
 
 def test_run_times_out_and_cancels(ci):
-    _chain_stubs(ci, [_all("RUNNING", 2)], LABELS["smoke"])
+    _chain_stubs(ci, [_all("RUNNING", 1)], LABELS["smoke"])
     r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="1", WAIT_S="1")
     assert r.returncode == 1 and "TIMEOUT after" in r.stdout
-    assert (ci.stubs / "scancel.log").read_text().split() == ["101", "102"]
+    assert (ci.stubs / "scancel.log").read_text().split() == ["101"]
 
 
 def test_run_checks_the_number_of_queued_jobs(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 2)], LABELS["smoke"])
+    _chain_stubs(ci, [_all("COMPLETED", 1)], LABELS["smoke"])
     r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["smoke"], POLL_S="0")
-    assert r.returncode == 1 and "2 jobs queued, LEVEL=cycle expects 6" in r.stdout
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == "101 102 "   # the queued jobs are still cancelled by post/unsuccessful. MJ (10/13/26)
+    assert r.returncode == 1 and "1 jobs queued, LEVEL=cycle expects 4" in r.stdout
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == "101 "   # the queued jobs are still cancelled by post/unsuccessful. MJ (10/13/26)
 
 
 def test_run_stops_when_the_launcher_preflight_fails(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 2)], LABELS["smoke"])
+    _chain_stubs(ci, [_all("COMPLETED", 1)], LABELS["smoke"])
     _stub(ci.home / "slurm" / "stofs_2d_glo" / "launch_stofs_2d_glo.sh", '#!/bin/bash\necho "MISSING: x" >&2\nexit 1\n')
     r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
     assert r.returncode == 1 and "MISSING: x" in r.stderr and not (ci.ws / "ci_logs" / "current_jobid").exists()

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -199,8 +200,13 @@ def test_ops_mode_is_chosen_at_submit_time(card):
     assert not [l for l in text.splitlines() if l.startswith(("export ADCIRC_STREAM", "export ADCIRC_SEGMENT",
                                                               "export ADCIRC_MODE=ops"))]
     if "nowcast" in card.name:
-        for job in ("ADCIRC_SEGMENT=spinup", "ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst", "COLDSTART=YES"):
-            assert job in text
+        for needle in ("four jobs", "adcprep", "spinup", "ADCIRC_STREAM", "done-markers", "-t 3:50:00" if card.suffix == ".sh" else "walltime=3:50:00"):
+            assert needle in text, needle
+        assert "ADCIRC_STREAM=tide,ADCIRC_SEGMENT" not in text  # the 11-job per-step examples are gone MJ (10/14/26)
+        # a hand-typed list is space separated and the whole -v / --export value is double-quoted, or qsub / sbatch refuse the stray words. MJ (10/14/26)
+        forms = [l for l in text.splitlines() if l.startswith("#   ") and ("qsub " in l or "sbatch " in l)]
+        assert len(forms) == 4 and not [l for l in forms if "'" in l]
+        assert all(('-v "PDY=' in l) if card.suffix == ".pbs" else ('--export="ALL,PDY=' in l) for l in forms)
     if "prep" not in card.name:
         assert "export ADCIRC_ALLOC_RANKS=" in text and "_tot" not in text
 
@@ -211,66 +217,115 @@ def test_keepdata_is_a_submit_time_override():
         assert "export KEEPDATA=${KEEPDATA:-YES}" in text and "KEEPDATA=YES\n" not in text.replace(":-YES}", "")
 
 
-def _ops_launch(tmp_path, **env):
+def _ops_launch(tmp_path, args=("20261005", "12"), **env):
     qsub = tmp_path / "bin" / "qsub"
     qsub.parent.mkdir()
+    # one tab-separated line per call: the -v value carries spaces. MJ (10/14/26)
     qsub.write_text('#!/bin/bash\nn=$(cat $QLOG.n 2>/dev/null || echo 0); n=$((n+1)); echo $n > $QLOG.n\n'
-                    'echo "$n.pbs $*" >> $QLOG; echo $n.pbs\n')
+                    '{ printf "%s" "$n.pbs"; printf "\\t%s" "$@"; echo; } >> $QLOG; echo $n.pbs\n')
     qsub.chmod(0o755)
     log = tmp_path / "q.log"
-    e = {**os.environ, "PATH": f"{qsub.parent}:{os.environ['PATH']}", "QLOG": str(log), "PKG": str(REPO),
-         "ADCIRC_MODE": "ops", **env}
-    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env=e, capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
+    e = {k: v for k, v in os.environ.items() if k not in ("STAGES", "STREAMS", "COLDSTART", "KEEPDATA", "PLACE")}
+    e.update({"PATH": f"{qsub.parent}:{os.environ['PATH']}", "QLOG": str(log), "PKG": str(REPO), "ADCIRC_MODE": "ops", **env})
+    r = subprocess.run(["bash", str(LAUNCH), *args], env=e, capture_output=True, text=True)
+    if r.returncode != 0:
+        return r
     jobs = {}
     for ln in log.read_text().splitlines():
-        jid, rest = ln.split(" ", 1)
-        a = rest.split()
+        jid, *a = ln.split("\t")
+        # qsub -v splits at commas, so a list value is space separated: ADCIRC_SEGMENT=ncst fcst. MJ (10/14/26)
         v = dict(kv.split("=", 1) for kv in a[a.index("-v") + 1].split(","))
         dep = a[a.index("-W") + 1].split(":")[1:] if "-W" in a else []
         ls = [a[i + 1] for i, x in enumerate(a) if x == "-l"]
         pick = lambda k: next((x.split("=", 1)[1] for x in ls if x.startswith(k + "=")), "")  # noqa: E731
-        jobs[a[1 + a.index("-N")]] = dict(jid=jid, dep=dep, v=v, wall=ls[0], sel=pick("select"), place=pick("place"),
-                                          card=Path(a[-1]).name)
+        jobs[a[1 + a.index("-N")][len("stofs_2d_glo_"):]] = dict(
+            jid=jid, dep=dep, v=v, wall=pick("walltime"), sel=pick("select"), place=pick("place"), card=Path(a[-1]).name, raw=a)
     return jobs
+
+
+def _deps(j):
+    ids = {v["jid"]: k for k, v in j.items()}
+    return {k: sorted(ids[d] for d in v["dep"]) for k, v in j.items()}
 
 
 def test_launcher_ops_job_graph(tmp_path):
     j = _ops_launch(tmp_path)
-    assert len(j) == 11 and "stofs_2d_glo_cold_adcprep" not in j
-    name = lambda label: j["stofs_2d_glo_" + label]  # noqa: E731
-    deps = {k[len("stofs_2d_glo_"):]: sorted(x["jid"] for x in j.values() if x["jid"] in v["dep"]) for k, v in j.items()}
-    want = {"tide_fcst": ["tide_ncst"], "surf_ncst": ["gfs_ncst"], "surf_fcst": ["surf_ncst", "gfs_fcst"],
-            "post_anomaly": ["surf_fcst", "tide_fcst"], "post_bias": ["post_anomaly"],
-            "post_ncdiff": ["post_bias", "tide_fcst"], "post_grib2": ["post_ncdiff"], "post_ncrcat": ["gfs_ncst", "gfs_fcst"],
-            "tide_ncst": [], "gfs_ncst": [], "gfs_fcst": []}
-    assert deps == {k: sorted(name(x)["jid"] for x in v) for k, v in want.items()}
+    assert list(j) == ["prep", "nowcast", "forecast", "post"]
+    assert _deps(j) == {"prep": [], "nowcast": ["prep"], "forecast": ["nowcast"], "post": ["forecast"]}
+    assert {k: v["card"] for k, v in j.items()} == {"prep": "jnos_prep_00.pbs", "nowcast": "jnos_nowcast_00.pbs",
+                                                    "forecast": "jnos_forecast_00.pbs", "post": "jnos_prep_00.pbs"}
     for v in j.values():
         assert v["v"]["PDY"] == "20261005" and v["v"]["CYC"] == "12" and v["v"]["KEEPDATA"] == "NO"
-        assert v["v"]["ADCIRC_MODE"] == "ops"
-    assert (name("surf_fcst")["v"]["ADCIRC_STREAM"], name("surf_fcst")["v"]["ADCIRC_SEGMENT"]) == ("surf", "fcst")
-    assert name("gfs_fcst")["card"] == "jnos_prep_00.pbs" and name("gfs_fcst")["v"]["ADCIRC_SEGMENT"] == "fcst"
-    assert name("post_ncdiff")["card"] == "jnos_prep_00.pbs" and name("post_ncrcat")["v"]["ADCIRC_SEGMENT"] == "ncrcat"
-    assert [name(k)["v"]["ADCIRC_SEGMENT"] for k in ("post_anomaly", "post_bias", "post_grib2")] == ["anomaly", "bias", "grib2"]
-    assert name("post_bias")["sel"] == "8:ncpus=32:prepost=true:mem=800gb" and name("post_bias")["place"] == "vscatter:exclhost"
-    assert name("post_grib2")["sel"].startswith("1:ncpus=7:") and name("post_anomaly")["place"] == ""
-    assert {k: name(k)["wall"] for k in ("tide_ncst", "surf_ncst", "tide_fcst", "surf_fcst", "gfs_fcst", "post_ncdiff", "post_ncrcat")} == {
-        "tide_ncst": "walltime=0:25:00", "surf_ncst": "walltime=0:25:00", "tide_fcst": "walltime=0:55:00", "surf_fcst": "walltime=1:05:00",
-        "gfs_fcst": "walltime=0:40:00", "post_ncdiff": "walltime=0:10:00",
-        "post_ncrcat": "walltime=0:25:00"}
-    assert [name(k)["wall"] for k in ("post_anomaly", "post_bias", "post_grib2")] == [
-        "walltime=0:15:00", "walltime=2:00:00", "walltime=0:20:00"]
+        assert v["v"]["ADCIRC_MODE"] == "ops" and "COLDSTART" not in v["v"]
+    assert {k: v["v"]["ADCIRC_SEGMENT"] for k, v in j.items()} == {
+        "prep": "ncst fcst", "nowcast": "ncst", "forecast": "fcst", "post": "anomaly bias ncdiff grib2 ncrcat"}
+    assert {k: v["v"].get("ADCIRC_STREAM") for k, v in j.items()} == {"prep": None, "nowcast": "tide surf", "forecast": "tide surf", "post": None}
+    # the walltimes are the sums of the former per-job ones (warm). MJ (10/14/26)
+    assert {k: v["wall"] for k, v in j.items()} == {"prep": "0:50:00", "nowcast": "0:50:00", "forecast": "2:00:00", "post": "3:10:00"}
+    assert {k: v["sel"] for k, v in j.items()} == {"prep": "1:ncpus=1:prepost=true:mem=400gb", "nowcast": "", "forecast": "",
+                                                   "post": "8:ncpus=32:prepost=true:mem=800gb"}
+    assert {k: v["place"] for k, v in j.items()} == {"prep": "", "nowcast": "", "forecast": "", "post": "vscatter:exclhost"}
 
 
 def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
     j = _ops_launch(tmp_path, COLDSTART="YES", NOWCAST_HOURS="24", KEEPDATA="YES")
-    spin, adc = j["stofs_2d_glo_cold_spinup"], j["stofs_2d_glo_cold_adcprep"]
-    assert adc["wall"] == "walltime=3:00:00" and all(v["v"]["KEEPDATA"] == "YES" for v in j.values())
-    assert adc["v"]["COLDSTART"] == "YES" and spin["dep"] == [adc["jid"]] and spin["v"]["ADCIRC_SEGMENT"] == "spinup"
-    for k in ("tide_ncst", "surf_ncst"):
-        assert spin["jid"] in j["stofs_2d_glo_" + k]["dep"]
-        assert j["stofs_2d_glo_" + k]["v"]["NOWCAST_HOURS"] == "24"
-    assert j["stofs_2d_glo_gfs_ncst"]["dep"] == [spin["jid"]]
+    assert list(j) == ["prep", "nowcast", "forecast", "post"] and _deps(j)["nowcast"] == ["prep"]
+    assert all(v["v"]["KEEPDATA"] == "YES" and v["v"]["NOWCAST_HOURS"] == "24" for v in j.values())
+    assert (j["prep"]["v"]["ADCIRC_SEGMENT"], j["prep"]["wall"]) == ("adcprep ncst fcst", "3:50:00")
+    assert (j["nowcast"]["v"]["ADCIRC_SEGMENT"], j["nowcast"]["wall"]) == ("spinup ncst", "1:50:00")
+    assert (j["forecast"]["wall"], j["post"]["wall"]) == ("2:00:00", "3:10:00")
+    # COLDSTART is the launcher's own switch: a job that reads it from the environment would repeat the cold start. MJ (10/14/26)
+    assert not any("COLDSTART" in v["v"] for v in j.values())
+
+
+def test_launcher_ops_stages_link_only_the_submitted_jobs(tmp_path):
+    j = _ops_launch(tmp_path, STAGES="nowcast forecast")
+    assert list(j) == ["nowcast", "forecast"] and _deps(j) == {"nowcast": [], "forecast": ["nowcast"]}
+    (tmp_path / "bin").rename(tmp_path / "bin1")
+    (tmp_path / "q.log").unlink()
+    (tmp_path / "q.log.n").unlink()
+    j = _ops_launch(tmp_path, STAGES="prep post")
+    assert list(j) == ["prep", "post"] and _deps(j) == {"prep": [], "post": ["prep"]}
+    assert j["post"]["v"]["ADCIRC_SEGMENT"] == "anomaly bias ncdiff grib2 ncrcat"
+
+
+@pytest.mark.parametrize("stages", ["nowcast prep", "prep prep", "gfs", "prep nowcast forecast post extra", "forecast prep"])
+def test_launcher_ops_stages_must_be_an_ordered_subset(tmp_path, stages):
+    r = _ops_launch(tmp_path, STAGES=stages)
+    assert r.returncode == 2 and "STAGES must be a subset" in r.stderr and not (tmp_path / "q.log").exists()
+
+
+@pytest.mark.parametrize("streams,want", [("surf", "surf"), ("tide", "tide"), ("tide surf", "tide surf"), ("tide,surf", "tide surf"), ("tide, surf", "tide surf")])
+def test_launcher_ops_streams_are_passed_as_adcirc_stream(tmp_path, streams, want):
+    j = _ops_launch(tmp_path, STREAMS=streams)
+    assert j["nowcast"]["v"]["ADCIRC_STREAM"] == j["forecast"]["v"]["ADCIRC_STREAM"] == want
+    assert "," not in want and not any("," in x for v in j.values() for x in (v["v"].get("ADCIRC_SEGMENT", ""), v["v"].get("ADCIRC_STREAM", "")))
+
+
+@pytest.mark.parametrize("streams", ["surf tide", "tide tide", "tide surf surf", "ocean", "tide sea"])
+def test_launcher_ops_streams_must_be_tide_and_surf_in_order(tmp_path, streams):
+    r = _ops_launch(tmp_path, STREAMS=streams)
+    assert r.returncode == 2 and "STREAMS must be" in r.stderr and not (tmp_path / "q.log").exists()
+
+
+def test_launcher_ops_prints_the_stage_list_and_notes_a_subset(tmp_path):
+    out = _launcher_stdout(tmp_path / "subset", STAGES="forecast post")
+    assert "STAGES='forecast post'" in out and "NOTE: STAGES is a subset, so only these jobs are submitted: forecast post" in out
+    out = _launcher_stdout(tmp_path / "all")
+    assert "STAGES='prep nowcast forecast post'" in out and "NOTE" not in out
+
+
+def _launcher_stdout(tmp_path, **env):
+    tmp_path.mkdir()
+    qsub = tmp_path / "bin" / "qsub"
+    qsub.parent.mkdir(exist_ok=True)
+    qsub.write_text("#!/bin/bash\necho 1.pbs\n")
+    qsub.chmod(0o755)
+    e = {k: v for k, v in os.environ.items() if k not in ("STAGES", "STREAMS", "COLDSTART", "KEEPDATA", "PLACE")}
+    e.update({"PATH": f"{qsub.parent}:{os.environ['PATH']}", "PKG": str(REPO), "ADCIRC_MODE": "ops", **env})
+    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env=e, capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    return r.stdout
 
 
 def test_launcher_single_mode_graph_unchanged(tmp_path):
@@ -289,13 +344,72 @@ def test_launcher_single_mode_graph_unchanged(tmp_path):
 
 
 @pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
-def test_prep_card_dispatches_ops_post_jobs(card):
+def test_prep_card_runs_one_jnos_job_and_then_the_pass_gate(card):
     text = card.read_text()
-    assert ('case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat|anomaly|bias|grib2) ${HOMEnos}/jobs/JNOS_POST ;; '
-            '*) ${HOMEnos}/jobs/JNOS_PREP ;; esac\n# JNOS_* exits 0') in text
-    assert "esac\n" in text and text.index("esac") < text.index(GATE)
+    assert text.index("jobs/JNOS_POST") < text.index("# JNOS_* exits 0") < text.index(GATE)
+    assert text.index("jobs/JNOS_PREP") < text.index("# JNOS_* exits 0") and text.rstrip().endswith(GATE)
     if card.suffix == ".pbs":
         assert "module load nco/" in text
+
+
+def _dispatch(card, tmp_path, segment):
+    """Runs the card's module and J-job dispatch block with a stub `module` and stub J-jobs; returns (rc, stdout, stderr, calls). MJ (10/14/26)"""
+    text = card.read_text()
+    block = text[text.index("# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post steps"):text.index("# JNOS_* exits 0")]
+    home, log = tmp_path / "home", tmp_path / "calls.log"
+    for job in ("JNOS_POST", "JNOS_PREP"):
+        f = home / "jobs" / job
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text('#!/bin/bash\necho "%s" >> "$CALLS"\n' % job)
+        f.chmod(0o755)
+    script = 'module() { echo "module $*" >> "$CALLS"; }\n_dcom_in=\n' + block
+    env = {k: v for k, v in os.environ.items() if k != "ADCIRC_SEGMENT"}
+    env.update(HOMEnos=str(home), CALLS=str(log), cfp_ver="C", util_shared_ver="U", grib_util_ver="G", ve_stofs="V")
+    if segment is not None:
+        env["ADCIRC_SEGMENT"] = segment
+    r = subprocess.run(["bash", "-c", script], env=env, capture_output=True, text=True)
+    return r, (log.read_text().splitlines() if log.exists() else [])
+
+
+@pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
+@pytest.mark.parametrize("segment,job", [(None, "JNOS_PREP"), ("", "JNOS_PREP"), ("ncst", "JNOS_PREP"), ("ncst fcst", "JNOS_PREP"),
+                                         ("ncst,fcst", "JNOS_PREP"), ("adcprep ncst fcst", "JNOS_PREP"), ("ncdiff", "JNOS_POST"),
+                                         ("ncdiff ncrcat", "JNOS_POST"), ("anomaly bias ncdiff grib2 ncrcat", "JNOS_POST"),
+                                         ("anomaly,bias,ncdiff,grib2,ncrcat", "JNOS_POST")])
+def test_prep_card_dispatches_a_segment_list_to_one_jnos_job(card, tmp_path, segment, job):
+    r, calls = _dispatch(card, tmp_path, segment)
+    assert r.returncode == 0, r.stderr
+    assert [c for c in calls if c.startswith("JNOS")] == [job]
+
+
+@pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
+@pytest.mark.parametrize("segment", ["ncst ncdiff", "ncst,ncdiff", "adcprep ncst fcst ncrcat", "ncrcat fcst"])
+def test_prep_card_rejects_a_list_that_mixes_prep_and_post(card, tmp_path, segment):
+    r, calls = _dispatch(card, tmp_path, segment)
+    assert r.returncode == 1 and "mixes prep and post segments" in r.stdout and calls == []
+
+
+@pytest.mark.parametrize("segment,mods", [
+    ("ncdiff ncrcat", []),
+    ("ncst fcst", []),
+    ("anomaly", ["unload python", "load ve/stofs/V"]),
+    ("bias", ["unload python", "load cfp/C util_shared/U", "load ve/stofs/V"]),
+    ("grib2", ["load cfp/C util_shared/U", "load grib_util/G"]),
+    # the post job: the union of the three, each once, python unloaded before ve/stofs is loaded MJ (10/14/26)
+    ("anomaly bias ncdiff grib2 ncrcat", ["unload python", "load cfp/C util_shared/U", "load grib_util/G", "load ve/stofs/V"]),
+    ("anomaly,bias,ncdiff,grib2,ncrcat", ["unload python", "load cfp/C util_shared/U", "load grib_util/G", "load ve/stofs/V"]),
+    ("anomaly   bias ncdiff", ["unload python", "load cfp/C util_shared/U", "load ve/stofs/V"]),
+    ("ncdiff grib2 ncrcat", ["load cfp/C util_shared/U", "load grib_util/G"]),
+])
+def test_pbs_prep_card_loads_the_union_of_the_listed_post_modules_once(tmp_path, segment, mods):
+    r, calls = _dispatch(PBS / "jnos_prep_00.pbs", tmp_path, segment)
+    assert r.returncode == 0, r.stderr
+    assert [c[len("module "):] for c in calls if c.startswith("module")] == mods
+
+
+def test_slurm_prep_card_loads_no_post_modules(tmp_path):
+    r, calls = _dispatch(SLURM / "jnos_prep_00.sh", tmp_path, "ncdiff ncrcat")
+    assert r.returncode == 0 and calls == ["JNOS_POST"]
 
 
 @pytest.mark.parametrize("launcher", [

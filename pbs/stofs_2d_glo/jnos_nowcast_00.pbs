@@ -13,17 +13,21 @@
 # stofs_2d_glo.yaml; 4064 + writers must stay <= 4096 (32 x 128), checked at launch. Cycles: 00/06/12/18
 # (ops runs four a day); the default is 12 like the ATL cards. MJ (10/05/26)
 
-# Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
-# from ecf/jstofs_2d_glo_*.ecf, and surf/tide only differ by ADCIRC_STREAM. The cold-start pair runs once per
-# restart (cold_adcprep, then spinup), then each cycle runs tide and surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
-#   qsub -l walltime=3:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.pbs                    (cold_adcprep)
-#   qsub -l walltime=1:00:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.pbs         (cold_spinup)
-#   qsub -l walltime=0:25:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.pbs
-#   qsub -l walltime=0:55:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.pbs
-#   surf: the same two with ADCIRC_STREAM=surf and walltimes 0:25:00, 1:05:00. MJ (10/13/26)
-#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/11/26)
-#   qsub -l walltime=0:10:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.pbs
-#   qsub -l walltime=0:40:00 -v PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst jnos_prep_00.pbs
+# Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time. A cycle is four jobs, prep -> nowcast ->
+# forecast -> post, which launch_stofs_2d_glo.sh submits with afterok dependencies and the walltimes below (the sums of the former per-job
+# walltimes: the ecf values except ncst 0:25, adcprep 3:00 and ncrcat 0:25). Each job runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM
+# list one after the other (tide, then surf) on its own allocation, here the 32 nodes. qsub -v splits at commas, so the lists are space
+# separated and a hand-typed -v value goes in one pair of quotes (without them qsub refuses the stray words). A cold start (adcprep,
+# then the spin-up) adds the adcprep step to the prep job and the spinup step to this one; the forecast is one 180 h run (ops fcst1 +
+# fcst2 merged). The single-job forms:
+#   qsub -l walltime=0:50:00 -l select=1:ncpus=1:prepost=true:mem=400gb -v "PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst fcst" jnos_prep_00.pbs
+#   qsub -l walltime=0:50:00 -v "PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst,ADCIRC_STREAM=tide surf" jnos_nowcast_00.pbs
+#   qsub -l walltime=2:00:00 -v "PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst,ADCIRC_STREAM=tide surf" jnos_forecast_00.pbs
+#   qsub -l walltime=3:10:00 -l select=8:ncpus=32:prepost=true:mem=800gb -l place=vscatter:exclhost -v "PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=anomaly bias ncdiff grib2 ncrcat" jnos_prep_00.pbs
+# A list is in the order of the examples (spinup ncst; tide surf; anomaly bias ncdiff grib2 ncrcat) and has no repeats, or the job stops
+# before its first step. Cold start: prep ADCIRC_SEGMENT=adcprep ncst fcst with -l walltime=3:50:00, nowcast ADCIRC_SEGMENT=spinup ncst with
+# 1:50:00 (values go inside the -v "..." quotes like the examples above). The ops run.ver exports COLDSTART=YES into every job, so a cold start is only ever the segment names, never that
+# variable. There are no done-markers: redo a failed step by resubmitting its job with a narrower list (ADCIRC_STREAM=surf). MJ (10/14/26)
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}

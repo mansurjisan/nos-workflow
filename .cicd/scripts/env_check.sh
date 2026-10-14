@@ -17,7 +17,7 @@ echo "OK: numpy netCDF4 yaml scipy pandas xarray"
 echo "=== executables ==="
 EXEC_DIR="${HOMEnos}/exec"
 if [ "${OFS}" = stofs_2d_glo ]; then
-  # tide_fac and the ADCIRC build, the NCO tools of post_ncdiff/ncrcat, and the Slurm client the launcher needs. MJ (10/13/26)
+  # tide_fac and the ADCIRC build, the NCO tools of the ncdiff and ncrcat steps, and the Slurm client the launcher needs. MJ (10/14/26)
   ADCIRC_DIR="${PACKAGEROOT}/adcirc_v56.1.0_exec"
   for exe in "${EXEC_DIR}/stofs_2d_glo_tide_fac" "${ADCIRC_DIR}/padcirc" "${ADCIRC_DIR}/adcprep"; do
     if [ ! -x "${exe}" ]; then

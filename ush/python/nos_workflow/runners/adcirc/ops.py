@@ -1,10 +1,11 @@
 """STOFS-2D-GLO ops mode (ADCIRC_MODE=ops): the stofs.v3.1.5 run structure, one call per ops job.
 
 Tide (NWS=0, chain file .hotstart) and surf (NWS=14014, chain file .restart) streams, each run as
-ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep and
-cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
+ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep with
+ADCIRC_SEGMENT=adcprep and cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
 chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
 $COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/11/26)
+A job runs one step per ADCIRC_SEGMENT / ADCIRC_STREAM value (space separated lists, see stages/_adcirc.py); the functions here run one. MJ (10/14/26)
 """
 from __future__ import annotations
 
@@ -37,6 +38,11 @@ FIX = (("stofs_2d_glo_body", "fort.24"), ("stofs_2d_glo_rotm", "fort.rotm"),
 RERUN = {"tide": [("fort.61.nc", "tide.61.nc"), ("fort.63.nc", "tide.63.nc")],
          "surf": [("fort.%d.nc" % n, "surf.%d.nc" % n) for n in (61, 62, 63, 64)]
          + [("%s.63.nc" % m, "%s.63.nc" % m) for m in ("maxele", "maxvel", "maxwvel")]}
+SEGMENTS = {"prep": ("adcprep", "ncst", "fcst"), "nowcast": ("spinup", "ncst"), "forecast": ("fcst",),
+            "post": ("anomaly", "bias", "ncdiff", "grib2", "ncrcat")}  # what each job takes, in the order a list must give them MJ (10/14/26)
+PER_STREAM = {"nowcast": ("ncst",), "forecast": ("fcst",)}  # run once per stream; spinup is tide-only, so once MJ (10/14/26)
+RETIRED = ("fcst1", "fcst2")
+COLD_HINT = "run a cold start (launcher COLDSTART=YES on WCOSS2 or COLD=1 on Hercules, i.e. the adcprep and spinup segments)"  # MJ (10/14/26)
 PRODUCTS = {"tide": [("fort.61.nc", "points.htp.nc"), ("fort.63.nc", "fields.htp.nc")],
             "surf": [("fort.61.nc", "points.cwl.nc"), ("fort.61.nc", "points.cwl.noanomaly.nc"),
                      ("fort.62.nc", "points.cwl.vel.nc"), ("fort.63.nc", "fields.cwl.nc"),
@@ -124,7 +130,7 @@ def _nod_path(ctx: CycleContext) -> Path:
 def _load_nod(ctx: CycleContext) -> Tuple[datetime, Dict[str, str]]:
     if not _nod_path(ctx).is_file():
         raise AdcircConfigError(f"FATAL ERROR: no {_nod_path(ctx)}; there are no tidal spin-up files, "
-                                "please restart with COLDSTART=YES")
+                                + COLD_HINT)
     return read_nod_equi(_nod_path(ctx))
 
 
@@ -169,7 +175,7 @@ def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str],
                 archive_path(ctx.comges, ctx.run, s.ncpu_compute), runner)
     if not (run_dir / "PE0000" / "fort.24").is_file():
         raise AdcircConfigError(f"FATAL ERROR: {archive_path(ctx.comges, ctx.run, s.ncpu_compute)} is a single-mode "
-                                "decomposition (no fort.24); delete it and its .json to rebuild, or run cold_adcprep with COLDSTART=YES")
+                                "decomposition (no fort.24); delete it and its .json to rebuild, or " + COLD_HINT)
     return run_dir
 
 
@@ -231,7 +237,7 @@ def cold_spinup(ctx: CycleContext, launcher, profile, runner: CommandRunner) -> 
     base, nod = _load_nod(ctx)
     if base != beg - timedelta(hours=SPINH):
         raise AdcircConfigError(f"nod_equi starts {base} but this cycle's spin-up starts "
-                                f"{beg - timedelta(hours=SPINH)}; run cold_adcprep for this cycle first")
+                                f"{beg - timedelta(hours=SPINH)}; run the adcprep segment for this cycle first (COLDSTART=YES / COLD=1)")
     run_dir = _stage(ctx, "tide", "spinup", spinup_tokens(), ctx.cycle_time.strftime("%Y%m%d%H"), nod, runner)
     argv = _launch(ctx, run_dir, "tide", "spinup", launcher, profile)
     ihot = parity_ihot(bc_div(SPINH, 24) * 86400, WNDH)
@@ -247,16 +253,16 @@ def find_chain_start(ctx: CycleContext, kind: str) -> Tuple[datetime, Path]:
         t = t - timedelta(hours=NOWH)
         if ctx.cycle_dir(t, kind).is_file():
             return t, ctx.cycle_dir(t, kind)
-    raise AdcircConfigError(f"FATAL ERROR: there are no {kind} files, please restart with COLDSTART=YES")
+    raise AdcircConfigError(f"FATAL ERROR: there are no {kind} files, " + COLD_HINT)
 
 
-def _check_retired(ctx: CycleContext) -> None:
-    if ctx.segment in ("fcst1", "fcst2"):
-        raise AdcircConfigError(f"ADCIRC_SEGMENT={ctx.segment} is retired: the forecast is one 180 h run, use ADCIRC_SEGMENT=fcst")
+def check_retired(segment: str) -> None:
+    if segment in RETIRED:
+        raise AdcircConfigError(f"ADCIRC_SEGMENT={segment} is retired: the forecast is one 180 h run, use ADCIRC_SEGMENT=fcst")
 
 
 def _check(ctx: CycleContext, segments: Tuple[str, ...]) -> None:
-    _check_retired(ctx)
+    check_retired(ctx.segment)
     if ctx.stream not in STREAMS:
         raise AdcircConfigError(f"ADCIRC_STREAM must be one of {tuple(STREAMS)}, got {ctx.stream!r}")
     if ctx.segment not in segments:
@@ -319,6 +325,16 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     return argv
 
 
+def _ncst_start(ctx: CycleContext) -> datetime:
+    """The restart time the ncst window starts at. On a cold start prep runs before the spin-up, so no chain file of this cycle
+    exists yet; when this cycle's adcprep made nod_equi, the spin-up will publish its restart at cycle - NOWH, whatever older
+    chain file the lookback would find. Otherwise the newest chain file. MJ (10/14/26)"""
+    nod = _nod_path(ctx)
+    if nod.is_file() and read_nod_equi(nod)[0] == ctx.cycle_time - timedelta(hours=NOWH + SPINH):
+        return ctx.cycle_time - timedelta(hours=NOWH)
+    return find_chain_start(ctx, STREAMS["surf"][0])[0]
+
+
 def gfs_forcing(ctx: CycleContext) -> None:
     """One ops GFS job: the ncst window starts at the multistart restart time, as exstofs_2d_glo_gfs.sh. MJ (10/06/26)"""
     from nos_utils.forcing.adcirc_met import build_sfcf_forcing
@@ -329,19 +345,21 @@ def gfs_forcing(ctx: CycleContext) -> None:
         return
     if not ctx.comin_gfs:
         raise AdcircConfigError("COMINgfs is not set; the GFS sfcf files are the surf forcing source")
-    start = find_chain_start(ctx, STREAMS["surf"][0])[0] if seg == "ncst" else None
+    start = _ncst_start(ctx) if seg == "ncst" else None
     wait = float((ctx.settings.raw["adcirc"].get("ops_gfs_wait_s") or {}).get(seg, 0))
     build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait)
 
 
 def run_prep(ctx: CycleContext, runner: CommandRunner = default_runner) -> int:
-    _check_retired(ctx)
+    """One prep step. A cold start is the explicit adcprep segment, never the COLDSTART env var: the ops run.ver exports
+    COLDSTART=YES into every job. MJ (10/14/26)"""
+    check_retired(ctx.segment)
     if ctx.segment in ("ncst", "fcst"):
         gfs_forcing(ctx)
-    elif ctx.coldstart:
+    elif ctx.segment == "adcprep":
         cold_adcprep(ctx, runner)
     else:
-        _load_nod(ctx)
+        raise AdcircConfigError(f"ADCIRC_SEGMENT must be one of {SEGMENTS['prep']} here, got {ctx.segment!r}")
     return 0
 
 
