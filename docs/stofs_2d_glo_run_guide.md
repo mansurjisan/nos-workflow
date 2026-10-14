@@ -168,7 +168,7 @@ STAGES="forecast post" STREAMS=surf ADCIRC_MODE=ops ./launch_stofs_2d_glo.sh 202
   - `adcprep` itself failed: repeat the whole cold launch.
 - A different list, or a single step, is a `qsub` of the card with `ADCIRC_SEGMENT` and `ADCIRC_STREAM` set (the comment block at the top of `pbs/stofs_2d_glo/jnos_nowcast_00.pbs` has the forms).
 
-Trade-offs of the four-job layout: the post job holds 8 exclusive prepost nodes for its whole 3:10 walltime (about twice the prepost node-hours of the former separate post jobs), the streams run one after the other, so a cycle's latency is the sum of its steps, and on Hercules the tide stream now also runs on 52 nodes.
+Trade-offs of the four-job layout: the post job holds 8 exclusive prepost nodes for its whole 3:10 walltime (about twice the prepost node-hours of the former separate post jobs), the streams run one after the other, so a cycle's latency is the sum of its steps, and on Hercules the tide stream runs on 51 of the 52 nodes (`srun -N 51`, the same layout as the former separate tide job), so its results are reproducible with the separate-job layout.
 
 ### 2.6 Starting from the ops state
 

@@ -37,8 +37,15 @@ def padcirc_argv(settings: AdcircSettings, profile: MachineProfile, executable: 
     rpn = profile.ranks_per_node_for(ranks_per_node_by_machine)
     exe_args = ["-W", str(writers)] if writers > 0 else []
     argv = profile.mpi_argv(settings.ncpu_compute + writers, executable, exe_args, ranks_per_node=rpn)
-    if profile.mpi.launcher == "srun" and not any(a.startswith("--cpu-bind") for a in argv):
-        argv.insert(argv.index(str(executable)), SRUN_CPU_BIND)
+    if profile.mpi.launcher == "srun":
+        exe_at = argv.index(str(executable))
+        # Pin the node count to ceil(ranks / rpn): inside a larger job allocation (ops tide on 52 nodes) srun would spread the ranks
+        # over every node and change the MPI layout and round-off. MJ (10/14/26)
+        if not any(a in ("-N", "--nodes") or a.startswith(("-N", "--nodes=")) for a in argv[:exe_at]):
+            argv[exe_at:exe_at] = ["-N", str(-(-(settings.ncpu_compute + writers) // rpn))]
+            exe_at += 2
+        if not any(a.startswith("--cpu-bind") for a in argv):
+            argv.insert(exe_at, SRUN_CPU_BIND)
     return argv
 
 
