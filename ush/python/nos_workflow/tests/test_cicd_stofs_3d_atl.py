@@ -16,7 +16,7 @@ SCRIPT = SCRIPTS / "stofs_3d_atl.sh"
 PDY, PDYM1, CYC, RUN = "20261001", "20260930", "12", "stofs_3d_atl_ufs"
 AMBIENT = ("ATL_CI_ROOT", "WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
            "RT_DATA_ROOT", "DATA_MODE", "LEVEL", "CI_OFS", "SLURM_CI_ACCOUNT", "SLURM_CI_QOS", "PACKAGEROOT", "NOS_PTMP", "DCOMROOT",
-           "DCOM_BUNDLE", "COMPARE_ATL", "STUB_DIR", "COMROOT_SA", "COMROOT_UFS", "COMPARE_ATL")
+           "DCOM_BUNDLE", "COMPARE_ATL", "STUB_DIR", "COMROOT_SA", "COMROOT_UFS")
 needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
 pytestmark = needs_rsync
 
@@ -217,7 +217,7 @@ def test_stage_data_sh_hands_over_to_the_atl_stage(ci):
     assert r.returncode == 0 and (ci.com / "nos").is_dir(), r.stderr + r.stdout
 
 
-# ---- run ----
+# ---- run ---- MJ (10/14/26)
 
 def _chain(ci: Ci, states, labels, passed=None):
     """Stub sbatch (records its arguments, hands out ids 101...), sacct stepping through `states`, scancel, and the cards' logs. MJ (10/14/26)"""
@@ -300,7 +300,7 @@ def test_run_needs_the_staged_init_state(ci):
     assert r.returncode == 1 and "init state" in r.stderr and not (ci.stubs / "sbatch.calls").exists()
 
 
-# ---- verify ----
+# ---- verify ---- MJ (10/14/26)
 
 def _calls(ci: Ci):
     return [ln.split() for ln in (ci.stubs / "cmp.calls").read_text().splitlines()]
@@ -342,7 +342,7 @@ def test_coupled_verify_passes_its_variant(tmp_path):
     assert _calls(ci)[0][_calls(ci)[0].index("--variant") + 1] == "coupled"
 
 
-# ---- seed ----
+# ---- seed ---- MJ (10/14/26)
 
 def _source(ci: Ci, coupled_link=False):
     com, comin, dcom = ci.tmp / "src_com", ci.tmp / "src_comin", ci.tmp / "src_dcom"
@@ -407,3 +407,174 @@ def test_seed_uses_ops_dir_and_reports_an_unfinished_source(ci):
     assert r.returncode == 1 and "forecast_outputs/staout_1" in r.stderr and "nwm" in r.stderr
     assert not (ci.rt / "stofs_3d_atl" / "coupled").exists()
     assert ci.run("seed", PDY, "other").returncode == 2
+
+
+# ---- review follow-ups: cleanup, bootstrap, deploy, env_check, CYC, seed checks. MJ (10/14/26)
+
+def _work(ci: Ci, cards: str, ids=("101", "102", "999")):
+    w = ci.ptmp / "tester" / "work" / cards
+    for i in ids:
+        _touch(w / f"stofs_3d_atl_ufs_prep_00_dev.{i}" / "x", "d")
+    return w
+
+
+def test_a_passing_run_deletes_its_own_run_directories_only(ci):
+    _ready(ci)
+    w = _work(ci, "stofs_3d_atl_ufs_standalone")
+    secofs = _touch(ci.ptmp / "tester" / "work" / "secofs_ufs" / "job.101" / "x", "keep")
+    other = _touch(ci.ptmp / "tester" / "work" / "stofs_3d_atl_ufs" / "job.101" / "x", "keep")
+    _chain(ci, [["COMPLETED"] * 2], CH["smoke"])
+    r = ci.run("run", LEVEL="smoke", POLL_S="0")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert not list(w.glob("*.101")) and not list(w.glob("*.102")) and list(w.glob("*.999"))
+    assert secofs.is_file() and other.is_file()
+
+
+def test_a_failing_run_keeps_its_directories_until_the_next_stage(ci):
+    ci.dataset()
+    _ready(ci)
+    w = _work(ci, "stofs_3d_atl_ufs_standalone")
+    _chain(ci, [["COMPLETED", "FAILED"]], CH["smoke"], passed={"nowcast": False})
+    assert ci.run("run", LEVEL="smoke", POLL_S="0").returncode == 1
+    assert len(list(w.iterdir())) == 3
+    secofs = _touch(ci.ptmp / "tester" / "work" / "secofs_ufs" / "job.1" / "x", "keep")
+    assert ci.run("stage").returncode == 0
+    assert not w.exists() and secofs.is_file()
+
+
+def test_reset_root_refuses_a_root_inside_a_protected_directory(ci):
+    ci.dataset()
+    inside = _touch(ci.ptmp / "tester" / "com" / "sub" / "dir" / "f", "keep")
+    r = ci.run("stage", ATL_CI_ROOT=f"{ci.ptmp}/tester/com/sub/dir")
+    assert r.returncode == 1 and "inside the protected" in r.stderr and inside.is_file()
+
+
+def test_run_pins_execnos_and_copies_early_sbatch_output(ci):
+    _ready(ci)
+    _chain(ci, [["COMPLETED"] * 2], CH["smoke"])
+    _touch(ci.root / "slurm" / "stofs_3d_atl_ufs_sa_prep_00.101.out", "died in a card check")
+    assert ci.run("run", LEVEL="smoke", POLL_S="0").returncode == 0
+    assert f"EXECnos={ci.home}/exec" in (ci.stubs / "sbatch.calls").read_text()
+    assert (ci.ws / "ci_logs" / "stofs_3d_atl_ufs_sa_prep_00.101.out").is_file()
+
+
+def test_jenkinsfile_forces_cyc_12_for_atl():
+    text = JENKINSFILE.read_text()
+    assert "CYC          = \"${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}\"" in text
+    assert 'echo "STOFS-3D-ATL runs 12z only: CYC ${params.CYC} -> 12"' in text
+    assert "${params.CYC}z" not in text and "${params.PDY}/${params.CYC}" not in text
+
+
+def test_live_stage_loads_the_modules_first(ci):
+    r = ci.run("stage", DATA_MODE="live", DCOM_BUNDLE=str(ci.tmp / "b"), PATH=f"{ci.bin}:/usr/bin:/bin")
+    assert r.returncode == 1 and "MISSING" in r.stderr   # module stub ran (no 'module: command not found' abort)
+    assert "command not found" not in r.stderr
+
+
+def _comin_day(root: Path, s: str, d: str):
+    _touch(root / s / f"{s}.{d}" / "f", s)
+
+
+def test_seed_copies_only_the_two_day_directories_and_rejects_the_wrong_variant(ci):
+    com, comin, dcom = _source(ci)
+    for s in ("gfs", "hrrr", "rtofs", "nwm"):
+        _comin_day(comin, s, "20260925")
+        _comin_day(comin, s, PDYM1)
+    _touch(com / "nos" / f"{RUN}.{PDY}" / "rerun" / f"{RUN}.t12z.param.nml", "  nws = 4 !coupled\n")
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
+    assert r.returncode == 1 and "not a standalone run" in r.stderr and not ci.ds.exists()
+    r = ci.run("seed", PDY, "coupled", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
+    assert r.returncode == 0, r.stderr
+    got = _tree(ci.rt / "stofs_3d_atl" / "coupled" / f"{PDY}{CYC}" / "input" / "comin")
+    assert sorted(got) == sorted([f"{s}/{s}.{PDYM1}/f" for s in ("gfs", "hrrr", "rtofs", "nwm")] + [f"{s}/{s}.{PDY}/f000" for s in ("gfs", "hrrr", "rtofs", "nwm")])
+    assert oct((ci.rt / "stofs_3d_atl" / "coupled").stat().st_mode & 0o001) == "0o1"
+    _touch(com / "nos" / f"{RUN}.{PDY}" / "rerun" / f"{RUN}.t12z.param.nml", "  nws = 2\n")
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
+    assert r.returncode == 0, r.stderr
+
+
+def test_seed_needs_the_st_lawrence_file(ci):
+    com, comin, dcom = _source(ci)
+    for d in (PDY, PDYM1):
+        (dcom / d / "can_streamgauge" / "02OA016_hydrometric.csv").unlink()
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
+    assert r.returncode == 1 and "02OA016_hydrometric.csv" in r.stderr
+
+
+# ATL bootstrap and env_check, deploy: the same machinery as 2D-GLO. MJ (10/14/26)
+ATL_OFS = ["stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs"]
+
+
+def _atl_seed_src(ci: Ci, ofs: str):
+    src = ci.tmp / "seed" / "nos-workflow"
+    _touch(src / "fix" / "stofs_3d_atl_ufs" / "grid", "grid")
+    _touch(src / "fix" / "secofs_ufs" / "grid", "secofs grid")
+    for e in ("stofs_3d_atl_tide_fac", "schism_combine_hotstart7.exe", "fv3_stofs_3d_atl.exe", "stofs_3d_atl_pschism_v3.1.5", "other_tool"):
+        _stub(src / "exec" / e)
+    return src
+
+
+@pytest.mark.parametrize("ofs", ATL_OFS)
+def test_bootstrap_atl_seeds_its_fix_and_only_its_executables(tmp_path, ofs):
+    ci = Ci(tmp_path, ofs)
+    src = _atl_seed_src(ci, ofs)
+    _stub(ci.venv / "bin" / "python")
+    _stub(ci.home / "exec" / "schism_combine_hotstart7.exe")        # already there from the SECOFS seed
+    seed_rt = tmp_path / "seed_rt"
+    for v in ("standalone", "coupled"):
+        _touch(seed_rt / "stofs_3d_atl" / v / f"{PDY}{CYC}" / "data", v)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt), DATA_MODE="frozen")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (ci.home / "fix" / "stofs_3d_atl_ufs" / "grid").is_file() and not (ci.home / "fix" / "secofs_ufs").exists()
+    mine = "stofs_3d_atl_pschism_v3.1.5" if ofs.endswith("standalone") else "fv3_stofs_3d_atl.exe"
+    theirs = "fv3_stofs_3d_atl.exe" if ofs.endswith("standalone") else "stofs_3d_atl_pschism_v3.1.5"
+    assert (ci.home / "exec" / mine).is_file() and (ci.home / "exec" / "stofs_3d_atl_tide_fac").is_file()
+    assert not (ci.home / "exec" / theirs).exists() and not (ci.home / "exec" / "other_tool").exists()
+    var = "standalone" if ofs.endswith("standalone") else "coupled"
+    assert (ci.rt / "stofs_3d_atl" / var / f"{PDY}{CYC}" / ".seeded_ok").is_file()
+
+
+def test_bootstrap_atl_hard_links_the_dataset_shared_with_the_sibling(tmp_path):
+    ci = Ci(tmp_path, "stofs_3d_atl_ufs")
+    src = _atl_seed_src(ci, ci.ofs)
+    _stub(ci.venv / "bin" / "python")
+    _stub(ci.home / "exec" / "schism_combine_hotstart7.exe")
+    seed_rt = tmp_path / "seed_rt"
+    for v in ("standalone", "coupled"):
+        _touch(seed_rt / "stofs_3d_atl" / v / f"{PDY}{CYC}" / "shared", "same")
+    sib = ci.rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}"
+    shutil.copytree(seed_rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}", sib, copy_function=shutil.copy2)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt), DATA_MODE="frozen")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (ci.rt / "stofs_3d_atl" / "coupled" / f"{PDY}{CYC}" / "shared").samefile(sib / "shared")
+
+
+@pytest.mark.parametrize("ofs", ATL_OFS)
+def test_env_check_atl_needs_the_variant_executables(tmp_path, ofs):
+    ci = Ci(tmp_path, ofs)
+    for t in ("python3", "wgrib2", "sbatch", "sacct", "rsync"):
+        _stub(ci.bin / t)
+    mine = "stofs_3d_atl_pschism_v3.1.5" if ofs.endswith("standalone") else "fv3_stofs_3d_atl.exe"
+    _touch(ci.home / "ush/python/nos-utils/nos_utils/orchestrator.py", "")
+    r = ci.run(script=SCRIPTS / "env_check.sh")
+    assert r.returncode == 1 and f"{mine} not found" in r.stdout
+    for e in (mine, "stofs_3d_atl_tide_fac", "schism_combine_hotstart7.exe"):
+        _stub(ci.home / "exec" / e)
+    r = ci.run(script=SCRIPTS / "env_check.sh")
+    assert r.returncode == 0 and "env_check PASS" in r.stdout, r.stdout + r.stderr
+
+
+@pytest.mark.parametrize("ofs", ATL_OFS)
+def test_deploy_atl_copies_nos_utils_and_a_secofs_deploy_removes_it(tmp_path, ofs):
+    ci = Ci(tmp_path, ofs)
+    _touch(ci.ws / "tools" / "t.sh", "t")
+    _touch(ci.ws / "ush/python/nos-utils/.git", "gitdir")
+    _touch(ci.ws / "ush/python/nos-utils/nos_utils/orchestrator.py", "# nu")
+    assert ci.run(script=SCRIPTS / "deploy.sh").returncode == 0
+    nu = ci.home / "ush/python/nos-utils"
+    assert (nu / "nos_utils/orchestrator.py").is_file() and not (nu / ".git").exists()
+    assert ci.run(script=SCRIPTS / "deploy.sh", CI_OFS="secofs_ufs").returncode == 0
+    assert not nu.exists() and (ci.home / "tools/t.sh").is_file()
+    (ci.ws / "ush/python/nos-utils/nos_utils/orchestrator.py").unlink()
+    r = ci.run(script=SCRIPTS / "deploy.sh")
+    assert r.returncode == 1 and "is empty" in r.stdout

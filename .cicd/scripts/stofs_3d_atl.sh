@@ -127,9 +127,29 @@ reset_root() {
     case "${s}/" in
       "${c}"/*) echo "FATAL: refusing to clear ${c}: it is the shared ${s} or a parent of it" >&2; exit 1 ;;
     esac
+    case "${c}/" in
+      "${s}"/*) echo "FATAL: refusing to clear ${c}: it sits inside the protected ${s}" >&2; exit 1 ;;
+    esac
   done
   rm -rf -- "${c}"
   mkdir -p -- "${c}"
+}
+
+# The cards keep every job's run directory (KEEPDATA=YES, ~150 GB a cycle): $NOS_PTMP/$LOGNAME/work/<cards>/<job>.<jobid>. $1 = job ids to
+# remove (none: the whole variant work directory). Only the variant's own directory, at least three levels under NOS_PTMP, is touched. MJ (10/14/26)
+clean_work() {
+  local w p id
+  w=$(realpath -m -- "${NOS_PTMP}/${LOGNAME}/work/${CARDS}")
+  p=$(realpath -m -- "${NOS_PTMP}")
+  case "${w}" in
+    "${p}"/?*/?*/?*) ;;
+    *) echo "FATAL: refusing to clean ${w}: not at least three levels under NOS_PTMP (${p})" >&2; exit 1 ;;
+  esac
+  if [ "$#" -eq 0 ]; then
+    rm -rf -- "${w}"
+  else
+    for id in "$@"; do rm -rf -- "${w}"/*."${id}"; done
+  fi
 }
 
 # Downloads the ops products `compare_atl.py ops-files` lists into $1; a product that cannot be fetched is reported, not fatal. MJ (10/14/26)
@@ -169,12 +189,14 @@ cmd_stage() {
       compgen -G "${DS}/input/dcom/*/can_streamgauge/02OA016_hydrometric.csv" >/dev/null || { echo "MISSING: ${DS}/input/dcom/<day>/can_streamgauge/02OA016_hydrometric.csv" >&2; miss=1; }
       [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what the ATL prep card reads (see the header of stofs_3d_atl.sh)"; exit 1; }
       reset_root
+      clean_work
       echo "staging ${DS}/input -> ${ATL_CI_ROOT} (LEVEL=${LEVEL}, ${VARIANT})"
       # The cards only read these inputs (the init state is copied into the run directory), so they are hard-linked: ~125 GB would not copy in reasonable time. MJ (10/14/26)
       rsync -a --link-dest="${DS}/input" "${DS}/input/" "${ATL_CI_ROOT}/"
       du -sh "${ATL_CI_ROOT}"/*
       ;;
     live)
+      setup_modules
       : "${DCOM_BUNDLE:?DATA_MODE=live needs DCOM_BUNDLE=<case bundle dir holding dcom/ and seeds/dyn_seed_<PDY-1>/> (run guide section 4.2); otherwise use DATA_MODE=frozen}"
       local b="${DCOM_BUNDLE}" seeds="${DCOM_BUNDLE}/seeds/dyn_seed_${PDYM1}" miss=0 f
       for f in $(dcom_required | sed "s#^#${b}/dcom/#") "${seeds}/staout_1" "${seeds}/${RUN}.t${CYC}z.avg_bias"; do
@@ -182,6 +204,7 @@ cmd_stage() {
       done
       [ "${miss}" = 0 ] || { echo "FATAL: DCOM_BUNDLE=${b} lacks the files above (before the ~100 GB download)"; exit 1; }
       reset_root
+      clean_work
       mkdir -p "${CI_COM}" "${ATL_CI_ROOT}/comin"
       echo "staging the public inputs for ${PDY}${CYC} into ${ATL_CI_ROOT} (login node)"
       python3 "${HOMEnos}/ush/stage_comin.py" --pdy "${PDY}" --cyc "${CYC}" --comroot "${ATL_CI_ROOT}/comin" --profile stofs_3d_atl --jobs 8 \
@@ -217,7 +240,7 @@ cmd_run() {
   [ -z "${SLURM_CI_ACCOUNT:-}" ] || acct+=(--account="${SLURM_CI_ACCOUNT}")
   [ -z "${SLURM_CI_QOS:-}" ] || acct+=(--qos="${SLURM_CI_QOS}")
   local ev="OFS=${RUN},PDY=${PDY},CYC=${CYC},PACKAGEROOT=${PACKAGEROOT},NOS_PTMP=${NOS_PTMP},NOS_VENV=${VENV_PATH:-},${COMVAR}=${CI_COM}"
-  ev="${ev},COMROOT_STAGED=${ATL_CI_ROOT}/comin,DCOMROOT=${dcom},RPTDIR=${ATL_CI_ROOT}/rpt,COLDSTART=NO"
+  ev="${ev},COMROOT_STAGED=${ATL_CI_ROOT}/comin,EXECnos=${HOMEnos}/exec,DCOMROOT=${dcom},RPTDIR=${ATL_CI_ROOT}/rpt,COLDSTART=NO"
   cd "${ATL_CI_ROOT}/slurm"
   [ ! -s "${JOBS}" ] || mv "${JOBS}" "${JOBS}.$(date +%y%m%d%H%M%S)"
   : > "${JOBS}"
@@ -277,6 +300,10 @@ cmd_run() {
     for f in "${log}" "${log%.out}.err"; do
       [ -r "${f}" ] && cp -p "${f}" "${LOGDIR}/" || true
     done
+    # the sbatch output of a job that died in a card check, before it opened its own log. MJ (10/14/26)
+    for f in "${ATL_CI_ROOT}"/slurm/*"${id}"*; do
+      [ -f "${f}" ] && cp -p "${f}" "${LOGDIR}/" || true
+    done
     state=$(awk -F'|' -v i="${id}" '$1==i{print $2}' <<<"${snap}")
     printf '%-9s %-9s %-16s %s\n' "${label}" "${id}" "${state:--}" "$(grep -o 'STAGE_SUMMARY.*' "${log}" 2>/dev/null | tail -1)"
     if [ "${state%% *}" != COMPLETED ] || ! grep -q 'STAGE_SUMMARY .*status=PASS' "${log}" 2>/dev/null; then bad="${bad}${label} "; fi
@@ -285,6 +312,8 @@ cmd_run() {
     echo "FAIL[run]: LEVEL=${LEVEL} ${verdict}; not COMPLETED with status=PASS: ${bad:-none listed}"
     exit 1
   fi
+  # passed: the run directories are no longer needed; a failed run keeps them for debugging until the next stage. MJ (10/14/26)
+  clean_work $(awk 'NF>=2{print $2}' "${JOBS}")
   echo "PASS[run]: LEVEL=${LEVEL}, ${EXPECT} jobs COMPLETED with status=PASS"
 }
 
@@ -342,6 +371,16 @@ cmd_seed() {
     [ -s "${src_dcom}/${f}" ] || { echo "MISSING: ${src_dcom}/${f}" >&2; miss=1; }
   done
   compgen -G "${src_dcom}/${PDY}/coops_waterlvlobs/*.xml" >/dev/null || { echo "MISSING: ${src_dcom}/${PDY}/coops_waterlvlobs/*.xml" >&2; miss=1; }
+  compgen -G "${src_dcom}/*/can_streamgauge/02OA016_hydrometric.csv" >/dev/null || { echo "MISSING: ${src_dcom}/<day>/can_streamgauge/02OA016_hydrometric.csv" >&2; miss=1; }
+  # The run's archived param.nml tells the variant apart: nws = 2 (sflux) standalone, nws = 4 (DATM) coupled. A run that has none is not checked. MJ (10/14/26)
+  local pn="${src_com}/nos/${RUN}.${PDY}/rerun/${RUN}.t${CYC}z.param.nml" want_nws=2 nws
+  [ "${VARIANT}" = standalone ] || want_nws=4
+  if [ -s "${pn}" ]; then
+    nws=$(sed -n 's/^[[:space:]]*nws[[:space:]]*=[[:space:]]*\(-\{0,1\}[0-9]*\).*/\1/p' "${pn}" | head -1)
+    [ "${nws}" = "${want_nws}" ] || { echo "MISSING: ${src_com} is not a ${VARIANT} run (${pn} has nws=${nws:-?}, expected ${want_nws})" >&2; miss=1; }
+  else
+    echo "WARN: no ${pn}; the variant of ${src_com} is not checked" >&2
+  fi
   [ "${miss}" = 0 ] || { echo "FATAL: the sources above are not a finished ${VARIANT} ${PDY}${CYC} run (COMROOT, comin, dcom arguments)" >&2; exit 1; }
   if [ -e "${dest}" ]; then
     [ "${FORCE:-0}" = 1 ] || { echo "FATAL: ${dest} exists; FORCE=1 replaces it" >&2; exit 1; }
@@ -358,15 +397,22 @@ cmd_seed() {
   [ ! -s "${src_com}/nos/${RUN}.${PDYM1}/rerun/${RUN}.t${CYC}z.param.nml" ] || list+=$'\n'"nos/${RUN}.${PDYM1}/rerun/${RUN}.t${CYC}z.param.nml"
   # -L: the coupled init file is a symlink to the standalone one. MJ (10/14/26)
   echo "${list}" | rsync -aL --files-from=- ${lcom[@]+"${lcom[@]}"} "${src_com}/" "${dest}/input/com/"
+  # only the day directories of PDY-1 and PDY (<source>.<day>), the cycle's whole input window. MJ (10/14/26)
   for s in gfs hrrr rtofs nwm; do
-    rsync -a ${lcomin[@]+"${lcomin[@]}"} "${src_comin}/${s}" "${dest}/input/comin/"
+    for f in "${PDYM1}" "${PDY}"; do
+      [ ! -d "${src_comin}/${s}/${s}.${f}" ] || echo "${s}/${s}.${f}/"
+    done
+  done | rsync -a --files-from=- ${lcomin[@]+"${lcomin[@]}"} "${src_comin}/" "${dest}/input/comin/"
+  for s in gfs hrrr rtofs nwm; do
+    [ -d "${dest}/input/comin/${s}" ] || { echo "FATAL: no ${s}.${PDYM1} or ${s}.${PDY} directory under ${src_comin}/${s}" >&2; exit 1; }
   done
   # a trailing slash makes --files-from copy the directory contents. MJ (10/14/26)
   dcom_groups | while read -r f; do [ ! -e "${src_dcom}/${f}" ] || echo "${f}"; done | rsync -a --files-from=- "${src_dcom}/" "${dest}/input/dcom/"
-  echo "${refs}" | rsync -a --files-from=- "${src_com}/" "${dest}/ref/"
+  echo "${refs}" | rsync -aL --files-from=- "${src_com}/" "${dest}/ref/"
   fetch_ops "${dest}/ref/ops"
   touch "${dest}/.seeded_ok"
   chmod -R o+rX "${dest}" || true
+  chmod o+x "${top}" "${top}/${VARIANT}" 2>/dev/null || true
   du -sh "${dest}"/* | sed 's/^/  /'
   echo "seed PASS: ${dest}"
   echo "the CI account reads it only if the parent directories are traversable: chmod o+x ${seed_rt} ${top} ${top}/${VARIANT}"

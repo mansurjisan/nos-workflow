@@ -90,7 +90,7 @@ def compare_file(ref_path: Path, out_path: Path, tol) -> tuple:
     if bitwise:
         return True, f"bitwise identical ({nvar} variables)"
     if per_var:
-        return True, "max |diff| " + ", ".join(f"{n} {d:.3g} (tol {tol[n]:g})" for n, d in diffs.items())
+        return True, "max |diff| " + ", ".join(f"{n} {d:.3g} (tol {tol.get(n, 0.0):g})" for n, d in diffs.items())
     return True, f"max |diff| {worst:.3g} ({wvar}) <= tol {tol:g}"
 
 

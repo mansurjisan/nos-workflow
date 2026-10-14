@@ -278,7 +278,7 @@ $HW/tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $COMROOT_SA $PDY $
 
 ### 4.3 Run
 
-Submit one stage at a time and wait for `status=PASS` before the next (do not use `--dependency=afterok`):
+Submit the stages in order, each after the previous one (Jenkins chains them with `--dependency=afterok`: each card exits non-zero unless its stage logged PASS, so an afterok chain stops at the first failure):
 ```bash
 cd $NOS_PTMP/$LOGNAME
 sbatch --export=ALL,CYC=12,DCOMROOT=$B/dcom $HW/slurm/stofs_3d_atl_ufs_standalone/jnos_prep_00.sh
@@ -336,7 +336,7 @@ nos-workflow on WCOSS2, 2-day chained cycle (seconds):
 | forecast (96 h) | 4825 | 4857 | 5899 | 5896 |
 | post | 3485 | 3591 | 7215 | not captured |
 
-The coupled post walltime limit is 4 h.
+The coupled post walltime limit is 4 h (card limit 4 h; the Hercules post is not yet measured).
 
 Hercules, PDY 20261001: standalone prep 8 min, nowcast stage 25 min (SCHISM 16 min); coupled prep 24 min (DATM build), nowcast stage 28 min.
 
@@ -416,3 +416,5 @@ bash .cicd/scripts/stofs_3d_atl.sh seed 20261001 coupled    $COMROOT_UFS $NOS_PT
 It stores the init state, the previous-cycle dynamic-adjust seed, the staged comin tree, the dcom files prep reads, the reference outputs and the ops products in `${SEED_RT}/stofs_3d_atl/<variant>/<PDY>12/` (layout in the script header). Then **Build with Parameters** with `OFS=...`, `LEVEL=...`, `DATA_MODE=frozen`, `PDY=20261001`, `CYC=12`.
 
 **Live.** `DATA_MODE=live` stages the public inputs for PDY with `stage_comin.py`, `hercules_atl_seed_init.sh` and `hercules_atl_seed_prev.sh` on the front-end node, and needs `DCOM_BUNDLE=<case bundle dir with dcom/ and seeds/dyn_seed_<PDY-1>/>`, readable by the CI account. It downloads about 125 GB per build and compares the ops products downloaded at verify time; use frozen for regression checks.
+
+Cleanup and first run. The cards keep every run directory (`KEEPDATA=YES`, about 150 GB a cycle under `$NOS_PTMP/$LOGNAME/work/<cards>/`); a passing CI run deletes its own, a failing one keeps them until the next Stage Data. The first standalone smoke is also a reproducibility probe: the reference comes from a hand run with a different venv, so if every compared file differs slightly, re-seed `ref/` from a CI-environment run or set `I_MPI_CBWR` in the ATL cards. Seeding stores only the PDY-1 and PDY day directories of the comin tree.

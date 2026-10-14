@@ -123,7 +123,8 @@ pipeline {
         SLURM_CI_QOS     = "${params.SLURM_QOS}"
         DATA_MODE    = "${params.DATA_MODE}"
         PDY          = "${params.PDY}"
-        CYC          = "${params.CYC}"
+        // STOFS-3D-ATL has only the 12z cycle, whatever the form says. MJ (10/14/26)
+        CYC          = "${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}"
         CI_OFS       = "${params.OFS ?: 'secofs_ufs'}"
         LEVEL        = "${params.LEVEL ?: 'smoke'}"
         DCOM_BUNDLE  = "${params.DCOM_BUNDLE ?: ''}"
@@ -178,6 +179,9 @@ pipeline {
                         env.RUN_CYCLE = hasLabel ? 'true' : 'false'
                         echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
                     }
+                    if (isAtlOfs(params.OFS) && params.CYC != '12') {
+                        echo "STOFS-3D-ATL runs 12z only: CYC ${params.CYC} -> 12"
+                    }
                     // STOFS-2D-Global and STOFS-3D-ATL are manual only: a user who starts a build with one of them as OFS bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/14/26)
                     if (env.RUN_CYCLE != 'true' && isManualOfs(params.OFS) && currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')) {
                         env.RUN_CYCLE = 'true'
@@ -228,7 +232,7 @@ pipeline {
                         } else {
                             error("another CI cycle holds the lock: ${lockResult.replaceFirst('^HELD:', '')}")
                         }
-                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${params.CYC} ${params.DATA_MODE}")
+                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${env.CYC} ${params.DATA_MODE}")
                     } else if (gateLookupFailed) {
                         postStatus('error', 'hercules-ci gate could not read PR labels')
                     }
@@ -366,22 +370,22 @@ pipeline {
             '''
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('failure', "cycle ${params.PDY}/${params.CYC} FAILED — see build log")
+                    postStatus('failure', "cycle ${params.PDY}/${env.CYC} FAILED — see build log")
                 }
             }
         }
         success {
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('success', "cycle ${params.PDY}/${params.CYC} PASS")
+                    postStatus('success', "cycle ${params.PDY}/${env.CYC} PASS")
                 }
             }
             slackSend(channel: '#nos-notifications', color: 'good',
-                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         failure {
             slackSend(channel: '#nos-notifications', color: 'danger',
-                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         aborted {
             slackSend(channel: '#nos-notifications', color: 'warning',

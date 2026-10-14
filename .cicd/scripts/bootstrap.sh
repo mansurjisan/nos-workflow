@@ -39,7 +39,8 @@ if [ "${ATL}" = 1 ]; then
   FIX_SRC="${SEED_SRC}/fix/stofs_3d_atl_ufs"
   FIX_TO="${FIX_DEST}"
   EXEC_FILTER=()
-  for _x in "${EXEC_NEED[@]}"; do EXEC_FILTER+=(--include="${_x}"); done
+  # the combiner is checked below but not copied: the shared exec/ gets it from the SECOFS seed. MJ (10/14/26)
+  for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || EXEC_FILTER+=(--include="${_x}"); done
   EXEC_FILTER+=(--exclude="*")
 fi
 
@@ -184,7 +185,14 @@ if [ "${DATA_MODE}" = "frozen" ]; then
     if [ -d "${SEED_RT}/${RT_REL}" ]; then
       echo "bootstrap: seeding frozen dataset (${RT_SIZE}) from ${SEED_RT}/${RT_REL}"
       mkdir -p "${COMROOT_STAGED}"
-      rsync -a --info=progress2 "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
+      # ATL: the other variant's dataset of the same cycle shares most files (comin, init); hard-link them instead of copying twice. MJ (10/14/26)
+      RT_LINK=()
+      if [ "${ATL}" = 1 ]; then
+        SIB=coupled
+        [ "${OFS}" != stofs_3d_atl_ufs ] || SIB=standalone
+        [ ! -d "${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}" ] || RT_LINK=(--link-dest="${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}")
+      fi
+      rsync -a --info=progress2 ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
       touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."

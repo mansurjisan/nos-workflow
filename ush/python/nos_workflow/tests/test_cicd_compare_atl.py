@@ -124,13 +124,13 @@ def test_regress_bitwise_and_smoke_needs_only_nowcast(tmp_path):
 
 def test_regress_tolerance_per_variable(tmp_path):
     _cycle_tree(tmp_path / "ref")
-    _cycle_tree(tmp_path / "out", bump=5e-4)  # zeta shifts by 0.5 mm: inside the 1 mm water-level tolerance
+    _cycle_tree(tmp_path / "out", bump=5e-4)  # zeta shifts by 0.5 mm: inside the 1 mm water-level tolerance MJ (10/14/26)
     r = _regress(tmp_path / "ref", tmp_path / "out")
     assert r.returncode == 0 and "within tolerance" in r.stdout and "zeta" in r.stdout, r.stdout
     _cycle_tree(tmp_path / "out", bump=5e-3)
     r = _regress(tmp_path / "ref", tmp_path / "out")
     assert r.returncode == 1 and "zeta: max |diff|" in r.stdout
-    assert _regress(tmp_path / "ref", tmp_path / "out", "cycle", "--tol", "1e-2").returncode == 0  # --tol scales the water level
+    assert _regress(tmp_path / "ref", tmp_path / "out", "cycle", "--tol", "1e-2").returncode == 0  # --tol scales the water level MJ (10/14/26)
 
 
 def test_regress_staout_tolerance_and_time_column(tmp_path):
@@ -142,7 +142,7 @@ def test_regress_staout_tolerance_and_time_column(tmp_path):
     _staout(p, scale=5e-3)
     r = _regress(tmp_path / "ref", tmp_path / "out", "smoke")
     assert r.returncode == 1 and "staout_1" in r.stdout and "> tol" in r.stdout
-    # staout_5 (temperature) has a 10x tolerance
+    # staout_5 (temperature) has a 10x tolerance MJ (10/14/26)
     _staout(p, scale=0.0)
     p5 = tmp_path / "out" / ca.regress_files("standalone", "smoke", PDY)[4]
     _staout(p5, scale=5e-3)
@@ -208,7 +208,7 @@ def test_ops_report(tmp_path):
     out, opsd = _ops_tree(tmp_path, ours_bump=0.002, junk=(5,))
     r = _ops(out, opsd)
     assert r.returncode == 0, r.stdout
-    assert "5 stations compared, 1 skipped" in r.stdout  # the out-of-mesh station is skipped
+    assert "5 stations compared, 1 skipped" in r.stdout  # the out-of-mesh station is skipped MJ (10/14/26)
     assert "median 2.00 mm" in r.stdout
     assert "WARN" not in r.stdout
     r = _ops(out, opsd, "--warn-mm", "1")
@@ -216,7 +216,7 @@ def test_ops_report(tmp_path):
 
 
 def test_ops_time_axes_by_epoch(tmp_path):
-    # our nowcast axis starts a day earlier: only the overlapping instants are compared
+    # nos-workflow nowcast axis starts a day earlier: only the overlapping instants are compared MJ (10/14/26)
     out, opsd = _ops_tree(tmp_path)
     _points(_day(out) / f"stofs_3d_atl_ufs.t12z.{PDY}.points.cwl.forecast.nc", base="2026-10-10 12:30:00")
     r = _ops(out, opsd)
@@ -226,9 +226,9 @@ def test_ops_time_axes_by_epoch(tmp_path):
 
 
 def test_ops_station_matching():
-    ia, ib = ca.match_stations(["a", "b"], ["x", "y"], 2, 2)  # equal counts: row order, names ignored
+    ia, ib = ca.match_stations(["a", "b"], ["x", "y"], 2, 2)  # equal counts: row order, names ignored MJ (10/14/26)
     assert ia.tolist() == ib.tolist() == [0, 1]
-    ia, ib = ca.match_stations(["a", "b", "c"], ["c", "a"], 3, 2)  # else exact names
+    ia, ib = ca.match_stations(["a", "b", "c"], ["c", "a"], 3, 2)  # else exact names MJ (10/14/26)
     assert ia.tolist() == [0, 2] and ib.tolist() == [1, 0]
     assert ca.match_stations(["a", "b", "c"], ["x", "y"], 3, 2) is None
     assert ca.match_stations(None, None, 3, 2) is None
@@ -248,3 +248,12 @@ def test_ops_station_count_mismatch_warns(tmp_path):
     out, opsd = _ops_tree(tmp_path, names=[f"STA{i}" for i in range(NSTA - 2)])
     r = _ops(out, opsd)
     assert r.returncode == 0 and "stations compared" in r.stdout
+
+
+# MJ (10/14/26)
+def test_staout_parse_accepts_fortran_numbers_without_an_exponent_letter(tmp_path):
+    f = tmp_path / "staout_1"
+    f.write_text("  360.0  0.427-100  -1.5+101  2.25\n  720.0  0.5  -0.25  1.0\n")
+    a = ca._load_staout(f)
+    assert a.shape == (2, 4) and a[0, 1] == pytest.approx(0.427e-100) and a[0, 2] == pytest.approx(-1.5e101) and a[1, 3] == 1.0
+    assert ca.compare_staout(f, f, 1e-3)[0]

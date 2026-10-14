@@ -22,7 +22,7 @@ rsync -a --delete \
   --exclude='/*.err' \
   "${WORKSPACE}/" "${HOMEnos}/"
 
-# The 2D-Global and STOFS-3D-ATL cards and tools import nos-utils from ${HOMEnos}/ush/python/nos-utils, a directory the rsync above leaves alone; copy the checked-out submodule there, without its .git. MJ (10/13/26)
+# The 2D-Global and STOFS-3D-ATL cards and tools import nos-utils from ${HOMEnos}/ush/python/nos-utils, a directory the rsync above leaves alone; copy the checked-out submodule there, without its .git. MJ (10/14/26)
 case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ATL=1 ;; *) ATL=0 ;; esac
 if [ "${OFS}" = stofs_2d_glo ] || [ "${ATL}" = 1 ]; then
   NU_SRC="${WORKSPACE}/ush/python/nos-utils"

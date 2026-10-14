@@ -68,7 +68,7 @@ def regress_files(variant: str, level: str, pdy: str, cyc: str = "12") -> list:
 
 
 def ops_names(cyc: str = "12") -> dict:
-    """our product kind -> ops file name. MJ (10/14/26)"""
+    """nos-workflow product kind -> ops file name. MJ (10/14/26)"""
     s = f"{OPS_RUN}.t{cyc}z"
     return {"points": f"{s}.points.cwl.temp.salt.vel.nc", "nowcast": f"{s}.ncast.station.profile.nc",
             "forecast": f"{s}.fcast.station.profile.nc"}
