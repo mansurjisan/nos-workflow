@@ -22,4 +22,18 @@ rsync -a --delete \
   --exclude='/*.err' \
   "${WORKSPACE}/" "${HOMEnos}/"
 
+# The 2D-Global cards and tools import nos-utils from ${HOMEnos}/ush/python/nos-utils, a directory the rsync above leaves alone; copy the checked-out submodule there, without its .git. MJ (10/13/26)
+if [ "${OFS}" = stofs_2d_glo ]; then
+  NU_SRC="${WORKSPACE}/ush/python/nos-utils"
+  [ -f "${NU_SRC}/nos_utils/forcing/adcirc_met.py" ] || {
+    echo "FATAL: ${NU_SRC} is empty -- enable Recursively update submodules in the job config"
+    exit 1
+  }
+  mkdir -p "${HOMEnos}/ush/python/nos-utils"
+  rsync -a --delete --exclude='.git' "${NU_SRC}/" "${HOMEnos}/ush/python/nos-utils/"
+else
+  # scripts/exnos_*.sh put ${USHnos}/python/nos-utils first on PYTHONPATH and the rsync above never deletes it, so a copy left by an earlier 2D-Global deploy would shadow the SECOFS submodule. MJ (10/13/26)
+  rm -rf "${HOMEnos}/ush/python/nos-utils"
+fi
+
 echo "deploy PASS: $(date -u +%FT%TZ)"
