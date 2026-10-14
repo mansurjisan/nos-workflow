@@ -54,10 +54,14 @@ def cycle(tmp_path):
     for kind in ("hotstart", "restart"):  # the chain files of 20261005 06z, 6 h before the cycle. MJ (10/13/26)
         _stub(com / "nos" / "stofs_2d_glo.20261005" / f"stofs_2d_glo.t06z.{kind}", "x")
     _stub(tmp_path / "bin" / "sbatch", SBATCH)
+    # the nos-utils file-list call of the SUBMIT_GFS=1 preflight: prints $GFS_LIST (a file) and records its arguments. MJ (10/14/26)
+    _stub(clone / "tools" / "stage_stofs_2d_glo_ops_forcing.py",
+          "#!/usr/bin/env python3\nimport os, sys\nopen(os.environ['GFS_ARGS'], 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+          "p = os.environ.get('GFS_LIST')\nprint(open(p).read() if p else '', end='')\n")
     env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "QLOG": str(tmp_path / "q.log"),
            "NOS_PTMP": str(tmp_path / "ptmp"), "LOGNAME": "tester", "COMROOT_2DGLO": str(com),
-           "ADCIRC_EXEC_DIR": str(tmp_path / "adcirc")}
-    for k in ("PKG", "COLD", "STAGES", "STREAMS", "KEEPDATA", "SUBMIT_GFS", "PACKAGEROOT", "HOMEnos", "ADCIRC_MODE", *DIRTY) + tuple(
+           "ADCIRC_EXEC_DIR": str(tmp_path / "adcirc"), "GFS_ARGS": str(tmp_path / "gfs.args")}
+    for k in ("PKG", "COLD", "STAGES", "STREAMS", "KEEPDATA", "SUBMIT_GFS", "ADCIRC_GFS_SOURCE", "GFS_LIST", "COMROOT_STAGED", "PACKAGEROOT", "HOMEnos", "ADCIRC_MODE", *DIRTY) + tuple(
             k for k in os.environ if k.startswith(("W_", "SLURM_"))):
         env.pop(k, None)
     return tmp_path, clone, env
@@ -212,6 +216,58 @@ def test_gfs_build_is_optional_and_replaces_the_staged_forcing_check(cycle):
     # prep runs adcprep, ncst and fcst in one job; with SUBMIT_GFS=1 it keeps the card's whole node for the GFS read. MJ (10/14/26)
     assert list(j) == ["prep", "nowcast", "forecast", "post"] and j["prep"]["seg"] == "adcprep ncst fcst" and j["prep"]["flags"] == []
     assert _deps(j)["nowcast"] == ["prep"] and j["prep"]["wall"] == "3:50:00"
+
+
+def _gfs_list(tmp, n, present):
+    files = [tmp / "gfs" / f"gfs.20261005/12/atmos/gfs.t12z.sfluxgrbf{i:03d}.grib2" for i in range(n)]
+    for f in files[:present]:
+        f.parent.mkdir(parents=True, exist_ok=True)
+        f.write_text("x")
+    (tmp / "gfs.list").write_text("\n".join(map(str, files)) + "\n")
+    return files
+
+
+def test_submit_gfs_forwards_sflux_and_the_preflight_lists_missing_files(cycle):
+    tmp = cycle[0]
+    files = _gfs_list(tmp, 6, 2)
+    r = _launch(cycle, SUBMIT_GFS="1", GFS_LIST=str(tmp / "gfs.list"))
+    assert r.returncode == 1 and not (tmp / "q.log").exists()
+    assert "MISSING: 4 of 6 GFS sflux files" in r.stderr and str(files[4]) in r.stderr and str(files[5]) not in r.stderr
+    assert "tools/hercules_2d_glo_stage_forcing.sh --source gfs 20261005 12" in r.stderr
+    # the call: the card's COMINgfs layout (<NOS_PTMP>/<user>/comin_2dglo/gfs), every stage's segments, the source. MJ (10/14/26)
+    a = (tmp / "gfs.args").read_text().splitlines()[-1]
+    assert f"--gfs-files {tmp}/ptmp/tester/comin_2dglo/gfs --cycle 2026100512 --segments fcst,ncst --gfs-source sflux" in a
+    _gfs_list(tmp, 6, 6)
+    assert _launch(cycle, SUBMIT_GFS="1", GFS_LIST=str(tmp / "gfs.list")).returncode == 0
+    assert all(j["v"]["ADCIRC_GFS_SOURCE"] == "sflux" for j in _jobs(tmp).values())
+
+
+@pytest.mark.parametrize("stages,segs", [("nowcast", "ncst"), ("forecast", "fcst"), ("prep", "fcst,ncst"), ("post", "fcst,ncst")])
+def test_gfs_preflight_asks_for_the_submitted_stages_files(cycle, stages, segs):
+    tmp = cycle[0]
+    assert _launch(cycle, SUBMIT_GFS="1", COLD="0", STAGES=stages, COMROOT_STAGED=str(tmp / "stg")).returncode == 0
+    assert f"--gfs-files {tmp}/stg/gfs --cycle 2026100512 --segments {segs} " in (tmp / "gfs.args").read_text()
+
+
+def test_gfs_source_is_forwarded_only_when_set_and_validated(cycle):
+    tmp = cycle[0]
+    assert _launch(cycle).returncode == 0
+    assert all("ADCIRC_GFS_SOURCE" not in j["v"] for j in _jobs(tmp).values()) and not (tmp / "gfs.args").exists()
+    (tmp / "q.log").unlink()
+    (tmp / "q.log.n").unlink()
+    assert _launch(cycle, ADCIRC_GFS_SOURCE="sfcf").returncode == 0  # the WCOSS2 family stays selectable. MJ (10/14/26)
+    assert all(j["v"]["ADCIRC_GFS_SOURCE"] == "sfcf" for j in _jobs(tmp).values())
+    r = _launch(cycle, ADCIRC_GFS_SOURCE="grib", SUBMIT_GFS="1")
+    assert r.returncode == 2 and "must be sfcf or sflux" in r.stderr
+    assert _launch(cycle, SUBMIT_GFS="1", ADCIRC_GFS_SOURCE="sfcf").returncode == 0
+    assert "--gfs-source sfcf" in (tmp / "gfs.args").read_text()
+
+
+def test_gfs_list_failure_stops_the_launcher(cycle):
+    tmp, clone, _ = cycle
+    (clone / "tools" / "stage_stofs_2d_glo_ops_forcing.py").write_text("import sys; sys.exit(3)\n")
+    r = _launch(cycle, SUBMIT_GFS="1")
+    assert r.returncode == 1 and "cannot list the GFS sflux files" in r.stderr and not (tmp / "q.log").exists()
 
 
 def test_preflight_names_every_missing_piece_and_queues_nothing(cycle):

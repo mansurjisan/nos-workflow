@@ -268,6 +268,15 @@ tools/hercules_2d_glo_stage_forcing.sh --rm-raw 20261012 00
 - A re-run skips what exists (`STAGE_FORCE=1` redoes both steps). `STAGE_SRUN="srun -A nos-surge -p hercules --qos=batch -N 1 -n 1 --mem=16G -t 2:00:00"` moves the 8 min staging step to a compute node. `DL_JOBS` sets the parallel downloads (default 4).
 - Stage a cycle only after ops has published it. Do this for every cycle you run.
 
+Hercules builds its own forcing (own-forcing path): download only the four needed messages (`PRES:surface`, `UGRD:10 m above ground`, `VGRD:10 m above ground`, `ICEC:surface`) of the public GFS flux files, then let the prep job build the rerun files:
+```bash
+tools/hercules_2d_glo_stage_forcing.sh --source gfs 20261012 00                       # login node, tmux; about 2-3 GB a cycle
+SUBMIT_GFS=1 COLD=0 slurm/stofs_2d_glo/launch_stofs_2d_glo.sh 20261012 00             # prep builds the forcing, then the chain runs
+```
+- `--source gfs` fetches `gfs.t<CYC>z.sfluxgrbfFFF.grib2` of the bucket `noaa-gfs-bdp-pds` by byte range (about 15 MB an hour instead of 310 MB) into `${COMROOT_STAGED:-$NOS_PTMP/$LOGNAME/comin_2dglo}/gfs/gfs.<PDY>/<CYC>/atmos`, the tree the cards read as `COMINgfs`. It checks four messages per file, skips complete files and retries failed ones. It does not build the rerun files and it still downloads the ops reference station files.
+- `SUBMIT_GFS=1` sets `ADCIRC_GFS_SOURCE=sflux` for the jobs (sfcf past f012 is not public); the preflight lists the GFS files missing for the stages you submit and names this command.
+- This forcing is not bitwise equal to ops: the GRIB2 packing differs from the netCDF sfcf the ops builder reads. The comparison against the ops-copy path is pending. The ops-copy path above stays the parity option.
+
 ### 3.3 Run
 
 From a login node shell (the launcher refuses inside an `srun`/`salloc` allocation), with `NOS_PTMP` exported:

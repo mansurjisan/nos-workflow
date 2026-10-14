@@ -27,8 +27,13 @@
 # a STAGES with nowcast and without prep needs COLD=spinup or COLD=0. The retired names W_COLD W_SPIN W_TNC W_TFC W_SNC W_SFC W_DIFF
 # W_CAT W_GN W_GF and SERIAL stop the launcher (the streams always run serially now). MJ (10/14/26)
 # The surf forcing is read from $COMROOT_2DGLO/nos/stofs_2d_glo.<PDY>/<CYC>/rerun (staged from the ops files; the preflight checks it).
-# The prep job always runs the ncst and fcst steps; they skip when the staged files exist. SUBMIT_GFS=1 lets them build from GFS instead,
-# for a machine that has GFS sfcf (untested on Hercules; GFS location via COMROOT_STAGED). MJ (10/14/26)
+# The prep job always runs the ncst and fcst steps; they skip when the staged files exist. SUBMIT_GFS=1 lets them build from GFS instead:
+# ADCIRC_GFS_SOURCE (sfcf|sflux, forwarded to the jobs; default sflux with SUBMIT_GFS=1, since sfcf past f012 is not public) picks the file
+# family, read from <COMROOT_STAGED default $NOS_PTMP/$LOGNAME/comin_2dglo>/gfs. On Hercules stage the public flux files first, on a login node:
+#   tools/hercules_2d_glo_stage_forcing.sh --source gfs <PDY> <CYC>
+# The preflight then lists every file the builder reads for the submitted stages (one nos-utils call) instead of the rerun files. The prep
+# job's whole node (the card's --mem=0) is plenty: the builder streams one record at a time, so the forcing needs only a few GB, and the
+# adcprep step (cold start) is what sets the memory. The forcing is not bitwise equal to ops (GRIB2 vs netCDF packing). MJ (10/14/26)
 # Walltimes are the Hercules measurements plus margin, not the ecf values (ncst took 1128 s tide and 1115 s surf; the ecf nowcast
 # limit is 0:15 and the WCOSS2 launcher uses 0:25). W_PREP W_NOWCAST W_FORECAST W_POST override them; the defaults are the sums of the
 # former per-job values (prep 0:50, +3:00 with adcprep; nowcast 1:20, +1:00 with the spin-up; forecast 2:00; post 1:15). MJ (10/14/26)
@@ -87,6 +92,9 @@ unset HOMEnos HOMEstofs EXECnos FIXnos FIXofs NOS_WORKFLOW_DIR NOS_UTILS_DIR PYT
 unset COMIN COMINgfs COMOUT COMOUTroot COMGES DATA ADCIRC_MODE ADCIRC_STREAM ADCIRC_SEGMENT COLDSTART NCPU NUM_WRITERS TOT_NCPU
 unset NOWCAST_HOURS COLDSTART_SPINUP_DAYS ATMOSPHERIC_FORCING RPTDIR
 export LOGNAME="${LOGNAME:-$(id -un)}"
+# sfcf past f012 is not public, so a SUBMIT_GFS=1 build on Hercules reads the sflux files unless told otherwise. MJ (10/14/26)
+[ "${SUBMIT_GFS:-0}" != 1 ] || export ADCIRC_GFS_SOURCE="${ADCIRC_GFS_SOURCE:-sflux}"
+case "${ADCIRC_GFS_SOURCE:-sfcf}" in sfcf|sflux) ;; *) echo "ERROR: ADCIRC_GFS_SOURCE must be sfcf or sflux (got ${ADCIRC_GFS_SOURCE})" >&2; exit 2 ;; esac
 export NOS_PTMP="${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}"
 export COMROOT_2DGLO="${COMROOT_2DGLO:-${NOS_PTMP}/${LOGNAME}/com}"
 export ADCIRC_EXEC_DIR="${ADCIRC_EXEC_DIR:-$(dirname "${PKG}")/adcirc_v56.1.0_exec}"
@@ -99,15 +107,31 @@ _miss=0
 need() { [ "$1" "$2" ] || { echo "MISSING: $2" >&2; _miss=1; }; }
 for _f in "${PREP}" "${NOW}" "${FC}"; do need -s "${_f}"; done
 for _f in "${ADCIRC_EXEC_DIR}/padcirc" "${ADCIRC_EXEC_DIR}/adcprep" "${PKG}/exec/stofs_2d_glo_tide_fac"; do need -x "${_f}"; done
+# prep and post (ncrcat) use both forcing segments, nowcast the ncst one, forecast the fcst one. MJ (10/14/26)
+_segs=""
+for _s in ${STAGES}; do
+  case "${_s}" in prep|post) _segs="${_segs} ncst fcst" ;; nowcast) _segs="${_segs} ncst" ;; forecast) _segs="${_segs} fcst" ;; esac
+done
+_segs="$(printf '%s\n' ${_segs} | sort -u | tr '\n' ' ')"
 if [ "${SUBMIT_GFS:-0}" != 1 ]; then
-  # prep and post (ncrcat) use both forcing segments, nowcast the ncst one, forecast the fcst one. MJ (10/14/26)
-  _segs=""
-  for _s in ${STAGES}; do
-    case "${_s}" in prep|post) _segs="${_segs} ncst fcst" ;; nowcast) _segs="${_segs} ncst" ;; forecast) _segs="${_segs} fcst" ;; esac
-  done
-  for _s in $(printf '%s\n' ${_segs} | sort -u); do
+  for _s in ${_segs}; do
     for _n in 221 222 225; do need -s "${RR}/stofs_2d_glo_${_s}.${_n}.nc"; done
   done
+else
+  # every GFS file the builder will read; the python call needs numpy (module nos_hercules.intel or the venv). MJ (10/14/26)
+  _gl=$( [ ! -f "${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}/bin/activate" ] || . "${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}/bin/activate"
+         python3 "${PKG}/tools/stage_stofs_2d_glo_ops_forcing.py" --gfs-files "${COMROOT_STAGED:-${NOS_PTMP}/${LOGNAME}/comin_2dglo}/gfs" \
+           --cycle "${PDY}${CYC}" --segments "$(echo ${_segs} | tr ' ' ',')" --gfs-source "${ADCIRC_GFS_SOURCE}" \
+           --nos-utils "${PKG}/ush/python/nos-utils" ) || {
+    echo "ERROR: cannot list the GFS ${ADCIRC_GFS_SOURCE} files (load module nos_hercules.intel or set NOS_VENV; nos-utils needs gfs_input_files)" >&2; exit 1; }
+  _gm=()
+  while IFS= read -r _f; do [ -z "${_f}" ] || [ -s "${_f}" ] || _gm+=("${_f}"); done <<< "${_gl}"
+  if [ "${#_gm[@]}" -gt 0 ]; then
+    echo "MISSING: ${#_gm[@]} of $(echo "${_gl}" | wc -l) GFS ${ADCIRC_GFS_SOURCE} files; the first ones:" >&2
+    printf '  %s\n' "${_gm[@]:0:3}" >&2
+    echo "  run: tools/hercules_2d_glo_stage_forcing.sh --source gfs ${PDY} ${CYC}" >&2
+    _miss=1
+  fi
 fi
 # The fix files the ops runner reads from $HOMEnos/fix/stofs_2d_glo (the cards unset FIXofs). MJ (10/13/26)
 for _f in "${PKG}"/fix/stofs_2d_glo/stofs_2d_glo_{grid,attr,body,tide.15,surf.15}; do need -s "${_f}"; done
@@ -131,7 +155,7 @@ mkdir -p "${JDIR}"
 # The cards' #SBATCH --output files (empty, the cards redirect to the rpt dir) land in the submit directory. MJ (10/13/26)
 cd "${JDIR}"
 
-OPSVARS="PDY=${PDY},CYC=${CYC},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops"
+OPSVARS="PDY=${PDY},CYC=${CYC},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops${ADCIRC_GFS_SOURCE:+,ADCIRC_GFS_SOURCE=${ADCIRC_GFS_SOURCE}}"
 # CLI --account/--qos beat the cards' #SBATCH lines, so a CI service account charges an allocation it may use. MJ (10/13/26)
 ACCT=()
 [ -z "${SLURM_CI_ACCOUNT:-}" ] || ACCT+=(--account="${SLURM_CI_ACCOUNT}")
