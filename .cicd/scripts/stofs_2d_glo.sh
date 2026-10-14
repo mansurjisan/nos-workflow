@@ -83,14 +83,25 @@ level_setup() {
   export NOS_PTMP COMROOT_2DGLO
 }
 
+# Clears the CI COMROOT. It is normalized first (//, symlinks), must sit at least two levels below NOS_PTMP ($p/<x>/<y>) and must
+# never be the shared com or a parent of it, which holds the live SECOFS and ATL cycles. MJ (10/13/26)
 reset_comroot() {
+  local c p shared
   case "${COMROOT_2DGLO}" in
     *..*) echo "FATAL: refusing to clear ${COMROOT_2DGLO} (contains ..)" >&2; exit 1 ;;
-    "${NOS_PTMP}"/?*) ;;
-    *) echo "FATAL: refusing to clear ${COMROOT_2DGLO}: it is not under NOS_PTMP (${NOS_PTMP})" >&2; exit 1 ;;
   esac
-  rm -rf "${COMROOT_2DGLO}"
-  mkdir -p "${COMROOT_2DGLO}"
+  c=$(realpath -m -- "${COMROOT_2DGLO}")
+  p=$(realpath -m -- "${NOS_PTMP}")
+  shared=$(realpath -m -- "${NOS_PTMP}/${LOGNAME}/com")
+  case "${c}" in
+    "${p}"/?*/?*) ;;
+    *) echo "FATAL: refusing to clear ${c}: it is not under NOS_PTMP (${p}) by at least two levels (<x>/<y>)" >&2; exit 1 ;;
+  esac
+  case "${shared}/" in
+    "${c}"/*) echo "FATAL: refusing to clear ${c}: it is the shared com (${shared}) or a parent of it" >&2; exit 1 ;;
+  esac
+  rm -rf -- "${c}"
+  mkdir -p -- "${c}"
 }
 
 cmd_stage() {
@@ -235,7 +246,7 @@ cmd_seed() {
   case "${mode}" in chain) ;; cold) with_state=0 ;; *) echo "FATAL: third argument must be 'cold' or empty (got '${mode}')" >&2; exit 2 ;; esac
   check_cycle_args
   local ptmp=${NOS_PTMP:-${DEFAULT_PTMP}} user=${LOGNAME:-$(id -un)}
-  local src=${COMROOT_2DGLO:-${ptmp}/${user}/com_2dglo}
+  local src=${COMROOT_2DGLO:-${ptmp}/${user}/com}
   local seed_rt=${SEED_RT:-/work2/noaa/nos-surge/mjisan/nos-workflow-rt}
   local dest="${seed_rt}/stofs_2d_glo/${PDY}${CYC}"
   local ops_dir=${OPS_DIR:-${ptmp}/${user}/ops_s3/${PDY}${CYC}/products}
