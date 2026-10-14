@@ -21,6 +21,8 @@
 #SBATCH --output=%x.%j.out
 #SBATCH --error=%x.%j.err
 
+# launch_stofs_2d_glo.sh <PDY> <CYC> (this directory) submits the whole ops chain with afterok dependencies and Hercules walltimes
+# (ncst 0:40, not the ecf values below); status_stofs_2d_glo.sh <PDY> <CYC> reports it. The lines below are the single-job form. MJ (10/13/26)
 # Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
 # from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst launch 4064 + 32 writers = 4096 ranks, which needs
 # 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
@@ -101,8 +103,8 @@ export SENDSMS=NO
 export PACKAGEROOT
 
 # Data and COM paths
-# Isolated COMROOT: an inherited generic COMROOT/DATAROOT is ignored, so SECOFS and ATL are never touched. MJ (10/05/26)
-export COMROOT=${COMROOT_2DGLO:-${NOS_PTMP}/$LOGNAME/com_2dglo}
+# An inherited generic COMROOT/DATAROOT is ignored; the shared com is safe, every directory is RUN-prefixed. COMROOT_2DGLO overrides for experiments. MJ (10/13/26)
+export COMROOT=${COMROOT_2DGLO:-${NOS_PTMP}/$LOGNAME/com}
 export DATAROOT=${NOS_PTMP}/$LOGNAME/work/stofs_2d_glo
 export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
 # padcirc/adcprep are a site build; the runner reads ADCIRC_EXEC_DIR. MJ (10/05/26)

@@ -4,6 +4,8 @@ set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/common.sh"
+# STOFS-2D-Global stages its own inputs (a level-aware copy of the frozen dataset, or the login-node forcing download). MJ (10/13/26)
+if [ "${OFS}" = stofs_2d_glo ]; then exec bash "${SCRIPT_DIR}/stofs_2d_glo.sh" stage; fi
 setup_env
 
 : "${PDY:?PDY not set}"

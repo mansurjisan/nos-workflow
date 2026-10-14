@@ -85,8 +85,8 @@ export SENDSMS=NO
 export PACKAGEROOT
 
 # Data and COM paths
-# Isolated COMROOT: an inherited generic COMROOT/DATAROOT is ignored, so SECOFS and ATL are never touched. MJ (10/05/26)
-export COMROOT=${COMROOT_2DGLO:-${NOS_PTMP}/$LOGNAME/com_2dglo}
+# An inherited generic COMROOT/DATAROOT is ignored; the shared com is safe, every directory is RUN-prefixed. COMROOT_2DGLO overrides for experiments. MJ (10/13/26)
+export COMROOT=${COMROOT_2DGLO:-${NOS_PTMP}/$LOGNAME/com}
 export DATAROOT=${NOS_PTMP}/$LOGNAME/work/stofs_2d_glo
 export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
 # padcirc/adcprep are a site build; the runner reads ADCIRC_EXEC_DIR. MJ (10/05/26)

@@ -7,7 +7,7 @@
 # Usage:    ./launch_stofs_2d_glo.sh <PDY:YYYYMMDD> [CYC:HH (00|06|12|18, default 12)]
 # Example:  ./launch_stofs_2d_glo.sh 20261005 12
 #
-# Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com_2dglo) is forwarded when set.
+# Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com, as SECOFS and coupled ATL) is forwarded when set. MJ (10/13/26)
 # STAGES selects a subset, e.g. STAGES="nowcast forecast" once prep has run.
 # Operator overrides, forwarded when set: ATMOSPHERIC_FORCING=false (tide-only), COLDSTART_SPINUP_DAYS,
 # NOWCAST_HOURS (default 6; use 24 for a once-a-day 12z run so the restart is the previous day's 12z).
@@ -112,7 +112,7 @@ cat <<EOM
 Chain submitted (${STAGES}), each gated on afterok of the previous.
   Monitor : qstat -u ${LOGNAME}
   Logs    : /lfs/h1/nos/ptmp/${LOGNAME}/rpt/stofs_2d_glo/stofs_2d_glo_{prep,nowcast,forecast}_00.<jobid>.{out,err}
-  COMOUT  : ${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/${LOGNAME}/com_2dglo}/nos/stofs_2d_glo.${PDY}
+  COMOUT  : ${COMROOT_2DGLO:-/lfs/h1/nos/ptmp/${LOGNAME}/com}/nos/stofs_2d_glo.${PDY}
 
 If an upstream stage fails, the downstream jobs stay queued with an unsatisfied
 dependency (state 'H'); clear them with:  qdel <jobid> ...  (see the ids above)
