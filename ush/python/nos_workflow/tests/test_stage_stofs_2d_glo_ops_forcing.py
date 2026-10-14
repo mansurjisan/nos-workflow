@@ -479,7 +479,8 @@ def gfs_input_files(comin_gfs, cycle, segment, start=None, source="sfcf"):
     ext = "sfluxgrbf%03d.grib2" if source == "sflux" else "sfcf%03d.nc"
     def p(c, fh):
         return Path(comin_gfs) / ("gfs.%s" % c.strftime("%Y%m%d")) / c.strftime("%H") / "atmos" / ("gfs.t%sz." % c.strftime("%H") + ext % fh)
-    return [p(start, 0), p(cycle, 0)] if segment == "ncst" else [p(cycle, 0), p(cycle, 1), p(cycle, 3)]
+    # ncst: the start cycle's f000 and f001..f005 (the hours getges walks back to), then the cycle's f000. MJ (10/14/26)
+    return [p(start, h) for h in range(6)] + [p(cycle, 0)] if segment == "ncst" else [p(cycle, 0), p(cycle, 1), p(cycle, 3)]
 _open_sfcf_output = _interp_bracket = sfcf_valid_times = _write_sfcf_manifest = SFC_OUTPUTS = None
 """
 
@@ -495,8 +496,8 @@ def fake_nu(tmp_path):
 def test_gfs_files_dedup_ncst_window_and_source(fake_nu):
     cyc = datetime(2026, 10, 4, 0)
     fl = S.gfs_files(fake_nu, "/c/gfs", cyc, ["ncst", "fcst"], 7)
-    assert fl == ["/c/gfs/gfs.20261003/18/atmos/gfs.t18z.sfluxgrbf000.grib2", "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf000.grib2",
-                  "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf001.grib2", "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf003.grib2"]
+    assert fl == ["/c/gfs/gfs.20261003/18/atmos/gfs.t18z.sfluxgrbf%03d.grib2" % h for h in range(6)] + [
+        "/c/gfs/gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf%03d.grib2" % h for h in (0, 1, 3)]
     assert S.gfs_files(fake_nu, "/c/gfs", cyc, ["fcst"], 7, "sfcf")[0].endswith("gfs.t00z.sfcf000.nc")
 
 
@@ -507,7 +508,7 @@ def test_cli_idx_ranges_and_gfs_files(fake_nu, tmp_path, capsys):
     assert S.main(["--gfs-files", "/c/gfs", "--cycle", "2026100400", "--segments", "fcst", "--nos-utils", fake_nu]) == 0
     assert len(capsys.readouterr().out.split()) == 3
     with pytest.raises(SystemExit):
-        S.main(["--gfs-files", "/c/gfs", "--nos-utils", fake_nu])  # no --cycle
+        S.main(["--gfs-files", "/c/gfs", "--nos-utils", fake_nu])  # no --cycle. MJ (10/14/26)
     with pytest.raises(SystemExit):
         S.main(["--gfs-files", "/c/gfs", "--cycle", "2026100400", "--segments", "bogus", "--nos-utils", fake_nu])
 
@@ -543,12 +544,16 @@ elif [ -n "$out" ]; then cp "$f" "$out"; else cat "$f"; fi
 """
 # a "GRIB2 file" is MSG lines; wgrib2 -s prints one line per MSG. MJ (10/14/26)
 FAKE_WGRIB2 = """#!/bin/bash
-grep '^MSG' "$1" | sed 's/^/1:0:/'
+grep -o '^MSG[0-9]' "$1" | while read m; do
+  case $m in MSG1) echo '1:0:d=2026100400:TMP:2 m above ground:anl:';; MSG2) echo '2:0:d=2026100400:PRES:surface:anl:';;
+    MSG3) echo '3:0:d=2026100400:UGRD:10 m above ground:anl:';; MSG4) echo '4:0:d=2026100400:VGRD:10 m above ground:anl:';;
+    MSG5) echo '5:0:d=2026100400:HGT:surface:anl:';; MSG6) echo '6:0:d=2026100400:ICEC:surface:anl:';; esac
+done
 """
 
 
 def mk_grib(path):
-    """Six messages with the offsets of IDX (message i is 'MSG<i>' padded to its idx length)."""
+    """Six messages with the offsets of IDX (message i is 'MSG<i>' padded to its idx length). MJ (10/14/26)"""
     sizes = [100, 150, 150, 120, 180]
     body = b"".join((b"MSG%d" % (i + 1)).ljust(n - 1, b".") + b"\n" for i, n in enumerate(sizes)) + b"MSG6 tail-of-the-file\n"
     path.write_bytes(body)
@@ -564,7 +569,7 @@ def gfs_env(shell_env, fake_nu, tmp_path):
     (bindir / "wgrib2").write_text(FAKE_WGRIB2)
     (bindir / "wgrib2").chmod(0o755)
     bodies = {}
-    for nm in ("gfs.t18z.sfluxgrbf000", "gfs.t00z.sfluxgrbf000", "gfs.t00z.sfluxgrbf001", "gfs.t00z.sfluxgrbf003"):
+    for nm in ["gfs.t18z.sfluxgrbf%03d" % h for h in range(6)] + ["gfs.t00z.sfluxgrbf%03d" % h for h in (0, 1, 3)]:
         bodies[nm] = mk_grib(srv / (nm + ".grib2"))
         (srv / (nm + ".grib2.idx")).write_text(IDX)
     se["env"].update(STAGE_NOS_UTILS=fake_nu, COMROOT_STAGED=str(tmp_path / "stg"))
@@ -586,7 +591,8 @@ def test_shell_tool_source_gfs_downloads_four_messages_by_range(gfs_env):
     b = se["bodies"]["gfs.t00z.sfluxgrbf001"]
     f = se["comin"] / "gfs.20261004" / "00" / "atmos" / "gfs.t00z.sfluxgrbf001.grib2"
     assert f.read_bytes() == b[100:520] + b[700:]  # PRES, UGRD, VGRD (offsets 100..519) and the last message ICEC. MJ (10/14/26)
-    assert (se["comin"] / "gfs.20261003" / "18" / "atmos" / "gfs.t18z.sfluxgrbf000.grib2").is_file()
+    assert (se["comin"] / "gfs.20261003" / "18" / "atmos" / "gfs.t18z.sfluxgrbf005.grib2").is_file()
+    assert f.with_name(f.name + ".idx").read_text() == IDX  # the .idx sits next to the grib, the readiness marker. MJ (10/14/26)
     assert not list(se["comin"].rglob("*.partial*")) and not se["rerun"].exists()  # the rerun files are the prep job's. MJ (10/14/26)
     assert len(list((se["work"] / "products").iterdir())) == 3 and not (se["work"] / "forcing").exists()
     log = curl_log(se)
@@ -597,8 +603,32 @@ def test_shell_tool_source_gfs_downloads_four_messages_by_range(gfs_env):
     se["log"].unlink()
     f.write_bytes(b"MSG1\nMSG2\n")
     r = run_shell(se, "--source", "gfs", "20261004", "00")
-    assert r.returncode == 0 and r.stdout.count("SKIP ") == 3 + 3 and "OK   gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf001.grib2" in r.stdout
+    assert r.returncode == 0 and r.stdout.count("SKIP ") == 8 + 3 and "OK   gfs.20261004/00/atmos/gfs.t00z.sfluxgrbf001.grib2" in r.stdout
     assert sum(x.startswith("GET gfs.t00z.sfluxgrbf001.grib2 ") and x[-1] != " " for x in curl_log(se)) == 4
+
+
+def test_shell_tool_source_gfs_tolerates_a_trailing_slash_in_comroot_staged(gfs_env):
+    se = gfs_env
+    r = run_shell(se, "--source", "gfs", "20261004", "00", COMROOT_STAGED=se["env"]["COMROOT_STAGED"] + "//")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (se["comin"] / "gfs.20261004" / "00" / "atmos" / "gfs.t00z.sfluxgrbf003.grib2").is_file()
+
+
+def test_src_ds_offers_the_netcdf_attribute_api_the_writer_calls(tmp_path):
+    with nc.Dataset(str(tmp_path / "a.nc"), "w") as d:
+        d.setncattr("history", "ncecat ...")
+        d.setncattr("title", "t")
+        src = S._SrcDs(d)
+        assert src.ncattrs() == ["title"] and src.getncattr("title") == "t"  # NCO history dropped. MJ (10/14/26)
+
+
+def test_load_nos_utils_names_a_missing_sflux_interface(tmp_path):
+    f = tmp_path / "nos_utils" / "forcing" / "adcirc_met.py"
+    f.parent.mkdir(parents=True)
+    f.write_text("_open_sfcf_output = _interp_bracket = sfcf_valid_times = _write_sfcf_manifest = SFC_OUTPUTS = None\n")
+    with pytest.raises(S.StageError, match="gfs_input_files"):
+        S.load_nos_utils(str(tmp_path), sflux=True)
+    S.load_nos_utils(str(tmp_path))  # the ops path does not need the sflux names. MJ (10/14/26)
 
 
 def test_shell_tool_source_gfs_fails_on_a_missing_file_and_a_short_file(gfs_env):

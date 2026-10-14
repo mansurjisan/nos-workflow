@@ -242,11 +242,23 @@ def test_submit_gfs_forwards_sflux_and_the_preflight_lists_missing_files(cycle):
     assert all(j["v"]["ADCIRC_GFS_SOURCE"] == "sflux" for j in _jobs(tmp).values())
 
 
-@pytest.mark.parametrize("stages,segs", [("nowcast", "ncst"), ("forecast", "fcst"), ("prep", "fcst,ncst"), ("post", "fcst,ncst")])
-def test_gfs_preflight_asks_for_the_submitted_stages_files(cycle, stages, segs):
+@pytest.mark.parametrize("stages", ["prep", "prep nowcast", "prep nowcast forecast post"])
+def test_gfs_preflight_asks_for_the_files_the_prep_job_builds_from(cycle, stages):
     tmp = cycle[0]
-    assert _launch(cycle, SUBMIT_GFS="1", COLD="0", STAGES=stages, COMROOT_STAGED=str(tmp / "stg")).returncode == 0
-    assert f"--gfs-files {tmp}/stg/gfs --cycle 2026100512 --segments {segs} " in (tmp / "gfs.args").read_text()
+    assert _launch(cycle, SUBMIT_GFS="1", COLD="0", STAGES=stages, COMROOT_STAGED=str(tmp / "stg"), NCST_RECORDS="13").returncode == 0
+    assert f"--gfs-files {tmp}/stg/gfs --cycle 2026100512 --segments fcst,ncst --gfs-source sflux --ncst-records 13 " in (tmp / "gfs.args").read_text()
+
+
+@pytest.mark.parametrize("stages", ["nowcast", "forecast", "nowcast forecast post"])
+def test_without_prep_the_staged_rerun_files_are_checked_even_with_submit_gfs(cycle, stages):
+    tmp = cycle[0]
+    assert _launch(cycle, SUBMIT_GFS="1", COLD="0", STAGES=stages).returncode == 0 and not (tmp / "gfs.args").exists()
+    (tmp / "q.log").unlink()
+    (tmp / "com" / "nos" / "stofs_2d_glo.20261005" / "12" / "rerun" / "stofs_2d_glo_ncst.221.nc").unlink()
+    (tmp / "com" / "nos" / "stofs_2d_glo.20261005" / "12" / "rerun" / "stofs_2d_glo_fcst.221.nc").unlink()
+    r = _launch(cycle, SUBMIT_GFS="1", COLD="0", STAGES=stages)
+    assert r.returncode == 1 and "MISSING" in r.stderr and "221.nc" in r.stderr and not (tmp / "q.log").exists()
+    assert not (tmp / "gfs.args").exists()
 
 
 def test_gfs_source_is_forwarded_only_when_set_and_validated(cycle):
@@ -447,7 +459,7 @@ def test_preflight_needs_the_forcing_of_the_submitted_stages_only(cycle):
     (rr / "stofs_2d_glo_ncst.222.nc").unlink()
     r = _launch(cycle, COLD="0", STAGES="nowcast")
     assert r.returncode == 1 and r.stderr.count("MISSING") == 1 and "stofs_2d_glo_ncst.222.nc" in r.stderr
-    assert _launch(cycle, COLD="0", STAGES="forecast", SUBMIT_GFS="1").returncode == 0  # nothing is staged for GFS builds. MJ (10/14/26)
+    assert _launch(cycle, COLD="0", STAGES="prep", SUBMIT_GFS="1").returncode == 0  # prep builds the forcing, nothing is staged for it. MJ (10/14/26)
 
 
 @pytest.mark.parametrize("stages", ["ncst", "all", "nowcast prep", "prep prep", "forecast bogus", "post nowcast"])

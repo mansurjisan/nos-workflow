@@ -33,7 +33,9 @@
 #   tools/hercules_2d_glo_stage_forcing.sh --source gfs <PDY> <CYC>
 # The preflight then lists every file the builder reads for the submitted stages (one nos-utils call) instead of the rerun files. The prep
 # job's whole node (the card's --mem=0) is plenty: the builder streams one record at a time, so the forcing needs only a few GB, and the
-# adcprep step (cold start) is what sets the memory. The forcing is not bitwise equal to ops (GRIB2 vs netCDF packing). MJ (10/14/26)
+# adcprep step (cold start) is what sets the memory. Only a submission with the prep job builds forcing, so without
+# prep in STAGES the preflight checks the staged rerun files as without SUBMIT_GFS. NCST_RECORDS (default 7) sets the ncst window of the
+# file list; after a gap, when the chain start is older than cycle - 6 h, stage and launch with NCST_RECORDS=<hours since the chain start + 1>. The forcing is not bitwise equal to ops (GRIB2 vs netCDF packing). MJ (10/14/26)
 # Walltimes are the Hercules measurements plus margin, not the ecf values (ncst took 1128 s tide and 1115 s surf; the ecf nowcast
 # limit is 0:15 and the WCOSS2 launcher uses 0:25). W_PREP W_NOWCAST W_FORECAST W_POST override them; the defaults are the sums of the
 # former per-job values (prep 0:50, +3:00 with adcprep; nowcast 1:20, +1:00 with the spin-up; forecast 2:00; post 1:15). MJ (10/14/26)
@@ -113,17 +115,26 @@ for _s in ${STAGES}; do
   case "${_s}" in prep|post) _segs="${_segs} ncst fcst" ;; nowcast) _segs="${_segs} ncst" ;; forecast) _segs="${_segs} fcst" ;; esac
 done
 _segs="$(printf '%s\n' ${_segs} | sort -u | tr '\n' ' ')"
-if [ "${SUBMIT_GFS:-0}" != 1 ]; then
+_prep=0; case " ${STAGES} " in *" prep "*) _prep=1 ;; esac
+if [ "${SUBMIT_GFS:-0}" != 1 ] || [ "${_prep}" = 0 ]; then
   for _s in ${_segs}; do
     for _n in 221 222 225; do need -s "${RR}/stofs_2d_glo_${_s}.${_n}.nc"; done
   done
 else
-  # every GFS file the builder will read; the python call needs numpy (module nos_hercules.intel or the venv). MJ (10/14/26)
-  _gl=$( [ ! -f "${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}/bin/activate" ] || . "${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}/bin/activate"
+  # every GFS file the builder will read; prep is the only job that builds forcing. The python call needs numpy: the launcher
+  # unsets PYTHONPATH, so load the modules and the venv as the stage tool does. MJ (10/14/26)
+  _gl=$( set +u
+         if ! type module >/dev/null 2>&1; then
+           for _m in /etc/profile.d/modules.sh "${LMOD_PKG:-/nonexistent}/init/bash"; do [ -r "${_m}" ] && { . "${_m}"; break; }; done
+         fi
+         if type module >/dev/null 2>&1; then
+           module purge; module use "${PKG}/modulefiles"; . "${PKG}/versions/run.hercules.ver"; module load nos_hercules.intel
+         fi
+         _v="${NOS_VENV:-${VENV_PATH:-$HOME/nos-venv}}"; [ ! -f "${_v}/bin/activate" ] || . "${_v}/bin/activate"
          python3 "${PKG}/tools/stage_stofs_2d_glo_ops_forcing.py" --gfs-files "${COMROOT_STAGED:-${NOS_PTMP}/${LOGNAME}/comin_2dglo}/gfs" \
            --cycle "${PDY}${CYC}" --segments "$(echo ${_segs} | tr ' ' ',')" --gfs-source "${ADCIRC_GFS_SOURCE}" \
-           --nos-utils "${PKG}/ush/python/nos-utils" ) || {
-    echo "ERROR: cannot list the GFS ${ADCIRC_GFS_SOURCE} files (load module nos_hercules.intel or set NOS_VENV; nos-utils needs gfs_input_files)" >&2; exit 1; }
+           --ncst-records "${NCST_RECORDS:-7}" --nos-utils "${PKG}/ush/python/nos-utils" ) || {
+    echo "ERROR: cannot list the GFS ${ADCIRC_GFS_SOURCE} files (python3 needs numpy: module nos_hercules.intel / NOS_VENV; nos-utils needs gfs_input_files)" >&2; exit 1; }
   _gm=()
   while IFS= read -r _f; do [ -z "${_f}" ] || [ -s "${_f}" ] || _gm+=("${_f}"); done <<< "${_gl}"
   if [ "${#_gm[@]}" -gt 0 ]; then
