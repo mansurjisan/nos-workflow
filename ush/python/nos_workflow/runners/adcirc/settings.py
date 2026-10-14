@@ -147,7 +147,6 @@ class CycleContext:
     data: Optional[Path] = None
     stream: str = ""
     segment: str = ""
-    coldstart: bool = False
 
     @classmethod
     def from_env(cls, settings: AdcircSettings, env: Optional[Mapping[str, str]] = None) -> "CycleContext":
@@ -177,7 +176,6 @@ class CycleContext:
             data=Path(env["DATA"]) if env.get("DATA") else None,
             stream=env.get("ADCIRC_STREAM", "").strip().lower(),
             segment=env.get("ADCIRC_SEGMENT", "").strip().lower(),
-            coldstart=env.get("COLDSTART", "").strip().upper() == "YES",
         )
 
     @property

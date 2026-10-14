@@ -97,18 +97,22 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_adcirc_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """STOFS-2D-GLO prep: nowcast then forecast inputs (forcing, fort.15, adcprep). MJ (10/05/26)"""
+    """STOFS-2D-GLO prep: nowcast then forecast inputs (forcing, fort.15, adcprep). Ops mode runs the ADCIRC_SEGMENT list
+    (adcprep, ncst, fcst) through the shared ADCIRC stage driver. MJ (10/14/26)"""
     sl = stage_logger(_STAGE, descriptor.name)
     t_stage = time.monotonic()
     from ..runners.adcirc import ops as adcirc_ops, prep as adcirc_prep
     from ..runners.adcirc.settings import AdcircSettings, CycleContext
 
+    if os.environ.get("ADCIRC_MODE", "").strip().lower() == "ops":
+        from ._adcirc import run_model_stage
+
+        return run_model_stage(descriptor, _STAGE, adcirc_ops.run_prep)
     try:
         cfg = os.environ.get("OFS_CONFIG") or Path(os.environ.get("HOMEnos", ".")) / descriptor.yaml_path
         settings = AdcircSettings.from_yaml(cfg)
         ctx = CycleContext.from_env(settings)
-        phases = ([("ops", adcirc_ops.run_prep)] if settings.mode == "ops"
-                  else [("nowcast", adcirc_prep.prep_nowcast), ("forecast", adcirc_prep.prep_forecast)])
+        phases = [("nowcast", adcirc_prep.prep_nowcast), ("forecast", adcirc_prep.prep_forecast)]
         for phase, fn in phases:
             with timed_step(sl, f"prep_{phase}"):
                 fn(ctx)

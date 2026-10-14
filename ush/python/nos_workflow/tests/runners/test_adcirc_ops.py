@@ -86,8 +86,8 @@ def _go(tmp_path, stream, seg, fa=None, **extra):
 
 
 def _cold(tmp_path):
-    ctx = _ctx(tmp_path, COLDSTART="YES")
-    ops.cold_adcprep(ctx, FakeAdcprep())
+    ctx = _ctx(tmp_path, ADCIRC_SEGMENT="adcprep")
+    ops.run_prep(ctx, FakeAdcprep())
     cs = _ctx(tmp_path, ADCIRC_SEGMENT="spinup")
     ops.run_nowcast(cs, FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
     for seg in ("ncst", "fcst"):
@@ -125,9 +125,9 @@ def test_cold_start_seeds_both_chains(tmp_path):
 
 
 def test_missing_tide_fac_is_fatal_and_no_python_fallback(tmp_path):
-    ctx = _ctx(tmp_path, tide_fac=False, COLDSTART="YES")
+    ctx = _ctx(tmp_path, tide_fac=False, ADCIRC_SEGMENT="adcprep")
     with pytest.raises(AdcircConfigError, match="FATAL.*stofs_2d_glo_tide_fac.*stofs.v3.1.5"):
-        ops.cold_adcprep(ctx, FakeAdcprep())
+        ops.run_prep(ctx, FakeAdcprep())
     assert not (ctx.comges / f"{RUN}_nod_equi").exists()
 
 
@@ -135,7 +135,7 @@ def test_missing_tide_fac_leaves_a_live_chain_untouched(tmp_path):
     _cold(tmp_path)
     (tmp_path / "bin" / "stofs_2d_glo_tide_fac").unlink()
     with pytest.raises(AdcircConfigError, match="tide_fac"):
-        ops.cold_adcprep(_ctx(tmp_path, COLDSTART="YES"), FakeAdcprep())
+        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
     assert (tmp_path / "com" / RUN / f"{RUN}_nod_equi").is_file()
     assert not list((tmp_path / "com" / RUN).glob("*.old"))
 
@@ -160,7 +160,19 @@ def test_bad_chain_file_time_is_named(tmp_path, monkeypatch):
 
 def test_no_nod_equi_asks_for_a_cold_start(tmp_path):
     with pytest.raises(AdcircConfigError, match="restart with COLDSTART=YES"):
-        ops.run_prep(_ctx(tmp_path))
+        _go(tmp_path, "tide", "ncst")
+
+
+def test_prep_never_infers_a_cold_start_from_the_coldstart_env(tmp_path):
+    """The ops run.ver exports COLDSTART=YES into every job; only the adcprep segment may run cold_adcprep. MJ (10/14/26)"""
+    for seg in ("", "ncst,fcst", "cold"):
+        with pytest.raises(AdcircConfigError, match="ADCIRC_SEGMENT must be one of \\(.adcprep"):
+            ops.run_prep(_ctx(tmp_path, COLDSTART="YES", ADCIRC_SEGMENT=seg), FakeAdcprep())
+    assert not (tmp_path / "com" / RUN / f"{RUN}_nod_equi").exists()
+    ctx = _ctx(tmp_path, ADCIRC_SEGMENT="adcprep")
+    assert ops.run_prep(ctx, FakeAdcprep()) == 0
+    assert ops.read_nod_equi(ctx.comges / f"{RUN}_nod_equi")[0] == CYCLE - timedelta(hours=168)
+    assert (tmp_path / "work" / "tide_adcprep" / "PE0000" / "fort.24").is_file()
 
 
 def test_tide_chain(tmp_path):
@@ -386,6 +398,39 @@ def test_gfs_ncst_prep_starts_at_the_restart_chain_time(tmp_path):
     for n, v in (("221", "pressfc"), ("222", "ugrd10m"), ("225", "icec")):
         with nc.Dataset(str(rr / f"{RUN}_ncst.{n}.nc")) as d:
             assert d.variables[v].shape[0] == 7 and d.dimensions["record"].isunlimited()
+
+
+def _tank_for_ncst(tmp_path):
+    for h in range(6):
+        _sfcf(tmp_path / "gfs", CYCLE - timedelta(hours=6), h)
+    _sfcf(tmp_path / "gfs", CYCLE, 0)
+
+
+def test_gfs_ncst_prep_on_a_cold_start_ends_at_the_spinup_restart(tmp_path):
+    """Prep runs before the spin-up, so no chain file exists; this cycle's nod_equi says the spin-up will publish cycle - 6 h. MJ (10/14/26)"""
+    nc = pytest.importorskip("netCDF4")
+    ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
+    assert not list((tmp_path / "com").glob(f"{RUN}.*/*.restart"))
+    _tank_for_ncst(tmp_path)
+    assert ops.run_prep(_gfs_ctx(tmp_path, "ncst")) == 0
+    rr = ops.rerun_dir(_ctx(tmp_path))
+    with nc.Dataset(str(rr / f"{RUN}_ncst.221.nc")) as d:
+        assert d.variables["pressfc"].shape[0] == 7
+    # the spin-up then publishes the restart the window was cut for, and the surf ncst accepts the window. MJ (10/14/26)
+    ops.run_nowcast(_seg(tmp_path, "spinup"), FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
+    _go(tmp_path, "surf", "ncst")
+
+
+def test_gfs_ncst_prep_without_a_chain_file_or_this_cycles_nod_equi_keeps_the_error(tmp_path):
+    _tank_for_ncst(tmp_path)
+    with pytest.raises(AdcircConfigError, match="there are no restart files.*COLDSTART=YES"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst"))
+    ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
+    # a nod_equi from another cycle (here the 18z one's would start 6 h later) does not make a cold start of this cycle
+    with pytest.raises(AdcircConfigError, match="there are no restart files"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst", cyc="18"))
+    with pytest.raises(AdcircConfigError, match="there are no restart files"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst", PDY="20261004"))
 
 
 def test_gfs_prep_skips_existing_and_fails_clearly(tmp_path):
