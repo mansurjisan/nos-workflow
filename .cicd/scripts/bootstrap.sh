@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/common.sh"
 DATA_MODE=${DATA_MODE:-live}
 
 FIX_DEST="${HOMEnos}/fix/${OFS}"
+ATL=0
+case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ATL=1; FIX_DEST="${HOMEnos}/fix/stofs_3d_atl_ufs" ;; esac
 EXEC_DEST="${HOMEnos}/exec"
 # SECOFS keeps its sentinel and executable; STOFS-2D-Global has its own exec sentinel (exec/ is shared) and also needs the ADCIRC build, which lives beside the clone. MJ (10/13/26)
 EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok"
@@ -28,6 +30,17 @@ if [ "${OFS}" = stofs_2d_glo ]; then
   EXEC_FILTER=(--include="stofs_2d_glo_tide_fac" --exclude="*")
   ADCIRC_SRC="${SEED_ADCIRC:-$(dirname "${SEED_SRC}")/adcirc_v56.1.0_exec}"
   ADCIRC_DEST="${PACKAGEROOT}/adcirc_v56.1.0_exec"
+fi
+# STOFS-3D-ATL: both variants share fix/stofs_3d_atl_ufs; each has its own executable (the coupled fv3 build or the standalone pschism), plus tide_fac and the hotstart combiner. MJ (10/14/26)
+if [ "${ATL}" = 1 ]; then
+  EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok.${OFS}"
+  EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe fv3_stofs_3d_atl.exe)
+  [ "${OFS}" != stofs_3d_atl_ufs_standalone ] || EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe stofs_3d_atl_pschism_v3.1.5)
+  FIX_SRC="${SEED_SRC}/fix/stofs_3d_atl_ufs"
+  FIX_TO="${FIX_DEST}"
+  EXEC_FILTER=()
+  for _x in "${EXEC_NEED[@]}"; do EXEC_FILTER+=(--include="${_x}"); done
+  EXEC_FILTER+=(--exclude="*")
 fi
 
 # Sentinel-gated, not existence-of-directory: an interrupted rsync could leave a partially-populated destination that [ -d ]/[ -x ] would mistake for a complete seed.
@@ -50,6 +63,10 @@ if [ "${DATA_MODE}" = "frozen" ]; then
   if [ "${OFS}" = stofs_2d_glo ]; then
     RT_REL="stofs_2d_glo/${PDY}${CYC}"
     RT_SIZE="tens of GB"
+  fi
+  if [ "${ATL}" = 1 ]; then
+    RT_REL="stofs_3d_atl/$([ "${OFS}" = stofs_3d_atl_ufs_standalone ] && echo standalone || echo coupled)/${PDY}${CYC}"
+    RT_SIZE="~130GB"
   fi
   COMROOT_STAGED="${RT_DATA_ROOT}/${RT_REL}"
   [ -f "${COMROOT_STAGED}/.seeded_ok" ] || need_rt=1
@@ -89,6 +106,7 @@ if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
     echo "and chmod o+x (not -R) on every parent directory above it, e.g.:"
     echo "  chmod o+x ${SEED_RT} /work2/noaa/nos-surge/mjisan"
     [ "${OFS}" != stofs_2d_glo ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see its header)"
+    [ "${ATL}" != 1 ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header)"
     exit 1
   }
 fi
@@ -170,7 +188,9 @@ if [ "${DATA_MODE}" = "frozen" ]; then
       touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."
-      if [ "${OFS}" = stofs_2d_glo ]; then
+      if [ "${ATL}" = 1 ]; then
+        echo "Seed it with: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header), or switch DATA_MODE=live with DCOM_BUNDLE."
+      elif [ "${OFS}" = stofs_2d_glo ]; then
         echo "Seed it with: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see its header), or switch DATA_MODE=live."
       else
         echo "Run freeze_dataset.sh for PDY=${PDY} CYC=${CYC}, or switch DATA_MODE=live."
