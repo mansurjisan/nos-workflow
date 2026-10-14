@@ -56,7 +56,7 @@ def cycle(tmp_path):
     env = {**os.environ, "PATH": f"{tmp_path / 'bin'}:{os.environ['PATH']}", "QLOG": str(tmp_path / "q.log"),
            "NOS_PTMP": str(tmp_path / "ptmp"), "LOGNAME": "tester", "COMROOT_2DGLO": str(com),
            "ADCIRC_EXEC_DIR": str(tmp_path / "adcirc")}
-    for k in ("PKG", "COLD", "SERIAL", "KEEPDATA", "SUBMIT_GFS", "PACKAGEROOT", "HOMEnos", "ADCIRC_MODE", *DIRTY) + tuple(
+    for k in ("PKG", "COLD", "STAGES", "SERIAL", "KEEPDATA", "SUBMIT_GFS", "PACKAGEROOT", "HOMEnos", "ADCIRC_MODE", *DIRTY) + tuple(
             k for k in os.environ if k.startswith(("W_", "SLURM_"))):
         env.pop(k, None)
     return tmp_path, clone, env
@@ -305,6 +305,72 @@ def test_sbatch_failure_points_at_the_queued_jobs(cycle):
     _stub(tmp / "bin" / "sbatch", SBATCH.replace('echo "$n;hercules"', '[ "$n" -lt 3 ] && echo "$n" || exit 1'))
     r = _launch(cycle, COLD="0")
     assert r.returncode == 1 and "sbatch failed for surf_ncst" in r.stderr and "scancel" in r.stderr
+
+
+def test_stages_ncst_submits_only_the_two_nowcasts(cycle):
+    """The Jenkins smoke level: COLD=0 STAGES=ncst runs tide_ncst and surf_ncst and nothing downstream. MJ (10/13/26)"""
+    tmp = cycle[0]
+    r = _launch(cycle, COLD="0", STAGES="ncst")
+    assert r.returncode == 0, r.stderr
+    j = _jobs(tmp)
+    assert list(j) == ["tide_ncst", "surf_ncst"] and _deps(j) == {"tide_ncst": [], "surf_ncst": []}
+    assert (j["tide_ncst"]["wall"], j["surf_ncst"]["wall"]) == ("0:40:00", "0:40:00")
+    assert " ".join(j["surf_ncst"]["flags"]) == "-N 52" and j["tide_ncst"]["flags"] == []
+    jobs = tmp / "ptmp" / "tester" / "slurm_2dglo" / "jobs_2026100512.txt"
+    assert [ln.split()[0] for ln in jobs.read_text().splitlines()] == ["tide_ncst", "surf_ncst"]
+    (tmp / "q.log").unlink()
+    assert _launch(cycle, COLD="0", STAGES="all").returncode == 0 and len(_jobs(tmp)) == 6
+
+
+def test_stages_ncst_cold_chain_and_gfs_jobs(cycle):
+    tmp = cycle[0]
+    assert _launch(cycle, STAGES="ncst").returncode == 0
+    j = _jobs(tmp)
+    assert set(j) == {"cold_adcprep", "cold_spinup", "tide_ncst", "surf_ncst"}
+    assert _deps(j)["tide_ncst"] == ["cold_spinup"] and _deps(j)["surf_ncst"] == ["cold_spinup"]
+    (tmp / "q.log").unlink()
+    assert _launch(cycle, COLD="0", STAGES="ncst", SUBMIT_GFS="1").returncode == 0
+    j = _jobs(tmp)
+    assert set(j) == {"gfs_ncst", "tide_ncst", "surf_ncst"} and _deps(j)["surf_ncst"] == ["gfs_ncst"]
+
+
+def test_stages_ncst_preflight_needs_only_the_ncst_forcing(cycle):
+    tmp = cycle[0]
+    rr = tmp / "com" / "nos" / "stofs_2d_glo.20261005" / "12" / "rerun"
+    for n in (221, 222, 225):
+        (rr / f"stofs_2d_glo_fcst.{n}.nc").unlink()
+    r = _launch(cycle, COLD="0")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 3 and "stofs_2d_glo_fcst.221.nc" in r.stderr
+    assert not (tmp / "q.log").exists()
+    assert _launch(cycle, COLD="0", STAGES="ncst").returncode == 0
+    (rr / "stofs_2d_glo_ncst.222.nc").unlink()
+    r = _launch(cycle, COLD="0", STAGES="ncst")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 1 and "stofs_2d_glo_ncst.222.nc" in r.stderr
+
+
+def test_stages_is_validated(cycle):
+    r = _launch(cycle, STAGES="fcst")
+    assert r.returncode == 2 and "STAGES must be" in r.stderr
+    r = _launch(cycle, COLD="0", STAGES="ncst", SERIAL="1")
+    assert r.returncode == 2 and "SERIAL=1" in r.stderr and not (cycle[0] / "q.log").exists()
+
+
+def test_ci_account_and_qos_are_passed_to_every_sbatch(cycle):
+    """The cards say #SBATCH --account=nos-surge; the CI agent charges another account through the CLI. MJ (10/13/26)"""
+    tmp = cycle[0]
+    assert _launch(cycle, SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch").returncode == 0
+    j = _jobs(tmp)
+    assert len(j) == 8
+    for k, v in j.items():
+        assert "--account=nosofs" in v["flags"] and "--qos=batch" in v["flags"], k
+        assert v["sbatch"].index("--account=nosofs") > v["sbatch"].index("-t")
+    assert " ".join(j["surf_ncst"]["flags"]) == "--account=nosofs --qos=batch -N 52"
+    (tmp / "q.log").unlink()
+    assert _launch(cycle, COLD="0", SLURM_CI_ACCOUNT="nosofs").returncode == 0
+    assert all("--account=nosofs" in v["flags"] and not any(f.startswith("--qos") for f in v["flags"]) for v in _jobs(tmp).values())
+    (tmp / "q.log").unlink()
+    assert _launch(cycle, COLD="0").returncode == 0
+    assert not any(f.startswith(("--account", "--qos")) for v in _jobs(tmp).values() for f in v["flags"])
 
 
 def _status_cycle(tmp_path):

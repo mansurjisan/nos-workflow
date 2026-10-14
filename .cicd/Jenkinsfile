@@ -38,7 +38,16 @@ def resolveTargetSha() {
     }
 }
 
+// Manual STOFS-2D-Global builds report in the Jenkins build only; the hercules-ci/cycle status belongs to the SECOFS cycle. MJ (10/13/26)
+def cycleLabel() {
+    return (env.CI_OFS == 'stofs_2d_glo') ? "STOFS-2D-Global ${params.LEVEL} ${params.DATA_MODE} cycle" : 'cycle'
+}
+
 def postStatus(String state, String description) {
+    if (env.CI_OFS == 'stofs_2d_glo') {
+        echo "postStatus: skipped for STOFS-2D-Global (manual build)"
+        return
+    }
     try {
         def targetSha = resolveTargetSha()
         if (!targetSha?.trim()) {
@@ -83,6 +92,8 @@ pipeline {
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
+        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo'], description: 'System to run. stofs_2d_glo is manual only (Build with Parameters / Build Now), never from the PR label')
+        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo only. smoke: COLD=0 tide+surf nowcasts, compared with the frozen reference. cycle: COLD=0 full 6-job chain, compared with the frozen reference. full: COLD=1 cold start + cycle, ops comparison reported')
     }
 
     environment {
@@ -97,6 +108,8 @@ pipeline {
         DATA_MODE    = "${params.DATA_MODE}"
         PDY          = "${params.PDY}"
         CYC          = "${params.CYC}"
+        CI_OFS       = "${params.OFS ?: 'secofs_ufs'}"
+        LEVEL        = "${params.LEVEL ?: 'smoke'}"
     }
 
     stages {
@@ -147,6 +160,11 @@ pipeline {
                         }
                         env.RUN_CYCLE = hasLabel ? 'true' : 'false'
                         echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
+                    }
+                    // STOFS-2D-Global is manual only: a user who starts a build with OFS=stofs_2d_glo bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/13/26)
+                    if (env.RUN_CYCLE != 'true' && params.OFS == 'stofs_2d_glo' && currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')) {
+                        env.RUN_CYCLE = 'true'
+                        echo "Gate: manual STOFS-2D-Global build (LEVEL=${params.LEVEL}) - cycle will run, PR label not required"
                     }
                     if (env.RUN_CYCLE == 'true') {
                         // mkdir (no -p) is atomic, so it doubles as a mutex against concurrent cycles sharing NOS_CI_ROOT.
@@ -225,33 +243,45 @@ pipeline {
             }
         }
         stage('Prep') {
-            when { environment name: 'RUN_CYCLE', value: 'true' }
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
             }
         }
         stage('Nowcast') {
-            when { environment name: 'RUN_CYCLE', value: 'true' }
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
             }
         }
         stage('Forecast') {
-            when { environment name: 'RUN_CYCLE', value: 'true' }
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
             }
         }
         stage('Post') {
-            when { environment name: 'RUN_CYCLE', value: 'true' }
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
             }
         }
         stage('Verify') {
-            when { environment name: 'RUN_CYCLE', value: 'true' }
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+            }
+        }
+        stage('Run 2D-GLO') {
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'stofs_2d_glo' } }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" run'
+            }
+        }
+        stage('Verify 2D-GLO') {
+            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'stofs_2d_glo' } }
+            steps {
+                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" verify'
             }
         }
     }
@@ -275,7 +305,7 @@ pipeline {
                 }
             }
             script {
-                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true') {
+                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true' && env.CI_OFS != 'stofs_2d_glo') {
                     try {
                         withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
                             withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
@@ -318,11 +348,11 @@ pipeline {
                 }
             }
             slackSend(channel: '#nos-notifications', color: 'good',
-                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         failure {
             slackSend(channel: '#nos-notifications', color: 'danger',
-                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* cycle ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         aborted {
             slackSend(channel: '#nos-notifications', color: 'warning',

@@ -21,6 +21,9 @@
 # limit is 0:15 and the WCOSS2 launcher uses 0:25, #223). W_COLD W_SPIN W_TNC W_TFC W_SNC W_SFC W_DIFF W_CAT (W_GN W_GF for the
 # GFS jobs) override them. MJ (10/13/26)
 # Not submitted: post_anomaly, post_bias and post_grib2 need the ops executables and cfp, which Hercules lacks. MJ (10/13/26)
+# STAGES=ncst submits only tide_ncst and surf_ncst (the nowcast smoke test; default all) and the preflight then needs only the ncst
+# forcing files; it cannot be combined with SERIAL=1. SLURM_CI_ACCOUNT and SLURM_CI_QOS, when set, are passed to every sbatch as
+# --account and --qos and override the cards' #SBATCH values (the Jenkins pipeline sets them, as for the SECOFS cards). MJ (10/13/26)
 set -eu
 
 if [ "$#" -ne 2 ]; then
@@ -32,6 +35,12 @@ CYC="$2"
 case "${PDY}" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) echo "ERROR: PDY must be YYYYMMDD (got ${PDY})" >&2; exit 2 ;; esac
 case "${CYC}" in 00|06|12|18) ;; *) echo "ERROR: CYC must be 00, 06, 12 or 18 (got ${CYC})" >&2; exit 2 ;; esac
 case "${COLD:-1}" in 1|spinup|0) ;; *) echo "ERROR: COLD must be 1, spinup or 0 (got ${COLD})" >&2; exit 2 ;; esac
+case "${STAGES:-all}" in all|ncst) ;; *) echo "ERROR: STAGES must be all or ncst (got ${STAGES})" >&2; exit 2 ;; esac
+if [ "${STAGES:-all}" = ncst ] && [ "${SERIAL:-0}" = 1 ]; then
+  echo "ERROR: SERIAL=1 makes surf_ncst wait for tide_fcst, which STAGES=ncst does not submit" >&2
+  exit 2
+fi
+STAGES="${STAGES:-all}"
 # sbatch from inside an allocation inherits its SLURM_* variables and nests the jobs under it. MJ (10/13/26)
 if [ -n "${SLURM_JOB_ID:-}" ]; then
   echo "ERROR: SLURM_JOB_ID=${SLURM_JOB_ID} is set (srun/salloc shell); exit the allocation and run the launcher from a login node shell" >&2
@@ -62,7 +71,11 @@ need() { [ "$1" "$2" ] || { echo "MISSING: $2" >&2; _miss=1; }; }
 for _f in "${PREP}" "${NOW}" "${FC}"; do need -s "${_f}"; done
 for _f in "${ADCIRC_EXEC_DIR}/padcirc" "${ADCIRC_EXEC_DIR}/adcprep" "${PKG}/exec/stofs_2d_glo_tide_fac"; do need -x "${_f}"; done
 if [ "${SUBMIT_GFS:-0}" != 1 ]; then
-  for _f in "${RR}"/stofs_2d_glo_{ncst,fcst}.{221,222,225}.nc; do need -s "${_f}"; done
+  _segs=(ncst fcst)
+  [ "${STAGES}" = all ] || _segs=(ncst)
+  for _s in "${_segs[@]}"; do
+    for _n in 221 222 225; do need -s "${RR}/stofs_2d_glo_${_s}.${_n}.nc"; done
+  done
 fi
 # The fix files the ops runner reads from $HOMEnos/fix/stofs_2d_glo (the cards unset FIXofs). MJ (10/13/26)
 for _f in "${PKG}"/fix/stofs_2d_glo/stofs_2d_glo_{grid,attr,body,tide.15,surf.15}; do need -s "${_f}"; done
@@ -87,6 +100,10 @@ mkdir -p "${JDIR}"
 cd "${JDIR}"
 
 OPSVARS="PDY=${PDY},CYC=${CYC},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops"
+# CLI --account/--qos beat the cards' #SBATCH lines, so a CI service account charges an allocation it may use. MJ (10/13/26)
+ACCT=()
+[ -z "${SLURM_CI_ACCOUNT:-}" ] || ACCT+=(--account="${SLURM_CI_ACCOUNT}")
+[ -z "${SLURM_CI_QOS:-}" ] || ACCT+=(--qos="${SLURM_CI_QOS}")
 declare -A J
 # sub <label> <card> <walltime> <extra sbatch flags|-> <extra export vars|-> [dep labels...]. MJ (10/13/26)
 sub() {
@@ -95,7 +112,7 @@ sub() {
   [ "${flags}" != - ] || flags=""
   [ "${xv}" = - ] || v="${v},${xv}"
   for l in "$@"; do dep="${dep}:${J[$l]}"; done
-  id=$(sbatch --parsable --kill-on-invalid-dep=yes -J "stofs_2d_glo_${label}" -t "${wall}" ${flags} \
+  id=$(sbatch --parsable --kill-on-invalid-dep=yes -J "stofs_2d_glo_${label}" -t "${wall}" ${ACCT[@]+"${ACCT[@]}"} ${flags} \
        ${dep:+--dependency=afterok${dep}} --export="ALL,${v}" "${card}") || {
     echo "ERROR: sbatch failed for ${label}; cancel what was queued: scancel \$(awk '{print \$2}' ${JOBS})" >&2
     exit 1
@@ -117,18 +134,23 @@ esac
 GN=""; GF=""
 if [ "${SUBMIT_GFS:-0}" = 1 ]; then
   sub gfs_ncst "${PREP}" "${W_GN:-0:10:00}" - ADCIRC_SEGMENT=ncst ${PRE}
-  sub gfs_fcst "${PREP}" "${W_GF:-0:40:00}" - ADCIRC_SEGMENT=fcst
-  GN="gfs_ncst"; GF="gfs_fcst"
+  GN="gfs_ncst"
+  if [ "${STAGES}" = all ]; then
+    sub gfs_fcst "${PREP}" "${W_GF:-0:40:00}" - ADCIRC_SEGMENT=fcst
+    GF="gfs_fcst"
+  fi
 fi
 SER=""
 [ "${SERIAL:-0}" != 1 ] || SER="tide_fcst"
 # surf ncst/fcst launch 4064 + 32 writer ranks = 4096, which needs 52 x 80 slots, so they add -N 52. MJ (10/13/26)
 sub tide_ncst "${NOW}" "${W_TNC:-0:40:00}" - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${PRE}
-sub tide_fcst "${FC}" "${W_TFC:-0:55:00}" - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
+[ "${STAGES}" != all ] || sub tide_fcst "${FC}" "${W_TFC:-0:55:00}" - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
 sub surf_ncst "${NOW}" "${W_SNC:-0:40:00}" "-N 52" ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst ${GN} ${PRE} ${SER}
-sub surf_fcst "${FC}" "${W_SFC:-1:05:00}" "-N 52" ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst ${GF}
-sub post_ncdiff "${PREP}" "${W_DIFF:-0:30:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncdiff tide_fcst surf_fcst
-sub post_ncrcat "${PREP}" "${W_CAT:-0:45:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncrcat surf_fcst
+if [ "${STAGES}" = all ]; then
+  sub surf_fcst "${FC}" "${W_SFC:-1:05:00}" "-N 52" ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst ${GF}
+  sub post_ncdiff "${PREP}" "${W_DIFF:-0:30:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncdiff tide_fcst surf_fcst
+  sub post_ncrcat "${PREP}" "${W_CAT:-0:45:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncrcat surf_fcst
+fi
 
 cat <<EOM
 
