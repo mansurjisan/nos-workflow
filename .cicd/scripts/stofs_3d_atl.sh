@@ -82,7 +82,7 @@ dcom_required() {
 dcom_groups() {
   local d
   for d in "${PDY}" "${PDYM1}"; do
-    echo "${d}/coops_waterlvlobs"
+    echo "${d}/coops_waterlvlobs/"
     echo "${d}/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_${d}_${d}.nc"
     echo "${d}/can_streamgauge/02OA016_hydrometric.csv"
   done
@@ -361,6 +361,7 @@ cmd_seed() {
   for s in gfs hrrr rtofs nwm; do
     rsync -a ${lcomin[@]+"${lcomin[@]}"} "${src_comin}/${s}" "${dest}/input/comin/"
   done
+  # a trailing slash makes --files-from copy the directory contents. MJ (10/14/26)
   dcom_groups | while read -r f; do [ ! -e "${src_dcom}/${f}" ] || echo "${f}"; done | rsync -a --files-from=- "${src_dcom}/" "${dest}/input/dcom/"
   echo "${refs}" | rsync -a --files-from=- "${src_com}/" "${dest}/ref/"
   fetch_ops "${dest}/ref/ops"

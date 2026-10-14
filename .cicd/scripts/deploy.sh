@@ -26,7 +26,9 @@ rsync -a --delete \
 case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ATL=1 ;; *) ATL=0 ;; esac
 if [ "${OFS}" = stofs_2d_glo ] || [ "${ATL}" = 1 ]; then
   NU_SRC="${WORKSPACE}/ush/python/nos-utils"
-  [ -f "${NU_SRC}/nos_utils/forcing/adcirc_met.py" ] && [ -f "${NU_SRC}/nos_utils/orchestrator.py" ] || {
+  NU_SENTINEL=forcing/adcirc_met.py
+  [ "${ATL}" != 1 ] || NU_SENTINEL=orchestrator.py
+  [ -f "${NU_SRC}/nos_utils/${NU_SENTINEL}" ] || {
     echo "FATAL: ${NU_SRC} is empty -- enable Recursively update submodules in the job config"
     exit 1
   }

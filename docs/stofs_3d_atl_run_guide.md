@@ -395,3 +395,24 @@ The difference from operational does not grow materially on the chained day: the
 | Hercules job ran the SECOFS package | `PACKAGEROOT` not set; the ATL cards refuse to run without it. |
 | SECOFS job on Hercules read ATL inputs | `atl_env.sh` was sourced in that shell. Use a fresh shell for SECOFS. |
 | Slow or hanging start at high rank counts | ParMETIS. All ATL builds use `NO_PARMETIS` with the staged `partition.prop`. |
+
+## 10. Jenkins (Hercules, manual only)
+
+Each ATL variant runs in the Hercules Jenkins pipeline only from **Build with Parameters**, like STOFS-2D-Global. The PR-label trigger is not used: a build started by a user with `OFS=stofs_3d_atl_ufs_standalone` (pschism) or `OFS=stofs_3d_atl_ufs` (UFS coupled) bypasses the label check, **Build Now** and PR-label builds keep running SECOFS, and no GitHub status is posted.
+
+| LEVEL | Cards run | Jobs | Verify |
+|---|---|---|---|
+| smoke | prep, nowcast | 2 | `compare_atl.py regress --level smoke` against the frozen reference |
+| cycle | prep, nowcast, forecast, post | 4 | `regress --level cycle` |
+| full | prep, nowcast, forecast, post | 4 | `regress --level cycle`, then the ops comparison (report only) |
+
+`stofs_3d_atl.sh run` submits the variant's four cards as an `sbatch --dependency=afterok` chain with the CI account and qos, waits (14400 s for smoke, 36000 s for cycle and full, `WAIT_S` overrides) and passes a job only when it is COMPLETED and its log has `STAGE_SUMMARY ... status=PASS`. It always runs the 12z cycle: set `CYC=12`. Everything lives in `$NOS_PTMP/$LOGNAME/atl_ci_<standalone|coupled>` (com, comin, dcom, rpt), which Stage Data clears; it refuses to clear the shared com or the hand-run `com_atl_sa`, `com_atl_ufs` and `comin_atl`.
+
+**Frozen (the main mode).** Seed a dataset once from a finished run (about 130 GB per variant; the second variant hard-links what it shares), as the user who owns it:
+```bash
+bash .cicd/scripts/stofs_3d_atl.sh seed 20261001 standalone $COMROOT_SA $NOS_PTMP/$LOGNAME/comin_atl $B/dcom
+bash .cicd/scripts/stofs_3d_atl.sh seed 20261001 coupled    $COMROOT_UFS $NOS_PTMP/$LOGNAME/comin_atl $B/dcom
+```
+It stores the init state, the previous-cycle dynamic-adjust seed, the staged comin tree, the dcom files prep reads, the reference outputs and the ops products in `${SEED_RT}/stofs_3d_atl/<variant>/<PDY>12/` (layout in the script header). Then **Build with Parameters** with `OFS=...`, `LEVEL=...`, `DATA_MODE=frozen`, `PDY=20261001`, `CYC=12`.
+
+**Live.** `DATA_MODE=live` stages the public inputs for PDY with `stage_comin.py`, `hercules_atl_seed_init.sh` and `hercules_atl_seed_prev.sh` on the front-end node, and needs `DCOM_BUNDLE=<case bundle dir with dcom/ and seeds/dyn_seed_<PDY-1>/>`, readable by the CI account. It downloads about 125 GB per build and compares the ops products downloaded at verify time; use frozen for regression checks.

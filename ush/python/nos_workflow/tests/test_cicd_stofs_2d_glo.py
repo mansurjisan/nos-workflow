@@ -114,7 +114,7 @@ def test_every_cicd_script_is_valid_bash_and_python_compiles():
 
 def test_jenkinsfile_parameters_default_to_the_secofs_pipeline():
     text = JENKINSFILE.read_text()
-    assert re.search(r"choice\(name: 'OFS', choices: \['secofs_ufs', 'stofs_2d_glo'\]", text)
+    assert re.search(r"choice\(name: 'OFS', choices: \['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'\]", text)
     assert re.search(r"choice\(name: 'LEVEL', choices: \['smoke', 'cycle', 'full'\]", text)
     assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
     assert "LEVEL        = \"${params.LEVEL ?: 'smoke'}\"" in text
@@ -140,11 +140,12 @@ def test_2dglo_is_never_selected_by_the_pr_label_path():
     """Only an explicit OFS=stofs_2d_glo started by a user turns RUN_CYCLE on without the label; the label code itself is kept. MJ (10/13/26)"""
     text = JENKINSFILE.read_text()
     assert "pullRequest.labels.contains('hercules-nos-RT')" in text
-    m = re.search(r"if \(env\.RUN_CYCLE != 'true' && params\.OFS == 'stofs_2d_glo' && currentBuild\.getBuildCauses\('hudson\.model\.Cause\$UserIdCause'\)\)", text)
+    assert "return ofs in ['stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']" in text
+    m = re.search(r"if \(env\.RUN_CYCLE != 'true' && isManualOfs\(params\.OFS\) && currentBuild\.getBuildCauses\('hudson\.model\.Cause\$UserIdCause'\)\)", text)
     assert m, "the manual override must require both the explicit selection and a user-started build"
     assert text.index("hasLabel ? 'true' : 'false'") < m.start() < text.index("mkdir (no -p) is atomic")
-    assert "CI_OFS != 'stofs_2d_glo'" in text, "the hercules-nos-RT label must not be removed after a 2D-GLO build"
-    assert re.search(r"def postStatus\(String state, String description\) \{\n    if \(env\.CI_OFS == 'stofs_2d_glo'\)", text)
+    assert "!isManualOfs(env.CI_OFS)" in text, "the hercules-nos-RT label must not be removed after a manual build"
+    assert re.search(r"def postStatus\(String state, String description\) \{\n    if \(isManualOfs\(env\.CI_OFS\)\)", text)
 
 
 def test_common_sh_defaults_to_secofs_and_rejects_an_unknown_system(ci):
