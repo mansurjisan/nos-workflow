@@ -483,7 +483,35 @@ def test_gfs_prep_wait_comes_from_the_yaml(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k, args=a))
     ops.run_prep(ctx)
-    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst"
+    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst" and "source" not in seen
+
+
+def test_gfs_source_env_beats_yaml_and_is_validated(tmp_path, monkeypatch):
+    from nos_utils.forcing import adcirc_met as am
+    _cold(tmp_path)
+    ctx = _gfs_ctx(tmp_path, "fcst")
+    (ops.rerun_dir(ctx) / f"{RUN}_fcst.221.nc").unlink()
+    seen = {}
+    monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k))
+    monkeypatch.delenv("ADCIRC_GFS_SOURCE", raising=False)
+    ctx.settings.raw["adcirc"]["ops_gfs_source"] = "sflux"
+    ops.run_prep(ctx)
+    assert seen["source"] == "sflux"
+    monkeypatch.setenv("ADCIRC_GFS_SOURCE", "sfcf")
+    seen.clear()
+    ops.run_prep(ctx)
+    assert "source" not in seen  # sfcf is the builder's default; not passed. MJ (10/14/26)
+    monkeypatch.setenv("ADCIRC_GFS_SOURCE", "grib")
+    with pytest.raises(AdcircConfigError, match="sfcf or sflux"):
+        ops.run_prep(ctx)
+    monkeypatch.delenv("ADCIRC_GFS_SOURCE")
+    ctx.settings.raw["adcirc"]["ops_gfs_source"] = "bad"
+    with pytest.raises(AdcircConfigError, match="sfcf or sflux"):
+        ops.run_prep(ctx)
+
+
+def test_yaml_default_gfs_source_is_sfcf():
+    assert AdcircSettings.from_yaml(YAML, {}).raw["adcirc"]["ops_gfs_source"] == "sfcf"
 
 
 def test_surf_ncst_window_must_match_the_chain_start(tmp_path):
