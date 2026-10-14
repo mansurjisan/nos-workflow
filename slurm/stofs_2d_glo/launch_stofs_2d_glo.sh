@@ -11,19 +11,30 @@
 # must be named nos-workflow because the cards derive HOMEnos from $PACKAGEROOT/nos-workflow. Optional env: ADCIRC_EXEC_DIR (dir
 # holding padcirc and adcprep; default <parent of the clone>/adcirc_v56.1.0_exec, where tools/build_stofs_2d_glo_adcirc_hercules.sh
 # installs), NOS_PTMP, COMROOT_2DGLO (default $NOS_PTMP/$LOGNAME/com, the cards' default), COMROOT_STAGED (GFS under <it>/gfs), NOS_VENV. MJ (10/13/26)
-# Cycle options: COLD=1 (default) prepends cold_adcprep + cold_spinup; COLD=spinup only the spin-up (nod_equi and the decomposition tar
-# exist); COLD=0 neither (the previous 6-hourly cycle is in COMOUT). The preflight checks the files each option needs. COLD=spinup
-# only works for the same PDY and CYC as the cold_adcprep that made nod_equi (the spin-up refuses another cycle). SERIAL=1 makes
-# surf_ncst wait for tide_fcst, so 52 nodes are busy at a time instead of 103. KEEPDATA=YES keeps each job's $DATA (default NO). MJ (10/13/26)
+# One cycle is four jobs, prep -> nowcast -> forecast -> post, each afterok on the one before. The tide and surf streams run one after the
+# other inside a job, on the job's own allocation. Each job runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list in order:
+#   prep      [adcprep], GFS ncst, GFS fcst forcing      -N 1 -n 1 --mem=64G (the card's whole node with SUBMIT_GFS=1)
+#   nowcast   [spinup], tide ncst, surf ncst             -N 52
+#   forecast  tide fcst, surf fcst                       -N 52
+#   post      ncdiff, ncrcat                             -N 1 -n 1 --mem=100G
+# 52 nodes because the surf runs launch 4064 + 32 writer ranks = 4096, which needs 52 x 80 slots. The launcher passes the lists in the
+# environment of sbatch (--export=ALL), as --export cannot carry a value with a comma. MJ (10/14/26)
+# Cycle options: COLD=1 (default) adds adcprep to prep and the spin-up to nowcast; COLD=spinup only the spin-up (nod_equi and the decomposition
+# tar exist); COLD=0 neither (the previous 6-hourly cycle is in COMOUT). The preflight checks the files each option needs. COLD=spinup
+# only works for the same PDY and CYC as the cold_adcprep that made nod_equi (the spin-up refuses another cycle). KEEPDATA=YES keeps each
+# job's $DATA (default NO). STAGES is a subset of "prep nowcast forecast post" in that order (default all; only the submitted jobs are
+# linked); STREAMS (default "tide surf") is passed as ADCIRC_STREAM. MJ (10/14/26)
 # The surf forcing is read from $COMROOT_2DGLO/nos/stofs_2d_glo.<PDY>/<CYC>/rerun (staged from the ops files; the preflight checks it).
-# SUBMIT_GFS=1 submits gfs_ncst and gfs_fcst instead, for a machine that has GFS sfcf (untested on Hercules; GFS location via COMROOT_STAGED). MJ (10/13/26)
+# The prep job always runs the ncst and fcst steps; they skip when the staged files exist. SUBMIT_GFS=1 lets them build from GFS instead,
+# for a machine that has GFS sfcf (untested on Hercules; GFS location via COMROOT_STAGED). MJ (10/14/26)
 # Walltimes are the Hercules measurements plus margin, not the ecf values (ncst took 1128 s tide and 1115 s surf; the ecf nowcast
-# limit is 0:15 and the WCOSS2 launcher uses 0:25, #223). W_COLD W_SPIN W_TNC W_TFC W_SNC W_SFC W_DIFF W_CAT (W_GN W_GF for the
-# GFS jobs) override them. MJ (10/13/26)
-# Not submitted: post_anomaly, post_bias and post_grib2 need the ops executables and cfp, which Hercules lacks. MJ (10/13/26)
-# STAGES=ncst submits only tide_ncst and surf_ncst (the nowcast smoke test; default all) and the preflight then needs only the ncst
-# forcing files; it cannot be combined with SERIAL=1. SLURM_CI_ACCOUNT and SLURM_CI_QOS, when set, are passed to every sbatch as
-# --account and --qos and override the cards' #SBATCH values (the Jenkins pipeline sets them, as for the SECOFS cards). MJ (10/13/26)
+# limit is 0:15 and the WCOSS2 launcher uses 0:25). W_PREP W_NOWCAST W_FORECAST W_POST override them; the defaults are the sums of the
+# former per-job values (prep 0:50, +3:00 with adcprep; nowcast 1:20, +1:00 with the spin-up; forecast 2:00; post 1:15). MJ (10/14/26)
+# Not submitted: anomaly, bias and grib2 need the ops executables and cfp, which Hercules lacks. MJ (10/13/26)
+# There are no done-markers: redo a failed step by resubmitting its job with a narrower list, e.g. STAGES="nowcast forecast post"
+# STREAMS=surf COLD=0 after the surf ncst failed (ncst re-runs from the same chain file; the prep forcing is staged). The CI smoke test
+# is STAGES=nowcast; the preflight then needs only the ncst forcing. SLURM_CI_ACCOUNT and SLURM_CI_QOS, when set, are passed to every
+# sbatch as --account and --qos and override the cards' #SBATCH values (the Jenkins pipeline sets them, as for the SECOFS cards). MJ (10/14/26)
 set -eu
 
 if [ "$#" -ne 2 ]; then
@@ -35,12 +46,13 @@ CYC="$2"
 case "${PDY}" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]) ;; *) echo "ERROR: PDY must be YYYYMMDD (got ${PDY})" >&2; exit 2 ;; esac
 case "${CYC}" in 00|06|12|18) ;; *) echo "ERROR: CYC must be 00, 06, 12 or 18 (got ${CYC})" >&2; exit 2 ;; esac
 case "${COLD:-1}" in 1|spinup|0) ;; *) echo "ERROR: COLD must be 1, spinup or 0 (got ${COLD})" >&2; exit 2 ;; esac
-case "${STAGES:-all}" in all|ncst) ;; *) echo "ERROR: STAGES must be all or ncst (got ${STAGES})" >&2; exit 2 ;; esac
-if [ "${STAGES:-all}" = ncst ] && [ "${SERIAL:-0}" = 1 ]; then
-  echo "ERROR: SERIAL=1 makes surf_ncst wait for tide_fcst, which STAGES=ncst does not submit" >&2
-  exit 2
-fi
-STAGES="${STAGES:-all}"
+STAGES="${STAGES:-prep nowcast forecast post}"
+_want=""
+for _s in prep nowcast forecast post; do
+  case " ${STAGES} " in *" ${_s} "*) _want="${_want:+${_want} }${_s}" ;; esac
+done
+[ "${_want}" = "$(echo ${STAGES})" ] || { echo "ERROR: STAGES must be a subset of 'prep nowcast forecast post' in that order (got '${STAGES}')" >&2; exit 2; }
+STREAMS="$(echo ${STREAMS:-tide surf} | tr -s ' ,' ',')"
 # sbatch from inside an allocation inherits its SLURM_* variables and nests the jobs under it. MJ (10/13/26)
 if [ -n "${SLURM_JOB_ID:-}" ]; then
   echo "ERROR: SLURM_JOB_ID=${SLURM_JOB_ID} is set (srun/salloc shell); exit the allocation and run the launcher from a login node shell" >&2
@@ -71,9 +83,12 @@ need() { [ "$1" "$2" ] || { echo "MISSING: $2" >&2; _miss=1; }; }
 for _f in "${PREP}" "${NOW}" "${FC}"; do need -s "${_f}"; done
 for _f in "${ADCIRC_EXEC_DIR}/padcirc" "${ADCIRC_EXEC_DIR}/adcprep" "${PKG}/exec/stofs_2d_glo_tide_fac"; do need -x "${_f}"; done
 if [ "${SUBMIT_GFS:-0}" != 1 ]; then
-  _segs=(ncst fcst)
-  [ "${STAGES}" = all ] || _segs=(ncst)
-  for _s in "${_segs[@]}"; do
+  # prep and post (ncrcat) use both forcing segments, nowcast the ncst one, forecast the fcst one. MJ (10/14/26)
+  _segs=""
+  for _s in ${STAGES}; do
+    case "${_s}" in prep|post) _segs="${_segs} ncst fcst" ;; nowcast) _segs="${_segs} ncst" ;; forecast) _segs="${_segs} fcst" ;; esac
+  done
+  for _s in $(printf '%s\n' ${_segs} | sort -u); do
     for _n in 221 222 225; do need -s "${RR}/stofs_2d_glo_${_s}.${_n}.nc"; done
   done
 fi
@@ -105,15 +120,17 @@ ACCT=()
 [ -z "${SLURM_CI_ACCOUNT:-}" ] || ACCT+=(--account="${SLURM_CI_ACCOUNT}")
 [ -z "${SLURM_CI_QOS:-}" ] || ACCT+=(--qos="${SLURM_CI_QOS}")
 declare -A J
-# sub <label> <card> <walltime> <extra sbatch flags|-> <extra export vars|-> [dep labels...]. MJ (10/13/26)
+# sub <label> <card> <walltime> <extra sbatch flags|-> <ADCIRC_SEGMENT list> <ADCIRC_STREAM list|-> [dep labels...]. The lists go in the
+# environment (--export=ALL): --export would split them at their commas. MJ (10/14/26)
 sub() {
-  local label="$1" card="$2" wall="$3" flags="$4" xv="$5" v="${OPSVARS}" dep="" l id
-  shift 5
+  local label="$1" card="$2" wall="$3" flags="$4" seg="$5" stream="$6" dep="" l id
+  shift 6
   [ "${flags}" != - ] || flags=""
-  [ "${xv}" = - ] || v="${v},${xv}"
+  [ "${stream}" != - ] || stream=""
   for l in "$@"; do dep="${dep}:${J[$l]}"; done
-  id=$(sbatch --parsable --kill-on-invalid-dep=yes -J "stofs_2d_glo_${label}" -t "${wall}" ${ACCT[@]+"${ACCT[@]}"} ${flags} \
-       ${dep:+--dependency=afterok${dep}} --export="ALL,${v}" "${card}") || {
+  id=$(ADCIRC_SEGMENT="${seg}" ADCIRC_STREAM="${stream}" \
+       sbatch --parsable --kill-on-invalid-dep=yes -J "stofs_2d_glo_${label}" -t "${wall}" ${ACCT[@]+"${ACCT[@]}"} ${flags} \
+       ${dep:+--dependency=afterok${dep}} --export="ALL,${OPSVARS}" "${card}") || {
     echo "ERROR: sbatch failed for ${label}; cancel what was queued: scancel \$(awk '{print \$2}' ${JOBS})" >&2
     exit 1
   }
@@ -122,40 +139,31 @@ sub() {
   printf '%-14s: %s%s\n' "${label}" "${J[$label]}" "${dep:+   (afterok${dep})}"
 }
 
-echo "=== STOFS-2D-Global ops-mode chain on Hercules: PDY=${PDY} CYC=${CYC} PKG=${PKG} COMROOT_2DGLO=${COMROOT_2DGLO} ==="
-PRE=""
+echo "=== STOFS-2D-Global ops-mode chain on Hercules: PDY=${PDY} CYC=${CYC} PKG=${PKG} COMROOT_2DGLO=${COMROOT_2DGLO} STAGES='${STAGES}' STREAMS=${STREAMS} ==="
+# Walltime defaults are the sums of the former per-job ones; the cold start adds adcprep (3:00) and the spin-up (1:00). MJ (10/14/26)
+PSEG=ncst,fcst; PW=0:50:00; NSEG=ncst; NW=1:20:00
 case "${COLD:-1}" in
-  1)      sub cold_adcprep "${PREP}" "${W_COLD:-3:00:00}" "-N 1 -n 1 --mem=64G" COLDSTART=YES
-          sub cold_spinup "${NOW}" "${W_SPIN:-1:00:00}" - ADCIRC_SEGMENT=spinup cold_adcprep
-          PRE="cold_spinup" ;;
-  spinup) sub cold_spinup "${NOW}" "${W_SPIN:-1:00:00}" - ADCIRC_SEGMENT=spinup
-          PRE="cold_spinup" ;;
+  1)      PSEG="adcprep,${PSEG}"; PW=3:50:00; NSEG="spinup,${NSEG}"; NW=2:20:00 ;;
+  spinup) NSEG="spinup,${NSEG}"; NW=2:20:00 ;;
 esac
-GN=""; GF=""
-if [ "${SUBMIT_GFS:-0}" = 1 ]; then
-  sub gfs_ncst "${PREP}" "${W_GN:-0:10:00}" - ADCIRC_SEGMENT=ncst ${PRE}
-  GN="gfs_ncst"
-  if [ "${STAGES}" = all ]; then
-    sub gfs_fcst "${PREP}" "${W_GF:-0:40:00}" - ADCIRC_SEGMENT=fcst
-    GF="gfs_fcst"
-  fi
-fi
-SER=""
-[ "${SERIAL:-0}" != 1 ] || SER="tide_fcst"
-# surf ncst/fcst launch 4064 + 32 writer ranks = 4096, which needs 52 x 80 slots, so they add -N 52. MJ (10/13/26)
-sub tide_ncst "${NOW}" "${W_TNC:-0:40:00}" - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst ${PRE}
-[ "${STAGES}" != all ] || sub tide_fcst "${FC}" "${W_TFC:-0:55:00}" - ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst tide_ncst
-sub surf_ncst "${NOW}" "${W_SNC:-0:40:00}" "-N 52" ADCIRC_STREAM=surf,ADCIRC_SEGMENT=ncst ${GN} ${PRE} ${SER}
-if [ "${STAGES}" = all ]; then
-  sub surf_fcst "${FC}" "${W_SFC:-1:05:00}" "-N 52" ADCIRC_STREAM=surf,ADCIRC_SEGMENT=fcst surf_ncst ${GF}
-  sub post_ncdiff "${PREP}" "${W_DIFF:-0:30:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncdiff tide_fcst surf_fcst
-  sub post_ncrcat "${PREP}" "${W_CAT:-0:45:00}" "-N 1 -n 1 --mem=100G" ADCIRC_SEGMENT=ncrcat surf_fcst
-fi
+# prep needs more than 64 GB only when it builds the forcing from GFS; the card's whole node covers that. MJ (10/14/26)
+PFLAGS="-N 1 -n 1 --mem=64G"
+[ "${SUBMIT_GFS:-0}" != 1 ] || PFLAGS=-
+PREV=""
+for _s in ${STAGES}; do
+  case "${_s}" in
+    prep)     sub prep "${PREP}" "${W_PREP:-${PW}}" "${PFLAGS}" "${PSEG}" - ${PREV} ;;
+    nowcast)  sub nowcast "${NOW}" "${W_NOWCAST:-${NW}}" "-N 52" "${NSEG}" "${STREAMS}" ${PREV} ;;
+    forecast) sub forecast "${FC}" "${W_FORECAST:-2:00:00}" "-N 52" fcst "${STREAMS}" ${PREV} ;;
+    post)     sub post "${PREP}" "${W_POST:-1:15:00}" "-N 1 -n 1 --mem=100G" ncdiff,ncrcat - ${PREV} ;;
+  esac
+  PREV="${_s}"
+done
 
 cat <<EOM
 
-Chain submitted, each job gated on afterok of its upstream jobs (an upstream failure cancels the rest: --kill-on-invalid-dep=yes).
-post_anomaly, post_bias and post_grib2 are not submitted on Hercules (they need the ops executables and cfp).
+Chain submitted, each job gated on afterok of the job before it (an upstream failure cancels the rest: --kill-on-invalid-dep=yes).
+anomaly, bias and grib2 are not run on Hercules (they need the ops executables and cfp); the post job is ncdiff and ncrcat.
   Monitor : squeue -u ${LOGNAME}
   Status  : ${SLDIR}/status_stofs_2d_glo.sh ${PDY} ${CYC}
   Logs    : ${NOS_PTMP}/${LOGNAME}/rpt/stofs_2d_glo/stofs_2d_glo_{prep,nowcast,forecast}_00.<jobid>.{out,err}

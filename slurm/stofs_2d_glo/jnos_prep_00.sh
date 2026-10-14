@@ -3,6 +3,7 @@
 # STOFS-2D-Global (ADCIRC padcirc) prep on Hercules, cycle 12z by default (file name _00 matches the pbs cards).
 #
 # adcprep is serial (about 85 min on the 12.8 M node mesh); the decomposition is cached at $COMGES/<RUN>_4064.tar. MJ (10/05/26)
+# In ops mode this card also runs the post steps (ncdiff, ncrcat); the launcher sets -N/-n/--mem/-t per job (see jnos_nowcast_00.sh). MJ (10/14/26)
 #
 # Required env (sbatch passes the caller's environment): PDY, PACKAGEROOT, ADCIRC_EXEC_DIR (dir holding
 # padcirc and adcprep; no module exists on Hercules). Optional: CYC (default 12; 00/06/12/18), COMROOT_2DGLO
@@ -134,7 +135,13 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
     python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
 fi
 
-# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post jobs; they share this card; size each job at submit time (sbatch -N/-n/--mem/-t). MJ (10/06/26)
-case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat|anomaly|bias|grib2) ${HOMEnos}/jobs/JNOS_POST ;; *) ${HOMEnos}/jobs/JNOS_PREP ;; esac
+# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post steps; they share this card; size each job at submit time (sbatch -N/-n/--mem/-t).
+# ADCIRC_SEGMENT is one segment or a comma list; a list is all prep or all post. MJ (10/14/26)
+_pre=0; _post=0
+for _s in ${ADCIRC_SEGMENT//,/ }; do
+    case "${_s}" in ncdiff|ncrcat|anomaly|bias|grib2) _post=1 ;; *) _pre=1 ;; esac
+done
+[ "${_pre}${_post}" != 11 ] || { echo "FATAL: ADCIRC_SEGMENT=${ADCIRC_SEGMENT} mixes prep and post segments"; exit 1; }
+if [ "${_post}" = 1 ]; then ${HOMEnos}/jobs/JNOS_POST; else ${HOMEnos}/jobs/JNOS_PREP; fi
 # JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
 grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1
