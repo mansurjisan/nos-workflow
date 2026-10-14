@@ -173,9 +173,10 @@ if [ "${SOURCE}" = gfs ]; then
   # dlg <file under COMIN>: skip a file with four messages; else fetch the .idx and the four byte ranges, retry 3 times. MJ (10/14/26)
   dlg() {
     local f=$1 rel url t r n ranges
-    rel=${f#"${COMIN}"/}; url=${GFS_S3}/${rel}; t=${f}.partial
+    [[ ${f} =~ (gfs\.[0-9]{8}/[0-9]{2}/atmos/[^/]+)$ ]] || { echo "FAIL ${f}: not a gfs.YYYYMMDD/HH/atmos/<file> path" >&2; return 1; }
+    rel=${BASH_REMATCH[1]}; url=${GFS_S3}/${rel}; t=${f}.partial.$$   # unique: adjacent cycles share files. MJ (10/14/26)
     mkdir -p "$(dirname "${f}")"
-    if [ -s "${f}" ] && [ "$(wgrib2 "${f}" -s 2>/dev/null | wc -l)" = 4 ]; then echo "SKIP ${rel}"; return 0; fi
+    if [ -s "${f}" ] && [ -s "${f}.idx" ] && [ "$(gfs_count "${f}")" = 4 ]; then echo "SKIP ${rel}"; return 0; fi
     for n in 1 2 3; do
       rm -f "${t}" "${t}.idx"
       if curl -fsS --retry 3 --retry-delay 5 -o "${t}.idx" "${url}.idx" \
@@ -183,13 +184,16 @@ if [ "${SOURCE}" = gfs ]; then
          && ( for r in ${ranges}; do
                 curl -fsS --retry 3 --retry-delay 5 --speed-limit 10000 --speed-time 60 -r "${r}" "${url}" >> "${t}" || exit 1
               done ) \
-         && [ -s "${t}" ] && [ "$(wgrib2 "${t}" -s 2>/dev/null | wc -l)" = 4 ]; then
-        mv "${t}" "${f}"; rm -f "${t}.idx"; echo "OK   ${rel} ($(stat -c %s "${f}") bytes)"; return 0
+         && [ -s "${t}" ] && [ "$(gfs_count "${t}")" = 4 ]; then
+        # the .idx lands after the grib is complete: nos-utils reads it as the readiness marker. MJ (10/14/26)
+        mv "${t}" "${f}"; mv "${t}.idx" "${f}.idx"; echo "OK   ${rel} ($(stat -c %s "${f}") bytes)"; return 0
       fi
       echo "RETRY ${rel} (attempt ${n})" >&2; sleep 5
     done
     rm -f "${t}" "${t}.idx"; echo "FAIL ${rel}" >&2; return 1
   }
+  gfs_count() { wgrib2 "$1" -s 2>/dev/null | grep -cE ':(PRES:surface|UGRD:10 m above ground|VGRD:10 m above ground|ICEC:surface):' || true; }
+  export -f gfs_count
   export -f dlg
   files=$(python3 "${HELPER}" --gfs-files "${COMIN}" --cycle "${PDY}${CYC}" --segments ncst,fcst --nos-utils "${NU}" \
           --ncst-records "${NCST_RECORDS}") || { echo "FATAL: cannot list the GFS sflux files (nos-utils too old for source=sflux?)" >&2; exit 1; }

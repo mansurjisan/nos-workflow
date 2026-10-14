@@ -12,7 +12,9 @@ and a nos-utils checkout (main >= 5496da0). Streams one record at a time. MJ (10
 
 --nos-utils defaults to this repo's ush/python/nos-utils, then $NOS_UTILS_DIR. tools/hercules_2d_glo_stage_forcing.sh
 downloads the nine files and runs this. Two helper modes serve its --source gfs: --idx-ranges (byte ranges of the SFLUX_FIELDS messages
-in a GFS .idx) and --gfs-files (the files nos-utils' gfs_input_files lists; also used by the Slurm launcher preflight). MJ (10/14/26)
+in a GFS .idx) and --gfs-files (the files nos-utils' gfs_input_files lists; also used by the Slurm launcher preflight). The ncst window is NCST_RECORDS
+hourly records (default 7, cycle - 6 h .. cycle; the launcher's COLD=0 already requires the cycle - 6 h chain). After a gap, when the chain
+start is older than cycle - 6 h, stage with NCST_RECORDS=<hours since the chain start + 1> and give the launcher the same value. MJ (10/14/26)
 """
 from __future__ import annotations
 
@@ -40,7 +42,7 @@ class StageError(Exception):
     pass
 
 
-def load_nos_utils(path):
+def load_nos_utils(path, sflux=False):
     """adcirc_met.py by file path: importing the package would pull xarray/scipy/pyproj that Hercules lacks. MJ (10/13/26)"""
     rel = Path("nos_utils") / "forcing" / "adcirc_met.py"
     if path:
@@ -61,9 +63,9 @@ def load_nos_utils(path):
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
-    for need in ("_open_sfcf_output", "_interp_bracket", "sfcf_valid_times", "_write_sfcf_manifest", "SFC_OUTPUTS"):
+    for need in ("_open_sfcf_output", "_interp_bracket", "sfcf_valid_times", "_write_sfcf_manifest", "SFC_OUTPUTS") + (("gfs_input_files", "SFLUX_FIELDS") if sflux else ()):
         if not hasattr(mod, need):
-            raise StageError("{} lacks {}: needs nos-utils main >= 5496da0 (single 180 h fcst)".format(f, need))
+            raise StageError("{} lacks {}: needs nos-utils main >= 5496da0{}".format(f, need, " with the sflux source" if sflux else ""))
     return mod
 
 
@@ -104,6 +106,12 @@ class _SrcDs:
         self.dimensions = ds.dimensions
         self.variables = {k: _SrcVar(v) for k, v in ds.variables.items()}
         self.__dict__.update({k: ds.getncattr(k) for k in ds.ncattrs() if k not in _NCO_ATTRS})
+
+    def ncattrs(self):
+        return list(self.__dict__)
+
+    def getncattr(self, k):
+        return self.__dict__[k]
 
 
 def _is_url(s):
@@ -305,7 +313,7 @@ def idx_ranges(idx_text, keys):
 
 def gfs_files(nos_utils, comin_gfs, cycle, segments, ncst_records=7, source="sflux"):
     """The GFS files (sflux or sfcf) the nos-utils builder reads for the given segments (ncst window = ncst_records hourly records). MJ (10/14/26)"""
-    am = load_nos_utils(nos_utils)
+    am = load_nos_utils(nos_utils, sflux=True)
     start = cycle - timedelta(hours=ncst_records - 1)
     files = []
     for seg in segments:
@@ -331,7 +339,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
     try:
         if a.idx_ranges:
-            keys = list(load_nos_utils(a.nos_utils).SFLUX_FIELDS)
+            keys = list(load_nos_utils(a.nos_utils, sflux=True).SFLUX_FIELDS)
             for b, e in idx_ranges(Path(a.idx_ranges).read_text(), keys):
                 print("{}-{}".format(b, "" if e is None else e))
             return 0
