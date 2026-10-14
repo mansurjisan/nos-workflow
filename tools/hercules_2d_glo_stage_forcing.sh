@@ -26,7 +26,7 @@
 # station files stay. Default: keep everything.
 #
 # Env (all optional): NOS_PTMP (default /work2/noaa/nos-surge/mjisan/nos-run/ptmp),
-#   COMROOT_2DGLO (default ${NOS_PTMP}/${LOGNAME}/com_2dglo, the default of the Slurm cards),
+#   COMROOT_2DGLO (default ${NOS_PTMP}/${LOGNAME}/com, the default of the Slurm cards),
 #   RERUN_DIR (output, default under COMROOT_2DGLO as above),
 #   OPS_WORK (download area, default ${NOS_PTMP}/${LOGNAME}/ops_s3/${PDY}${CYC}; forcing/ and products/ below it),
 #   NCST_RECORDS (default 7), DL_JOBS (parallel downloads, default 4), STAGE_SRUN (default none),
@@ -60,7 +60,7 @@ NU=${REPO_ROOT}/ush/python/nos-utils
 # These defaults must stay equal to the ones in slurm/stofs_2d_glo/jnos_*_00.sh, or the cards will not find the forcing. MJ (10/13/26)
 NOS_PTMP=${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}
 U=${LOGNAME:-$(id -un)}
-COMROOT_2DGLO=${COMROOT_2DGLO:-${NOS_PTMP}/${U}/com_2dglo}
+COMROOT_2DGLO=${COMROOT_2DGLO:-${NOS_PTMP}/${U}/com}
 RERUN_DIR=${RERUN_DIR:-${COMROOT_2DGLO}/nos/stofs_2d_glo.${PDY}/${CYC}/rerun}
 OPS_WORK=${OPS_WORK:-${NOS_PTMP}/${U}/ops_s3/${PDY}${CYC}}
 OPSIN=${OPS_WORK}/forcing

@@ -235,7 +235,7 @@ cmd_seed() {
   case "${mode}" in chain) ;; cold) with_state=0 ;; *) echo "FATAL: third argument must be 'cold' or empty (got '${mode}')" >&2; exit 2 ;; esac
   check_cycle_args
   local ptmp=${NOS_PTMP:-${DEFAULT_PTMP}} user=${LOGNAME:-$(id -un)}
-  local src=${COMROOT_2DGLO:-${ptmp}/${user}/com_2dglo}
+  local src=${COMROOT_2DGLO:-${ptmp}/${user}/com}
   local seed_rt=${SEED_RT:-/work2/noaa/nos-surge/mjisan/nos-workflow-rt}
   local dest="${seed_rt}/stofs_2d_glo/${PDY}${CYC}"
   local ops_dir=${OPS_DIR:-${ptmp}/${user}/ops_s3/${PDY}${CYC}/products}

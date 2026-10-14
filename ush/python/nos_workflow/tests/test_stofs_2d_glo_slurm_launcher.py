@@ -429,7 +429,7 @@ def test_ptmp_and_comroot_defaults_are_the_same_string_everywhere():
     assert all(len(v) == 1 for v in ptmp.values()), ptmp
     assert {next(iter(v)) for v in ptmp.values()} == {"/work2/noaa/nos-surge/mjisan/nos-run/ptmp"}
     # $LOGNAME, ${LOGNAME} and the staging tool's ${U} are one user. MJ (10/13/26)
-    comroot = {f: {re.sub(r"\$\{(LOGNAME|U)\}", "$LOGNAME", m) for m in re.findall(r"COMROOT_2DGLO:-(.*?com_2dglo)\}", f.read_text())}
+    comroot = {f: {re.sub(r"\$\{(LOGNAME|U)\}", "$LOGNAME", m) for m in re.findall(r"COMROOT_2DGLO:-(.*?/com)\}", f.read_text())}
                for f in (*CARDS, LAUNCH, STAGE_TOOL)}
     assert all(len(v) == 1 for v in comroot.values()), comroot
-    assert {next(iter(v)) for v in comroot.values()} == {"${NOS_PTMP}/$LOGNAME/com_2dglo"}
+    assert {next(iter(v)) for v in comroot.values()} == {"${NOS_PTMP}/$LOGNAME/com"}

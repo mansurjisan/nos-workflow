@@ -10,7 +10,7 @@
 # Run it from a login node shell (it refuses inside an srun/salloc allocation) and from the clone whose cards should run; the clone
 # must be named nos-workflow because the cards derive HOMEnos from $PACKAGEROOT/nos-workflow. Optional env: ADCIRC_EXEC_DIR (dir
 # holding padcirc and adcprep; default <parent of the clone>/adcirc_v56.1.0_exec, where tools/build_stofs_2d_glo_adcirc_hercules.sh
-# installs), NOS_PTMP, COMROOT_2DGLO (default $NOS_PTMP/$LOGNAME/com_2dglo), COMROOT_STAGED (GFS under <it>/gfs), NOS_VENV. MJ (10/13/26)
+# installs), NOS_PTMP, COMROOT_2DGLO (default $NOS_PTMP/$LOGNAME/com, the cards' default), COMROOT_STAGED (GFS under <it>/gfs), NOS_VENV. MJ (10/13/26)
 # Cycle options: COLD=1 (default) prepends cold_adcprep + cold_spinup; COLD=spinup only the spin-up (nod_equi and the decomposition tar
 # exist); COLD=0 neither (the previous 6-hourly cycle is in COMOUT). The preflight checks the files each option needs. COLD=spinup
 # only works for the same PDY and CYC as the cold_adcprep that made nod_equi (the spin-up refuses another cycle). SERIAL=1 makes
@@ -59,7 +59,7 @@ unset COMIN COMINgfs COMOUT COMOUTroot COMGES DATA ADCIRC_MODE ADCIRC_STREAM ADC
 unset NOWCAST_HOURS COLDSTART_SPINUP_DAYS ATMOSPHERIC_FORCING RPTDIR
 export LOGNAME="${LOGNAME:-$(id -un)}"
 export NOS_PTMP="${NOS_PTMP:-/work2/noaa/nos-surge/mjisan/nos-run/ptmp}"
-export COMROOT_2DGLO="${COMROOT_2DGLO:-${NOS_PTMP}/${LOGNAME}/com_2dglo}"
+export COMROOT_2DGLO="${COMROOT_2DGLO:-${NOS_PTMP}/${LOGNAME}/com}"
 export ADCIRC_EXEC_DIR="${ADCIRC_EXEC_DIR:-$(dirname "${PKG}")/adcirc_v56.1.0_exec}"
 export PACKAGEROOT="$(dirname "${PKG}")" HOMEnos="${PKG}"
 
