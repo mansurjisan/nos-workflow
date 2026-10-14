@@ -13,6 +13,7 @@
 # NOWCAST_HOURS (default 6; use 24 for a once-a-day 12z run so the restart is the previous day's 12z).
 # A cold start spins up tide-only; GFS starts with the forecast. NCPU/NUM_WRITERS are tied to the card
 # node counts, so they come from the yaml only. MJ (10/05/26)
+# Ops mode:  ADCIRC_MODE=ops [COLDSTART=YES] [STAGES="prep nowcast forecast post"] [STREAMS="tide surf"] ./launch_stofs_2d_glo.sh <PDY> [CYC]. MJ (10/14/26)
 # ADCIRC_MODE=ops submits one cycle as four jobs, prep -> nowcast -> forecast -> post, each afterok on the one before. The tide and surf
 # streams run one after the other inside a job, on the same 32 nodes. Each job runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list
 # in order (the stofs.v3.1.5 jobs it replaces, with their walltimes from ecf/*.ecf, summed):
@@ -23,8 +24,8 @@
 # COLDSTART=YES (launcher side only: the jobs never read it) adds adcprep to prep and the spin-up to nowcast. STAGES is a subset of
 # "prep nowcast forecast post" in that order (default all); only the submitted jobs are linked. STREAMS (default "tide surf") is
 # passed as ADCIRC_STREAM. Gempak is not ported. MJ (10/14/26)
-# There are no done-markers: recover a failed job by resubmitting it with a narrower list, e.g. STAGES="nowcast forecast post"
-# STREAMS=surf after the surf ncst failed (GFS prep skips forcing that exists; ncst re-runs from the same chain file). MJ (10/14/26)
+# There are no done-markers: recover a failed job by resubmitting it with a narrower list, e.g. STAGES="forecast post" STREAMS=surf
+# after the surf fcst failed (a fcst cannot run twice; GFS prep skips forcing that exists; ncst re-runs from the same chain file). MJ (10/14/26)
 # Longer than ecf: cold_adcprep 3:00 (full adcprep with fort.24 plus the cache tar, untimed here) and ncrcat 0:25
 # (ncks cuts of the hourly fcst before ncrcat). KEEPDATA=YES keeps each job's $DATA for debugging. MJ (10/13/26)
 # ncst 0:25: the first WCOSS2 cycle took 750 s (tide) and 821 s (surf) of the ecf 0:15, mostly decomposition extract and staging. MJ (10/13/26)

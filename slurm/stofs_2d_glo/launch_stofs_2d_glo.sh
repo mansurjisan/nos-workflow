@@ -31,8 +31,8 @@
 # limit is 0:15 and the WCOSS2 launcher uses 0:25). W_PREP W_NOWCAST W_FORECAST W_POST override them; the defaults are the sums of the
 # former per-job values (prep 0:50, +3:00 with adcprep; nowcast 1:20, +1:00 with the spin-up; forecast 2:00; post 1:15). MJ (10/14/26)
 # Not submitted: anomaly, bias and grib2 need the ops executables and cfp, which Hercules lacks. MJ (10/13/26)
-# There are no done-markers: redo a failed step by resubmitting its job with a narrower list, e.g. STAGES="nowcast forecast post"
-# STREAMS=surf COLD=0 after the surf ncst failed (ncst re-runs from the same chain file; the prep forcing is staged). The CI smoke test
+# There are no done-markers: redo a failed step by resubmitting its job with a narrower list, e.g. COLD=0 STAGES="forecast post"
+# STREAMS=surf after the surf fcst failed (a fcst cannot run twice; ncst re-runs from the same chain file). The CI smoke test
 # is STAGES=nowcast; the preflight then needs only the ncst forcing. SLURM_CI_ACCOUNT and SLURM_CI_QOS, when set, are passed to every
 # sbatch as --account and --qos and override the cards' #SBATCH values (the Jenkins pipeline sets them, as for the SECOFS cards). MJ (10/14/26)
 set -eu
