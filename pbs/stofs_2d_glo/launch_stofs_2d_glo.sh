@@ -7,7 +7,7 @@
 # Usage:    ./launch_stofs_2d_glo.sh <PDY:YYYYMMDD> [CYC:HH (00|06|12|18, default 12)]
 # Example:  ./launch_stofs_2d_glo.sh 20261005 12
 #
-# Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com, as SECOFS and ATL) is forwarded when set. MJ (10/13/26)
+# Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com, as SECOFS and coupled ATL) is forwarded when set. MJ (10/13/26)
 # STAGES selects a subset, e.g. STAGES="nowcast forecast" once prep has run.
 # Operator overrides, forwarded when set: ATMOSPHERIC_FORCING=false (tide-only), COLDSTART_SPINUP_DAYS,
 # NOWCAST_HOURS (default 6; use 24 for a once-a-day 12z run so the restart is the previous day's 12z).

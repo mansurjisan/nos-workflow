@@ -243,6 +243,14 @@ def test_stage_refuses_to_clear_a_comroot_outside_nos_ptmp(ci):
     assert r.returncode == 1 and "contains .." in r.stderr and (outside / "file").is_file()
     r = ci.script("stage", COMROOT_2DGLO=str(ci.ptmp))
     assert r.returncode == 1
+    # the shared com (live SECOFS and ATL cycles) and its parent are refused even though they sit under NOS_PTMP. MJ (10/13/26)
+    keep = _touch(ci.ptmp / "tester" / "com" / "nos" / "live", "keep")
+    for shared, why in ((f"{ci.ptmp}/tester/com", "shared com"), (f"{ci.ptmp}/tester/com/", "shared com"), (f"{ci.ptmp}/tester", "two levels")):
+        r = ci.script("stage", COMROOT_2DGLO=shared)
+        assert r.returncode == 1 and why in r.stderr and keep.read_text() == "keep", shared
+    stale = _touch(ci.com / "stale", "old")
+    r = ci.script("stage")
+    assert r.returncode == 0 and not stale.exists() and keep.read_text() == "keep"
 
 
 def test_bad_arguments_are_rejected(ci):
@@ -732,6 +740,13 @@ def test_seed_refuses_an_unfinished_run_and_an_existing_dataset(ci):
     assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", FORCE="1", **env).returncode == 0
     (run / "nos" / f"stofs_2d_glo.{PDY}" / f"stofs_2d_glo.t{CYC}z.points.swl.nc").unlink()
     assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", FORCE="1", **env).returncode == 1
+
+
+def test_seed_without_comroot_reads_the_shared_com(ci):
+    r = ci.run(SCRIPT, "seed", PDY, CYC, SEED_RT=str(ci.tmp / "seed_rt"))
+    missing = [l for l in r.stderr.splitlines() if l.startswith("MISSING:")]
+    assert r.returncode == 1 and missing and not (ci.tmp / "seed_rt").exists()
+    assert all(l.startswith(f"MISSING: {ci.ptmp}/tester/com/") for l in missing), missing
 
 
 def test_seed_warns_about_missing_ops_products_and_validates_arguments(ci):
