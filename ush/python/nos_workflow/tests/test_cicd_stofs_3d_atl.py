@@ -197,17 +197,22 @@ def test_frozen_stage_lists_what_is_missing_and_needs_the_sentinel(ci):
     assert r.returncode == 1 and "staout_1" in r.stderr and "comin/nwm" in r.stderr and keep.is_file()
 
 
-def test_stage_deletes_only_the_two_atl_day_directories_and_keeps_secofs(ci):
+def test_stage_deletes_every_earlier_atl_day_directory_and_keeps_everything_else(ci):
     ci.dataset()
     secofs = _touch(ci.com / "nos" / f"secofs_ufs.{PDY}" / "f", "keep")
     secofs2 = _touch(ci.com / "nos" / f"secofs_ufs.{PDYM1}" / "f", "keep")
-    other_day = _touch(ci.com / "nos" / f"{RUN}.20260929" / "f", "keep")
+    other_day = _touch(ci.com / "nos" / f"{RUN}.20260929" / "f", "gone")
+    odd = [_touch(ci.com / "nos" / n / "f", "keep") for n in (f"{RUN}.2026092", f"{RUN}.20260929x", f"{RUN}_standalone.20260929", f"{RUN}.latest")]
+    live_old = _touch(ci.rt / "stofs_3d_atl" / "live" / "2026092912" / "comin" / "f", "gone")
+    live_now = _touch(ci.rt / "stofs_3d_atl" / "live" / f"{PDY}12" / "comin" / "f", "keep")
+    live_odd = _touch(ci.rt / "stofs_3d_atl" / "live" / "notes" / "f", "keep")
+    dsx = _touch(ci.rt / "stofs_3d_atl" / "standalone" / "2026092912" / "f", "keep")
     loose = _touch(ci.com / "other" / "f", "keep")
     hand = _touch(ci.ptmp / "tester" / "com_atl_sa" / "nos" / "mine", "keep")
     gone = [_touch(ci.com / "nos" / f"{RUN}.{d}" / "stale", "old") for d in (PDY, PDYM1)]
     assert ci.run("stage").returncode == 0
-    assert not any(g.exists() for g in gone)
-    assert all(f.is_file() for f in (secofs, secofs2, other_day, loose, hand))
+    assert not any(g.exists() for g in gone + [other_day, live_old])
+    assert all(f.is_file() for f in (secofs, secofs2, loose, hand, live_now, live_odd, dsx, *odd))
 
 
 def test_stage_refuses_symlinked_or_odd_com_targets(ci):
@@ -227,7 +232,18 @@ def test_stage_refuses_symlinked_or_odd_com_targets(ci):
     ci.com.mkdir()
     (ci.com / "nos").symlink_to(victim.parent)
     assert ci.run("stage").returncode == 1 and victim.is_file()
-    for bad in ("..", "a/b"):
+    (ci.com / "nos").unlink()
+    (ci.com / "nos").mkdir()
+    other = ci.com / "nos" / f"{RUN}.20260929"
+    other.symlink_to(victim.parent)
+    r = ci.run("stage")
+    assert r.returncode == 1 and "is a symlink" in r.stderr and victim.is_file()
+    other.unlink()
+    (ci.rt / "stofs_3d_atl" / "live").mkdir(parents=True)
+    (ci.rt / "stofs_3d_atl" / "live" / "2026092912").symlink_to(victim.parent)
+    r = ci.run("stage")
+    assert r.returncode == 1 and "is a symlink" in r.stderr and victim.is_file()
+    for bad in ("..", ".", "a/b"):
         r = ci.run("stage", LOGNAME=bad)
         assert r.returncode == 1 and "odd LOGNAME" in r.stderr, bad
     assert victim.is_file()
@@ -262,6 +278,65 @@ def test_live_mode_needs_a_dcom_bundle_and_checks_it_before_downloading(ci):
     b = ci.tmp / "bundle"
     r = ci.run("stage", DATA_MODE="live", DCOM_BUNDLE=str(b))
     assert r.returncode == 1 and "MISSING" in r.stderr and "before the ~100 GB download" in r.stdout
+
+
+def test_stage_links_the_day_dirs_only_and_keeps_modes_and_the_dataset_read_only(ci):
+    ds = ci.dataset()
+    _touch(ds / "input/com/extra/f", "must not be copied")
+    for f in (ds / "input").rglob("*"):
+        if f.is_file():
+            f.chmod(0o444)
+    (ci.com / "nos").mkdir(parents=True)
+    ci.com.chmod(0o775)
+    (ci.com / "nos").chmod(0o775)
+    assert ci.run("stage").returncode == 0
+    assert oct(ci.com.stat().st_mode & 0o777) == "0o775" and oct((ci.com / "nos").stat().st_mode & 0o777) == "0o775"
+    assert not (ci.com / "extra").exists()
+    day = ci.com / "nos" / f"{RUN}.{PDY}"
+    init = day / f"{RUN}.t12z.{PDY}.init.nowcast.nc"
+    assert init.samefile(ds / "input/com/nos" / day.name / init.name) and not os.access(init, os.W_OK) and os.access(day, os.W_OK)
+    # a writer replaces the file by name (new file + rename) without touching the shared inode. MJ (10/15/26)
+    tmp = _touch(day / "x.tmp", "new")
+    os.replace(tmp, init)
+    assert init.read_text() == "new" and (ds / "input/com/nos" / day.name / init.name).read_text() == "init"
+    # the next Stage Data clears the replaced day and links the dataset again
+    assert ci.run("stage").returncode == 0 and init.read_text() == "init"
+
+
+def test_a_relative_rt_data_root_still_hard_links(ci):
+    ci.dataset()
+    r = ci.run("stage", RT_DATA_ROOT=os.path.relpath(ci.rt, ci.tmp))
+    init = f"nos/{RUN}.{PDY}/{RUN}.t12z.{PDY}.init.nowcast.nc"
+    assert r.returncode == 0 and (ci.com / init).samefile(ci.ds / "input/com" / init), r.stderr
+
+
+def test_seed_makes_dataset_files_read_only_and_the_smoke_upgrade_and_force_still_work(ci):
+    com, comin, dcom = _source(ci)
+    _nowcast_only(com)
+    env = dict(SEED_RT=str(ci.rt))
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_LEVEL="smoke", **env).returncode == 0
+    files = [f for f in (ci.ds / "input").rglob("*") if f.is_file()]
+    assert files and not any(os.access(f, os.W_OK) for f in files) and all(os.access(d, os.W_OK) for d in (ci.ds / "input").rglob("*") if d.is_dir())
+    com, comin, dcom = _source(ci)
+    (com / "nos" / f"{RUN}.{PDYM1}" / "staout_1").write_text("changed")
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), **env)
+    assert r.returncode == 0 and "upgrading" in r.stdout, r.stderr
+    assert (ci.ds / "input/com/nos" / f"{RUN}.{PDYM1}" / "staout_1").read_text() == "changed"
+    assert ci.run("seed", PDY, "coupled", str(com), str(comin), str(dcom), **env).returncode == 0
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), FORCE="1", **env).returncode == 0
+
+
+def test_bootstrap_copy_is_read_only_and_a_recopy_over_read_only_files_works(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    sd = seed_rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}"
+    boot = dict(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    _touch(sd / "input" / "data", "d")
+    assert ci.run(**boot).returncode == 0
+    f = ci.ds / "input" / "data"
+    assert f.read_text() == "d" and not os.access(f, os.W_OK) and os.access(f.parent, os.W_OK)
+    (ci.ds / ".seeded_ok").unlink()
+    (sd / "input" / "data").write_text("newer-content")
+    assert ci.run(**boot).returncode == 0 and f.read_text() == "newer-content"
 
 
 def _live(ci: Ci):
@@ -400,9 +475,9 @@ def test_card_env_refuses_a_comma_in_a_path(ci):
 ])
 def test_run_stage_timeout_cancels_a_hung_atl_job_after_its_limit(tmp_path, ofs, stage, secs):
     ci = Ci(tmp_path, ofs)
-    # a stub date that jumps past the limit on its second call; the first call is t0. MJ (10/15/26)
+    # a stub date that jumps past the limit on its second +%s call; the first is t0 (other date calls pass through). MJ (10/15/26)
     _job(ci, stage, state="RUNNING", ok=False)
-    _stub(ci.bin / "date", f'#!/bin/bash\nn=$(cat "$STUB_DIR/d" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/d"\n[ "$1" = +%s ] && {{ [ $n -eq 0 ] && echo 1000 || echo {1000 + secs}; exit 0; }}\nexec /bin/date "$@"\n')
+    _stub(ci.bin / "date", f'#!/bin/bash\n[ "$1" = +%s ] || exec /bin/date "$@"\nn=$(cat "$STUB_DIR/d" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/d"\n[ $n -eq 0 ] && echo 1000 || echo {1000 + secs}\n')
     r = _stage(ci, stage)
     assert r.returncode == 1 and f"rc=timeout" in r.stdout and (ci.stubs / "scancel.log").read_text().split() == ["101"]
     assert f"after {secs}s" in r.stdout

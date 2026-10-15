@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # STOFS-3D-Atlantic stages of the Hercules Jenkins pipeline (OFS=stofs_3d_atl_ufs_standalone or stofs_3d_atl_ufs; manual builds only). MJ (10/14/26)
-#   stofs_3d_atl.sh stage    Stage Data (called by stage_data.sh): frozen = hard-link the dataset's com state into the shared CI com;
+#   stofs_3d_atl.sh stage    Stage Data (called by stage_data.sh): frozen = hard-link the dataset's com state into the shared CI com; MJ (10/15/26)
 #                            live = stage_comin.py + hercules_atl_seed_init.sh + hercules_atl_seed_prev.sh on this login/front-end node
 #                            (compute nodes have no internet), with the dcom case bundle DCOM_BUNDLE the user supplies
 #   stofs_3d_atl.sh card-env <stage>   eval-able shell for run_stage.sh: the variant's extra sbatch exports (ATL_EXPORTS), log prefix, unset list
@@ -24,11 +24,12 @@
 # Layout, the SECOFS one (no per-variant roots): com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work} and the cards' own defaults;
 # comin (COMROOT_STAGED) and dcom (DCOMROOT) are read in place from the frozen dataset's input/ (read-only to the CI; prep never writes there).
 #   com   $NOS_PTMP/$LOGNAME/com  COMROOT_SA or COMROOT_UFS; both variants run RUN=stofs_3d_atl_ufs, so they share com/nos/stofs_3d_atl_ufs.<day> and
-#         the second variant overwrites the first (one CI build at a time). Stage removes ONLY com/nos/stofs_3d_atl_ufs.<PDY-1> and .<PDY>, then
-#         hard-links the dataset's input/com back in (a copy if the dataset is on another filesystem); SECOFS's com/nos/secofs_ufs.* is never touched.
+#         the second variant overwrites the first (one CI build at a time). Stage removes only nos/stofs_3d_atl_ufs.<8 digits> day dirs (all earlier cycles), then
+#         hard-links the PDY-1 and PDY day dirs of the dataset back in (a copy if the dataset is on another filesystem); SECOFS's com/nos/secofs_ufs.* is never touched.
 #   rpt   the card's RPTDIR default $NOS_PTMP/$LOGNAME/rpt/stofs_3d_atl_ufs;  work/  the cards' shared work dir.
 #   live  comin is staged to $RT_DATA_ROOT/stofs_3d_atl/live/<PDY><CYC>/comin (ops/ there too), dcom is read from DCOM_BUNDLE/dcom.
-# Stage also removes the old per-variant roots $NOS_PTMP/$LOGNAME/atl_ci_standalone and atl_ci_coupled once. MJ (10/15/26)
+# The dataset files are read-only (seed and Bootstrap chmod a-w; com shares their inodes). The cfgrib fallback (used only without wgrib2, always present on Hercules)
+# would write .idx files next to the GRIBs in the read-only comin. Stage also removes earlier cycles' nos/stofs_3d_atl_ufs.<8 digits> and live/<PDY>12 dirs and the old per-variant roots $NOS_PTMP/$LOGNAME/atl_ci_standalone and atl_ci_coupled once. MJ (10/15/26)
 #
 # Dataset ${RT_DATA_ROOT}/stofs_3d_atl/<standalone|coupled>/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/ in frozen mode):
 #   .seeded_ok                                                                           one line, level=smoke|cycle (empty or no level = cycle)
@@ -132,23 +133,33 @@ level_setup() {
   export NOS_PTMP
 }
 
-# Clears this cycle's ATL state from the shared com: exactly com/nos/${RUN}.<PDY-1> and .<PDY>, nothing else (SECOFS's secofs_ufs.* lives there too).
-# The com root must be the CI's $NOS_PTMP/$LOGNAME/com and neither it, nos/ nor a day directory may be a symlink. Then removes the old atl_ci_* roots. MJ (10/15/26)
+# Clears the ATL state of earlier cycles from the shared com (every nos/${RUN}.<8 digits>, CI-owned and ATL-only, so the disk does not grow; SECOFS's secofs_ufs.* and any
+# other name stay) and the live staging dirs of other PDYs. The com root must be the CI's $NOS_PTMP/$LOGNAME/com; no root, parent or target may be a symlink and every name
+# is matched exactly. All targets are validated before the first rm, so a refusal never follows a delete. Then removes the old atl_ci_* roots. MJ (10/15/26)
 clear_com() {
-  local p c d t v
-  case "${LOGNAME}" in ""|*/*|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
+  local p c t v live rm=()
+  case "${LOGNAME}" in ""|*/*|.|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
   p=$(realpath -m -- "${NOS_PTMP}")
   c="${p}/${LOGNAME}/com"
   [ "$(realpath -m -- "${CI_COM}")" = "${c}" ] || { echo "FATAL: refusing to clear ${CI_COM}: it is not ${c} (symlink?)" >&2; exit 1; }
   for t in "${c}" "${c}/nos"; do
     [ ! -L "${t}" ] || { echo "FATAL: refusing to clear under ${t}: it is a symlink" >&2; exit 1; }
   done
-  for d in "${PDYM1}" "${PDY}"; do
-    t="${c}/nos/${RUN}.${d}"
-    [ ! -L "${t}" ] || { echo "FATAL: refusing to remove ${t}: it is a symlink" >&2; exit 1; }
-    rm -rf -- "${t}"
+  for t in "${c}/nos/${RUN}."*; do
+    [[ "${t##*/}" =~ ^${RUN}\.[0-9]{8}$ ]] && { [ -e "${t}" ] || [ -L "${t}" ]; } && rm+=("${t}")
   done
-  mkdir -p -- "${c}"
+  live="$(realpath -m -- "${RT_DATA_ROOT}")/stofs_3d_atl/live"
+  if [ -d "${live}" ]; then
+    [ ! -L "${live}" ] || { echo "FATAL: refusing to prune ${live}: it is a symlink" >&2; exit 1; }
+    for t in "${live}"/*; do
+      [[ "${t##*/}" =~ ^[0-9]{8}12$ ]] && [ "${t##*/}" != "${PDY}${CYC}" ] && { [ -e "${t}" ] || [ -L "${t}" ]; } && rm+=("${t}")
+    done
+  fi
+  for t in ${rm[@]+"${rm[@]}"}; do
+    { [ ! -L "${t}" ] && [ -d "${t}" ] && [ "$(realpath -m -- "${t}")" = "${t}" ]; } || { echo "FATAL: refusing to remove ${t}: it is a symlink or not a plain directory" >&2; exit 1; }
+  done
+  for t in ${rm[@]+"${rm[@]}"}; do rm -rf -- "${t}"; done
+  mkdir -p -- "${c}/nos"
   for v in standalone coupled; do
     t="${p}/${LOGNAME}/atl_ci_${v}"
     if [ -L "${t}" ]; then echo "WARN: leaving ${t}: it is a symlink" >&2
@@ -221,7 +232,13 @@ cmd_stage() {
       # The cards only read the init state (it is copied into the run directory), so it is hard-linked: 26 GB would not copy quickly. rsync copies instead when the
       # dataset is on another filesystem, so that is said up front. comin and dcom are not linked at all. MJ (10/15/26)
       [ "$(stat -c %d "${DS}/input/com")" = "$(stat -c %d "${CI_COM}")" ] || echo "WARN: ${DS} and ${CI_COM} are on different filesystems: the init state is copied, not linked"
-      rsync -a --link-dest="${DS}/input/com" "${DS}/input/com/" "${CI_COM}/"
+      # Only the two day directories, each linked against itself (an absolute --link-dest, or rsync copies); -a would also copy the dataset's mode onto com/ and nos/. The files stay
+      # read-only (shared inodes), the day directories are writable (Du+w). MJ (10/15/26)
+      local dsa d
+      dsa=$(realpath -- "${DS}")
+      for d in "${PDYM1}" "${PDY}"; do
+        [ ! -d "${dsa}/input/com/nos/${RUN}.${d}" ] || rsync -a --chmod=Du+w --link-dest="${dsa}/input/com/nos/${RUN}.${d}" "${dsa}/input/com/nos/${RUN}.${d}/" "${CI_COM}/nos/${RUN}.${d}/"
+      done
       ;;
     live)
       setup_modules
@@ -252,6 +269,7 @@ cmd_stage() {
 # <RPTDIR>/<prefix>.<jobid>.out, the prefix from its _LOG_PREFIX line so the two cannot drift. MJ (10/15/26)
 cmd_card_env() {
   local st=${1:?usage: stofs_3d_atl.sh card-env <stage>} card pfx dcom rpt v
+  check_cycle_args
   set_variant "${OFS}"
   ci_paths
   card="${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh"
@@ -354,8 +372,8 @@ cmd_seed() {
   fi
   mkdir -p "${dest}/input/com" "${dest}/input/comin" "${dest}/input/dcom" "${dest}/ref"
   echo "seeding ${dest} from ${src_com}, ${src_comin}, ${src_dcom}"
-  # --files-from turns off the recursion -a implies, so -r is explicit; the fixed modes match what the final chmod -R o+rX gives, so the second variant can hard-link against this one. MJ (10/14/26)
-  local lcom=() lcomin=() list PERM=(--chmod=Do+rx,Fo+r)
+  # --files-from turns off the recursion -a implies, so -r is explicit; the fixed modes (read-only files, as the chmod below leaves them) match across the two variants, so the second can hard-link against the first. MJ (10/15/26)
+  local lcom=() lcomin=() list PERM=(--chmod=Do+rx,Fo+r,Fa-w)
   if [ -d "${top}/${SIBLING}/${PDY}${CYC}/input" ]; then
     lcom=(--link-dest="${top}/${SIBLING}/${PDY}${CYC}/input/com")
     lcomin=(--link-dest="${top}/${SIBLING}/${PDY}${CYC}/input/comin")
@@ -378,6 +396,7 @@ cmd_seed() {
   echo "${refs}" | rsync -arL "${PERM[@]}" --files-from=- "${src_com}/" "${dest}/ref/"
   [ "${level}" = smoke ] || fetch_ops "${dest}/ref/ops"   # the ops products are compared at LEVEL=full only, and a smoke source has no post output. MJ (10/14/26)
   echo "level=${level}" > "${dest}/.seeded_ok"
+  find "${dest}/input" -type f -exec chmod a-w {} +   # com shares these inodes; every writer replaces files (new file + rename), none opens one in place. MJ (10/15/26)
   chmod -R o+rX "${dest}" || true
   chmod o+x "${top}" "${top}/${VARIANT}" 2>/dev/null || true
   du -sh "${dest}"/* | sed 's/^/  /'

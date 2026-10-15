@@ -223,6 +223,7 @@ if [ "${DATA_MODE}" = "frozen" ]; then
       _n=$(sed -n 's/^Number of \(regular \)\{0,1\}files transferred: *//p' <<<"${_stats}" | tr -d ,)
       _b=$(sed -n 's/^Total transferred file size: *\([0-9,]*\).*/\1/p' <<<"${_stats}" | tr -d ,)
       echo "bootstrap: dataset copied: ${_n:-?} files, $(numfmt --to=iec "${_b:-0}" 2>/dev/null || echo "${_b:-?} bytes"), $((SECONDS - _t0)) s"
+      [ "${ATL}" != 1 ] || [ ! -d "${COMROOT_STAGED}/input" ] || find "${COMROOT_STAGED}/input" -type f -exec chmod a-w {} +   # ATL: com and the sibling dataset share these inodes. MJ (10/15/26)
       cp -p "${SEED_RT}/${RT_REL}/.seeded_ok" "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null || touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."
