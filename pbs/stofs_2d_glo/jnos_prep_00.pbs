@@ -12,6 +12,7 @@
 # serially (ops COLD_ADCPREP is select=1:ncpus=1, 50 GB, 2 h; Zach measured about 85 min), so the 8
 # cpus here only cover the Python side; mem=100GB covers the 7.5 d forecast GFS through cfgrib/xarray (a cold nowcast is tide-only) (ops asks 50 GB for adcprep alone). The decomposition is cached at $COMGES/<RUN>_4064.tar, so
 # only the first cycle pays for the full partition and later cycles run adcprep --prep15. MJ (10/05/26)
+# In ops mode this card also runs the post steps (the launcher sets select per job); see jnos_nowcast_00.pbs for the four-job form. MJ (10/14/26)
 
 PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
 HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
@@ -104,14 +105,20 @@ if [ "${ATMOSPHERIC_FORCING:-true}" != "false" ] && [ "${ADCIRC_MODE}" != ops ];
     python3 -c 'import xarray, cfgrib, eccodes' 2>&1 || { echo "FATAL: xarray/cfgrib/eccodes not importable (pip install cfgrib eccodes; ECCODES_DIR / eccodes module)"; exit 1; }
 fi
 
-# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post jobs; they share this card and the launcher overrides select per job.
-# The ops ex-scripts get the modules their ecf files load (python from ve/stofs, so unload the stock one first). MJ (10/06/26)
-case "${ADCIRC_SEGMENT:-}" in
-    anomaly) module unload python 2>/dev/null || true; module load ve/stofs/${ve_stofs} ;;
-    bias) module unload python 2>/dev/null || true; module load cfp/${cfp_ver} util_shared/${util_shared_ver} ve/stofs/${ve_stofs} ;;
-    grib2) module load cfp/${cfp_ver} grib_util/${grib_util_ver} util_shared/${util_shared_ver} ;;
-esac
+# ncdiff/ncrcat/anomaly/bias/grib2 are the ops post steps; they share this card and the launcher overrides select per job.
+# ADCIRC_SEGMENT is one segment or a space (or comma) separated list. A list is all prep or all post; the post list gets the union of
+# the modules the ops ecf files load, once (python from ve/stofs, so unload the stock one first). MJ (10/14/26)
+_pre=0; _post=0
+for _s in ${ADCIRC_SEGMENT//,/ }; do
+    case "${_s}" in ncdiff|ncrcat|anomaly|bias|grib2) _post=1 ;; *) _pre=1 ;; esac
+done
+[ "${_pre}${_post}" != 11 ] || { echo "FATAL: ADCIRC_SEGMENT=${ADCIRC_SEGMENT} mixes prep and post segments"; exit 1; }
+_seg=" ${ADCIRC_SEGMENT//,/ } "
+case "${_seg}" in *" anomaly "*|*" bias "*) module unload python 2>/dev/null || true ;; esac
+case "${_seg}" in *" bias "*|*" grib2 "*) module load cfp/${cfp_ver} util_shared/${util_shared_ver} ;; esac
+case "${_seg}" in *" grib2 "*) module load grib_util/${grib_util_ver} ;; esac
+case "${_seg}" in *" anomaly "*|*" bias "*) module load ve/stofs/${ve_stofs} ;; esac
 [ -z "${_dcom_in}" ] || export DCOMROOT=${_dcom_in}
-case "${ADCIRC_SEGMENT:-}" in ncdiff|ncrcat|anomaly|bias|grib2) ${HOMEnos}/jobs/JNOS_POST ;; *) ${HOMEnos}/jobs/JNOS_PREP ;; esac
+if [ "${_post}" = 1 ]; then ${HOMEnos}/jobs/JNOS_POST; else ${HOMEnos}/jobs/JNOS_PREP; fi
 # JNOS_* exits 0 even when the stage fails; stop the afterok chain unless the stage logged PASS, as ops does. MJ (10/06/26)
 grep -q 'STAGE_SUMMARY .*status=PASS' "${_LOG_PREFIX}.out" || exit 1

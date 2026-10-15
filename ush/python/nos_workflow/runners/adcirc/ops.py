@@ -1,15 +1,17 @@
 """STOFS-2D-GLO ops mode (ADCIRC_MODE=ops): the stofs.v3.1.5 run structure, one call per ops job.
 
 Tide (NWS=0, chain file .hotstart) and surf (NWS=14014, chain file .restart) streams, each run as
-ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep and
-cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
+ncst and one 180 h fcst (the ops fcst1 + fcst2 merged: hourly forcing, WTIMINC 3600); cold_adcprep (nod_equi + decomposition) runs in prep with
+ADCIRC_SEGMENT=adcprep and cold_spinup in the nowcast stage with ADCIRC_SEGMENT=spinup. The arithmetic, file names and sed
 chain follow exstofs_2d_glo_*.sh and stofs_2d_glo_multistart.sh. The surf segments read
 $COMOUT/<cyc>/rerun/<RUN>_{ncst,fcst}.{221,222,225}.nc, which prep makes with ADCIRC_SEGMENT=ncst|fcst. MJ (10/11/26)
+A job runs one step per ADCIRC_SEGMENT / ADCIRC_STREAM value (space separated lists, see stages/_adcirc.py); the functions here run one. MJ (10/14/26)
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -37,6 +39,11 @@ FIX = (("stofs_2d_glo_body", "fort.24"), ("stofs_2d_glo_rotm", "fort.rotm"),
 RERUN = {"tide": [("fort.61.nc", "tide.61.nc"), ("fort.63.nc", "tide.63.nc")],
          "surf": [("fort.%d.nc" % n, "surf.%d.nc" % n) for n in (61, 62, 63, 64)]
          + [("%s.63.nc" % m, "%s.63.nc" % m) for m in ("maxele", "maxvel", "maxwvel")]}
+SEGMENTS = {"prep": ("adcprep", "ncst", "fcst"), "nowcast": ("spinup", "ncst"), "forecast": ("fcst",),
+            "post": ("anomaly", "bias", "ncdiff", "grib2", "ncrcat")}  # what each job takes, in the order a list must give them MJ (10/14/26)
+PER_STREAM = {"nowcast": ("ncst",), "forecast": ("fcst",)}  # run once per stream; spinup is tide-only, so once MJ (10/14/26)
+RETIRED = ("fcst1", "fcst2")
+COLD_HINT = "run a cold start (launcher COLDSTART=YES on WCOSS2 or COLD=1 on Hercules, i.e. the adcprep and spinup segments)"  # MJ (10/14/26)
 PRODUCTS = {"tide": [("fort.61.nc", "points.htp.nc"), ("fort.63.nc", "fields.htp.nc")],
             "surf": [("fort.61.nc", "points.cwl.nc"), ("fort.61.nc", "points.cwl.noanomaly.nc"),
                      ("fort.62.nc", "points.cwl.vel.nc"), ("fort.63.nc", "fields.cwl.nc"),
@@ -124,7 +131,7 @@ def _nod_path(ctx: CycleContext) -> Path:
 def _load_nod(ctx: CycleContext) -> Tuple[datetime, Dict[str, str]]:
     if not _nod_path(ctx).is_file():
         raise AdcircConfigError(f"FATAL ERROR: no {_nod_path(ctx)}; there are no tidal spin-up files, "
-                                "please restart with COLDSTART=YES")
+                                + COLD_HINT)
     return read_nod_equi(_nod_path(ctx))
 
 
@@ -169,7 +176,7 @@ def _stage(ctx: CycleContext, stream: str, segment: str, tokens: Dict[str, str],
                 archive_path(ctx.comges, ctx.run, s.ncpu_compute), runner)
     if not (run_dir / "PE0000" / "fort.24").is_file():
         raise AdcircConfigError(f"FATAL ERROR: {archive_path(ctx.comges, ctx.run, s.ncpu_compute)} is a single-mode "
-                                "decomposition (no fort.24); delete it and its .json to rebuild, or run cold_adcprep with COLDSTART=YES")
+                                "decomposition (no fort.24); delete it and its .json to rebuild, or " + COLD_HINT)
     return run_dir
 
 
@@ -231,7 +238,7 @@ def cold_spinup(ctx: CycleContext, launcher, profile, runner: CommandRunner) -> 
     base, nod = _load_nod(ctx)
     if base != beg - timedelta(hours=SPINH):
         raise AdcircConfigError(f"nod_equi starts {base} but this cycle's spin-up starts "
-                                f"{beg - timedelta(hours=SPINH)}; run cold_adcprep for this cycle first")
+                                f"{beg - timedelta(hours=SPINH)}; run the adcprep segment for this cycle first (COLDSTART=YES / COLD=1)")
     run_dir = _stage(ctx, "tide", "spinup", spinup_tokens(), ctx.cycle_time.strftime("%Y%m%d%H"), nod, runner)
     argv = _launch(ctx, run_dir, "tide", "spinup", launcher, profile)
     ihot = parity_ihot(bc_div(SPINH, 24) * 86400, WNDH)
@@ -247,16 +254,16 @@ def find_chain_start(ctx: CycleContext, kind: str) -> Tuple[datetime, Path]:
         t = t - timedelta(hours=NOWH)
         if ctx.cycle_dir(t, kind).is_file():
             return t, ctx.cycle_dir(t, kind)
-    raise AdcircConfigError(f"FATAL ERROR: there are no {kind} files, please restart with COLDSTART=YES")
+    raise AdcircConfigError(f"FATAL ERROR: there are no {kind} files, " + COLD_HINT)
 
 
-def _check_retired(ctx: CycleContext) -> None:
-    if ctx.segment in ("fcst1", "fcst2"):
-        raise AdcircConfigError(f"ADCIRC_SEGMENT={ctx.segment} is retired: the forecast is one 180 h run, use ADCIRC_SEGMENT=fcst")
+def check_retired(segment: str) -> None:
+    if segment in RETIRED:
+        raise AdcircConfigError(f"ADCIRC_SEGMENT={segment} is retired: the forecast is one 180 h run, use ADCIRC_SEGMENT=fcst")
 
 
 def _check(ctx: CycleContext, segments: Tuple[str, ...]) -> None:
-    _check_retired(ctx)
+    check_retired(ctx.segment)
     if ctx.stream not in STREAMS:
         raise AdcircConfigError(f"ADCIRC_STREAM must be one of {tuple(STREAMS)}, got {ctx.stream!r}")
     if ctx.segment not in segments:
@@ -266,6 +273,66 @@ def _check(ctx: CycleContext, segments: Tuple[str, ...]) -> None:
 def _export(ctx: CycleContext, run_dir: Path) -> None:
     for src, name in RERUN[ctx.stream]:
         _publish(_need(run_dir, src), rerun_dir(ctx) / f"{ctx.run}_{name}")
+
+
+def _fort15_outputs(fort15: Path) -> Tuple[float, float, Dict[str, Tuple[float, float, int]]]:
+    """DTDP, RNDY and per output unit (TOUTS s, TOUTF s, NSPOOL) read from the rendered fort.15, so the expected
+    window is the one the run was configured with. MJ (10/15/26)"""
+    dtdp = rnday = None
+    units: Dict[str, Tuple[float, float, int]] = {}
+    for ln in fort15.read_text().splitlines():
+        if "!" not in ln:
+            continue
+        head, tag = ln.split("!", 1)
+        f, m = head.split(), re.search(r"\(UNIT\s+(\d+)\)", tag)
+        if tag.split()[:1] == ["DTDP"]:
+            dtdp = float(f[0])
+        elif tag.split()[:1] == ["RNDY"]:
+            rnday = float(f[0])
+        elif m and len(f) >= 4 and int(f[0]) != 0:
+            units[m.group(1)] = (float(f[1]) * 86400, float(f[2]) * 86400, int(f[3]))
+    if dtdp is None or rnday is None:
+        raise AdcircConfigError(f"no DTDP or RNDY in {fort15}")
+    return dtdp, rnday, units
+
+
+def check_records(run_dir: Path, stream: str, step: str) -> None:
+    """Fail a finished ncst/fcst whose time series lost an hourly record (a sporadic padcirc writer drop that otherwise
+    surfaces only in post). Per fort.61-64 that exists: constant spacing of NSPOOL*DTDP, the first record at TOUTS or one
+    interval after it, the last at min(TOUTF, RNDAY) (ADCIRC end of run); the expected count follows from that window and
+    the first record found. Only the time variable is read. MJ (10/15/26)"""
+    import numpy as np
+    import netCDF4
+    dtdp, rnday, units = _fort15_outputs(run_dir / "fort.15")
+    # The jobs run tide then surf and stop at the first failure: redo the failed stream and every one after it. MJ (10/15/26)
+    rest = list(STREAMS)[list(STREAMS).index(stream):]
+    redo = 'STAGES="nowcast forecast post"' if step == "ncst" else \
+        'STAGES="forecast post"' + ("" if rest == list(STREAMS) else " STREAMS=" + " ".join(rest))
+    head = f"padcirc dropped an output record: re-run this step ({redo}); "
+    for src, _name in RERUN[stream]:
+        unit = src[len("fort."):-3]
+        f = run_dir / src
+        if not (src.startswith("fort.6") and f.is_file()):
+            continue
+        if unit not in units:
+            raise AdcircConfigError(f"{src} exists but {run_dir / 'fort.15'} has no output line (UNIT {unit}); "
+                                    "the fort.15 template changed, so the record check cannot find its window")  # MJ (10/15/26)
+        touts, toutf, nspool = units[unit]
+        step_s, end = nspool * dtdp, min(toutf, rnday * 86400)
+        with netCDF4.Dataset(str(f)) as d:
+            t = np.asarray(d.variables["time"][:], dtype="f8")
+        if not t.size:
+            raise RuntimeError(head + f"{src} ({stream} {step}) has no records")
+        first = t[0]
+        if abs(first - touts) > 1.5:
+            first = touts + step_s
+        want = int(round((end - first) / step_s)) + 1
+        bad = np.flatnonzero(np.abs(np.diff(t) - step_s) > 1.5)
+        if t.size != want or bad.size or abs(t[-1] - end) > 1.5 or abs(t[0] - first) > 1.5:
+            gaps = ", ".join("%.0f->%.0f s" % (t[i], t[i + 1]) for i in bad) or "none inside the series"
+            raise RuntimeError(
+                head + f"{src} ({stream} {step}) has {t.size} records, expected {want}; gap times: {gaps}; every "
+                f"{step_s:.0f} s, expected first {first:.0f} s, last {end:.0f} s, found {t[0]:.0f} .. {t[-1]:.0f} s")
 
 
 def _check_window(path: Path, want: int) -> None:
@@ -289,6 +356,7 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
         _check_window(rerun_dir(ctx) / f"{ctx.run}_ncst.221.nc", int((now - beg).total_seconds() // 3600) + 1)
     run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
     argv = _launch(ctx, run_dir, stream, "ncst", launcher, profile)
+    check_records(run_dir, stream, "ncst")  # before anything is published or the state is written MJ (10/15/26)
     _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, WNDH) - 300}.nc"), ctx.cycle_dir(now, chain))
     _export(ctx, run_dir)
     # Written last, after success; the leading 0 keeps the ops hottime.out/retime.out layout. MJ (10/05/26)
@@ -313,10 +381,30 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     run_dir = _stage(ctx, stream, segment, seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hot, int(seg.tokens["ihot"]),
                      [(rr / f"{ctx.run}_{name}", src) for src, name in RERUN[stream]])
     argv = _launch(ctx, run_dir, stream, segment, launcher, profile)
+    check_records(run_dir, stream, "fcst")  # before the products are published and before the state is advanced MJ (10/15/26)
     for src, name in PRODUCTS[stream]:
         _publish(_need(run_dir, src), ctx.cycle_dir(now, name))
     sp.write_text("0 %s %s %s\n" % (seg.state_time, st[2], st[3]))
     return argv
+
+
+def _ncst_start(ctx: CycleContext) -> datetime:
+    """The restart time the ncst window starts at. On a cold start prep runs before the spin-up, so no chain file of this cycle
+    exists yet; when this cycle's adcprep made nod_equi, the spin-up will publish its restart at cycle - NOWH, whatever older
+    chain file the lookback would find. Otherwise the newest chain file. MJ (10/14/26)"""
+    nod = _nod_path(ctx)
+    if nod.is_file() and read_nod_equi(nod)[0] == ctx.cycle_time - timedelta(hours=NOWH + SPINH):
+        return ctx.cycle_time - timedelta(hours=NOWH)
+    return find_chain_start(ctx, STREAMS["surf"][0])[0]
+
+
+def gfs_source(ctx: CycleContext) -> str:
+    """sfcf (the netCDF files of the WCOSS2 COMINgfs) or sflux (the public GRIB2 flux files): env ADCIRC_GFS_SOURCE, else the yaml
+    adcirc.ops_gfs_source (read from settings.raw, as ops_gfs_wait_s is, so no yaml_to_env key). MJ (10/14/26)"""
+    src = (os.environ.get("ADCIRC_GFS_SOURCE") or ctx.settings.raw["adcirc"].get("ops_gfs_source") or "sfcf").strip()
+    if src not in ("sfcf", "sflux"):
+        raise AdcircConfigError(f"ADCIRC_GFS_SOURCE / adcirc.ops_gfs_source must be sfcf or sflux, got {src!r}")
+    return src
 
 
 def gfs_forcing(ctx: CycleContext) -> None:
@@ -329,19 +417,23 @@ def gfs_forcing(ctx: CycleContext) -> None:
         return
     if not ctx.comin_gfs:
         raise AdcircConfigError("COMINgfs is not set; the GFS sfcf files are the surf forcing source")
-    start = find_chain_start(ctx, STREAMS["surf"][0])[0] if seg == "ncst" else None
+    start = _ncst_start(ctx) if seg == "ncst" else None
     wait = float((ctx.settings.raw["adcirc"].get("ops_gfs_wait_s") or {}).get(seg, 0))
-    build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait)
+    # source is passed only for sflux, so the sfcf path runs unchanged on a nos-utils that predates the keyword. MJ (10/14/26)
+    extra = {} if gfs_source(ctx) == "sfcf" else {"source": "sflux"}
+    build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait, **extra)
 
 
 def run_prep(ctx: CycleContext, runner: CommandRunner = default_runner) -> int:
-    _check_retired(ctx)
+    """One prep step. A cold start is the explicit adcprep segment, never the COLDSTART env var: the ops run.ver exports
+    COLDSTART=YES into every job. MJ (10/14/26)"""
+    check_retired(ctx.segment)
     if ctx.segment in ("ncst", "fcst"):
         gfs_forcing(ctx)
-    elif ctx.coldstart:
+    elif ctx.segment == "adcprep":
         cold_adcprep(ctx, runner)
     else:
-        _load_nod(ctx)
+        raise AdcircConfigError(f"ADCIRC_SEGMENT must be one of {SEGMENTS['prep']} here, got {ctx.segment!r}")
     return 0
 
 

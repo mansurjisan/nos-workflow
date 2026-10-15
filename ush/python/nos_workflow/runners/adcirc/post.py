@@ -169,8 +169,10 @@ def run_ops_script(ctx: CycleContext, runner: CommandRunner = default_runner) ->
     return [ex.name]
 
 
+JOBS = {"ncdiff": run_ncdiff, "ncrcat": run_ncrcat, **{k: run_ops_script for k in OPS_JOBS}}  # the segments a post job takes MJ (10/14/26)
+
+
 def run_post(ctx: CycleContext, runner: CommandRunner = default_runner) -> List[str]:
-    jobs = {"ncdiff": run_ncdiff, "ncrcat": run_ncrcat, **{k: run_ops_script for k in OPS_JOBS}}
-    if ctx.segment not in jobs:
-        raise AdcircConfigError("ADCIRC_SEGMENT must be one of %s for post, got %r" % (tuple(jobs), ctx.segment))
-    return jobs[ctx.segment](ctx, runner)
+    if ctx.segment not in JOBS:
+        raise AdcircConfigError("ADCIRC_SEGMENT must be one of %s for post, got %r" % (tuple(JOBS), ctx.segment))
+    return JOBS[ctx.segment](ctx, runner)

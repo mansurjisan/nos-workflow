@@ -53,11 +53,32 @@ class FakeAdcprep:
         return 0
 
 
+def _series(cwd, name, drop=()):
+    """The time series padcirc writes for one unit: records TOUTS+dt .. min(TOUTF, RNDAY) every NSPOOL*DTDP s, appended to a
+    copied-in file. MJ (10/15/26)"""
+    nc = pytest.importorskip("netCDF4")
+    dtdp, rnday, units = ops._fort15_outputs(cwd / "fort.15")
+    touts, toutf, nspool = units[name[5:7]]
+    step, end = nspool * dtdp, min(toutf, rnday * 86400)
+    path = cwd / name
+    with nc.Dataset(str(path), "a" if path.exists() else "w") as d:
+        if "time" not in d.variables:
+            d.createDimension("time", None)
+            d.createVariable("time", "f8", ("time",))
+        t = d.variables["time"]
+        k = len(t)
+        nxt = (t[k - 1] if k else touts) + step
+        while nxt <= end + 0.5:
+            if round(nxt) not in drop:
+                t[len(t)] = nxt
+            nxt += step
+
+
 class FakeAdcirc:
     """Writes what padcirc would: the hotstart named by write-count parity, appended 61/63 output. MJ (10/05/26)"""
 
-    def __init__(self, crash=""):
-        self.argv, self.crash = [], crash
+    def __init__(self, crash="", drop=None):
+        self.argv, self.crash, self.drop = [], crash, drop or {}
 
     def __call__(self, argv, cwd):
         self.argv.append(list(argv))
@@ -70,9 +91,10 @@ class FakeAdcirc:
         if ihot:
             assert (cwd / f"fort.{ihot - 300}.nc").is_file()
         _restart(cwd / f"fort.{68 if end // int(int(f['NHSTAR,NHSINC'][1]) * 6) % 2 == 0 else 67}.nc", float(end))
-        for n in ["fort.61.nc", "fort.63.nc"] + (["fort.62.nc", "fort.64.nc", "maxele.63.nc", "maxvel.63.nc",
-                                                  "maxwvel.63.nc"] if nws else []):
-            (cwd / n).write_text(((cwd / n).read_text() if (cwd / n).exists() else "") + cwd.name + ";")
+        for n in ["fort.61.nc", "fort.63.nc"] + (["fort.62.nc", "fort.64.nc"] if nws else []):
+            _series(cwd, n, self.drop.get(n, ()))
+        for n in (["maxele.63.nc", "maxvel.63.nc", "maxwvel.63.nc"] if nws else []):
+            (cwd / n).write_text(cwd.name + ";")
         (cwd / "adcirc.err").write_text(self.crash)
         return 0
 
@@ -86,8 +108,8 @@ def _go(tmp_path, stream, seg, fa=None, **extra):
 
 
 def _cold(tmp_path):
-    ctx = _ctx(tmp_path, COLDSTART="YES")
-    ops.cold_adcprep(ctx, FakeAdcprep())
+    ctx = _ctx(tmp_path, ADCIRC_SEGMENT="adcprep")
+    ops.run_prep(ctx, FakeAdcprep())
     cs = _ctx(tmp_path, ADCIRC_SEGMENT="spinup")
     ops.run_nowcast(cs, FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
     for seg in ("ncst", "fcst"):
@@ -104,6 +126,12 @@ def _ncst221(ctx, records):
     with nc.Dataset(str(p), "w") as d:
         d.createDimension("record", None)
         d.createVariable("pressfc", "f4", ("record",))[:] = [0.0] * records
+
+
+def _times(path):
+    nc = pytest.importorskip("netCDF4")
+    with nc.Dataset(str(path)) as d:
+        return list(d.variables["time"][:])
 
 
 def test_single_is_the_default_and_bad_mode_fails():
@@ -125,9 +153,9 @@ def test_cold_start_seeds_both_chains(tmp_path):
 
 
 def test_missing_tide_fac_is_fatal_and_no_python_fallback(tmp_path):
-    ctx = _ctx(tmp_path, tide_fac=False, COLDSTART="YES")
+    ctx = _ctx(tmp_path, tide_fac=False, ADCIRC_SEGMENT="adcprep")
     with pytest.raises(AdcircConfigError, match="FATAL.*stofs_2d_glo_tide_fac.*stofs.v3.1.5"):
-        ops.cold_adcprep(ctx, FakeAdcprep())
+        ops.run_prep(ctx, FakeAdcprep())
     assert not (ctx.comges / f"{RUN}_nod_equi").exists()
 
 
@@ -135,7 +163,7 @@ def test_missing_tide_fac_leaves_a_live_chain_untouched(tmp_path):
     _cold(tmp_path)
     (tmp_path / "bin" / "stofs_2d_glo_tide_fac").unlink()
     with pytest.raises(AdcircConfigError, match="tide_fac"):
-        ops.cold_adcprep(_ctx(tmp_path, COLDSTART="YES"), FakeAdcprep())
+        ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
     assert (tmp_path / "com" / RUN / f"{RUN}_nod_equi").is_file()
     assert not list((tmp_path / "com" / RUN).glob("*.old"))
 
@@ -146,7 +174,7 @@ def test_single_mode_cache_is_fatal(tmp_path):
     class Single:
         def __call__(self, cmd, cwd):
             return FakeAdcprep()(cmd, cwd) or [(cwd / f"PE{i:04d}" / "fort.24").unlink() for i in range(NC)] and 0
-    with pytest.raises(AdcircConfigError, match="single-mode.*COLDSTART=YES"):
+    with pytest.raises(AdcircConfigError, match="single-mode.*run a cold start"):
         ops.cold_spinup(_ctx(tmp_path, ADCIRC_SEGMENT="spinup"), FakeAdcirc(),
                         MachineProfile.load("wcoss2", validate=False), Single())
 
@@ -159,8 +187,20 @@ def test_bad_chain_file_time_is_named(tmp_path, monkeypatch):
 
 
 def test_no_nod_equi_asks_for_a_cold_start(tmp_path):
-    with pytest.raises(AdcircConfigError, match="restart with COLDSTART=YES"):
-        ops.run_prep(_ctx(tmp_path))
+    with pytest.raises(AdcircConfigError, match="run a cold start"):
+        _go(tmp_path, "tide", "ncst")
+
+
+def test_prep_never_infers_a_cold_start_from_the_coldstart_env(tmp_path):
+    """The ops run.ver exports COLDSTART=YES into every job; only the adcprep segment may run cold_adcprep. MJ (10/14/26)"""
+    for seg in ("", "ncst,fcst", "cold"):
+        with pytest.raises(AdcircConfigError, match="ADCIRC_SEGMENT must be one of \\(.adcprep"):
+            ops.run_prep(_ctx(tmp_path, COLDSTART="YES", ADCIRC_SEGMENT=seg), FakeAdcprep())
+    assert not (tmp_path / "com" / RUN / f"{RUN}_nod_equi").exists()
+    ctx = _ctx(tmp_path, ADCIRC_SEGMENT="adcprep")
+    assert ops.run_prep(ctx, FakeAdcprep()) == 0
+    assert ops.read_nod_equi(ctx.comges / f"{RUN}_nod_equi")[0] == CYCLE - timedelta(hours=168)
+    assert (tmp_path / "work" / "tide_adcprep" / "PE0000" / "fort.24").is_file()
 
 
 def test_tide_chain(tmp_path):
@@ -172,7 +212,8 @@ def test_tide_chain(tmp_path):
     assert (rr / f"{RUN}_hottime.out").read_text().split()[1:] == ["604800", "6.75000", "14.50000"]
     _go(tmp_path, "tide", "fcst")
     assert not (rr / f"{RUN}_tide.68.nc").exists()
-    assert ctx.cycle_dir(CYCLE, "points.htp.nc").read_text().count(";") == 2  # fcst appended to the ncst output MJ (10/11/26)
+    pts = _times(ctx.cycle_dir(CYCLE, "points.htp.nc"))  # fcst appended to the ncst output MJ (10/11/26)
+    assert pts[-1] == 1252800 and len(pts) == 186 * 10
     assert ctx.cycle_dir(CYCLE, "fields.htp.nc").is_file()
     assert not list((tmp_path / "work" / "tide_fcst").glob("PE[0-9]*"))
     assert (rr / f"{RUN}_hottime.out").read_text().split()[1] == "1252800"  # ncst end 604800 s + 180 h. MJ (10/11/26)
@@ -214,7 +255,7 @@ def test_multistart(tmp_path):
     nxt, _ = _go(tmp_path, "tide", "ncst", cyc="18")   # 18z steps back 6 h to the 12z chain file MJ (10/05/26)
     assert nxt.cycle_dir(nxt.cycle_time, "hotstart").is_file()
     _go(tmp_path, "tide", "ncst", cyc="00", PDY="20261006", COMOUT=str(tmp_path / "com" / f"{RUN}.20261006"))
-    with pytest.raises(AdcircConfigError, match="restart with COLDSTART=YES"):
+    with pytest.raises(AdcircConfigError, match="run a cold start"):
         _go(tmp_path, "tide", "ncst", cyc="12", PDY="20261012", COMOUT=str(tmp_path / "com" / f"{RUN}.20261012"))
 
 
@@ -388,6 +429,66 @@ def test_gfs_ncst_prep_starts_at_the_restart_chain_time(tmp_path):
             assert d.variables[v].shape[0] == 7 and d.dimensions["record"].isunlimited()
 
 
+def _tank_for_ncst(tmp_path):
+    for h in range(6):
+        _sfcf(tmp_path / "gfs", CYCLE - timedelta(hours=6), h)
+    _sfcf(tmp_path / "gfs", CYCLE, 0)
+
+
+def test_gfs_ncst_prep_on_a_cold_start_ends_at_the_spinup_restart(tmp_path):
+    """Prep runs before the spin-up, so no chain file exists; this cycle's nod_equi says the spin-up will publish cycle - 6 h. MJ (10/14/26)"""
+    nc = pytest.importorskip("netCDF4")
+    ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
+    assert not list((tmp_path / "com").glob(f"{RUN}.*/*.restart"))
+    _tank_for_ncst(tmp_path)
+    assert ops.run_prep(_gfs_ctx(tmp_path, "ncst")) == 0
+    rr = ops.rerun_dir(_ctx(tmp_path))
+    with nc.Dataset(str(rr / f"{RUN}_ncst.221.nc")) as d:
+        assert d.variables["pressfc"].shape[0] == 7
+    # the spin-up then publishes the restart the window was cut for, and the surf ncst accepts the window. MJ (10/14/26)
+    ops.run_nowcast(_seg(tmp_path, "spinup"), FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
+    _go(tmp_path, "surf", "ncst")
+
+
+def test_gfs_ncst_prep_on_a_cold_start_ignores_an_older_chain_file_in_the_lookback(tmp_path):
+    """A stale restart at cycle - 12 h is inside the 21 x 6 h lookback; the spin-up still publishes cycle - 6 h, so the window is 7 records. MJ (10/14/26)"""
+    nc = pytest.importorskip("netCDF4")
+    ctx = _ctx(tmp_path, ADCIRC_SEGMENT="adcprep")
+    ops.run_prep(ctx, FakeAdcprep())
+    stale = ctx.cycle_dir(CYCLE - timedelta(hours=12), "restart")
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale")
+    assert ops.find_chain_start(ctx, "restart")[0] == CYCLE - timedelta(hours=12)
+    _tank_for_ncst(tmp_path)
+    for h in range(6):  # the stale start's own sfcf files exist, so the old window builds with 13 records instead of failing on a missing file. MJ (10/14/26)
+        _sfcf(tmp_path / "gfs", CYCLE - timedelta(hours=12), h)
+    assert ops.run_prep(_gfs_ctx(tmp_path, "ncst")) == 0
+    with nc.Dataset(str(ops.rerun_dir(ctx) / f"{RUN}_ncst.221.nc")) as d:
+        assert d.variables["pressfc"].shape[0] == 7
+    ops.run_nowcast(_seg(tmp_path, "spinup"), FakeAdcirc(), MachineProfile.load("wcoss2", validate=False), FakeAdcprep())
+    _go(tmp_path, "surf", "ncst")  # the window check passes after the spin-up MJ (10/14/26)
+
+
+def test_a_later_cycle_starts_the_ncst_window_at_the_newest_chain_file(tmp_path):
+    _cold(tmp_path)  # nod_equi of the 12z cycle; the spin-up published the 06z chain files MJ (10/14/26)
+    nxt = _gfs_ctx(tmp_path, "ncst", cyc="18")
+    nxt.cycle_dir(CYCLE, "restart").write_text("x")
+    assert ops._ncst_start(nxt) == CYCLE  # the 12z restart, not the cold-start rule: nod_equi is not the 18z cycle's MJ (10/14/26)
+    assert ops._ncst_start(_gfs_ctx(tmp_path, "ncst")) == CYCLE - timedelta(hours=6)
+
+
+def test_gfs_ncst_prep_without_a_chain_file_or_this_cycles_nod_equi_keeps_the_error(tmp_path):
+    _tank_for_ncst(tmp_path)
+    with pytest.raises(AdcircConfigError, match="there are no restart files.*run a cold start"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst"))
+    ops.run_prep(_ctx(tmp_path, ADCIRC_SEGMENT="adcprep"), FakeAdcprep())
+    # a nod_equi from another cycle (here the 18z one's would start 6 h later) does not make a cold start of this cycle MJ (10/14/26)
+    with pytest.raises(AdcircConfigError, match="there are no restart files"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst", cyc="18"))
+    with pytest.raises(AdcircConfigError, match="there are no restart files"):
+        ops.run_prep(_gfs_ctx(tmp_path, "ncst", PDY="20261004"))
+
+
 def test_gfs_prep_skips_existing_and_fails_clearly(tmp_path):
     _cold(tmp_path)
     rr = ops.rerun_dir(_ctx(tmp_path))
@@ -411,7 +512,35 @@ def test_gfs_prep_wait_comes_from_the_yaml(tmp_path, monkeypatch):
     seen = {}
     monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k, args=a))
     ops.run_prep(ctx)
-    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst"
+    assert seen["wait_s"] == 77 and seen["start"] is None and seen["args"][2] == "fcst" and "source" not in seen
+
+
+def test_gfs_source_env_beats_yaml_and_is_validated(tmp_path, monkeypatch):
+    from nos_utils.forcing import adcirc_met as am
+    _cold(tmp_path)
+    ctx = _gfs_ctx(tmp_path, "fcst")
+    (ops.rerun_dir(ctx) / f"{RUN}_fcst.221.nc").unlink()
+    seen = {}
+    monkeypatch.setattr(am, "build_sfcf_forcing", lambda *a, **k: seen.update(k))
+    monkeypatch.delenv("ADCIRC_GFS_SOURCE", raising=False)
+    ctx.settings.raw["adcirc"]["ops_gfs_source"] = "sflux"
+    ops.run_prep(ctx)
+    assert seen["source"] == "sflux"
+    monkeypatch.setenv("ADCIRC_GFS_SOURCE", "sfcf")
+    seen.clear()
+    ops.run_prep(ctx)
+    assert "source" not in seen  # sfcf is the builder's default; not passed. MJ (10/14/26)
+    monkeypatch.setenv("ADCIRC_GFS_SOURCE", "grib")
+    with pytest.raises(AdcircConfigError, match="sfcf or sflux"):
+        ops.run_prep(ctx)
+    monkeypatch.delenv("ADCIRC_GFS_SOURCE")
+    ctx.settings.raw["adcirc"]["ops_gfs_source"] = "bad"
+    with pytest.raises(AdcircConfigError, match="sfcf or sflux"):
+        ops.run_prep(ctx)
+
+
+def test_yaml_default_gfs_source_is_sfcf():
+    assert AdcircSettings.from_yaml(YAML, {}).raw["adcirc"]["ops_gfs_source"] == "sfcf"
 
 
 def test_surf_ncst_window_must_match_the_chain_start(tmp_path):
@@ -538,3 +667,98 @@ def test_ops_grib2_needs_every_region_f000_and_f180(tmp_path, monkeypatch):
     pkg.write_text(pkg.read_text().replace("000 180", "000 179"))
     with pytest.raises(RuntimeError, match="made no stofs_2d_glo.t12z.conus.east.f180.grib2"):
         post.run_post(_seg(tmp_path, "grib2"))
+
+
+def _run_dir(tmp_path, nrec=4, drop=None, files=("61", "62", "63", "64")):
+    """A finished surf step: fort.15 with a 4 h window every 3600 s (NSPOOL 600, DTDP 6) and fort.6x series. MJ (10/15/26)"""
+    nc = pytest.importorskip("netCDF4")
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    lines = ["6 ! DTDP", "1 ! RNDY"] + ["-3 0.0 %s 600 ! X (UNIT  %s)" % (4 / 24, u) for u in ("61", "62", "63", "64")]
+    (rd / "fort.15").write_text("\n".join(lines) + "\n")
+    times = [3600.0 * k for k in range(1, nrec + 1)]
+    if drop is not None:
+        times.remove(drop)
+    for u in files:
+        with nc.Dataset(str(rd / f"fort.{u}.nc"), "w") as d:
+            d.createDimension("time", None)
+            d.createVariable("time", "f8", ("time",))[:] = times
+    return rd
+
+
+def test_check_records_passes_complete_and_skips_absent_optional_files(tmp_path):
+    ops.check_records(_run_dir(tmp_path), "surf", "fcst")
+    (tmp_path / "x").mkdir()
+    ops.check_records(_run_dir(tmp_path / "x", files=("61", "63")), "surf", "fcst")
+
+
+def test_check_records_missing_middle_record_message(tmp_path):
+    rd = _run_dir(tmp_path, drop=7200.0)
+    with pytest.raises(RuntimeError) as e:
+        ops.check_records(rd, "surf", "fcst")
+    msg = str(e.value)
+    assert "fort.61.nc (surf fcst) has 3 records, expected 4; gap times: 3600->10800 s;" in msg
+    assert msg.index("STREAMS=surf") + len("STREAMS=surf") + len("surf_fcst: ") < 200  # the recovery survives the 200 char reason cut. MJ (10/15/26)
+    assert msg.startswith('padcirc dropped an output record: re-run this step (STAGES="forecast post" STREAMS=surf); fort.61.nc')
+
+
+@pytest.mark.parametrize("nrec", [3, 5])
+def test_check_records_wrong_count_fails(tmp_path, nrec):
+    with pytest.raises(RuntimeError, match=r"has %d records, expected 4" % nrec):
+        ops.check_records(_run_dir(tmp_path, nrec=nrec), "surf", "fcst")
+
+
+@pytest.mark.parametrize("seg", ["ncst", "fcst"])
+def test_dropped_record_fails_before_publish_and_state_write(tmp_path, seg):
+    _ncst221(_cold(tmp_path), 7)
+    for n in ("221", "222", "225"):
+        p = ops.rerun_dir(_ctx(tmp_path)) / f"{RUN}_fcst.{n}.nc"
+        p.write_text("fcst")
+    if seg == "fcst":
+        _go(tmp_path, "surf", "ncst")
+    ctx = _ctx(tmp_path, ADCIRC_STREAM="surf")
+    rr, state = ops.rerun_dir(ctx), ops.rerun_dir(ctx) / f"{RUN}_retime.out"
+    before = state.read_text() if state.is_file() else None
+    exists = lambda: sorted(p.name for p in list(rr.glob(f"{RUN}_surf.*")) + list(ctx.cycle_dir(CYCLE, "x").parent.glob("*.cwl*")))
+    snap = exists()
+    chain = ctx.cycle_dir(CYCLE, "restart").is_file()
+    with pytest.raises(RuntimeError, match="padcirc dropped an output record"):
+        _go(tmp_path, "surf", seg, FakeAdcirc(drop={"fort.63.nc": (1238400,) if seg == "fcst" else (604800 - 7200,)}))
+    assert exists() == snap
+    assert (state.read_text() if state.is_file() else None) == before
+    assert ctx.cycle_dir(CYCLE, "restart").is_file() == chain
+    _go(tmp_path, "surf", seg)  # the same step re-runs and passes MJ (10/15/26)
+
+
+@pytest.mark.parametrize("stream,step,redo", [
+    ("tide", "ncst", 'STAGES="nowcast forecast post")'), ("surf", "ncst", 'STAGES="nowcast forecast post")'),
+    ("tide", "fcst", 'STAGES="forecast post")'), ("surf", "fcst", 'STAGES="forecast post" STREAMS=surf)')])
+def test_check_records_recovery_hint_per_stream_and_step(tmp_path, stream, step, redo):
+    with pytest.raises(RuntimeError) as e:
+        ops.check_records(_run_dir(tmp_path, drop=7200.0, files=("61", "63")), stream, step)
+    assert ("re-run this step (" + redo + "; fort.") in str(e.value)
+
+
+def test_check_records_unknown_unit_is_not_skipped(tmp_path):
+    rd = _run_dir(tmp_path)
+    (rd / "fort.15").write_text((rd / "fort.15").read_text().replace("(UNIT  63)", "(63)"))
+    with pytest.raises(AdcircConfigError, match="fort.63.nc exists but .* no output line"):
+        ops.check_records(rd, "surf", "fcst")
+
+
+def test_real_template_windows_have_literal_values(tmp_path):
+    """The real surf template rendered for hotstart 648000 s (ncst 6 h, fcst 180 h), against literal numbers. MJ (10/15/26)"""
+    nod = {}  # the tide factors do not touch the output lines
+    tpl = (DATA / f"{RUN}_surf.15").read_text()
+    seg = ops.ncst_segment("surf", 648000, 6)
+    f15 = tmp_path / "ncst.15"
+    f15.write_text(ops.render(tpl, nod, seg.tokens, "2026100512"))
+    dtdp, rnday, units = ops._fort15_outputs(f15)
+    assert dtdp == 6 and rnday == 7.75
+    assert units["63"][:2] == (648000.0, 1317600.0) and units["61"][:2] == (648000.0, 1317600.0)
+    assert units["61"][2] * dtdp == 360
+    assert units["62"][2] * dtdp == 360 and units["63"][2] * dtdp == 3600 and units["64"][2] * dtdp == 3600
+    seg = ops.fcst_segment("surf", seg.state_time, seg.tokens["touts"], seg.tokens["toutf"])
+    f15.write_text(ops.render(tpl, nod, seg.tokens, "2026100512"))
+    dtdp, rnday, units = ops._fort15_outputs(f15)
+    assert rnday == 15.25 and min(units["63"][1], rnday * 86400) == 1317600.0

@@ -5,6 +5,7 @@
 # Layout: 4064 ADCIRC compute ranks on 51 x 80-rank nodes (4080 slots; 4064 + up to 16 writer ranks fit).
 # Nodes and ranks-per-node follow parm/machines/hercules.yaml (allocation.ranks_per_node = 80);
 # tests/test_stofs_2d_glo_cards.py fails if they drift. Walltime: ops forecast chain about 1:05; Zach 180 h test inside 2 h, card 3 h. MJ (10/05/26)
+# The ops-mode job runs the tide and surf forecasts one after the other (launch_stofs_2d_glo.sh: -N 52, 2:00:00; see jnos_nowcast_00.sh). MJ (10/14/26)
 #
 # Required env (sbatch passes the caller's environment): PDY, PACKAGEROOT, ADCIRC_EXEC_DIR (dir holding
 # padcirc and adcprep; no module exists on Hercules). Optional: CYC (default 12; 00/06/12/18), COMROOT_2DGLO

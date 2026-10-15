@@ -22,19 +22,19 @@
 #SBATCH --error=%x.%j.err
 
 # launch_stofs_2d_glo.sh <PDY> <CYC> (this directory) submits the whole ops chain with afterok dependencies and Hercules walltimes
-# (ncst 0:40, not the ecf values below); status_stofs_2d_glo.sh <PDY> <CYC> reports it. The lines below are the single-job form. MJ (10/13/26)
-# Ops jobs (stofs.v3.1.5 structure) are these same cards with the mode chosen at submit time; walltimes are
-# from ecf/jstofs_2d_glo_*.ecf. Surf ncst and fcst launch 4064 + 32 writers = 4096 ranks, which needs
-# 52 x 80 slots, so they add -N 52. The cold-start pair runs once per restart, then each cycle runs tide and
-# surf ncst -> fcst (one 180 h run, ops fcst1 + fcst2 merged):
-#   sbatch -t 3:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,COLDSTART=YES jnos_prep_00.sh                 (cold_adcprep)
-#   sbatch -t 1:00:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=spinup jnos_nowcast_00.sh       (cold_spinup)
-#   sbatch -t 0:25:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=ncst jnos_nowcast_00.sh
-#   sbatch -t 0:55:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_STREAM=tide,ADCIRC_SEGMENT=fcst jnos_forecast_00.sh
-#   surf: the same two with ADCIRC_STREAM=surf, -t 0:25:00 -N 52, 1:05:00 -N 52. MJ (10/13/26)
-#   GFS surf forcing, one prep per ops GFS job, before the surf segment of the same name (ecf gfs_ncst walltime; fcst is gfs_fcst1 + gfs_fcst2). MJ (10/11/26)
-#   sbatch -t 0:10:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=ncst jnos_prep_00.sh
-#   sbatch -t 0:40:00 --export=ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops,ADCIRC_SEGMENT=fcst jnos_prep_00.sh
+# (the sums of the former per-job ones, not the ecf values); status_stofs_2d_glo.sh <PDY> <CYC> reports it. A cycle is four jobs, prep ->
+# nowcast -> forecast -> post, and each runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list one after the other (tide, then
+# surf) on its own allocation. The surf runs launch 4064 + 32 writers = 4096 ranks, which needs 52 x 80 slots, so nowcast and forecast add
+# -N 52. --export splits values at commas, so the lists are space separated and go in the environment of sbatch (the default
+# --export=ALL), and a hand-typed --export value goes in one pair of quotes. A list is in the order of the examples (spinup ncst; tide surf;
+# ncdiff ncrcat) and has no repeats, or the job stops before its first step. The single-job forms (the cold start adds adcprep to the prep
+# list, '-t 3:50:00', and spinup to the nowcast list, '-t 2:20:00'):
+#   ADCIRC_SEGMENT="ncst fcst" sbatch -t 0:50:00 -N 1 -n 1 --mem=64G --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_prep_00.sh
+#   ADCIRC_SEGMENT=ncst ADCIRC_STREAM="tide surf" sbatch -t 1:20:00 -N 52 --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_nowcast_00.sh
+#   ADCIRC_SEGMENT=fcst ADCIRC_STREAM="tide surf" sbatch -t 2:00:00 -N 52 --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_forecast_00.sh
+#   ADCIRC_SEGMENT="ncdiff ncrcat" sbatch -t 1:15:00 -N 1 -n 1 --mem=100G --export="ALL,PDY=<yyyymmdd>,CYC=<hh>,KEEPDATA=NO,ADCIRC_MODE=ops" jnos_prep_00.sh
+# A cold start is only ever the segment names, never the COLDSTART variable. There are no done-markers: redo a failed step by
+# resubmitting its job with a narrower list (ADCIRC_STREAM=surf, ADCIRC_SEGMENT=ncst). MJ (10/14/26)
 
 # PACKAGEROOT must be set explicitly: a default could pick up the SECOFS or ATL package and run its code silently. MJ (10/05/26)
 PACKAGEROOT=${PACKAGEROOT:?export PACKAGEROOT=<dir holding the 2D-Global nos-workflow clone>}

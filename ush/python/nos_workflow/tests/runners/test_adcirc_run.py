@@ -34,7 +34,7 @@ def test_wcoss2_launch_line_matches_june():
 
 def test_hercules_launch_line():
     argv = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN)
-    assert argv == ["srun", "-n", "4064", "--label", "--cpu-bind=cores", "padcirc"]
+    assert argv == ["srun", "-n", "4064", "--label", "-N", "51", "--cpu-bind=cores", "padcirc"]
 
 
 def test_writers_add_ranks_and_w_flag():
@@ -43,6 +43,19 @@ def test_writers_add_ranks_and_w_flag():
                     "padcirc", "-W", "32"]
     h = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("hercules"), "padcirc", RPN, 32)
     assert h[-3:] == ["padcirc", "-W", "32"] and h[2] == "4096"
+    assert h[h.index("-N") + 1] == "52"
+
+
+def test_srun_node_count_pins_layout_and_is_not_duplicated():
+    import dataclasses
+    tide = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN)
+    surf = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN, 32)
+    assert tide[tide.index("-N") + 1] == "51" and surf[surf.index("-N") + 1] == "52"
+    assert "-N" not in execute.padcirc_argv(_s(), _profile("wcoss2"), "padcirc", RPN, 32)
+    p = _profile("hercules")
+    p = dataclasses.replace(p, mpi=dataclasses.replace(p.mpi, fixed_args=("--nodes=7",)))
+    argv = execute.padcirc_argv(_s(), p, "padcirc", RPN)
+    assert "-N" not in argv and argv.count("--nodes=7") == 1
 
 
 def _staged(tmp_path, hot=False, **extra):
