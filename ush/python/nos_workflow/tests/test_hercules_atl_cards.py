@@ -46,7 +46,9 @@ def test_card_allocation_matches_machine_layer(system, stage, hercules):
     card = REPO / d / f"jnos_{stage}_00.sh"
     assert card.is_file()
     lines = _sbatch(card)
-    assert f"#SBATCH --time={WALL[stage]}" in lines
+    # the coupled post needed 4 h on WCOSS2 and is unmeasured on Hercules. MJ (10/14/26)
+    wall = "04:00:00" if (system == "stofs_3d_atl_ufs" and stage == "post") else WALL[stage]
+    assert f"#SBATCH --time={wall}" in lines
     for want in ("--account=nos-surge", "--qos=batch", "--partition=hercules"):
         assert f"#SBATCH {want}" in lines
     if stage in ("nowcast", "forecast"):

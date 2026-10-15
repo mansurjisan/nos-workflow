@@ -31,6 +31,22 @@ if [ "${OFS}" = stofs_2d_glo ]; then
     echo "OK: ${tool}"
   done
   [ -f "${HOMEnos}/ush/python/nos-utils/nos_utils/forcing/adcirc_met.py" ] || { echo "FATAL: nos-utils is not deployed under ${HOMEnos}/ush/python/nos-utils (Deploy stage)"; exit 1; }
+elif [ "${OFS}" = stofs_3d_atl_ufs_standalone ] || [ "${OFS}" = stofs_3d_atl_ufs ]; then
+  # STOFS-3D-ATL: the variant's model executable, tide_fac, the hotstart combiner and the Slurm client the chain needs. MJ (10/14/26)
+  MODEL_EXE=fv3_stofs_3d_atl.exe
+  [ "${OFS}" != stofs_3d_atl_ufs_standalone ] || MODEL_EXE=stofs_3d_atl_pschism_v3.1.5
+  for exe in "${EXEC_DIR}/${MODEL_EXE}" "${EXEC_DIR}/stofs_3d_atl_tide_fac" "${EXEC_DIR}/schism_combine_hotstart7.exe"; do
+    if [ ! -x "${exe}" ]; then
+      echo "FATAL: ${exe} not found. Build it: see docs/stofs_3d_atl_run_guide.md section 4.1"
+      exit 1
+    fi
+    echo "OK: ${exe}"
+  done
+  for tool in sbatch sacct rsync; do
+    command -v "${tool}" >/dev/null 2>&1 || { echo "FATAL: ${tool} not on PATH"; exit 1; }
+    echo "OK: ${tool}"
+  done
+  [ -f "${HOMEnos}/ush/python/nos-utils/nos_utils/orchestrator.py" ] || { echo "FATAL: nos-utils is not deployed under ${HOMEnos}/ush/python/nos-utils (Deploy stage)"; exit 1; }
 else
   for exe in fv3_coastalS.exe schism_combine_hotstart7.exe; do
     if [ ! -x "${EXEC_DIR}/${exe}" ]; then

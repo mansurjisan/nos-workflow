@@ -14,7 +14,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=8
 #SBATCH --mem=0
-#SBATCH --time=02:00:00
+#SBATCH --time=04:00:00
 # No #SBATCH -o/-e: Slurm's default slurm-%j.out catches its own epilogue, the script
 # self-redirects its own log below. MJ (10/04/26)
 

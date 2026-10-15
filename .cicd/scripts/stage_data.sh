@@ -6,6 +6,8 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "${SCRIPT_DIR}/common.sh"
 # STOFS-2D-Global stages its own inputs (a level-aware copy of the frozen dataset, or the login-node forcing download). MJ (10/13/26)
 if [ "${OFS}" = stofs_2d_glo ]; then exec bash "${SCRIPT_DIR}/stofs_2d_glo.sh" stage; fi
+# Same for STOFS-3D-ATL (frozen dataset link, or the login-node public-input staging with a dcom bundle). MJ (10/14/26)
+case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) exec bash "${SCRIPT_DIR}/stofs_3d_atl.sh" stage ;; esac
 setup_env
 
 : "${PDY:?PDY not set}"

@@ -57,10 +57,12 @@ def _compare_var(name: str, a, b, tol: float):
     return False, float(diff.max()) if diff.size else 0.0, ""
 
 
-def compare_file(ref_path: Path, out_path: Path, tol: float) -> tuple:
-    """(ok, text) for one file pair. MJ (10/13/26)"""
+def compare_file(ref_path: Path, out_path: Path, tol) -> tuple:
+    """(ok, text) for one file pair. tol is a float, or a {variable: tol} dict (a variable not in it must be bitwise). MJ (10/14/26)"""
     if not out_path.is_file():
         return False, "missing in this run"
+    per_var = isinstance(tol, dict)  # per-variable tolerances, used by compare_atl.py. MJ (10/14/26)
+    diffs = {}
     try:
         with nc.Dataset(ref_path) as r, nc.Dataset(out_path) as o:
             if set(r.variables) != set(o.variables):
@@ -68,7 +70,8 @@ def compare_file(ref_path: Path, out_path: Path, tol: float) -> tuple:
             bitwise, worst, wvar, nvar = True, 0.0, "", 0
             for name in sorted(r.variables):
                 nvar += 1
-                same, mx, problem = _compare_var(name, r.variables[name][:], o.variables[name][:], tol)
+                vtol = tol.get(name, 0.0) if per_var else tol
+                same, mx, problem = _compare_var(name, r.variables[name][:], o.variables[name][:], vtol)
                 if problem:
                     return False, problem
                 if same:
@@ -77,14 +80,17 @@ def compare_file(ref_path: Path, out_path: Path, tol: float) -> tuple:
                 dims = r.variables[name].dimensions
                 if not (dims and dims[0] == "time" and name != "time"):
                     return False, f"{name}: differs but is not a time-dependent variable (max |diff| {mx:.3g})"
+                diffs[name] = mx
                 if mx > worst:
                     worst, wvar = mx, name
-                if mx > tol:
-                    return False, f"{name}: max |diff| {mx:.3g} > tol {tol:g}"
+                if mx > vtol:
+                    return False, f"{name}: max |diff| {mx:.3g} > tol {vtol:g}"
     except (OSError, RuntimeError, KeyError, ValueError) as exc:
         return False, f"unreadable ({exc})"
     if bitwise:
         return True, f"bitwise identical ({nvar} variables)"
+    if per_var:
+        return True, "max |diff| " + ", ".join(f"{n} {d:.3g} (tol {tol.get(n, 0.0):g})" for n, d in diffs.items())
     return True, f"max |diff| {worst:.3g} ({wvar}) <= tol {tol:g}"
 
 

@@ -38,14 +38,29 @@ def resolveTargetSha() {
     }
 }
 
-// Manual STOFS-2D-Global builds report in the Jenkins build only; the hercules-ci/cycle status belongs to the SECOFS cycle. MJ (10/13/26)
+// Systems that run only from a user-started Build with Parameters, never from the PR label. MJ (10/14/26)
+def isManualOfs(String ofs) {
+    return ofs in ['stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
+}
+
+def isAtlOfs(String ofs) {
+    return ofs in ['stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
+}
+
+// Manual STOFS builds report in the Jenkins build only; the hercules-ci/cycle status belongs to the SECOFS cycle. MJ (10/14/26)
 def cycleLabel() {
-    return (env.CI_OFS == 'stofs_2d_glo') ? "STOFS-2D-Global ${params.LEVEL} ${params.DATA_MODE} cycle" : 'cycle'
+    if (env.CI_OFS == 'stofs_2d_glo') {
+        return "STOFS-2D-Global ${params.LEVEL} ${params.DATA_MODE} cycle"
+    }
+    if (isAtlOfs(env.CI_OFS)) {
+        return "STOFS-3D-ATL (${env.CI_OFS}) ${params.LEVEL} ${params.DATA_MODE} cycle"
+    }
+    return 'cycle'
 }
 
 def postStatus(String state, String description) {
-    if (env.CI_OFS == 'stofs_2d_glo') {
-        echo "postStatus: skipped for STOFS-2D-Global (manual build)"
+    if (isManualOfs(env.CI_OFS)) {
+        echo "postStatus: skipped for ${env.CI_OFS} (manual build)"
         return
     }
     try {
@@ -92,8 +107,9 @@ pipeline {
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
-        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo (never the PR label); Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
-        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo only. smoke: COLD=0 nowcast job (tide then surf), compared with the frozen reference. cycle: COLD=0 full 4-job chain (prep, nowcast, forecast, post), compared with the frozen reference. full: COLD=1 cold start + cycle (the same 4 jobs, longer), compared with the frozen reference, ops comparison reported. Frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full; use DATA_MODE=frozen')
+        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo, stofs_3d_atl_ufs_standalone (pschism) or stofs_3d_atl_ufs (UFS coupled), never the PR label; Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
+        string(name: 'DCOM_BUNDLE', defaultValue: '', description: 'stofs_3d_atl_* with DATA_MODE=live only: case bundle dir holding dcom/ and seeds/dyn_seed_<PDY-1>/ (run guide section 4.2); must be readable by the CI account. Not needed for frozen')
+        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo and stofs_3d_atl_*. 2D-GLO smoke: COLD=0 nowcast job (tide then surf), compared with the frozen reference. 2D-GLO cycle: COLD=0 full 4-job chain (prep, nowcast, forecast, post), compared with the frozen reference. 2D-GLO full: COLD=1 cold start + cycle (the same 4 jobs, longer), compared with the frozen reference, ops comparison reported. 2D-GLO frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full. ATL smoke: Prep, Nowcast, Verify. ATL cycle and full: Prep, Nowcast, Forecast, Post, Verify; full adds the report-only ops comparison. ATL needs a seeded frozen dataset (stofs_3d_atl.sh seed); CYC is forced to 12. Use DATA_MODE=frozen')
     }
 
     environment {
@@ -107,9 +123,11 @@ pipeline {
         SLURM_CI_QOS     = "${params.SLURM_QOS}"
         DATA_MODE    = "${params.DATA_MODE}"
         PDY          = "${params.PDY}"
-        CYC          = "${params.CYC}"
+        // STOFS-3D-ATL has only the 12z cycle, whatever the form says. MJ (10/14/26)
+        CYC          = "${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}"
         CI_OFS       = "${params.OFS ?: 'secofs_ufs'}"
         LEVEL        = "${params.LEVEL ?: 'smoke'}"
+        DCOM_BUNDLE  = "${params.DCOM_BUNDLE ?: ''}"
     }
 
     stages {
@@ -161,10 +179,13 @@ pipeline {
                         env.RUN_CYCLE = hasLabel ? 'true' : 'false'
                         echo "Gate: PR #${env.CHANGE_ID} label check via ${labelSource}: hercules-nos-RT ${hasLabel ? 'PRESENT' : 'ABSENT'} -> RUN_CYCLE=${env.RUN_CYCLE}"
                     }
-                    // STOFS-2D-Global is manual only: a user who starts a build with OFS=stofs_2d_glo bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/13/26)
-                    if (env.RUN_CYCLE != 'true' && params.OFS == 'stofs_2d_glo' && currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')) {
+                    if (isAtlOfs(params.OFS) && params.CYC != '12') {
+                        echo "STOFS-3D-ATL runs 12z only: CYC ${params.CYC} -> 12"
+                    }
+                    // STOFS-2D-Global and STOFS-3D-ATL are manual only: a user who starts a build with one of them as OFS bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/14/26)
+                    if (env.RUN_CYCLE != 'true' && isManualOfs(params.OFS) && currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')) {
                         env.RUN_CYCLE = 'true'
-                        echo "Gate: manual STOFS-2D-Global build (LEVEL=${params.LEVEL}) - cycle will run, PR label not required"
+                        echo "Gate: manual ${params.OFS} build (LEVEL=${params.LEVEL}) - cycle will run, PR label not required"
                     }
                     if (env.RUN_CYCLE == 'true') {
                         // mkdir (no -p) is atomic, so it doubles as a mutex against concurrent cycles sharing NOS_CI_ROOT.
@@ -211,7 +232,7 @@ pipeline {
                         } else {
                             error("another CI cycle holds the lock: ${lockResult.replaceFirst('^HELD:', '')}")
                         }
-                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${params.CYC} ${params.DATA_MODE}")
+                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${env.CYC} ${params.DATA_MODE}")
                     } else if (gateLookupFailed) {
                         postStatus('error', 'hercules-ci gate could not read PR labels')
                     }
@@ -242,34 +263,41 @@ pipeline {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
             }
         }
+        // Prep..Verify run for SECOFS and STOFS-3D-ATL (ATL smoke stops after Nowcast); the STOFS-2D-Global stages below keep their own chain. MJ (10/15/26)
         stage('Prep') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
             }
         }
         stage('Nowcast') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
             }
         }
         stage('Forecast') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
             }
         }
         stage('Post') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
             }
         }
         stage('Verify') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+                script {
+                    if (isAtlOfs(env.CI_OFS)) {
+                        sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_3d_atl.sh" verify'
+                    } else {
+                        sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+                    }
+                }
             }
         }
         stage('Run 2D-GLO') {
@@ -305,7 +333,7 @@ pipeline {
                 }
             }
             script {
-                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true' && env.CI_OFS != 'stofs_2d_glo') {
+                if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true' && !isManualOfs(env.CI_OFS)) {
                     try {
                         withCredentials([string(credentialsId: 'github-status-token', variable: 'GH_TOKEN')]) {
                             withEnv(["GH_CHANGE_ID=${env.CHANGE_ID}"]) {
@@ -326,7 +354,7 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh writes the current jobid here; best-effort scancel it on failure.
+            // run_stage.sh writes the current jobid here (SECOFS and ATL); best-effort scancel it on failure. MJ (10/15/26)
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then
@@ -337,22 +365,22 @@ pipeline {
             '''
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('failure', "cycle ${params.PDY}/${params.CYC} FAILED — see build log")
+                    postStatus('failure', "cycle ${params.PDY}/${env.CYC} FAILED — see build log")
                 }
             }
         }
         success {
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('success', "cycle ${params.PDY}/${params.CYC} PASS")
+                    postStatus('success', "cycle ${params.PDY}/${env.CYC} PASS")
                 }
             }
             slackSend(channel: '#nos-notifications', color: 'good',
-                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         failure {
             slackSend(channel: '#nos-notifications', color: 'danger',
-                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${params.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         aborted {
             slackSend(channel: '#nos-notifications', color: 'warning',

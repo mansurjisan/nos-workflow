@@ -11,6 +11,8 @@ source "${SCRIPT_DIR}/common.sh"
 DATA_MODE=${DATA_MODE:-live}
 
 FIX_DEST="${HOMEnos}/fix/${OFS}"
+ATL=0
+case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ATL=1; FIX_DEST="${HOMEnos}/fix/stofs_3d_atl_ufs" ;; esac
 EXEC_DEST="${HOMEnos}/exec"
 # SECOFS keeps its sentinel and executable; STOFS-2D-Global has its own exec sentinel (exec/ is shared) and also needs the ADCIRC build, which lives beside the clone. MJ (10/13/26)
 EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok"
@@ -28,6 +30,18 @@ if [ "${OFS}" = stofs_2d_glo ]; then
   EXEC_FILTER=(--include="stofs_2d_glo_tide_fac" --exclude="*")
   ADCIRC_SRC="${SEED_ADCIRC:-$(dirname "${SEED_SRC}")/adcirc_v56.1.0_exec}"
   ADCIRC_DEST="${PACKAGEROOT}/adcirc_v56.1.0_exec"
+fi
+# STOFS-3D-ATL: both variants share fix/stofs_3d_atl_ufs; each has its own executable (the coupled fv3 build or the standalone pschism), plus tide_fac and the hotstart combiner. MJ (10/14/26)
+if [ "${ATL}" = 1 ]; then
+  EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok.${OFS}"
+  EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe fv3_stofs_3d_atl.exe)
+  [ "${OFS}" != stofs_3d_atl_ufs_standalone ] || EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe stofs_3d_atl_pschism_v3.1.5)
+  FIX_SRC="${SEED_SRC}/fix/stofs_3d_atl_ufs"
+  FIX_TO="${FIX_DEST}"
+  EXEC_FILTER=()
+  # the combiner is checked below but not copied: the shared exec/ gets it from the SECOFS seed. MJ (10/14/26)
+  for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || EXEC_FILTER+=(--include="${_x}"); done
+  EXEC_FILTER+=(--exclude="*")
 fi
 
 # Sentinel-gated, not existence-of-directory: an interrupted rsync could leave a partially-populated destination that [ -d ]/[ -x ] would mistake for a complete seed.
@@ -51,11 +65,31 @@ if [ "${DATA_MODE}" = "frozen" ]; then
     RT_REL="stofs_2d_glo/${PDY}${CYC}"
     RT_SIZE="tens of GB"
   fi
+  if [ "${ATL}" = 1 ]; then
+    RT_REL="stofs_3d_atl/$([ "${OFS}" = stofs_3d_atl_ufs_standalone ] && echo standalone || echo coupled)/${PDY}${CYC}"
+    RT_SIZE="~130GB"
+  fi
   COMROOT_STAGED="${RT_DATA_ROOT}/${RT_REL}"
   [ -f "${COMROOT_STAGED}/.seeded_ok" ] || need_rt=1
+  # ATL: a smoke copy is refreshed once the seeded source has been upgraded to cycle (the marker's level= line; none = cycle). MJ (10/14/26)
+  if [ "${ATL}" = 1 ] && [ "${need_rt}" -eq 0 ] && grep -qx 'level=smoke' "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null \
+     && ! grep -qx 'level=smoke' "${SEED_RT}/${RT_REL}/.seeded_ok" 2>/dev/null && [ -f "${SEED_RT}/${RT_REL}/.seeded_ok" ]; then
+    need_rt=1
+  fi
 fi
 
 # Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
+# Files and directories too: ls only proves the top directory is listable, and group-only files or a closed subdirectory still made rsync die mid-copy with "Permission denied (13)".
+# find -H follows only the starting path, as rsync src/ does: rsync -a copies symlinks as links and never reads their targets, so a link into another package must not fail here.
+# Real access of the running user; metadata only, stops at the first hit, for every OFS. MJ (10/15/26)
+unreadable_or_exit() {  # $1 = tree or file about to be copied, $2 = the source root named in the parent-directory hint
+  local bad
+  bad=$(find -H "$1" \( -type d \( ! -readable -o ! -executable \) -o -type f ! -readable \) -print -quit 2>/dev/null) || true
+  [ -n "${bad}" ] || return 0
+  echo "FATAL: ${bad} is not readable by $(whoami); as its owner run: $([ -d "${bad}" ] || [ -d "$1" ] && echo "chmod -R o+rX $([ -d "${bad}" ] && echo "${bad}" || echo "$1")" || echo "chmod o+rx $1")"
+  echo "(parent directories also need o+x, e.g. chmod o+x ${2:-${SEED_SRC}})"
+  exit 1
+}
 if [ "${need_fix}" -eq 1 ]; then
   ls "${FIX_SRC}" >/dev/null 2>&1 || {
     echo "FATAL: ${FIX_SRC} not readable as $(whoami)."
@@ -65,6 +99,7 @@ if [ "${need_fix}" -eq 1 ]; then
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
+  unreadable_or_exit "${FIX_SRC}" "${SEED_SRC}"
 fi
 if [ "${need_exec}" -eq 1 ]; then
   ls "${EXEC_SRC}" >/dev/null 2>&1 || {
@@ -74,6 +109,11 @@ if [ "${need_exec}" -eq 1 ]; then
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
+  if [ "${#EXEC_FILTER[@]}" -eq 0 ]; then
+    unreadable_or_exit "${EXEC_SRC}" "${SEED_SRC}"
+  else
+    for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
+  fi
 fi
 if [ "${need_adcirc}" -eq 1 ]; then
   ls "${ADCIRC_SRC}" >/dev/null 2>&1 || {
@@ -81,6 +121,7 @@ if [ "${need_adcirc}" -eq 1 ]; then
     echo "Ask the tree owner to run: chmod -R o+rX ${ADCIRC_SRC}"
     exit 1
   }
+  unreadable_or_exit "${ADCIRC_SRC}" "${ADCIRC_SRC}"
 fi
 if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
   ls "${SEED_RT}/${RT_REL}" >/dev/null 2>&1 || {
@@ -89,8 +130,10 @@ if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
     echo "and chmod o+x (not -R) on every parent directory above it, e.g.:"
     echo "  chmod o+x ${SEED_RT} /work2/noaa/nos-surge/mjisan"
     [ "${OFS}" != stofs_2d_glo ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see its header)"
+    [ "${ATL}" != 1 ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header)"
     exit 1
   }
+  unreadable_or_exit "${SEED_RT}/${RT_REL}" "${SEED_RT}"
 fi
 
 mkdir -p "${PACKAGEROOT}"
@@ -166,11 +209,27 @@ if [ "${DATA_MODE}" = "frozen" ]; then
     if [ -d "${SEED_RT}/${RT_REL}" ]; then
       echo "bootstrap: seeding frozen dataset (${RT_SIZE}) from ${SEED_RT}/${RT_REL}"
       mkdir -p "${COMROOT_STAGED}"
-      rsync -a --info=progress2 "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
-      touch "${COMROOT_STAGED}/.seeded_ok"
+      # ATL: the other variant's dataset of the same cycle shares most files (comin, init); hard-link them instead of copying twice. MJ (10/14/26)
+      RT_LINK=()
+      if [ "${ATL}" = 1 ]; then
+        SIB=coupled
+        [ "${OFS}" != stofs_3d_atl_ufs ] || SIB=standalone
+        [ ! -d "${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}" ] || RT_LINK=(--link-dest="${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}")
+      fi
+      # the marker is copied last, so an interrupted copy is not taken for a finished one, and keeps its level= line. MJ (10/14/26)
+      # Jenkins is not a TTY, so --info=progress2 printed one console line per update; keep the stats and print one summary line. MJ (10/15/26)
+      _t0=${SECONDS}
+      _stats=$(rsync -a --stats --exclude=/.seeded_ok ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/")
+      _n=$(sed -n 's/^Number of \(regular \)\{0,1\}files transferred: *//p' <<<"${_stats}" | tr -d ,)
+      _b=$(sed -n 's/^Total transferred file size: *\([0-9,]*\).*/\1/p' <<<"${_stats}" | tr -d ,)
+      echo "bootstrap: dataset copied: ${_n:-?} files, $(numfmt --to=iec "${_b:-0}" 2>/dev/null || echo "${_b:-?} bytes"), $((SECONDS - _t0)) s"
+      [ "${ATL}" != 1 ] || [ ! -d "${COMROOT_STAGED}/input" ] || find "${COMROOT_STAGED}/input" -type f -exec chmod a-w {} +   # ATL: com and the sibling dataset share these inodes. MJ (10/15/26)
+      cp -p "${SEED_RT}/${RT_REL}/.seeded_ok" "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null || touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."
-      if [ "${OFS}" = stofs_2d_glo ]; then
+      if [ "${ATL}" = 1 ]; then
+        echo "Seed it with: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header), or switch DATA_MODE=live with DCOM_BUNDLE."
+      elif [ "${OFS}" = stofs_2d_glo ]; then
         echo "Seed it with: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see its header), or switch DATA_MODE=live."
       else
         echo "Run freeze_dataset.sh for PDY=${PDY} CYC=${CYC}, or switch DATA_MODE=live."
