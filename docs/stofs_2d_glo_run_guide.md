@@ -269,6 +269,16 @@ tools/hercules_2d_glo_stage_forcing.sh --rm-raw 20261012 00
 - A re-run skips what exists (`STAGE_FORCE=1` redoes both steps). `STAGE_SRUN="srun -A nos-surge -p hercules --qos=batch -N 1 -n 1 --mem=16G -t 2:00:00"` moves the 8 min staging step to a compute node. `DL_JOBS` sets the parallel downloads (default 4).
 - Stage a cycle only after ops has published it. Do this for every cycle you run.
 
+Hercules builds its own forcing (own-forcing path): download only the four needed messages (`PRES:surface`, `UGRD:10 m above ground`, `VGRD:10 m above ground`, `ICEC:surface`) of the public GFS flux files, then let the prep job build the rerun files:
+```bash
+tools/hercules_2d_glo_stage_forcing.sh --source gfs 20261012 00                       # login node, tmux; about 2-3 GB a cycle
+SUBMIT_GFS=1 COLD=0 slurm/stofs_2d_glo/launch_stofs_2d_glo.sh 20261012 00             # prep builds the forcing, then the chain runs
+```
+- `--source gfs` fetches `gfs.t<CYC>z.sfluxgrbfFFF.grib2` of the bucket `noaa-gfs-bdp-pds` by byte range (about 15 MB an hour instead of 310 MB) into `${COMROOT_STAGED:-$NOS_PTMP/$LOGNAME/comin_2dglo}/gfs/gfs.<PDY>/<CYC>/atmos`, the tree the cards read as `COMINgfs`. It checks four messages per file, skips complete files and retries failed ones. It does not build the rerun files and it still downloads the ops reference station files.
+- `SUBMIT_GFS=1` sets `ADCIRC_GFS_SOURCE=sflux` for the jobs (sfcf past f012 is not public); the preflight lists the GFS files missing for the stages you submit and names this command.
+- This forcing is not bitwise equal to ops: the GRIB2 packing differs from the netCDF sfcf the ops builder reads. Measured against the ops ncst for 20261012 12z: winds agree within 0.005 m/s (up to 0.05 m/s in a few coarsely packed analysis-hour files), `icec` within 5e-4, surface pressure within 0.7 Pa mean over the ocean (up to about 270 Pa near steep terrain), and the file structure equals ops apart from the NCO history. The ops-copy path above stays the parity option.
+- The ncst window is 7 hourly records (cycle - 6 h .. cycle); `COLD=0` already requires the cycle - 6 h chain. After a gap, when the chain start is older, stage and launch with `NCST_RECORDS=<hours since the chain start + 1>`. The preflight checks the GFS files only when `prep` is in `STAGES`.
+
 ### 3.3 Run
 
 From a login node shell (the launcher refuses inside an `srun`/`salloc` allocation), with `NOS_PTMP` exported:
@@ -289,7 +299,7 @@ Run from the clone you want the cards to use. The launcher unsets package-select
 | `KEEPDATA=YES` | keep each job's `$DATA` (default `NO`) |
 | `W_PREP W_NOWCAST W_FORECAST W_POST` | override the walltimes below |
 | `ADCIRC_EXEC_DIR`, `COMROOT_2DGLO`, `NOS_PTMP`, `NOS_VENV`, `COMROOT_STAGED` | locations (defaults in section 4) |
-| `SUBMIT_GFS=1` | let the prep job's `ncst` and `fcst` steps build the forcing from GFS instead of finding the staged ops forcing (prep then keeps the card's whole node); for a machine that has GFS `sfcf`, untested on Hercules |
+| `SUBMIT_GFS=1` | let the prep job's `ncst` and `fcst` steps build the forcing from GFS instead of finding the staged ops forcing (prep then keeps the card's whole node); `ADCIRC_GFS_SOURCE` (default `sflux` here) picks the GFS file family; on Hercules stage the public flux files first with `tools/hercules_2d_glo_stage_forcing.sh --source gfs` |
 | `SLURM_CI_ACCOUNT`, `SLURM_CI_QOS` | passed to every `sbatch` as `--account` and `--qos`, overriding the cards' `nos-surge` / `batch` |
 
 | Job | Resources | Walltime | Steps | Waits for |

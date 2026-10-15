@@ -40,6 +40,9 @@ adcirc:
   # Seconds the ops GFS prep jobs (ADCIRC_SEGMENT=ncst|fcst) wait in total for a late sfcf file, inside the walltimes
   # 0:10 (ecf) and 0:40 (ecf fcst1 + fcst2); ops waits until the walltime kills it. MJ (10/11/26)
   # fcst leaves 600 s of the 0:40 for the 181 records (40 interpolated: hours 121-179 minus the 19 that are 3-hourly GFS records). MJ (10/14/26)
+  # GFS file family the ops GFS prep jobs read: sfcf (netCDF, WCOSS2 COMINgfs) or sflux (public GRIB2 flux files, Hercules);
+  # ADCIRC_GFS_SOURCE in the job env overrides. Read from settings.raw, not through yaml_to_env. MJ (10/14/26)
+  ops_gfs_source: sfcf
   ops_gfs_wait_s: {ncst: 420, fcst: 1800}
   executables:
     padcirc: padcirc
