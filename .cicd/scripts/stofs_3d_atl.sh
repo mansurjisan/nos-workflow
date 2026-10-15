@@ -9,7 +9,7 @@
 #   stofs_3d_atl.sh seed <PDY> <standalone|coupled> [SRC_COMROOT [SRC_COMIN [SRC_DCOM]]]   one-time, by hand (see below)
 # The variant comes from OFS: stofs_3d_atl_ufs_standalone = pschism (cards slurm/stofs_3d_atl_ufs_standalone, COMROOT_SA),
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
-# Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH SLURM_CI_ACCOUNT SLURM_CI_QOS; optional
+# Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh; optional
 # ATL_CI_ROOT (default $NOS_PTMP/$LOGNAME/atl_ci_<variant>), CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), DCOM_BUNDLE (live only),
 # COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26)
 #
@@ -22,7 +22,7 @@
 # MJ (10/15/26)
 #
 # CI root ${ATL_CI_ROOT}: com/ (the variant's COMROOT), comin/ (COMROOT_STAGED), dcom/ (DCOMROOT), rpt/ (the cards' RPTDIR),
-# slurm/ (jobs_<PDY><CYC>.txt and the cards' Slurm output), ops/ (live mode ops products). frozen clears it at stage.
+# ops/ (live mode ops products). frozen clears it at stage.
 #
 # Dataset ${RT_DATA_ROOT}/stofs_3d_atl/<standalone|coupled>/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/ in frozen mode):
 #   .seeded_ok                                                                           one line, level=smoke|cycle (empty or no level = cycle)

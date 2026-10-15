@@ -354,7 +354,7 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh writes the current jobid here (SECOFS and ATL); best-effort scancel it on failure.
+            // run_stage.sh writes the current jobid here (SECOFS and ATL); best-effort scancel it on failure. MJ (10/15/26)
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then

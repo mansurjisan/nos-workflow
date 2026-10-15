@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit one secofs_ufs Hercules Slurm card and gate on its STAGE_SUMMARY.
+# Submit one SECOFS or STOFS-3D-ATL Hercules Slurm card and gate on its STAGE_SUMMARY.
 # Usage: run_stage.sh <prep|nowcast|forecast|post> <PDY> <CYC>
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,7 +25,7 @@ case "${STAGE}" in
 esac
 
 # The STOFS-3D-ATL variants share this template; stofs_3d_atl.sh card-env supplies what differs (extra exports, CI log dir, RUN). MJ (10/15/26)
-ATL_EXPORTS=""
+ATL_EXPORTS=""; ATL_LOGPFX=""; ATL_RPTDIR=""   # nothing inherited may leak into the SECOFS path. MJ (10/15/26)
 GATE_OFS="${OFS}"
 case "${OFS}" in
   stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs)
@@ -36,7 +36,8 @@ case "${OFS}" in
       forecast) TIMEOUT_S=23400 ;;
       post)     TIMEOUT_S=9000; [ "${OFS}" = stofs_3d_atl_ufs ] && TIMEOUT_S=16200 ;;
     esac
-    eval "$(bash "${SCRIPT_DIR}/stofs_3d_atl.sh" card-env "${STAGE}")"
+    _env=$(bash "${SCRIPT_DIR}/stofs_3d_atl.sh" card-env "${STAGE}") || exit 2   # eval of a command substitution would hide its failure. MJ (10/15/26)
+    eval "${_env}"
     COMROOT_STAGED="${ATL_COMIN}"
     GATE_OFS="${ATL_RUN}"
     ;;
@@ -90,7 +91,7 @@ fi
 [ -r "${ERRLOG}" ] && cp -p "${ERRLOG}" "${WORKSPACE:-.}/ci_logs/" || true
 
 # Slurm's own epilogue shares a basename with the real per-stage log above, so copy it under a distinct name rather than clobbering that copy.
-for f in "${WORKSPACE:-.}"/*"${JOBID}"*.out "${WORKSPACE:-.}/slurm-${JOBID}.out"; do
+for f in "${WORKSPACE:-.}"/*"${JOBID}"*.out "${WORKSPACE:-.}"/*"${JOBID}"*.err "${WORKSPACE:-.}/slurm-${JOBID}.out"; do
   [ -r "${f}" ] || continue
   cp -p "${f}" "${WORKSPACE:-.}/ci_logs/slurm_epilogue.$(basename "${f}")"
 done

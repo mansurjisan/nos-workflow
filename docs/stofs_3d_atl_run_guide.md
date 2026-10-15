@@ -408,7 +408,7 @@ ATL uses the same stage columns as SECOFS: Prep, Nowcast, Forecast and Post each
 | cycle | Prep, Nowcast, Forecast, Post | `regress --level cycle` |
 | full | Prep, Nowcast, Forecast, Post | `regress --level cycle`, then the ops comparison (report only) |
 
-Each stage has its own timeout, the card walltime plus 30 min of queue margin (the coupled post card is 4 h). It always runs the 12z cycle: set `CYC=12`. Everything lives in `$NOS_PTMP/$LOGNAME/atl_ci_<standalone|coupled>` (com, comin, dcom, rpt), which Stage Data clears; it refuses to clear the shared com or the hand-run `com_atl_sa`, `com_atl_ufs` and `comin_atl`.
+Each stage has its own timeout, the card walltime plus 30 min of queue margin (the coupled post card is 4 h). The whole pipeline has a 16 h cap; a healthy ATL cycle takes about 4-6 h, so the per-stage limits mostly absorb queue wait. It always runs the 12z cycle: set `CYC=12`. Everything lives in `$NOS_PTMP/$LOGNAME/atl_ci_<standalone|coupled>` (com, comin, dcom, rpt), which Stage Data clears; it refuses to clear the shared com or the hand-run `com_atl_sa`, `com_atl_ufs` and `comin_atl`.
 
 **Frozen (the main mode).** Seed a dataset once from a finished run (about 130 GB per variant; the second variant hard-links what it shares), as the user who owns it:
 ```bash

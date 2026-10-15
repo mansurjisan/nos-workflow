@@ -746,6 +746,35 @@ def test_bootstrap_fails_before_rsync_on_an_unreadable_executable(tmp_path):
     assert [l for l in (log.read_text().splitlines() if log.exists() else []) if "exec" in l] == []
 
 
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")
+def test_bootstrap_preflight_ignores_a_symlink_to_an_unreadable_target(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    target = _touch(tmp_path / "other_pkg" / "secret", "x")
+    target.chmod(0)
+    (src / "fix" / "stofs_3d_atl_ufs" / "link").symlink_to(target)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 0 and "is not readable" not in r.stdout, r.stdout + r.stderr
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")
+def test_bootstrap_preflight_fails_on_an_unreadable_subdirectory(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    sub = src / "fix" / "stofs_3d_atl_ufs" / "closed"
+    _touch(sub / "f", "x")
+    sub.chmod(0)
+    try:
+        r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    finally:
+        sub.chmod(0o755)
+    assert r.returncode == 1 and f"FATAL: {sub} is not readable by" in r.stdout and f"chmod -R o+rX {sub}" in r.stdout and not log.exists()
+
+
+def test_run_stage_never_submits_when_card_env_fails(ci):
+    _job(ci, "prep")
+    r = _stage(ci, "prep", DCOM_BUNDLE=None, DATA_MODE="live")
+    assert r.returncode == 2 and not (ci.stubs / "sbatch.calls").exists()
+
+
 def test_bootstrap_dataset_copy_prints_one_summary_line_and_no_progress(tmp_path):
     ci, src, seed_rt, log = _boot(tmp_path)
     r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))

@@ -79,14 +79,15 @@ if [ "${DATA_MODE}" = "frozen" ]; then
 fi
 
 # Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
-# Files too: ls only proves the directory is listable, and group-only files still made rsync die mid-copy with "Permission denied (13)". find -L tests the running user's real access; metadata only, stops at the first hit.
-# It can only fail where rsync would have failed anyway, for every OFS. MJ (10/15/26)
-unreadable_or_exit() {  # $1 = tree or file about to be copied
+# Files and directories too: ls only proves the top directory is listable, and group-only files or a closed subdirectory still made rsync die mid-copy with "Permission denied (13)".
+# find -H follows only the starting path, as rsync src/ does: rsync -a copies symlinks as links and never reads their targets, so a link into another package must not fail here.
+# Real access of the running user; metadata only, stops at the first hit, for every OFS. MJ (10/15/26)
+unreadable_or_exit() {  # $1 = tree or file about to be copied, $2 = the source root named in the parent-directory hint
   local bad
-  bad=$(find -L "$1" -type f ! -readable -print -quit 2>/dev/null) || true
+  bad=$(find -H "$1" \( -type d \( ! -readable -o ! -executable \) -o -type f ! -readable \) -print -quit 2>/dev/null) || true
   [ -n "${bad}" ] || return 0
-  echo "FATAL: ${bad} is not readable by $(whoami); as its owner run: $([ -d "$1" ] && echo "chmod -R o+rX $1" || echo "chmod o+rx $1")"
-  echo "(parent directories also need o+x, e.g. chmod o+x ${SEED_SRC})"
+  echo "FATAL: ${bad} is not readable by $(whoami); as its owner run: $([ -d "${bad}" ] || [ -d "$1" ] && echo "chmod -R o+rX $([ -d "${bad}" ] && echo "${bad}" || echo "$1")" || echo "chmod o+rx $1")"
+  echo "(parent directories also need o+x, e.g. chmod o+x ${2:-${SEED_SRC}})"
   exit 1
 }
 if [ "${need_fix}" -eq 1 ]; then
@@ -98,7 +99,7 @@ if [ "${need_fix}" -eq 1 ]; then
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
-  unreadable_or_exit "${FIX_SRC}"
+  unreadable_or_exit "${FIX_SRC}" "${SEED_SRC}"
 fi
 if [ "${need_exec}" -eq 1 ]; then
   ls "${EXEC_SRC}" >/dev/null 2>&1 || {
@@ -109,9 +110,9 @@ if [ "${need_exec}" -eq 1 ]; then
     exit 1
   }
   if [ "${#EXEC_FILTER[@]}" -eq 0 ]; then
-    unreadable_or_exit "${EXEC_SRC}"
+    unreadable_or_exit "${EXEC_SRC}" "${SEED_SRC}"
   else
-    for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}"; done
+    for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
   fi
 fi
 if [ "${need_adcirc}" -eq 1 ]; then
@@ -120,7 +121,7 @@ if [ "${need_adcirc}" -eq 1 ]; then
     echo "Ask the tree owner to run: chmod -R o+rX ${ADCIRC_SRC}"
     exit 1
   }
-  unreadable_or_exit "${ADCIRC_SRC}"
+  unreadable_or_exit "${ADCIRC_SRC}" "${ADCIRC_SRC}"
 fi
 if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
   ls "${SEED_RT}/${RT_REL}" >/dev/null 2>&1 || {
@@ -132,7 +133,7 @@ if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
     [ "${ATL}" != 1 ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header)"
     exit 1
   }
-  unreadable_or_exit "${SEED_RT}/${RT_REL}"
+  unreadable_or_exit "${SEED_RT}/${RT_REL}" "${SEED_RT}"
 fi
 
 mkdir -p "${PACKAGEROOT}"
