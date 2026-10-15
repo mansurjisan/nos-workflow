@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 from datetime import datetime, timedelta
@@ -277,7 +278,6 @@ def _export(ctx: CycleContext, run_dir: Path) -> None:
 def _fort15_outputs(fort15: Path) -> Tuple[float, float, Dict[str, Tuple[float, float, int]]]:
     """DTDP, RNDY and per output unit (TOUTS s, TOUTF s, NSPOOL) read from the rendered fort.15, so the expected
     window is the one the run was configured with. MJ (10/15/26)"""
-    import re
     dtdp = rnday = None
     units: Dict[str, Tuple[float, float, int]] = {}
     for ln in fort15.read_text().splitlines():
@@ -304,19 +304,25 @@ def check_records(run_dir: Path, stream: str, step: str) -> None:
     import numpy as np
     import netCDF4
     dtdp, rnday, units = _fort15_outputs(run_dir / "fort.15")
-    redo = 'STAGES="nowcast forecast post"' if step == "ncst" else 'STAGES="forecast post"'
+    # The jobs run tide then surf and stop at the first failure: redo the failed stream and every one after it. MJ (10/15/26)
+    rest = list(STREAMS)[list(STREAMS).index(stream):]
+    redo = 'STAGES="nowcast forecast post"' if step == "ncst" else \
+        'STAGES="forecast post"' + ("" if rest == list(STREAMS) else " STREAMS=" + " ".join(rest))
+    head = f"padcirc dropped an output record: re-run this step ({redo}); "
     for src, _name in RERUN[stream]:
         unit = src[len("fort."):-3]
         f = run_dir / src
-        if not (src.startswith("fort.6") and f.is_file() and unit in units):
+        if not (src.startswith("fort.6") and f.is_file()):
             continue
+        if unit not in units:
+            raise AdcircConfigError(f"{src} exists but {run_dir / 'fort.15'} has no output line (UNIT {unit}); "
+                                    "the fort.15 template changed, so the record check cannot find its window")  # MJ (10/15/26)
         touts, toutf, nspool = units[unit]
         step_s, end = nspool * dtdp, min(toutf, rnday * 86400)
         with netCDF4.Dataset(str(f)) as d:
             t = np.asarray(d.variables["time"][:], dtype="f8")
         if not t.size:
-            raise RuntimeError(f"{src} ({stream} {step}) has no records; padcirc dropped an output record; "
-                               f"re-run this step ({redo} STREAMS={stream})")
+            raise RuntimeError(head + f"{src} ({stream} {step}) has no records")
         first = t[0]
         if abs(first - touts) > 1.5:
             first = touts + step_s
@@ -325,9 +331,8 @@ def check_records(run_dir: Path, stream: str, step: str) -> None:
         if t.size != want or bad.size or abs(t[-1] - end) > 1.5 or abs(t[0] - first) > 1.5:
             gaps = ", ".join("%.0f->%.0f s" % (t[i], t[i + 1]) for i in bad) or "none inside the series"
             raise RuntimeError(
-                f"{src} ({stream} {step}) has {t.size} records, expected {want} (every {step_s:g} s, first {first:g} s, "
-                f"last {end:g} s; found {t[0]:g} .. {t[-1]:g} s); gap times: {gaps}; padcirc dropped an output record; "
-                f"re-run this step ({redo} STREAMS={stream})")
+                head + f"{src} ({stream} {step}) has {t.size} records, expected {want}; gap times: {gaps}; every "
+                f"{step_s:.0f} s, expected first {first:.0f} s, last {end:.0f} s, found {t[0]:.0f} .. {t[-1]:.0f} s")
 
 
 def _check_window(path: Path, want: int) -> None:
