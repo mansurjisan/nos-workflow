@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit one SECOFS, STOFS-3D-ATL or STOFS-2D-Global Hercules Slurm card and gate on its STAGE_SUMMARY.
+# Submit one SECOFS, STOFS-3D-ATL or STOFS-2D-Global Hercules Slurm card and gate on its STAGE_SUMMARY. MJ (10/15/26)
 # Usage: run_stage.sh <prep|nowcast|forecast|post> <PDY> <CYC>
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

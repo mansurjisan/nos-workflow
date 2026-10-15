@@ -321,7 +321,7 @@ def test_stage_links_the_forcing_into_a_writable_rerun_directory_from_a_read_onl
         (ci.com / "nos" / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").write_text("{}")
         assert (rr / "stofs_2d_glo_ncst.221.nc").samefile(ds / "input" / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc")
         assert (ds / "input" / "nos" / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").read_text() == "ges stofs_2d_glo_4064.tar.json"
-        assert ci.script("stage").returncode == 0     # a second stage clears the linked tree and links it again
+        assert ci.script("stage").returncode == 0     # a second stage clears the linked tree and links it again. MJ (10/15/26)
     finally:
         for d in (ds / "input").rglob("*"):
             if d.is_dir():
@@ -436,6 +436,33 @@ def test_run_stage_submits_the_2dglo_job_with_the_launchers_flags_lists_and_expo
     assert f"{pfx}.101.out" in logs and f"{pfx}.101.err" in logs and "slurm_epilogue.slurm-101.out" in logs
 
 
+@needs_rsync
+def test_stage_keeps_the_mode_of_the_shared_com_nos_and_copies_the_chain_files(ci):
+    """MJ (10/15/26): --no-implied-dirs keeps the mode of com/nos (shared with SECOFS and ATL); the chain files and json are copies, the rest links."""
+    ds = ci.dataset()
+    nos = ci.com / "nos"
+    nos.mkdir(parents=True)
+    nos.chmod(0o2770)
+    before = nos.stat()
+    assert ci.script("stage").returncode == 0
+    after = nos.stat()
+    assert after.st_mode == before.st_mode, oct(after.st_mode)
+    inp = ds / "input" / "nos"
+    for kind in ("hotstart", "restart"):
+        f = Path("nos") / f"stofs_2d_glo.{PREV[0]}" / f"stofs_2d_glo.t{PREV[1]}z.{kind}"
+        assert (ci.com / f).read_text() == f"chain {kind}" and not (ci.com / f).samefile(ds / "input" / f)
+    assert (ci.com / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_fcst.222.nc").samefile(inp / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_fcst.222.nc")
+
+
+def test_stage_makes_an_existing_dataset_read_only_for_the_linked_kinds(ci):
+    ds = ci.dataset()
+    assert ci.script("stage").returncode == 0
+    inp = ds / "input" / "nos"
+    ro = [inp / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc", inp / "stofs_2d_glo" / "stofs_2d_glo_4064.tar", inp / "stofs_2d_glo" / "stofs_2d_glo_nod_equi"]
+    assert os.geteuid() == 0 or not any(os.access(f, os.W_OK) for f in ro)
+    assert (inp / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").stat().st_mode & 0o200
+
+
 def test_the_post_job_runs_on_the_prep_card_and_logs_under_its_name(ci):
     pfx = _job(ci, "post")
     assert pfx == "stofs_2d_glo_prep_00"
@@ -465,7 +492,7 @@ def test_run_stage_keeps_the_work_directory_alone_and_never_calls_clean_job(ci):
     assert "KEEPDATA=NO" in (ci.stubs / "sbatch.calls").read_text()
 
 
-@pytest.mark.parametrize("stage,level,secs", [(s, lv, int(re.sub(r"(\d+):(\d+):(\d+)", lambda m: str(int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])), WALL[(s, lv == "full")])) + 1800)
+@pytest.mark.parametrize("stage,level,secs", [(s, lv, int(re.sub(r"(\d+):(\d+):(\d+)", lambda m: str(int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])), WALL[(s, lv == "full")])) + 3600)
                                               for s in ("prep", "nowcast", "forecast", "post") for lv in ("cycle", "full")])
 def test_run_stage_timeout_is_the_card_walltime_plus_margin_and_cancels(ci, stage, level, secs):
     # a stub date that jumps past the limit on its second +%s call; the first is t0. MJ (10/15/26)
@@ -485,14 +512,19 @@ def test_the_walltimes_and_flags_are_the_launchers_and_fit_the_pipeline_timeout(
     assert (WALL[("prep", False)], WALL[("nowcast", False)], WALL[("prep", True)], WALL[("nowcast", True)]) == (warm[0], warm[1], cold[0], cold[1])
     assert (WALL[("forecast", False)], WALL[("post", False)]) == (fcst, post)
     assert f'PFLAGS="{JOB["prep"][4]}"' in launcher
-    for label, stage, segs in (("nowcast", "nowcast", "NSEG"), ("forecast", "forecast", "fcst"), ("post", "post", "ncdiff ncrcat")):
+    for label, stage in (("nowcast", "nowcast"), ("forecast", "forecast"), ("post", "post")):   # MJ (10/15/26)
         assert re.search(rf'sub {label} "\$\{{\w+\}}" "\$\{{W_\w+:-\S+\}}" "{JOB[stage][4]}" ', launcher), label
+    # the segment and stream lists of card-env are the launcher's. MJ (10/15/26)
+    assert f'PSEG="{JOB["prep"][1]}"' in launcher and f'PSEG="adcprep ${{PSEG}}"' in launcher and f'NSEG="spinup ${{NSEG}}"' in launcher
+    assert f"NSEG={JOB['nowcast'][1]};" in launcher and f'-N 52" {JOB["forecast"][1]} "${{STREAMS}}"' in launcher and f'"{JOB["post"][1]}"' in launcher
+    assert "STREAMS:-tide surf" in launcher and JOB["nowcast"][3] == JOB["forecast"][3] == "tide surf"
+    assert JOB["prep"][2] == "adcprep " + JOB["prep"][1] and JOB["nowcast"][2] == "spinup " + JOB["nowcast"][1]
     assert 'sub post "${PREP}"' in launcher
-    totals = {lv: sum(int(h) * 3600 + int(m) * 60 + int(x) + 1800 for h, m, x in (w.split(":") for w in (WALL[(s, lv == "full")] for s in JOB))) for lv in ("cycle", "full")}
+    totals = {lv: sum(int(h) * 3600 + int(m) * 60 + int(x) + 3600 for h, m, x in (w.split(":") for w in (WALL[(s, lv == "full")] for s in JOB))) for lv in ("cycle", "full")}
     pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
-    assert totals["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"
+    assert totals["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"   # +1 h queue margin per job. MJ (10/15/26)
     cards = REPO / "slurm" / "stofs_2d_glo"
-    for stage, (card, *_rest) in JOB.items():     # no walltime above the card's own limit
+    for stage, (card, *_rest) in JOB.items():     # no walltime above the card's own limit. MJ (10/15/26)
         h, m, x = map(int, re.search(r"^#SBATCH\s+--time=(\d+):(\d+):(\d+)", (cards / f"jnos_{card}_00.sh").read_text(), re.M).groups())
         for cold in (False, True):
             hh, mm, xx = map(int, WALL[(stage, cold)].split(":"))

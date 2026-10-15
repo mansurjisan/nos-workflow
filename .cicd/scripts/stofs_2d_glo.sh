@@ -11,7 +11,7 @@
 # optional CMP_TOL (default 1e-3), OPS_WARN_MM (default 500). MJ (10/15/26)
 #
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits one job of the
-# ops chain, waits (timeout = the job's walltime + 30 min), gates on its STAGE_SUMMARY and moves on. Then Verify calls `verify`. The jobs are the ones
+# ops chain, waits (timeout = the job's walltime + 1 h), gates on its STAGE_SUMMARY and moves on. Then Verify calls `verify`. The jobs are the ones
 # slurm/stofs_2d_glo/launch_stofs_2d_glo.sh queues, with the same sbatch flags and walltimes (card-env repeats them; a test compares the two):
 #   Prep      adcprep (COLD=1 only), gfs ncst, gfs fcst   prep card      -N 1 -n 1 --mem=64G   0:50 (3:50 cold)
 #   Nowcast   spinup (COLD=1 only), tide ncst, surf ncst  nowcast card   -N 52                 1:20 (2:20 cold)
@@ -139,15 +139,18 @@ cmd_stage() {
       for f in $(input_files "${with_state}" ncst fcst); do
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
       done
-      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs (a cold dataset has no COMGES/previous-cycle files; use the dataset of a COLD=0 cycle)"; exit 1; }
+      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs: the ncst and fcst forcing, and for smoke/cycle COMGES and the previous cycle's chain files (a cold dataset has none; use the dataset of a COLD=0 cycle, or re-seed it)"; exit 1; }
       clear_com
       echo "staging ${DS}/input -> ${CI_COM} (LEVEL=${LEVEL})"
       # The run never writes into these files in place (see the header), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied.
       # The directories are made writable (Du+w) whatever the dataset's modes: rerun/ receives the jobs' own products. MJ (10/15/26)
       files=$(input_files "${with_state}" ncst fcst)
-      { grep -v '\.json$' <<<"${files}" || true; } | rsync -a --chmod=Du+w --files-from=- --link-dest="$(realpath -- "${DS}")/input" "${DS}/input/" "${CI_COM}/"
-      { grep '\.json$' <<<"${files}" || true; } | rsync -a --chmod=Du+w --files-from=- "${DS}/input/" "${CI_COM}/"
-      du -sh "${CI_COM}"
+      # --no-implied-dirs: the shared com/nos (SECOFS and ATL too) must keep its own mode, mtime and group; missing parents are still created. The json and the chain files
+      # (rewritten through their copies) are copied, the rest linked. MJ (10/15/26)
+      find "${DS}/input" -type f \( -name '*.2[0-9][0-9].nc' -o -name '*_4064.tar' -o -name '*_nod_equi' \) -exec chmod a-w {} +   # existing datasets too; idempotent. MJ (10/15/26)
+      { grep -vE '\.json$|\.t[0-9]{2}z\.(hotstart|restart)$' <<<"${files}" || true; } | rsync -a --no-implied-dirs --chmod=Du+w --files-from=- --link-dest="$(realpath -- "${DS}")/input" "${DS}/input/" "${CI_COM}/"
+      { grep -E '\.json$|\.t[0-9]{2}z\.(hotstart|restart)$' <<<"${files}" || true; } | rsync -a --no-implied-dirs --chmod=Du+w --files-from=- "${DS}/input/" "${CI_COM}/"
+      du -sh "${CI_COM}/nos/${RUN}"* | sed 's/^/  /'   # MJ (10/15/26)
       ;;
     live)
       local rc=0 f miss=0
@@ -174,7 +177,7 @@ cmd_stage() {
 
 # What run_stage.sh needs to submit this stage's job, as shell for it to eval: the sbatch flags and walltimes are those of launch_stofs_2d_glo.sh (a test
 # compares them; the launcher cannot be sourced, it queues the whole chain), the segment and stream lists are space separated and go in the environment of sbatch
-# (--export=ALL), as the launcher does, since --export splits at commas, and the timeout is the walltime plus 30 min of queue margin. Post runs on the prep card. The
+# (--export=ALL), as the launcher does, since --export splits at commas, and the timeout is the walltime plus 1 h of queue margin (the 52-node exclusive jobs can wait). Post runs on the prep card. The
 # log is <RPTDIR>/<prefix>.<jobid>.out with RPTDIR and the prefix read from the card, so the post job logs under the prep name. MJ (10/15/26)
 cmd_card_env() {
   local st=${1:?usage: stofs_2d_glo.sh card-env <stage>} card seg stream="" flags wall pfx rpt v h m s
@@ -204,7 +207,7 @@ cmd_card_env() {
   printf 'ATL_RUN=%q\nATL_COMIN=%q\nATL_RPTDIR=%q\nATL_LOGPFX=%q\nATL_EXPORTS=%q\nSTAGE_CARD=%q\nSTAGE_SBATCH=%q\nTIMEOUT_S=%q\n' \
     "${RUN}" "${NOS_PTMP}/${LOGNAME}/comin_2dglo" "${rpt}" "${rpt}/${pfx}" \
     "ADCIRC_MODE=ops,KEEPDATA=NO,COMROOT_2DGLO=${CI_COM},ADCIRC_EXEC_DIR=${PACKAGEROOT}/adcirc_v56.1.0_exec,PACKAGEROOT=${PACKAGEROOT}" \
-    "${card}" "-J ${RUN}_${st} -t ${wall} ${flags}" "$(( 10#${h} * 3600 + 10#${m} * 60 + 10#${s} + 1800 ))"
+    "${card}" "-J ${RUN}_${st} -t ${wall} ${flags}" "$(( 10#${h} * 3600 + 10#${m} * 60 + 10#${s} + 3600 ))"
 }
 
 cmd_verify() {

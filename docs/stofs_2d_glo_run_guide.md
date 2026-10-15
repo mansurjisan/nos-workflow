@@ -1,6 +1,6 @@
 # Running STOFS-2D-Global with nos-workflow on WCOSS2 and Hercules
 
-Applies to nos-workflow `develop` as of 2026-10-14. Update this guide in the same PR as any change to the 2D-Global cards, launchers, build/fetch/staging tools or Jenkins scripts.
+Applies to nos-workflow `develop` as of 2026-10-15. Update this guide in the same PR as any change to the 2D-Global cards, launchers, build/fetch/staging tools or Jenkins scripts.
 
 ## 1. What you are running
 
@@ -367,10 +367,10 @@ STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Par
 
 | Stage | Steps | Card | Walltime (cold) | Timeout |
 |---|---|---|---|---|
-| Prep | [`adcprep`], `gfs_ncst`, `gfs_fcst` | prep | 0:50 (3:50) | walltime + 30 min |
-| Nowcast | [`spinup`], `tide_ncst`, `surf_ncst` | nowcast, `-N 52` | 1:20 (2:20) | walltime + 30 min |
-| Forecast | `tide_fcst`, `surf_fcst` | forecast, `-N 52` | 2:00 | walltime + 30 min |
-| Post | `ncdiff`, `ncrcat` | prep card, `-N 1 -n 1 --mem=100G` (logs under the prep name) | 1:15 | walltime + 30 min |
+| Prep | [`adcprep`], `gfs_ncst`, `gfs_fcst` | prep | 0:50 (3:50) | walltime + 1 h |
+| Nowcast | [`spinup`], `tide_ncst`, `surf_ncst` | nowcast, `-N 52` | 1:20 (2:20) | walltime + 1 h |
+| Forecast | `tide_fcst`, `surf_fcst` | forecast, `-N 52` | 2:00 | walltime + 1 h |
+| Post | `ncdiff`, `ncrcat` | prep card, `-N 1 -n 1 --mem=100G` (logs under the prep name) | 1:15 | walltime + 1 h |
 
 | LEVEL | Stages run | COLD | Verify |
 |---|---|---|---|
@@ -382,7 +382,7 @@ At every level Prep finds the staged ops forcing and skips its GFS steps, so it 
 
 **Layout.** Like SECOFS and ATL, the jobs use the shared `$NOS_PTMP/$LOGNAME/{com,rpt,work}` (the old `com_2dglo_ci` is removed once; an inherited `COMROOT_2DGLO` is ignored). `RUN=stofs_2d_glo` is unique, so the state sits beside SECOFS's and ATL's without touching it: COMGES is `com/nos/stofs_2d_glo` and a cycle is `com/nos/stofs_2d_glo.<PDY>`.
 
-- **frozen:** Stage Data removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<8 digits>` (exact names, no symlinks, every target checked before the first delete), then links the dataset in: hard links, or copies across file systems. The forcing sits in `rerun/`, a real writable directory in com, because the jobs also publish their products there. The jobs only read the forcing, `nod_equi` and the decomposition tar (they replace the tar by rename), so those are read-only, shared with the dataset. The chain files (`hotstart`, `restart`) are copied with their mode into the ADCIRC run directory and rewritten there, so they stay writable; the `.json` beside the tar is rewritten in place when the decomposition is rebuilt, so it is copied. Use the 06z-type dataset for smoke and cycle (they continue from the previous cycle) and the 00z-type dataset for full.
+- **frozen:** Stage Data removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<8 digits>` (exact names, no symlinks, every target checked before the first delete), then links the dataset in: hard links, or copies across file systems. The forcing sits in `rerun/`, a real writable directory in com, because the jobs also publish their products there. The jobs only read the forcing, `nod_equi` and the decomposition tar (they replace the tar by rename), so those are read-only, shared with the dataset. The chain files (`hotstart`, `restart`) are copied into the ADCIRC run directory with their mode and rewritten there, so they stay writable, and Stage copies them (like the `.json` beside the tar, which is rewritten in place when the decomposition is rebuilt) instead of linking. Stage also applies the read-only mode to datasets copied earlier. Use the 06z-type dataset for smoke and cycle (they continue from the previous cycle) and the 00z-type dataset for full.
 - **live:** stages the ops forcing with `tools/hercules_2d_glo_stage_forcing.sh --rm-raw` on the front-end node and does not clear com. It continues from the state already there: run `LEVEL=full` first, then `LEVEL=cycle` at +6 h.
 - **Prerequisites:** Bootstrap copies `fix/stofs_2d_glo` and `exec/stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build from `SEED_ADCIRC` (default `<parent of SEED_SRC>/adcirc_v56.1.0_exec`). These must be world-readable for the CI account.
 
