@@ -278,7 +278,7 @@ $HW/tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $COMROOT_SA $PDY $
 
 ### 4.3 Run
 
-Submit each card after the previous one logs PASS, or chain them with `--dependency=afterok:<jobid>` (each card exits non-zero unless its stage logged PASS, so an afterok chain stops at the first failure; Jenkins chains them this way):
+Submit each card after the previous one logs PASS, or chain them with `--dependency=afterok:<jobid>` (each card exits non-zero unless its stage logged PASS, so an afterok chain stops at the first failure):
 ```bash
 cd $NOS_PTMP/$LOGNAME
 sbatch --export=ALL,CYC=12,DCOMROOT=$B/dcom $HW/slurm/stofs_3d_atl_ufs_standalone/jnos_prep_00.sh
@@ -400,13 +400,15 @@ The difference from operational does not grow materially on the chained day: the
 
 Each ATL variant runs in the Hercules Jenkins pipeline only from **Build with Parameters**, like STOFS-2D-Global. The PR-label trigger is not used: a build started by a user with `OFS=stofs_3d_atl_ufs_standalone` (pschism) or `OFS=stofs_3d_atl_ufs` (UFS coupled) bypasses the label check, **Build Now** and PR-label builds keep running SECOFS, and no GitHub status is posted.
 
-| LEVEL | Cards run | Jobs | Verify |
-|---|---|---|---|
-| smoke | prep, nowcast | 2 | `compare_atl.py regress --level smoke` against the frozen reference |
-| cycle | prep, nowcast, forecast, post | 4 | `regress --level cycle` |
-| full | prep, nowcast, forecast, post | 4 | `regress --level cycle`, then the ops comparison (report only) |
+ATL uses the same stage columns as SECOFS: Prep, Nowcast, Forecast and Post each submit the variant's card through `run_stage.sh` (CI account and qos), wait for it, and pass only when the job log has `STAGE_SUMMARY stage=<stage> ofs=stofs_3d_atl_ufs status=PASS`; then Verify runs.
 
-`stofs_3d_atl.sh run` submits the variant's four cards as an `sbatch --dependency=afterok` chain with the CI account and qos, waits (14400 s for smoke, 36000 s for cycle and full, `WAIT_S` overrides) and passes a job only when it is COMPLETED and its log has `STAGE_SUMMARY ... status=PASS`. It always runs the 12z cycle: set `CYC=12`. Everything lives in `$NOS_PTMP/$LOGNAME/atl_ci_<standalone|coupled>` (com, comin, dcom, rpt), which Stage Data clears; it refuses to clear the shared com or the hand-run `com_atl_sa`, `com_atl_ufs` and `comin_atl`.
+| LEVEL | Stages run | Verify |
+|---|---|---|
+| smoke | Prep, Nowcast (Forecast and Post are skipped) | `compare_atl.py regress --level smoke` against the frozen reference |
+| cycle | Prep, Nowcast, Forecast, Post | `regress --level cycle` |
+| full | Prep, Nowcast, Forecast, Post | `regress --level cycle`, then the ops comparison (report only) |
+
+Each stage has its own timeout, the card walltime plus 30 min of queue margin (the coupled post card is 4 h). It always runs the 12z cycle: set `CYC=12`. Everything lives in `$NOS_PTMP/$LOGNAME/atl_ci_<standalone|coupled>` (com, comin, dcom, rpt), which Stage Data clears; it refuses to clear the shared com or the hand-run `com_atl_sa`, `com_atl_ufs` and `comin_atl`.
 
 **Frozen (the main mode).** Seed a dataset once from a finished run (about 130 GB per variant; the second variant hard-links what it shares), as the user who owns it:
 ```bash
@@ -419,4 +421,4 @@ It stores the init state, the previous-cycle dynamic-adjust seed, the staged com
 
 **Live.** `DATA_MODE=live` stages the public inputs for PDY with `stage_comin.py`, `hercules_atl_seed_init.sh` and `hercules_atl_seed_prev.sh` on the front-end node, and needs `DCOM_BUNDLE=<case bundle dir with dcom/ and seeds/dyn_seed_<PDY-1>/>`, readable by the CI account. It downloads about 125 GB per build and compares the ops products downloaded at verify time; use frozen for regression checks.
 
-Cleanup and first run. The cards keep every run directory (`KEEPDATA=YES`, about 150 GB a cycle under `$NOS_PTMP/$LOGNAME/work/<cards>/`); a passing CI run deletes its own, a failing one keeps them until the next Stage Data. The first standalone smoke is also a reproducibility probe: the reference comes from a hand run with a different venv, so if every compared file differs slightly, re-seed `ref/` from a CI-environment run or set `I_MPI_CBWR` in the ATL cards. Seeding stores only the PDY-1 and PDY day directories of the comin tree.
+Cleanup and first run. The cards keep every run directory (`KEEPDATA=YES`, about 150 GB a cycle under `$NOS_PTMP/$LOGNAME/work/<cards>/`); a passing CI stage deletes its own job's directory, a failing one keeps it until the next Stage Data. The first standalone smoke is also a reproducibility probe: the reference comes from a hand run with a different venv, so if every compared file differs slightly, re-seed `ref/` from a CI-environment run or set `I_MPI_CBWR` in the ATL cards. Seeding stores only the PDY-1 and PDY day directories of the comin tree.

@@ -123,13 +123,37 @@ def test_jenkinsfile_adds_the_atl_choices_and_keeps_the_secofs_default():
     text = JENKINSFILE.read_text()
     assert "choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']" in text
     assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
-    cond = _stage_conditions()
-    for name in ("Prep", "Nowcast", "Forecast", "Post", "Verify"):
-        assert "env.CI_OFS == 'secofs_ufs'" in cond[name], name
-    for name in ("Run ATL", "Verify ATL"):
-        assert "isAtlOfs(env.CI_OFS)" in cond[name] and "env.RUN_CYCLE == 'true'" in cond[name], name
     assert "return ofs in ['stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']" in text
-    assert 'stofs_3d_atl.sh" run' in text and 'stofs_3d_atl.sh" verify' in text
+
+
+def _runs(cond: str, ofs: str, level: str = "smoke") -> bool:
+    """Evaluates a stage `when` expression for one (OFS, LEVEL): only the two operators and isAtlOfs() the Jenkinsfile uses. MJ (10/15/26)"""
+    py = re.sub(r"^expression \{ | \}$", "", cond).replace("env.RUN_CYCLE == 'true'", "True").replace("&&", " and ").replace("||", " or ")
+    py = py.replace("isAtlOfs(env.CI_OFS)", str(ofs.startswith("stofs_3d_atl"))).replace("!=", " != ")
+    return bool(eval(re.sub(r"env\.CI_OFS", repr(ofs), re.sub(r"env\.LEVEL", repr(level), py))))
+
+
+@pytest.mark.parametrize("ofs,level,want", [
+    ("secofs_ufs", "smoke", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),
+    ("stofs_3d_atl_ufs_standalone", "smoke", ["Prep", "Nowcast", "Verify"]),
+    ("stofs_3d_atl_ufs", "smoke", ["Prep", "Nowcast", "Verify"]),
+    ("stofs_3d_atl_ufs_standalone", "cycle", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),
+    ("stofs_3d_atl_ufs", "full", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),
+    ("stofs_2d_glo", "cycle", ["Run 2D-GLO", "Verify 2D-GLO"]),
+])
+def test_jenkinsfile_stage_conditions(ofs, level, want):
+    cond = _stage_conditions()
+    ran = [n for n, c in cond.items() if n not in ("Checkout", "Gate") and "RUN_CYCLE == 'true'" in c and "environment" not in c and _runs(c, ofs, level)]
+    assert ran == want, (ran, want)
+
+
+def test_jenkinsfile_has_no_atl_run_chain_and_verifies_atl_through_the_secofs_stage():
+    text = JENKINSFILE.read_text()
+    cond = _stage_conditions()
+    assert "Run ATL" not in cond and "Verify ATL" not in cond and 'stofs_3d_atl.sh" run' not in text
+    assert 'stofs_3d_atl.sh" verify' in text and 'scripts/verify.sh"' in text
+    assert "ci_logs/current_jobid" in text
+    assert not re.search(r"\brun\)|cmd_run|afterok|WAIT_S|POLL_S|BAD_STATES", SCRIPT.read_text())
 
 
 def test_atl_is_manual_only_and_posts_no_github_status():
@@ -146,17 +170,6 @@ def test_common_sh_accepts_both_atl_variants_and_still_rejects_others(ci):
     for ofs in ("stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs"):
         assert f"OFS={ofs}" in ci.run(script=probe, CI_OFS=ofs).stdout
     assert ci.run(script=probe, CI_OFS="stofs_3d_atl").returncode == 2
-
-
-@pytest.mark.parametrize("level,stages,expect", [("smoke", "prep nowcast", 2), ("cycle", "prep nowcast forecast post", 4), ("full", "prep nowcast forecast post", 4)])
-def test_level_table_and_wait_limits(level, stages, expect):
-    text = SCRIPT.read_text()
-    m = re.search(rf'{level}\) +STAGES="([a-z ]+)"; +EXPECT=(\d+); WAIT_DEFAULT=(\d+)', text)
-    assert (m.group(1), int(m.group(2))) == (stages, expect)
-    # the wait covers the cards' healthy runtimes (smoke <= 1 h, cycle <= 4 h, per the run guide) with queue margin and leaves the pipeline timeout room. MJ (10/14/26)
-    healthy = {"smoke": 3600, "cycle": 14400, "full": 14400}[level]
-    pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
-    assert 2 * healthy <= int(m.group(3)) and int(m.group(3)) + 7200 <= pipeline
 
 
 def test_frozen_stage_links_the_dataset_into_a_clean_root(ci):
@@ -220,87 +233,127 @@ def test_stage_data_sh_hands_over_to_the_atl_stage(ci):
     assert r.returncode == 0 and (ci.com / "nos").is_dir(), r.stderr + r.stdout
 
 
-# ---- run ---- MJ (10/14/26)
+# ---- Prep/Nowcast/Forecast/Post: run_stage.sh with the ATL card-env ---- MJ (10/15/26)
 
-def _chain(ci: Ci, states, labels, passed=None):
-    """Stub sbatch (records its arguments, hands out ids 101...), sacct stepping through `states`, scancel, and the cards' logs. MJ (10/14/26)"""
-    _stub(ci.bin / "sbatch", r'''#!/bin/bash
-n=$(cat "$STUB_DIR/sb.n" 2>/dev/null || echo 100); n=$((n+1)); echo $n > "$STUB_DIR/sb.n"
-echo "$n $*" >> "$STUB_DIR/sbatch.calls"; echo "$n"
-''')
-    ids = [101 + i for i in range(len(labels))]
-    for i, snap in enumerate(states):
-        _touch(ci.stubs / f"snap.{i}", "".join(f"{j}|{s}\n" for j, s in zip(ids, snap)))
-    _touch(ci.stubs / "snap.last", "".join(f"{j}|{s}\n" for j, s in zip(ids, states[-1])))
-    _stub(ci.bin / "sacct", r'''#!/bin/bash
-n=$(cat "$STUB_DIR/n" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/n"
-f="$STUB_DIR/snap.$n"; [ -f "$f" ] || f="$STUB_DIR/snap.last"; cat "$f"
-''')
+RUN_STAGE = SCRIPTS / "run_stage.sh"
+
+
+def _job(ci: Ci, stage: str, state="COMPLETED", ok=True, ofs_in_log=RUN, jid=101):
+    """Stub sbatch (prints the jobid, records its arguments and a few inherited variables), sacct, scancel, and the card's log. MJ (10/15/26)"""
+    _stub(ci.bin / "sbatch", f"""#!/bin/bash
+echo "$*" >> "$STUB_DIR/sbatch.calls"; echo "COMOUT=${{COMOUT:-unset}} RPTDIR=${{RPTDIR:-unset}}" >> "$STUB_DIR/sbatch.env"
+echo "Submitted batch job {jid}"
+""")
+    _stub(ci.bin / "sacct", f'#!/bin/bash\necho "{state}"\n')
     _stub(ci.bin / "scancel", '#!/bin/bash\necho "$@" >> "$STUB_DIR/scancel.log"\n')
     pfx = "stofs_3d_atl_ufs_standalone" if ci.var == "standalone" else "stofs_3d_atl_ufs"
-    for i, label in enumerate(labels):
-        ok = True if passed is None else passed.get(label, True)
-        _touch(ci.root / "rpt" / f"{pfx}_{label}_00.{101 + i}.out", f"STAGE_SUMMARY stage={label} status={'PASS' if ok else 'FAIL'} runtime_s=1\n")
+    _touch(ci.root / "rpt" / f"{pfx}_{stage}_00.{jid}.out", f"STAGE_SUMMARY stage={stage} ofs={ofs_in_log} status={'PASS' if ok else 'FAIL'} runtime_s=1\n")
+    _touch(ci.root / "rpt" / f"{pfx}_{stage}_00.{jid}.err", "err")
+    _touch(ci.ws / f"slurm-{jid}.out", "epilogue")
 
 
-CH = {"smoke": ["prep", "nowcast"], "cycle": ["prep", "nowcast", "forecast", "post"]}
-
-
-def _ready(ci: Ci):
-    _touch(ci.com / "nos" / f"{RUN}.{PDY}" / f"{RUN}.t12z.{PDY}.init.nowcast.nc")
+def _stage(ci: Ci, stage: str, **extra):
+    return ci.run(stage, PDY, CYC, script=RUN_STAGE, **extra)
 
 
 @pytest.mark.parametrize("ofs,comvar,carddir", [("stofs_3d_atl_ufs_standalone", "COMROOT_SA", "stofs_3d_atl_ufs_standalone"), ("stofs_3d_atl_ufs", "COMROOT_UFS", "stofs_3d_atl_ufs")])
-@pytest.mark.parametrize("level", ["smoke", "cycle", "full"])
-def test_run_submits_an_afterok_chain_with_the_ci_account_and_waits(tmp_path, ofs, comvar, carddir, level):
+@pytest.mark.parametrize("stage", ["prep", "nowcast", "forecast", "post"])
+def test_run_stage_submits_the_atl_card_with_its_exports_and_gates_on_the_run_name(tmp_path, ofs, comvar, carddir, stage):
     ci = Ci(tmp_path, ofs)
-    labels = CH["smoke" if level == "smoke" else "cycle"]
-    _ready(ci)
-    _chain(ci, [["PENDING"] * len(labels), ["COMPLETED"] * len(labels)], labels)
-    r = ci.run("run", LEVEL=level, POLL_S="0", SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch")
+    _job(ci, stage)
+    r = _stage(ci, stage, SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch", COMOUT="/leak", RPTDIR="/leak/rpt", COMROOT="/leak/com")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert f"PASS[run]: LEVEL={level}, {len(labels)} jobs COMPLETED with status=PASS" in r.stdout
-    calls = (ci.stubs / "sbatch.calls").read_text().splitlines()
-    assert len(calls) == len(labels)
-    for i, (label, line) in enumerate(zip(labels, calls)):
-        assert f"--account=nosofs --qos=batch" in line and "--kill-on-invalid-dep=yes" in line
-        assert line.endswith(f"{ci.home}/slurm/{carddir}/jnos_{label}_00.sh")
-        assert (f"--dependency=afterok:{100 + i}" in line) == (i > 0)
-        for want in (f"PDY={PDY}", "CYC=12", f"PACKAGEROOT={ci.pk}", f"{comvar}={ci.com}", f"COMROOT_STAGED={ci.root}/comin",
-                     f"DCOMROOT={ci.root}/dcom", f"RPTDIR={ci.root}/rpt", f"NOS_VENV={ci.venv}", "OFS=stofs_3d_atl_ufs"):
-            assert want in line, (want, line)
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == " ".join(str(101 + i) for i in range(len(labels))) + " "
-    assert len(list((ci.ws / "ci_logs").glob("*_00.*.out"))) == len(labels)
-    assert not (ci.stubs / "scancel.log").exists()
+    assert f"PASS[{stage}]: {ci.root}/rpt/" in r.stdout
+    line = (ci.stubs / "sbatch.calls").read_text()
+    assert "--account=nosofs --qos=batch" in line and line.split()[-1] == f"{ci.home}/slurm/{carddir}/jnos_{stage}_00.sh"
+    for want in (f"PDY={PDY}", "CYC=12", f"PACKAGEROOT={ci.pk}", f"{comvar}={ci.com}", f"COMROOT_STAGED={ci.root}/comin",
+                 f"DCOMROOT={ci.root}/dcom", f"RPTDIR={ci.root}/rpt", f"EXECnos={ci.home}/exec", "COLDSTART=NO",
+                 f"NOS_VENV={ci.venv}", f"NOS_PTMP={ci.ptmp}", f"OFS={RUN}"):
+        assert want in line, (want, line)
+    assert line.count("COMROOT_STAGED=") == 1 and line.count("--export=") == 1
+    assert (ci.stubs / "sbatch.env").read_text().strip() == "COMOUT=unset RPTDIR=unset"
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text().strip() == "101"
+    logs = sorted(p.name for p in (ci.ws / "ci_logs").iterdir())
+    pfx = carddir
+    assert f"{pfx}_{stage}_00.101.out" in logs and f"{pfx}_{stage}_00.101.err" in logs and "slurm_epilogue.slurm-101.out" in logs
 
 
-def test_run_fails_fast_on_a_bad_state_and_cancels(ci):
-    labels = CH["cycle"]
-    _ready(ci)
-    _chain(ci, [["COMPLETED", "FAILED", "CANCELLED", "CANCELLED"]], labels, passed={"nowcast": False})
-    r = ci.run("run", LEVEL="cycle", POLL_S="0")
-    assert r.returncode == 1 and "chain verdict: BAD 102:FAILED" in r.stdout and "FAIL[run]" in r.stdout
-    assert (ci.stubs / "scancel.log").read_text().split() == ["101", "102", "103", "104"]
+def test_run_stage_gate_uses_the_run_name_for_the_standalone_variant_and_rejects_the_ofs_name(ci):
+    _job(ci, "prep", ofs_in_log="stofs_3d_atl_ufs_standalone")
+    r = _stage(ci, "prep")
+    assert r.returncode == 1 and "FAIL[prep]: no STAGE_SUMMARY PASS" in r.stdout
 
 
-def test_run_requires_status_pass_in_the_log_not_just_completed(ci):
-    _ready(ci)
-    _chain(ci, [["COMPLETED"] * 2], CH["smoke"], passed={"nowcast": False})
-    r = ci.run("run", LEVEL="smoke", POLL_S="0")
-    assert r.returncode == 1 and "not COMPLETED with status=PASS: nowcast" in r.stdout
+@pytest.mark.parametrize("state,ok", [("COMPLETED", False), ("FAILED", False), ("TIMEOUT", False)])
+def test_run_stage_fails_on_a_bad_log_or_state_and_keeps_the_run_directory(ci, state, ok):
+    w = _work(ci, "stofs_3d_atl_ufs_standalone")
+    _job(ci, "nowcast", state=state, ok=ok)
+    r = _stage(ci, "nowcast")
+    assert r.returncode == 1 and "FAIL[nowcast]" in r.stdout
+    assert len(list(w.iterdir())) == 3
 
 
-def test_run_times_out_and_cancels(ci):
-    _ready(ci)
-    _chain(ci, [["RUNNING"] * 2], CH["smoke"])
-    r = ci.run("run", LEVEL="smoke", POLL_S="1", WAIT_S="1")
-    assert r.returncode == 1 and "TIMEOUT after" in r.stdout and (ci.stubs / "scancel.log").read_text().split() == ["101", "102"]
+def test_run_stage_pass_deletes_only_that_jobs_run_directory(ci):
+    w = _work(ci, "stofs_3d_atl_ufs_standalone")
+    secofs = _touch(ci.ptmp / "tester" / "work" / "secofs_ufs" / "job.101" / "x", "keep")
+    other = _touch(ci.ptmp / "tester" / "work" / "stofs_3d_atl_ufs" / "job.101" / "x", "keep")
+    _job(ci, "prep")
+    assert _stage(ci, "prep").returncode == 0
+    assert not list(w.glob("*.101")) and list(w.glob("*.102")) and list(w.glob("*.999"))
+    assert secofs.is_file() and other.is_file()
 
 
-def test_run_needs_the_staged_init_state(ci):
-    _chain(ci, [["COMPLETED"] * 2], CH["smoke"])
-    r = ci.run("run", LEVEL="smoke", POLL_S="0")
-    assert r.returncode == 1 and "init state" in r.stderr and not (ci.stubs / "sbatch.calls").exists()
+def test_clean_job_keeps_the_depth_and_symlink_guards(ci):
+    assert ci.run("clean-job", "101", NOS_PTMP=str(ci.ptmp)).returncode == 0
+    work = ci.ptmp / "tester" / "work"
+    work.mkdir(parents=True, exist_ok=True)
+    victim = _touch(ci.tmp / "victim" / "x.101" / "f", "keep")
+    (work / "stofs_3d_atl_ufs_standalone").symlink_to(victim.parent.parent)
+    r = ci.run("clean-job", "101")
+    assert r.returncode == 1 and "refusing to clean" in r.stderr and victim.is_file()
+    assert ci.run("clean-job").returncode == 1
+
+
+def test_card_env_refuses_a_comma_in_a_path(ci):
+    r = ci.run("card-env", "prep", PACKAGEROOT=str(ci.tmp / "a,b"))
+    assert r.returncode != 0
+
+
+@pytest.mark.parametrize("ofs,stage,secs", [
+    ("stofs_3d_atl_ufs_standalone", "prep", 12600), ("stofs_3d_atl_ufs_standalone", "nowcast", 10800), ("stofs_3d_atl_ufs_standalone", "forecast", 23400),
+    ("stofs_3d_atl_ufs_standalone", "post", 9000), ("stofs_3d_atl_ufs", "post", 16200),
+])
+def test_run_stage_timeout_cancels_a_hung_atl_job_after_its_limit(tmp_path, ofs, stage, secs):
+    ci = Ci(tmp_path, ofs)
+    # a stub date that jumps past the limit on its second call; the first call is t0. MJ (10/15/26)
+    _job(ci, stage, state="RUNNING", ok=False)
+    _stub(ci.bin / "date", f'#!/bin/bash\nn=$(cat "$STUB_DIR/d" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/d"\n[ "$1" = +%s ] && {{ [ $n -eq 0 ] && echo 1000 || echo {1000 + secs}; exit 0; }}\nexec /bin/date "$@"\n')
+    r = _stage(ci, stage)
+    assert r.returncode == 1 and f"rc=timeout" in r.stdout and (ci.stubs / "scancel.log").read_text().split() == ["101"]
+    assert f"after {secs}s" in r.stdout
+
+
+@pytest.mark.parametrize("stage,card", [(s, c) for s in ("prep", "nowcast", "forecast", "post") for c in ("stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs")])
+def test_atl_timeouts_cover_the_card_walltimes(stage, card):
+    text = (REPO / ".cicd" / "scripts" / "run_stage.sh").read_text()
+    block = text[text.index("stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs)"):]
+    m = re.search(rf"^\s*{stage}\)\s*TIMEOUT_S=(\d+)(?:; \[ \"\$\{{OFS\}}\" = stofs_3d_atl_ufs \] && TIMEOUT_S=(\d+))?", block, re.M)
+    limit = int(m.group(2) or m.group(1)) if card == "stofs_3d_atl_ufs" else int(m.group(1))
+    h, mi, sec = map(int, re.search(r"^#SBATCH\s+--time=(\d+):(\d+):(\d+)", (REPO / "slurm" / card / f"jnos_{stage}_00.sh").read_text(), re.M).groups())
+    assert limit >= h * 3600 + mi * 60 + sec + 1800
+
+
+def test_the_secofs_path_of_run_stage_is_untouched_by_the_atl_hooks(tmp_path):
+    ci = Ci(tmp_path, "secofs_ufs")
+    _stub(ci.bin / "sbatch", '#!/bin/bash\necho "$*" >> "$STUB_DIR/sbatch.calls"\necho "Submitted batch job 7"\n')
+    _stub(ci.bin / "sacct", '#!/bin/bash\necho COMPLETED\n')
+    (ci.home / "slurm").unlink()
+    card = _touch(ci.home / "slurm" / "secofs_ufs" / "jnos_prep_00.sh", "RPTDIR=" + str(ci.tmp / "rptdir") + "\n")
+    _touch(ci.tmp / "rptdir" / "secofs_ufs_prep_00.7.out", "STAGE_SUMMARY stage=prep ofs=secofs_ufs status=PASS\n")
+    r = _stage(ci, "prep")
+    assert r.returncode == 0, r.stdout + r.stderr
+    call = (ci.stubs / "sbatch.calls").read_text().strip()
+    assert call == f"--export=ALL,PDY={PDY},CYC=12,COMROOT_STAGED={ci.rt}/comin_{PDY}12,NOS_VENV={ci.venv},NOS_PTMP={ci.ptmp} {card}"
 
 
 # ---- verify ---- MJ (10/14/26)
@@ -422,25 +475,9 @@ def _work(ci: Ci, cards: str, ids=("101", "102", "999")):
     return w
 
 
-def test_a_passing_run_deletes_its_own_run_directories_only(ci):
-    _ready(ci)
-    w = _work(ci, "stofs_3d_atl_ufs_standalone")
-    secofs = _touch(ci.ptmp / "tester" / "work" / "secofs_ufs" / "job.101" / "x", "keep")
-    other = _touch(ci.ptmp / "tester" / "work" / "stofs_3d_atl_ufs" / "job.101" / "x", "keep")
-    _chain(ci, [["COMPLETED"] * 2], CH["smoke"])
-    r = ci.run("run", LEVEL="smoke", POLL_S="0")
-    assert r.returncode == 0, r.stdout + r.stderr
-    assert not list(w.glob("*.101")) and not list(w.glob("*.102")) and list(w.glob("*.999"))
-    assert secofs.is_file() and other.is_file()
-
-
-def test_a_failing_run_keeps_its_directories_until_the_next_stage(ci):
+def test_a_failed_stage_leaves_its_directories_for_the_next_stage_data_to_clear(ci):
     ci.dataset()
-    _ready(ci)
     w = _work(ci, "stofs_3d_atl_ufs_standalone")
-    _chain(ci, [["COMPLETED", "FAILED"]], CH["smoke"], passed={"nowcast": False})
-    assert ci.run("run", LEVEL="smoke", POLL_S="0").returncode == 1
-    assert len(list(w.iterdir())) == 3
     secofs = _touch(ci.ptmp / "tester" / "work" / "secofs_ufs" / "job.1" / "x", "keep")
     assert ci.run("stage").returncode == 0
     assert not w.exists() and secofs.is_file()
@@ -451,15 +488,6 @@ def test_reset_root_refuses_a_root_inside_a_protected_directory(ci):
     inside = _touch(ci.ptmp / "tester" / "com" / "sub" / "dir" / "f", "keep")
     r = ci.run("stage", ATL_CI_ROOT=f"{ci.ptmp}/tester/com/sub/dir")
     assert r.returncode == 1 and "inside the protected" in r.stderr and inside.is_file()
-
-
-def test_run_pins_execnos_and_copies_early_sbatch_output(ci):
-    _ready(ci)
-    _chain(ci, [["COMPLETED"] * 2], CH["smoke"])
-    _touch(ci.root / "slurm" / "stofs_3d_atl_ufs_sa_prep_00.101.out", "died in a card check")
-    assert ci.run("run", LEVEL="smoke", POLL_S="0").returncode == 0
-    assert f"EXECnos={ci.home}/exec" in (ci.stubs / "sbatch.calls").read_text()
-    assert (ci.ws / "ci_logs" / "stofs_3d_atl_ufs_sa_prep_00.101.out").is_file()
 
 
 def test_jenkinsfile_forces_cyc_12_for_atl():

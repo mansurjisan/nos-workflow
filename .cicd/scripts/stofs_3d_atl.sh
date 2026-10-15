@@ -3,23 +3,23 @@
 #   stofs_3d_atl.sh stage    Stage Data (called by stage_data.sh): frozen = link the dataset for PDY into a clean CI root ATL_CI_ROOT;
 #                            live = stage_comin.py + hercules_atl_seed_init.sh + hercules_atl_seed_prev.sh on this login/front-end node
 #                            (compute nodes have no internet), with the dcom case bundle DCOM_BUNDLE the user supplies
-#   stofs_3d_atl.sh run      Run ATL: sbatch the variant's cards as an afterok chain with the CI account/qos, wait, check every job
+#   stofs_3d_atl.sh card-env <stage>   eval-able shell for run_stage.sh: the variant's extra sbatch exports (ATL_EXPORTS), log prefix, unset list
+#   stofs_3d_atl.sh clean-job <jobid>  delete that job's run directory (run_stage.sh calls it after a passing stage)
 #   stofs_3d_atl.sh verify   Verify ATL: compare_atl.py regress against the dataset's reference; ops comparison (report only) at full
 #   stofs_3d_atl.sh seed <PDY> <standalone|coupled> [SRC_COMROOT [SRC_COMIN [SRC_DCOM]]]   one-time, by hand (see below)
 # The variant comes from OFS: stofs_3d_atl_ufs_standalone = pschism (cards slurm/stofs_3d_atl_ufs_standalone, COMROOT_SA),
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH SLURM_CI_ACCOUNT SLURM_CI_QOS; optional
-# ATL_CI_ROOT (default $NOS_PTMP/$LOGNAME/atl_ci_<variant>), WAIT_S POLL_S (poll limit and interval, seconds), CMP_TOL (default 1e-3),
-# OPS_WARN_MM (default 500), DCOM_BUNDLE (live only), COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/14/26)
+# ATL_CI_ROOT (default $NOS_PTMP/$LOGNAME/atl_ci_<variant>), CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), DCOM_BUNDLE (live only),
+# COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26)
 #
-# LEVEL   cards run                    jobs  wait (s)  verify
-#   smoke  prep nowcast                   2    14400   compare_atl.py regress --level smoke
-#   cycle  prep nowcast forecast post     4    36000   regress --level cycle
-#   full   prep nowcast forecast post     4    36000   regress --level cycle, then ops (report only)
-# The waits are about 3x the expected healthy time (Hercules: prep 8 min standalone / 24 min coupled, nowcast stage 25-28 min,
-# forecast and post not yet measured on Hercules, about 1.5 h and 1-2 h on WCOSS2) plus queue time for the 62/63-node jobs.
-# The cards' own walltimes (3 h, 2.5 h, 6 h, 2 h; the coupled post 4 h) stop a hung job, and a job in FAILED, CANCELLED, TIMEOUT or any other bad state, or
-# without STAGE_SUMMARY status=PASS in its log, fails the run stage. MJ (10/14/26)
+# The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits the variant's
+# card, waits (timeouts in run_stage.sh), gates on its STAGE_SUMMARY and deletes the job's run directory on a pass. Then Verify calls `verify`.
+# LEVEL   Jenkins stages run                       Verify
+#   smoke  Prep Nowcast                             compare_atl.py regress --level smoke
+#   cycle  Prep Nowcast Forecast Post               regress --level cycle
+#   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (report only)
+# MJ (10/15/26)
 #
 # CI root ${ATL_CI_ROOT}: com/ (the variant's COMROOT), comin/ (COMROOT_STAGED), dcom/ (DCOMROOT), rpt/ (the cards' RPTDIR),
 # slurm/ (jobs_<PDY><CYC>.txt and the cards' Slurm output), ops/ (live mode ops products). frozen clears it at stage.
@@ -104,23 +104,22 @@ dcom_groups() {
   done
 }
 
-# Everything the stage, run and verify commands share. MJ (10/14/26)
+# The CI root and its com, from the variant. MJ (10/15/26)
+ci_root() {
+  ATL_CI_ROOT=${ATL_CI_ROOT:-${NOS_PTMP}/${LOGNAME}/atl_ci_${VARIANT}}
+  CI_COM="${ATL_CI_ROOT}/com"
+}
+
+# Everything the stage and verify commands share. MJ (10/15/26)
 level_setup() {
   check_cycle_args
   set_variant "${OFS}"
   LEVEL=${LEVEL:-smoke}
-  case "${LEVEL}" in
-    smoke) STAGES="prep nowcast";               EXPECT=2; WAIT_DEFAULT=14400 ;;
-    cycle) STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=36000 ;;
-    full)  STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=36000 ;;
-    *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;;
-  esac
+  case "${LEVEL}" in smoke|cycle|full) ;; *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;; esac
   DATA_MODE=${DATA_MODE:-frozen}
   : "${RT_DATA_ROOT:?RT_DATA_ROOT not set}"
-  ATL_CI_ROOT=${ATL_CI_ROOT:-${NOS_PTMP}/${LOGNAME}/atl_ci_${VARIANT}}
-  CI_COM="${ATL_CI_ROOT}/com"
+  ci_root
   DS="${RT_DATA_ROOT}/stofs_3d_atl/${VARIANT}/${PDY}${CYC}"
-  JOBS="${ATL_CI_ROOT}/slurm/jobs_${PDY}${CYC}.txt"
   LOGDIR="${WORKSPACE:-${PWD}}/ci_logs"
   export NOS_PTMP
 }
@@ -240,102 +239,29 @@ cmd_stage() {
   echo "stage_data PASS"
 }
 
-# sacct states that end a job unsuccessfully; --kill-on-invalid-dep turns the jobs behind a failure into CANCELLED. MJ (10/14/26)
-BAD_STATES='FAILED|CANCELLED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY|BOOT_FAIL|DEADLINE|PREEMPTED|REVOKED|SPECIAL_EXIT'
-
-cmd_run() {
-  level_setup
-  mkdir -p "${LOGDIR}" "${ATL_CI_ROOT}/slurm" "${ATL_CI_ROOT}/rpt"
-  local wait_s=${WAIT_S:-${WAIT_DEFAULT}} poll_s=${POLL_S:-60}
-  local dcom="${ATL_CI_ROOT}/dcom" st carddir="${HOMEnos}/slurm/${CARDS}" miss=0
-  [ "${DATA_MODE}" != live ] || dcom="${DCOM_BUNDLE:?DCOM_BUNDLE not set}/dcom"
-  for st in ${STAGES}; do
-    [ -s "${carddir}/jnos_${st}_00.sh" ] || { echo "MISSING: ${carddir}/jnos_${st}_00.sh" >&2; miss=1; }
+# What run_stage.sh needs to submit this variant's <stage> card, as shell for it to eval (one --export value, so no commas).
+# The card's log is <RPTDIR>/<prefix>.<jobid>.out; the prefix comes from its _LOG_PREFIX line so the two cannot drift. MJ (10/15/26)
+cmd_card_env() {
+  local st=${1:?usage: stofs_3d_atl.sh card-env <stage>} pfx dcom v
+  set_variant "${OFS}"
+  ci_root
+  pfx=$(sed -n 's#^_LOG_PREFIX=.*/\([^/]*\)\.\${_JOBID}.*#\1#p' "${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh" | head -1)
+  [ -n "${pfx}" ] || { echo "FATAL: no _LOG_PREFIX in ${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh" >&2; exit 1; }
+  dcom="${ATL_CI_ROOT}/dcom"
+  [ "${DATA_MODE:-frozen}" != live ] || dcom="${DCOM_BUNDLE:?DCOM_BUNDLE not set}/dcom"
+  for v in "${PACKAGEROOT}" "${HOMEnos}" "${CI_COM}" "${dcom}" "${NOS_PTMP}" "${VENV_PATH:-}"; do
+    case "${v}" in *,*) echo "FATAL: a comma in '${v}' would split the sbatch --export list" >&2; exit 1 ;; esac
   done
-  [ -s "${CI_COM}/nos/${RUN}.${PDY}/${RUN}.t${CYC}z.${PDY}.init.nowcast.nc" ] || { echo "MISSING: the init state under ${CI_COM} (Stage Data)" >&2; miss=1; }
-  [ "${miss}" = 0 ] || exit 1
+  # Inherited values would bypass what the cards derive; the cards also clear most of these themselves. MJ (10/15/26)
+  echo "unset COMOUT COMOUTroot DATA COMIN COMINgfs COMINhrrr COMINrtofs_2d COMINrtofs_3d COMINnwm COMINrerun COMROOT DATAROOT RPTDIR OFS_CONFIG"
+  printf 'ATL_RUN=%q\nATL_COMIN=%q\nATL_RPTDIR=%q\nATL_LOGPFX=%q\nATL_EXPORTS=%q\n' "${RUN}" "${ATL_CI_ROOT}/comin" "${ATL_CI_ROOT}/rpt" "${ATL_CI_ROOT}/rpt/${pfx}" \
+    "OFS=${RUN},PACKAGEROOT=${PACKAGEROOT},${COMVAR}=${CI_COM},EXECnos=${HOMEnos}/exec,DCOMROOT=${dcom},RPTDIR=${ATL_CI_ROOT}/rpt,COLDSTART=NO"
+}
 
-  # Inherited values would bypass what the cards derive; the cards also clear most of these themselves. MJ (10/14/26)
-  unset COMOUT COMOUTroot DATA COMIN COMINgfs COMINhrrr COMINrtofs_2d COMINrtofs_3d COMINnwm COMINrerun COMROOT DATAROOT RPTDIR OFS_CONFIG
-  local acct=()
-  [ -z "${SLURM_CI_ACCOUNT:-}" ] || acct+=(--account="${SLURM_CI_ACCOUNT}")
-  [ -z "${SLURM_CI_QOS:-}" ] || acct+=(--qos="${SLURM_CI_QOS}")
-  local ev="OFS=${RUN},PDY=${PDY},CYC=${CYC},PACKAGEROOT=${PACKAGEROOT},NOS_PTMP=${NOS_PTMP},NOS_VENV=${VENV_PATH:-},${COMVAR}=${CI_COM}"
-  ev="${ev},COMROOT_STAGED=${ATL_CI_ROOT}/comin,EXECnos=${HOMEnos}/exec,DCOMROOT=${dcom},RPTDIR=${ATL_CI_ROOT}/rpt,COLDSTART=NO"
-  cd "${ATL_CI_ROOT}/slurm"
-  [ ! -s "${JOBS}" ] || mv "${JOBS}" "${JOBS}.$(date +%y%m%d%H%M%S)"
-  : > "${JOBS}"
-  echo "submitting ${CARDS} LEVEL=${LEVEL} (${STAGES}) for ${PDY}${CYC}, account=${SLURM_CI_ACCOUNT:-card} qos=${SLURM_CI_QOS:-card}"
-  local id prev="" label
-  for st in ${STAGES}; do
-    id=$(sbatch --parsable --kill-on-invalid-dep=yes ${acct[@]+"${acct[@]}"} ${prev:+--dependency=afterok:${prev}} \
-         --export="ALL,${ev}" "${carddir}/jnos_${st}_00.sh") || {
-      echo "ERROR: sbatch failed for ${st}; cancel what was queued: scancel \$(awk '{print \$2}' ${JOBS})" >&2
-      awk 'NF>=2{printf "%s ", $2}' "${JOBS}" > "${LOGDIR}/current_jobid"
-      exit 1
-    }
-    id=${id%%;*}
-    echo "${st} ${id}" >> "${JOBS}"
-    printf '%-9s: %s%s\n' "${st}" "${id}" "${prev:+   (afterok:${prev})}"
-    prev=${id}
-  done
-
-  # post/unsuccessful in the Jenkinsfile scancels whatever is in this file, space separated; written before the count check so a mismatch still cancels what was queued. MJ (10/14/26)
-  awk 'NF>=2{printf "%s ", $2}' "${JOBS}" > "${LOGDIR}/current_jobid"
-  local n idlist
-  n=$(awk 'NF>=2' "${JOBS}" | wc -l)
-  [ "${n}" -eq "${EXPECT}" ] || { echo "FATAL: ${n} jobs queued, LEVEL=${LEVEL} expects ${EXPECT} (${JOBS})"; exit 1; }
-  idlist=$(awk 'NF>=2{printf "%s%s", sep, $2; sep=","}' "${JOBS}")
-
-  local t0 snap verdict last="" elapsed
-  t0=$(date +%s)
-  while true; do
-    snap=$(sacct -j "${idlist}" -X -n -P -o JobID,State 2>/dev/null || true)
-    verdict=$(awk -F'|' -v n="${EXPECT}" -v bad="^(${BAD_STATES})" '
-      NF >= 2 { st = $2; sub(/ .*/, "", st)
-                if (st ~ bad) badlist = badlist " " $1 ":" st; else if (st == "COMPLETED") done++ }
-      END { if (badlist != "") print "BAD" badlist; else if (done == n) print "DONE"; else print "WAIT" }' <<<"${snap}")
-    if [ "${snap}" != "${last}" ]; then
-      echo "[$(date -u +%T)] $(awk -F'|' 'NF>=2{printf "%s=%s ", $1, $2}' <<<"${snap}")"
-      last="${snap}"
-    fi
-    case "${verdict}" in DONE|BAD*) break ;; esac
-    elapsed=$(( $(date +%s) - t0 ))
-    if [ "${elapsed}" -ge "${wait_s}" ]; then
-      verdict="TIMEOUT after ${elapsed}s"
-      break
-    fi
-    sleep "${poll_s}"
-  done
-  echo "chain verdict: ${verdict} (elapsed $(( $(date +%s) - t0 ))s)"
-  case "${verdict}" in DONE) ;; *) scancel ${idlist//,/ } 2>/dev/null || true ;; esac
-
-  # The card writes <RPTDIR>/<prefix>_<stage>_00.<jobid>.out; the prefix is read from the card's _LOG_PREFIX line so the two cannot drift. MJ (10/14/26)
-  local pfx bad="" log state
-  printf '%-9s %-9s %-16s %s\n' job id state log
-  while read -r label id; do
-    [ -n "${id}" ] || continue
-    pfx=$(sed -n 's#^_LOG_PREFIX=.*/\([^/]*\)\.\${_JOBID}.*#\1#p' "${carddir}/jnos_${label}_00.sh" | head -1)
-    [ -n "${pfx}" ] || { echo "FATAL: no _LOG_PREFIX in ${carddir}/jnos_${label}_00.sh"; exit 1; }
-    log="${ATL_CI_ROOT}/rpt/${pfx}.${id}.out"
-    for f in "${log}" "${log%.out}.err"; do
-      [ -r "${f}" ] && cp -p "${f}" "${LOGDIR}/" || true
-    done
-    # the sbatch output of a job that died in a card check, before it opened its own log. MJ (10/14/26)
-    for f in "${ATL_CI_ROOT}"/slurm/*"${id}"*; do
-      [ -f "${f}" ] && cp -p "${f}" "${LOGDIR}/" || true
-    done
-    state=$(awk -F'|' -v i="${id}" '$1==i{print $2}' <<<"${snap}")
-    printf '%-9s %-9s %-16s %s\n' "${label}" "${id}" "${state:--}" "$(grep -o 'STAGE_SUMMARY.*' "${log}" 2>/dev/null | tail -1)"
-    if [ "${state%% *}" != COMPLETED ] || ! grep -q 'STAGE_SUMMARY .*status=PASS' "${log}" 2>/dev/null; then bad="${bad}${label} "; fi
-  done < "${JOBS}"
-  if [ "${verdict}" != DONE ] || [ -n "${bad}" ]; then
-    echo "FAIL[run]: LEVEL=${LEVEL} ${verdict}; not COMPLETED with status=PASS: ${bad:-none listed}"
-    exit 1
-  fi
-  # passed: the run directories are no longer needed; a failed run keeps them for debugging until the next stage. MJ (10/14/26)
-  clean_work $(awk 'NF>=2{print $2}' "${JOBS}")
-  echo "PASS[run]: LEVEL=${LEVEL}, ${EXPECT} jobs COMPLETED with status=PASS"
+# After a passing stage: the cards keep the job's run directory (~150 GB a cycle); a failed one is kept for debugging until the next Stage Data. MJ (10/15/26)
+cmd_clean_job() {
+  set_variant "${OFS}"
+  clean_work "${1:?usage: stofs_3d_atl.sh clean-job <jobid>}"
 }
 
 cmd_verify() {
@@ -455,11 +381,11 @@ case "${CMD}" in
     # common.sh is not sourced for the by-hand seed (it needs PACKAGEROOT); the variant arguments are explicit. MJ (10/14/26)
     cmd_seed "$@"
     ;;
-  stage|run|verify)
+  stage|verify|card-env|clean-job)
     # shellcheck disable=SC1091
     source "${SCRIPT_DIR}/common.sh"
     case "${OFS}" in stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ;; *) echo "FATAL: ${CMD} runs with CI_OFS=stofs_3d_atl_ufs_standalone or stofs_3d_atl_ufs (got ${OFS})" >&2; exit 2 ;; esac
-    "cmd_${CMD}"
+    "cmd_${CMD//-/_}" "$@"
     ;;
   *) usage >&2; exit 2 ;;
 esac

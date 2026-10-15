@@ -24,10 +24,28 @@ case "${STAGE}" in
   *) echo "FATAL: unknown stage '${STAGE}' (expected prep|nowcast|forecast|post)"; exit 2 ;;
 esac
 
+# The STOFS-3D-ATL variants share this template; stofs_3d_atl.sh card-env supplies what differs (extra exports, CI log dir, RUN). MJ (10/15/26)
+ATL_EXPORTS=""
+GATE_OFS="${OFS}"
+case "${OFS}" in
+  stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs)
+    # Walltime of the ATL card + 30 min of queue margin (62/63-node jobs); the coupled post card is 4 h. MJ (10/15/26)
+    case "${STAGE}" in
+      prep)     TIMEOUT_S=12600 ;;
+      nowcast)  TIMEOUT_S=10800 ;;
+      forecast) TIMEOUT_S=23400 ;;
+      post)     TIMEOUT_S=9000; [ "${OFS}" = stofs_3d_atl_ufs ] && TIMEOUT_S=16200 ;;
+    esac
+    eval "$(bash "${SCRIPT_DIR}/stofs_3d_atl.sh" card-env "${STAGE}")"
+    COMROOT_STAGED="${ATL_COMIN}"
+    GATE_OFS="${ATL_RUN}"
+    ;;
+esac
+
 CARD="${HOMEnos}/slurm/${OFS}/jnos_${STAGE}_00.sh"
 [ -r "${CARD}" ] || { echo "FATAL: card not found: ${CARD}"; exit 2; }
 
-RPTDIR=$(card_value "${CARD}" RPTDIR)
+if [ -n "${ATL_EXPORTS}" ]; then RPTDIR="${ATL_RPTDIR}"; else RPTDIR=$(card_value "${CARD}" RPTDIR); fi
 mkdir -p "${RPTDIR}"
 mkdir -p "${WORKSPACE:-.}/ci_logs"
 
@@ -36,15 +54,16 @@ echo "submitting ${CARD} (PDY=${PDY} CYC=${CYC})"
 ACCT_ARGS=()
 [ -n "${SLURM_CI_ACCOUNT:-}" ] && ACCT_ARGS+=(--account="${SLURM_CI_ACCOUNT}")
 [ -n "${SLURM_CI_QOS:-}" ] && ACCT_ARGS+=(--qos="${SLURM_CI_QOS}")
-SBATCH_OUT=$(sbatch ${ACCT_ARGS[@]+"${ACCT_ARGS[@]}"} --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}" "${CARD}")
+SBATCH_OUT=$(sbatch ${ACCT_ARGS[@]+"${ACCT_ARGS[@]}"} --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}"${ATL_EXPORTS:+,"${ATL_EXPORTS}"} "${CARD}")
 echo "${SBATCH_OUT}"
 JOBID=$(awk '/Submitted batch job/{print $NF}' <<<"${SBATCH_OUT}")
 [ -n "${JOBID}" ] || { echo "FATAL: could not parse jobid from sbatch output"; exit 2; }
 echo "jobid=${JOBID}"
 echo "${JOBID}" > "${WORKSPACE:-.}/ci_logs/current_jobid"
 
-LOG="${RPTDIR}/${OFS}_${STAGE}_00.${JOBID}.out"
-ERRLOG="${RPTDIR}/${OFS}_${STAGE}_00.${JOBID}.err"
+LOGPFX="${ATL_LOGPFX:-${RPTDIR}/${OFS}_${STAGE}_00}"
+LOG="${LOGPFX}.${JOBID}.out"
+ERRLOG="${LOGPFX}.${JOBID}.err"
 
 t0=$(date +%s)
 STATE="UNKNOWN"
@@ -76,7 +95,9 @@ for f in "${WORKSPACE:-.}"/*"${JOBID}"*.out "${WORKSPACE:-.}/slurm-${JOBID}.out"
   cp -p "${f}" "${WORKSPACE:-.}/ci_logs/slurm_epilogue.$(basename "${f}")"
 done
 
-if [ -r "${LOG}" ] && grep -q "STAGE_SUMMARY stage=${STAGE} ofs=${OFS} status=PASS" "${LOG}"; then
+if [ -r "${LOG}" ] && grep -q "STAGE_SUMMARY stage=${STAGE} ofs=${GATE_OFS} status=PASS" "${LOG}"; then
+  # A passing ATL stage no longer needs its run directory (~150 GB a cycle); a failed one is kept for debugging. MJ (10/15/26)
+  [ -z "${ATL_EXPORTS}" ] || bash "${SCRIPT_DIR}/stofs_3d_atl.sh" clean-job "${JOBID}" || echo "WARN: could not clean the run directory of job ${JOBID}"
   echo "PASS[${STAGE}]: ${LOG}"
   exit 0
 fi

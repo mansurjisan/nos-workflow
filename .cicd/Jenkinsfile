@@ -263,34 +263,41 @@ pipeline {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
             }
         }
+        // Prep..Verify run for SECOFS and STOFS-3D-ATL (ATL smoke stops after Nowcast); the STOFS-2D-Global stages below keep their own chain. MJ (10/15/26)
         stage('Prep') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
             }
         }
         stage('Nowcast') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
             }
         }
         stage('Forecast') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
             }
         }
         stage('Post') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
             }
         }
         stage('Verify') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'secofs_ufs' } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
             steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+                script {
+                    if (isAtlOfs(env.CI_OFS)) {
+                        sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_3d_atl.sh" verify'
+                    } else {
+                        sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
+                    }
+                }
             }
         }
         stage('Run 2D-GLO') {
@@ -303,18 +310,6 @@ pipeline {
             when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'stofs_2d_glo' } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" verify'
-            }
-        }
-        stage('Run ATL') {
-            when { expression { env.RUN_CYCLE == 'true' && isAtlOfs(env.CI_OFS) } }
-            steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_3d_atl.sh" run'
-            }
-        }
-        stage('Verify ATL') {
-            when { expression { env.RUN_CYCLE == 'true' && isAtlOfs(env.CI_OFS) } }
-            steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_3d_atl.sh" verify'
             }
         }
     }
@@ -359,7 +354,7 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh writes the current jobid here; best-effort scancel it on failure.
+            // run_stage.sh writes the current jobid here (SECOFS and ATL); best-effort scancel it on failure.
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then
