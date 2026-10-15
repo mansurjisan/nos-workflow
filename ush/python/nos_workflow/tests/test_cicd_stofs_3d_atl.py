@@ -682,3 +682,47 @@ def test_bootstrap_keeps_the_level_and_refreshes_a_smoke_copy_after_the_upgrade(
     assert r.returncode == 0 and "seeding frozen dataset" in r.stdout, r.stdout + r.stderr
     assert (ci.ds / ".seeded_ok").read_text().strip() == "level=cycle" and (ci.ds / "ref" / "b").is_file()
     assert "skipping" in ci.run(**boot).stdout or "already present" in ci.run(**boot).stdout
+
+
+# bootstrap: readable-file preflight and the quiet dataset copy. MJ (10/15/26)
+def _boot(tmp_path, ofs="stofs_3d_atl_ufs_standalone"):
+    ci = Ci(tmp_path, ofs)
+    src = _atl_seed_src(ci, ofs)
+    _stub(ci.venv / "bin" / "python")
+    _stub(ci.home / "exec" / "schism_combine_hotstart7.exe")
+    seed_rt = tmp_path / "seed_rt"
+    _touch(seed_rt / "stofs_3d_atl" / ci.var / f"{PDY}{CYC}" / "data", "d")
+    log = tmp_path / "rsync.argv"
+    real = shutil.which("rsync")
+    _stub(ci.bin / "rsync", f'#!/bin/bash\necho "$@" >> {log}\nexec {real} "$@"\n')
+    return ci, src, seed_rt, log
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")
+def test_bootstrap_fails_before_rsync_on_an_unreadable_fix_file(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    bad = src / "fix" / "stofs_3d_atl_ufs" / "grid"
+    bad.chmod(0)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 1 and f"FATAL: {bad} is not readable by" in r.stdout
+    assert f"chmod -R o+rX {src}/fix/stofs_3d_atl_ufs" in r.stdout and not log.exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")
+def test_bootstrap_fails_before_rsync_on_an_unreadable_executable(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    bad = src / "exec" / "stofs_3d_atl_pschism_v3.1.5"
+    bad.chmod(0)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 1 and f"chmod o+rx {bad}" in r.stdout
+    assert [l for l in (log.read_text().splitlines() if log.exists() else []) if "exec" in l] == []
+
+
+def test_bootstrap_dataset_copy_prints_one_summary_line_and_no_progress(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert len(re.findall(r"^bootstrap: dataset copied: \d+ files, \S+, \d+ s$", r.stdout, re.M)) == 1
+    calls = log.read_text()
+    assert "progress2" not in calls and "--exclude=/.seeded_ok" in calls and "--stats" in calls
+    assert "to-chk" not in r.stdout

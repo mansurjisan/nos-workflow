@@ -79,6 +79,16 @@ if [ "${DATA_MODE}" = "frozen" ]; then
 fi
 
 # Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
+# Files too: ls only proves the directory is listable, and group-only files still made rsync die mid-copy with "Permission denied (13)". find -L tests the running user's real access; metadata only, stops at the first hit.
+# It can only fail where rsync would have failed anyway, for every OFS. MJ (10/15/26)
+unreadable_or_exit() {  # $1 = tree or file about to be copied
+  local bad
+  bad=$(find -L "$1" -type f ! -readable -print -quit 2>/dev/null) || true
+  [ -n "${bad}" ] || return 0
+  echo "FATAL: ${bad} is not readable by $(whoami); as its owner run: $([ -d "$1" ] && echo "chmod -R o+rX $1" || echo "chmod o+rx $1")"
+  echo "(parent directories also need o+x, e.g. chmod o+x ${SEED_SRC})"
+  exit 1
+}
 if [ "${need_fix}" -eq 1 ]; then
   ls "${FIX_SRC}" >/dev/null 2>&1 || {
     echo "FATAL: ${FIX_SRC} not readable as $(whoami)."
@@ -88,6 +98,7 @@ if [ "${need_fix}" -eq 1 ]; then
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
+  unreadable_or_exit "${FIX_SRC}"
 fi
 if [ "${need_exec}" -eq 1 ]; then
   ls "${EXEC_SRC}" >/dev/null 2>&1 || {
@@ -97,6 +108,11 @@ if [ "${need_exec}" -eq 1 ]; then
     echo "  chmod o+x ${SEED_SRC} /work2/noaa/nos-surge/mjisan"
     exit 1
   }
+  if [ "${#EXEC_FILTER[@]}" -eq 0 ]; then
+    unreadable_or_exit "${EXEC_SRC}"
+  else
+    for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}"; done
+  fi
 fi
 if [ "${need_adcirc}" -eq 1 ]; then
   ls "${ADCIRC_SRC}" >/dev/null 2>&1 || {
@@ -104,6 +120,7 @@ if [ "${need_adcirc}" -eq 1 ]; then
     echo "Ask the tree owner to run: chmod -R o+rX ${ADCIRC_SRC}"
     exit 1
   }
+  unreadable_or_exit "${ADCIRC_SRC}"
 fi
 if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
   ls "${SEED_RT}/${RT_REL}" >/dev/null 2>&1 || {
@@ -115,6 +132,7 @@ if [ "${DATA_MODE}" = "frozen" ] && [ "${need_rt}" -eq 1 ]; then
     [ "${ATL}" != 1 ] || echo "If the dataset does not exist yet, seed it once: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} <standalone|coupled> (see its header)"
     exit 1
   }
+  unreadable_or_exit "${SEED_RT}/${RT_REL}"
 fi
 
 mkdir -p "${PACKAGEROOT}"
@@ -198,7 +216,12 @@ if [ "${DATA_MODE}" = "frozen" ]; then
         [ ! -d "${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}" ] || RT_LINK=(--link-dest="${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}")
       fi
       # the marker is copied last, so an interrupted copy is not taken for a finished one, and keeps its level= line. MJ (10/14/26)
-      rsync -a --info=progress2 --exclude=/.seeded_ok ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
+      # Jenkins is not a TTY, so --info=progress2 printed one console line per update; keep the stats and print one summary line. MJ (10/15/26)
+      _t0=${SECONDS}
+      _stats=$(rsync -a --stats --exclude=/.seeded_ok ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/")
+      _n=$(sed -n 's/^Number of \(regular \)\{0,1\}files transferred: *//p' <<<"${_stats}" | tr -d ,)
+      _b=$(sed -n 's/^Total transferred file size: *\([0-9,]*\).*/\1/p' <<<"${_stats}" | tr -d ,)
+      echo "bootstrap: dataset copied: ${_n:-?} files, $(numfmt --to=iec "${_b:-0}" 2>/dev/null || echo "${_b:-?} bytes"), $((SECONDS - _t0)) s"
       cp -p "${SEED_RT}/${RT_REL}/.seeded_ok" "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null || touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."
