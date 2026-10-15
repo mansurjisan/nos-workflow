@@ -357,22 +357,33 @@ STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Par
 
 | Parameter | Values | Meaning |
 |---|---|---|
-| `OFS` | `secofs_ufs` (default), `stofs_2d_glo` | system to run |
-| `LEVEL` | `smoke`, `cycle`, `full` | see below (2D-Global only) |
+| `OFS` | `secofs_ufs` (default), `stofs_2d_glo`, and the two STOFS-3D-ATL variants | system to run |
+| `LEVEL` | `smoke`, `cycle`, `full` | see below (2D-Global and ATL) |
 | `DATA_MODE` | `live`, `frozen` | `live`: stage the ops forcing for PDY/CYC now; `frozen`: use a pre-staged dataset |
 | `PDY`, `CYC` | date, hour | the frozen datasets are 20261012 06 (smoke, cycle) and 20261012 00 (full) |
 | `SEED_RT`, `SEED_SRC`, `NOS_CI_ROOT`, `SLURM_ACCOUNT`, `SLURM_QOS` | | where datasets and trees are seeded from, and the CI account |
 
-| LEVEL | Launcher call | Jobs | Verify |
+2D-Global uses the same Jenkins stages as SECOFS and ATL: Prep, Nowcast, Forecast, Post and Verify. Each model stage calls `.cicd/scripts/run_stage.sh <stage> <PDY> <CYC>`, which submits one job of the section 3.3 chain (the same card, `-N`/`--mem` flags and walltime as `launch_stofs_2d_glo.sh`), waits for it, and passes only on `STAGE_SUMMARY stage=<stage> ofs=stofs_2d_glo status=PASS` in the job log. `stofs_2d_glo.sh card-env <stage>` supplies what differs from SECOFS (card, flags, exports, log prefix, timeout), so there is no separate run chain or poller.
+
+| Stage | Steps | Card | Walltime (cold) | Timeout |
+|---|---|---|---|---|
+| Prep | [`adcprep`], `gfs_ncst`, `gfs_fcst` | prep | 0:50 (3:50) | walltime + 30 min |
+| Nowcast | [`spinup`], `tide_ncst`, `surf_ncst` | nowcast, `-N 52` | 1:20 (2:20) | walltime + 30 min |
+| Forecast | `tide_fcst`, `surf_fcst` | forecast, `-N 52` | 2:00 | walltime + 30 min |
+| Post | `ncdiff`, `ncrcat` | prep card, `-N 1 -n 1 --mem=100G` (logs under the prep name) | 1:15 | walltime + 30 min |
+
+| LEVEL | Stages run | COLD | Verify |
 |---|---|---|---|
-| smoke | `COLD=0 STAGES=nowcast` | 1 | `rerun/stofs_2d_glo_{tide,surf}.61.nc` against the reference |
-| cycle | `COLD=0` | 4 | the same, plus `points.*.nc` against the reference; ops comparison reported |
-| full | `COLD=1` | 4 | the same as cycle (a cold start is deterministic); ops comparison reported |
+| smoke | Prep, Nowcast, Verify | 0 | `rerun/stofs_2d_glo_{tide,surf}.61.nc` against the reference |
+| cycle | Prep, Nowcast, Forecast, Post, Verify | 0 | the same, plus `points.*.nc` against the reference; ops comparison reported |
+| full | Prep, Nowcast, Forecast, Post, Verify | 1 | the same as cycle (a cold start is deterministic); ops comparison reported |
 
-The regression compares bitwise first, and otherwise needs the largest difference in the time-dependent variables (zeta, u-vel, v-vel) within `CMP_TOL` (default 1e-3, in m or m/s). The ops comparison is the section 2.8 report (`OPS_WARN_MM`, default 500). A job in any bad state, or without `STAGE_SUMMARY status=PASS`, fails the run.
+At every level Prep finds the staged ops forcing and skips its GFS steps, so it takes seconds (full adds `adcprep`). The jobs run with `KEEPDATA=NO` and remove their own work directory. The regression compares bitwise first, and otherwise needs the largest difference in the time-dependent variables (zeta, u-vel, v-vel) within `CMP_TOL` (default 1e-3, in m or m/s). The ops comparison is the section 2.8 report (`OPS_WARN_MM`, default 500). A job in any bad state, or without `STAGE_SUMMARY status=PASS`, fails its stage and the build.
 
-- **frozen:** clears the CI COMROOT (`$NOS_PTMP/$LOGNAME/com_2dglo_ci` unless `COMROOT_2DGLO` is set) and starts from the dataset. Use the 06z-type dataset for smoke and cycle (they continue from the previous cycle) and the 00z-type dataset for full.
-- **live:** stages the ops forcing with `tools/hercules_2d_glo_stage_forcing.sh --rm-raw` on the front-end node and does not clear the COMROOT. It continues from the state already there: run `LEVEL=full` first, then `LEVEL=cycle` at +6 h.
+**Layout.** Like SECOFS and ATL, the jobs use the shared `$NOS_PTMP/$LOGNAME/{com,rpt,work}` (the old `com_2dglo_ci` is removed once; an inherited `COMROOT_2DGLO` is ignored). `RUN=stofs_2d_glo` is unique, so the state sits beside SECOFS's and ATL's without touching it: COMGES is `com/nos/stofs_2d_glo` and a cycle is `com/nos/stofs_2d_glo.<PDY>`.
+
+- **frozen:** Stage Data removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<8 digits>` (exact names, no symlinks, every target checked before the first delete), then links the dataset in: hard links, or copies across file systems. The forcing sits in `rerun/`, a real writable directory in com, because the jobs also publish their products there. The jobs only read the forcing, `nod_equi` and the decomposition tar (they replace the tar by rename), so those are read-only, shared with the dataset. The chain files (`hotstart`, `restart`) are copied with their mode into the ADCIRC run directory and rewritten there, so they stay writable; the `.json` beside the tar is rewritten in place when the decomposition is rebuilt, so it is copied. Use the 06z-type dataset for smoke and cycle (they continue from the previous cycle) and the 00z-type dataset for full.
+- **live:** stages the ops forcing with `tools/hercules_2d_glo_stage_forcing.sh --rm-raw` on the front-end node and does not clear com. It continues from the state already there: run `LEVEL=full` first, then `LEVEL=cycle` at +6 h.
 - **Prerequisites:** Bootstrap copies `fix/stofs_2d_glo` and `exec/stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build from `SEED_ADCIRC` (default `<parent of SEED_SRC>/adcirc_v56.1.0_exec`). These must be world-readable for the CI account.
 
 **One-time seeding of the frozen datasets.** Run by hand from the clone, as the user who owns the finished runs (a cold start at 00z and the following 06z cycle):
@@ -381,7 +392,7 @@ export COMROOT_2DGLO=$NOS_PTMP/$LOGNAME/com_2dglo_ops          # the finished ru
 bash .cicd/scripts/stofs_2d_glo.sh seed 20261012 00 cold
 bash .cicd/scripts/stofs_2d_glo.sh seed 20261012 06
 ```
-`seed <PDY> <CYC> [cold]` copies the cycle's inputs (the staged forcing, and for a non-cold seed also `nod_equi`, the decomposition tar and the previous cycle's chain files), the reference outputs (tide and surf `.61.nc` and the points files) and, when present, the ops products into `${SEED_RT}/stofs_2d_glo/<PDY><CYC>/`. Optional environment: `SEED_RT` (default `/work2/noaa/nos-surge/mjisan/nos-workflow-rt`), `OPS_DIR` (default `$NOS_PTMP/$LOGNAME/ops_s3/<PDY><CYC>/products`), `NOS_PTMP`, `FORCE=1` (replace an existing dataset). The dataset is made world-readable; the script prints the `chmod o+x` for the two parent directories.
+`seed <PDY> <CYC> [cold]` copies the cycle's inputs (the staged forcing, and for a non-cold seed also `nod_equi`, the decomposition tar and the previous cycle's chain files), the reference outputs (tide and surf `.61.nc` and the points files) and, when present, the ops products into `${SEED_RT}/stofs_2d_glo/<PDY><CYC>/`. Optional environment: `SEED_RT` (default `/work2/noaa/nos-surge/mjisan/nos-workflow-rt`), `OPS_DIR` (default `$NOS_PTMP/$LOGNAME/ops_s3/<PDY><CYC>/products`), `NOS_PTMP`, `FORCE=1` (replace an existing dataset). The dataset is made world-readable, and its forcing, `nod_equi` and tar read-only; the script prints the `chmod o+x` for the two parent directories.
 
 ## 6. Measured timings
 

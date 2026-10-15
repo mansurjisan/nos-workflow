@@ -139,7 +139,7 @@ def _runs(cond: str, ofs: str, level: str = "smoke") -> bool:
     ("stofs_3d_atl_ufs", "smoke", ["Prep", "Nowcast", "Verify"]),
     ("stofs_3d_atl_ufs_standalone", "cycle", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),
     ("stofs_3d_atl_ufs", "full", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),
-    ("stofs_2d_glo", "cycle", ["Run 2D-GLO", "Verify 2D-GLO"]),
+    ("stofs_2d_glo", "cycle", ["Prep", "Nowcast", "Forecast", "Post", "Verify"]),   # the 2D-GLO stages are the shared ones. MJ (10/15/26)
 ])
 def test_jenkinsfile_stage_conditions(ofs, level, want):
     cond = _stage_conditions()
