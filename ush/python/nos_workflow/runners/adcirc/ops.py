@@ -335,6 +335,15 @@ def _ncst_start(ctx: CycleContext) -> datetime:
     return find_chain_start(ctx, STREAMS["surf"][0])[0]
 
 
+def gfs_source(ctx: CycleContext) -> str:
+    """sfcf (the netCDF files of the WCOSS2 COMINgfs) or sflux (the public GRIB2 flux files): env ADCIRC_GFS_SOURCE, else the yaml
+    adcirc.ops_gfs_source (read from settings.raw, as ops_gfs_wait_s is, so no yaml_to_env key). MJ (10/14/26)"""
+    src = (os.environ.get("ADCIRC_GFS_SOURCE") or ctx.settings.raw["adcirc"].get("ops_gfs_source") or "sfcf").strip()
+    if src not in ("sfcf", "sflux"):
+        raise AdcircConfigError(f"ADCIRC_GFS_SOURCE / adcirc.ops_gfs_source must be sfcf or sflux, got {src!r}")
+    return src
+
+
 def gfs_forcing(ctx: CycleContext) -> None:
     """One ops GFS job: the ncst window starts at the multistart restart time, as exstofs_2d_glo_gfs.sh. MJ (10/06/26)"""
     from nos_utils.forcing.adcirc_met import build_sfcf_forcing
@@ -347,7 +356,9 @@ def gfs_forcing(ctx: CycleContext) -> None:
         raise AdcircConfigError("COMINgfs is not set; the GFS sfcf files are the surf forcing source")
     start = _ncst_start(ctx) if seg == "ncst" else None
     wait = float((ctx.settings.raw["adcirc"].get("ops_gfs_wait_s") or {}).get(seg, 0))
-    build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait)
+    # source is passed only for sflux, so the sfcf path runs unchanged on a nos-utils that predates the keyword. MJ (10/14/26)
+    extra = {} if gfs_source(ctx) == "sfcf" else {"source": "sflux"}
+    build_sfcf_forcing(ctx.comin_gfs, ctx.cycle_time, seg, rr, ctx.run, start=start, wait_s=wait, **extra)
 
 
 def run_prep(ctx: CycleContext, runner: CommandRunner = default_runner) -> int:
