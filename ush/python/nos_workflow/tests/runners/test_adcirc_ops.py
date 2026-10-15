@@ -53,11 +53,32 @@ class FakeAdcprep:
         return 0
 
 
+def _series(cwd, name, drop=()):
+    """The time series padcirc writes for one unit: records TOUTS+dt .. min(TOUTF, RNDAY) every NSPOOL*DTDP s, appended to a
+    copied-in file. MJ (10/15/26)"""
+    nc = pytest.importorskip("netCDF4")
+    dtdp, rnday, units = ops._fort15_outputs(cwd / "fort.15")
+    touts, toutf, nspool = units[name[5:7]]
+    step, end = nspool * dtdp, min(toutf, rnday * 86400)
+    path = cwd / name
+    with nc.Dataset(str(path), "a" if path.exists() else "w") as d:
+        if "time" not in d.variables:
+            d.createDimension("time", None)
+            d.createVariable("time", "f8", ("time",))
+        t = d.variables["time"]
+        k = len(t)
+        nxt = (t[k - 1] if k else touts) + step
+        while nxt <= end + 0.5:
+            if round(nxt) not in drop:
+                t[len(t)] = nxt
+            nxt += step
+
+
 class FakeAdcirc:
     """Writes what padcirc would: the hotstart named by write-count parity, appended 61/63 output. MJ (10/05/26)"""
 
-    def __init__(self, crash=""):
-        self.argv, self.crash = [], crash
+    def __init__(self, crash="", drop=None):
+        self.argv, self.crash, self.drop = [], crash, drop or {}
 
     def __call__(self, argv, cwd):
         self.argv.append(list(argv))
@@ -70,9 +91,10 @@ class FakeAdcirc:
         if ihot:
             assert (cwd / f"fort.{ihot - 300}.nc").is_file()
         _restart(cwd / f"fort.{68 if end // int(int(f['NHSTAR,NHSINC'][1]) * 6) % 2 == 0 else 67}.nc", float(end))
-        for n in ["fort.61.nc", "fort.63.nc"] + (["fort.62.nc", "fort.64.nc", "maxele.63.nc", "maxvel.63.nc",
-                                                  "maxwvel.63.nc"] if nws else []):
-            (cwd / n).write_text(((cwd / n).read_text() if (cwd / n).exists() else "") + cwd.name + ";")
+        for n in ["fort.61.nc", "fort.63.nc"] + (["fort.62.nc", "fort.64.nc"] if nws else []):
+            _series(cwd, n, self.drop.get(n, ()))
+        for n in (["maxele.63.nc", "maxvel.63.nc", "maxwvel.63.nc"] if nws else []):
+            (cwd / n).write_text(cwd.name + ";")
         (cwd / "adcirc.err").write_text(self.crash)
         return 0
 
@@ -104,6 +126,12 @@ def _ncst221(ctx, records):
     with nc.Dataset(str(p), "w") as d:
         d.createDimension("record", None)
         d.createVariable("pressfc", "f4", ("record",))[:] = [0.0] * records
+
+
+def _times(path):
+    nc = pytest.importorskip("netCDF4")
+    with nc.Dataset(str(path)) as d:
+        return list(d.variables["time"][:])
 
 
 def test_single_is_the_default_and_bad_mode_fails():
@@ -184,7 +212,8 @@ def test_tide_chain(tmp_path):
     assert (rr / f"{RUN}_hottime.out").read_text().split()[1:] == ["604800", "6.75000", "14.50000"]
     _go(tmp_path, "tide", "fcst")
     assert not (rr / f"{RUN}_tide.68.nc").exists()
-    assert ctx.cycle_dir(CYCLE, "points.htp.nc").read_text().count(";") == 2  # fcst appended to the ncst output MJ (10/11/26)
+    pts = _times(ctx.cycle_dir(CYCLE, "points.htp.nc"))  # fcst appended to the ncst output MJ (10/11/26)
+    assert pts[-1] == 1252800 and len(pts) == 186 * 10
     assert ctx.cycle_dir(CYCLE, "fields.htp.nc").is_file()
     assert not list((tmp_path / "work" / "tide_fcst").glob("PE[0-9]*"))
     assert (rr / f"{RUN}_hottime.out").read_text().split()[1] == "1252800"  # ncst end 604800 s + 180 h. MJ (10/11/26)
@@ -638,3 +667,98 @@ def test_ops_grib2_needs_every_region_f000_and_f180(tmp_path, monkeypatch):
     pkg.write_text(pkg.read_text().replace("000 180", "000 179"))
     with pytest.raises(RuntimeError, match="made no stofs_2d_glo.t12z.conus.east.f180.grib2"):
         post.run_post(_seg(tmp_path, "grib2"))
+
+
+def _run_dir(tmp_path, nrec=4, drop=None, files=("61", "62", "63", "64")):
+    """A finished surf step: fort.15 with a 4 h window every 3600 s (NSPOOL 600, DTDP 6) and fort.6x series. MJ (10/15/26)"""
+    nc = pytest.importorskip("netCDF4")
+    rd = tmp_path / "rd"
+    rd.mkdir()
+    lines = ["6 ! DTDP", "1 ! RNDY"] + ["-3 0.0 %s 600 ! X (UNIT  %s)" % (4 / 24, u) for u in ("61", "62", "63", "64")]
+    (rd / "fort.15").write_text("\n".join(lines) + "\n")
+    times = [3600.0 * k for k in range(1, nrec + 1)]
+    if drop is not None:
+        times.remove(drop)
+    for u in files:
+        with nc.Dataset(str(rd / f"fort.{u}.nc"), "w") as d:
+            d.createDimension("time", None)
+            d.createVariable("time", "f8", ("time",))[:] = times
+    return rd
+
+
+def test_check_records_passes_complete_and_skips_absent_optional_files(tmp_path):
+    ops.check_records(_run_dir(tmp_path), "surf", "fcst")
+    (tmp_path / "x").mkdir()
+    ops.check_records(_run_dir(tmp_path / "x", files=("61", "63")), "surf", "fcst")
+
+
+def test_check_records_missing_middle_record_message(tmp_path):
+    rd = _run_dir(tmp_path, drop=7200.0)
+    with pytest.raises(RuntimeError) as e:
+        ops.check_records(rd, "surf", "fcst")
+    msg = str(e.value)
+    assert "fort.61.nc (surf fcst) has 3 records, expected 4; gap times: 3600->10800 s;" in msg
+    assert msg.index("STREAMS=surf") + len("STREAMS=surf") + len("surf_fcst: ") < 200  # the recovery survives the 200 char reason cut. MJ (10/15/26)
+    assert msg.startswith('padcirc dropped an output record: re-run this step (STAGES="forecast post" STREAMS=surf); fort.61.nc')
+
+
+@pytest.mark.parametrize("nrec", [3, 5])
+def test_check_records_wrong_count_fails(tmp_path, nrec):
+    with pytest.raises(RuntimeError, match=r"has %d records, expected 4" % nrec):
+        ops.check_records(_run_dir(tmp_path, nrec=nrec), "surf", "fcst")
+
+
+@pytest.mark.parametrize("seg", ["ncst", "fcst"])
+def test_dropped_record_fails_before_publish_and_state_write(tmp_path, seg):
+    _ncst221(_cold(tmp_path), 7)
+    for n in ("221", "222", "225"):
+        p = ops.rerun_dir(_ctx(tmp_path)) / f"{RUN}_fcst.{n}.nc"
+        p.write_text("fcst")
+    if seg == "fcst":
+        _go(tmp_path, "surf", "ncst")
+    ctx = _ctx(tmp_path, ADCIRC_STREAM="surf")
+    rr, state = ops.rerun_dir(ctx), ops.rerun_dir(ctx) / f"{RUN}_retime.out"
+    before = state.read_text() if state.is_file() else None
+    exists = lambda: sorted(p.name for p in list(rr.glob(f"{RUN}_surf.*")) + list(ctx.cycle_dir(CYCLE, "x").parent.glob("*.cwl*")))
+    snap = exists()
+    chain = ctx.cycle_dir(CYCLE, "restart").is_file()
+    with pytest.raises(RuntimeError, match="padcirc dropped an output record"):
+        _go(tmp_path, "surf", seg, FakeAdcirc(drop={"fort.63.nc": (1238400,) if seg == "fcst" else (604800 - 7200,)}))
+    assert exists() == snap
+    assert (state.read_text() if state.is_file() else None) == before
+    assert ctx.cycle_dir(CYCLE, "restart").is_file() == chain
+    _go(tmp_path, "surf", seg)  # the same step re-runs and passes MJ (10/15/26)
+
+
+@pytest.mark.parametrize("stream,step,redo", [
+    ("tide", "ncst", 'STAGES="nowcast forecast post")'), ("surf", "ncst", 'STAGES="nowcast forecast post")'),
+    ("tide", "fcst", 'STAGES="forecast post")'), ("surf", "fcst", 'STAGES="forecast post" STREAMS=surf)')])
+def test_check_records_recovery_hint_per_stream_and_step(tmp_path, stream, step, redo):
+    with pytest.raises(RuntimeError) as e:
+        ops.check_records(_run_dir(tmp_path, drop=7200.0, files=("61", "63")), stream, step)
+    assert ("re-run this step (" + redo + "; fort.") in str(e.value)
+
+
+def test_check_records_unknown_unit_is_not_skipped(tmp_path):
+    rd = _run_dir(tmp_path)
+    (rd / "fort.15").write_text((rd / "fort.15").read_text().replace("(UNIT  63)", "(63)"))
+    with pytest.raises(AdcircConfigError, match="fort.63.nc exists but .* no output line"):
+        ops.check_records(rd, "surf", "fcst")
+
+
+def test_real_template_windows_have_literal_values(tmp_path):
+    """The real surf template rendered for hotstart 648000 s (ncst 6 h, fcst 180 h), against literal numbers. MJ (10/15/26)"""
+    nod = {}  # the tide factors do not touch the output lines
+    tpl = (DATA / f"{RUN}_surf.15").read_text()
+    seg = ops.ncst_segment("surf", 648000, 6)
+    f15 = tmp_path / "ncst.15"
+    f15.write_text(ops.render(tpl, nod, seg.tokens, "2026100512"))
+    dtdp, rnday, units = ops._fort15_outputs(f15)
+    assert dtdp == 6 and rnday == 7.75
+    assert units["63"][:2] == (648000.0, 1317600.0) and units["61"][:2] == (648000.0, 1317600.0)
+    assert units["61"][2] * dtdp == 360
+    assert units["62"][2] * dtdp == 360 and units["63"][2] * dtdp == 3600 and units["64"][2] * dtdp == 3600
+    seg = ops.fcst_segment("surf", seg.state_time, seg.tokens["touts"], seg.tokens["toutf"])
+    f15.write_text(ops.render(tpl, nod, seg.tokens, "2026100512"))
+    dtdp, rnday, units = ops._fort15_outputs(f15)
+    assert rnday == 15.25 and min(units["63"][1], rnday * 86400) == 1317600.0
