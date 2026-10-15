@@ -71,6 +71,11 @@ if [ "${DATA_MODE}" = "frozen" ]; then
   fi
   COMROOT_STAGED="${RT_DATA_ROOT}/${RT_REL}"
   [ -f "${COMROOT_STAGED}/.seeded_ok" ] || need_rt=1
+  # ATL: a smoke copy is refreshed once the seeded source has been upgraded to cycle (the marker's level= line; none = cycle). MJ (10/14/26)
+  if [ "${ATL}" = 1 ] && [ "${need_rt}" -eq 0 ] && grep -qx 'level=smoke' "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null \
+     && ! grep -qx 'level=smoke' "${SEED_RT}/${RT_REL}/.seeded_ok" 2>/dev/null && [ -f "${SEED_RT}/${RT_REL}/.seeded_ok" ]; then
+    need_rt=1
+  fi
 fi
 
 # Preflight: fail with an actionable chmod message before touching rsync, rather than mid-copy.
@@ -192,8 +197,9 @@ if [ "${DATA_MODE}" = "frozen" ]; then
         [ "${OFS}" != stofs_3d_atl_ufs ] || SIB=standalone
         [ ! -d "${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}" ] || RT_LINK=(--link-dest="${RT_DATA_ROOT}/stofs_3d_atl/${SIB}/${PDY}${CYC}")
       fi
-      rsync -a --info=progress2 ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
-      touch "${COMROOT_STAGED}/.seeded_ok"
+      # the marker is copied last, so an interrupted copy is not taken for a finished one, and keeps its level= line. MJ (10/14/26)
+      rsync -a --info=progress2 --exclude=/.seeded_ok ${RT_LINK[@]+"${RT_LINK[@]}"} "${SEED_RT}/${RT_REL}/" "${COMROOT_STAGED}/"
+      cp -p "${SEED_RT}/${RT_REL}/.seeded_ok" "${COMROOT_STAGED}/.seeded_ok" 2>/dev/null || touch "${COMROOT_STAGED}/.seeded_ok"
     else
       echo "FATAL: no frozen dataset at ${COMROOT_STAGED} or ${SEED_RT}/${RT_REL}."
       if [ "${ATL}" = 1 ]; then

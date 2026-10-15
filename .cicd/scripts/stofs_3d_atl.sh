@@ -25,7 +25,7 @@
 # slurm/ (jobs_<PDY><CYC>.txt and the cards' Slurm output), ops/ (live mode ops products). frozen clears it at stage.
 #
 # Dataset ${RT_DATA_ROOT}/stofs_3d_atl/<standalone|coupled>/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/ in frozen mode):
-#   .seeded_ok
+#   .seeded_ok                                                                           one line, level=smoke|cycle (empty or no level = cycle)
 #   input/com/nos/stofs_3d_atl_ufs.<PDY>/stofs_3d_atl_ufs.t12z.<PDY>.init.nowcast.nc     first-cycle init state (NETCDF4_CLASSIC, 26 GB)
 #   input/com/nos/stofs_3d_atl_ufs.<PDY-1>/staout_1                                      previous-cycle dynamic-adjust seed
 #   input/com/nos/stofs_3d_atl_ufs.<PDY-1>/rerun/stofs_3d_atl_ufs.t12z.{avg_bias,param.nml}   (param.nml optional)
@@ -33,8 +33,8 @@
 #   input/dcom/<day>/coops_waterlvlobs/*.xml                                             day = PDY and PDY-1
 #   input/dcom/<day>/validation_data/marine/cmems/ssh/nrt_global_allsat_phy_l4_<day>_<day>.nc
 #   input/dcom/<day>/can_streamgauge/02OA016_hydrometric.csv
-#   ref/nos/stofs_3d_atl_ufs.<PDY>/...                                                   what `compare_atl.py files --level cycle` lists
-#   ref/ops/...                                                                          what `compare_atl.py ops-files` lists (optional)
+#   ref/nos/stofs_3d_atl_ufs.<PDY>/...                                                   what `compare_atl.py files --level <level>` lists (smoke: the 8 nowcast staout files)
+#   ref/ops/...                                                                          what `compare_atl.py ops-files` lists (optional; cycle datasets only)
 # MJ (10/14/26)
 #
 # One-time seeding on Hercules from a finished run (all four stages PASS), as the user who owns it, once per variant:
@@ -45,6 +45,15 @@
 # OPS_DIR (a directory that already holds the ops products; otherwise they are downloaded from the public bucket), NOS_PTMP,
 # FORCE=1 (replace an existing dataset). The second variant hard-links what it shares with the first (comin, init). The destination
 # is made world-readable for the CI account; the parent directories need chmod o+x (printed). MJ (10/14/26)
+#
+# SEED_LEVEL=smoke|cycle (default cycle) = how much of the source run the dataset holds. smoke seeds from a run that has finished prep and nowcast:
+# it copies only the nowcast staout references and no ops products, and Stage refuses LEVEL=cycle or full on it. Seed it now, run LEVEL=smoke:
+#   SEED_LEVEL=smoke bash .cicd/scripts/stofs_3d_atl.sh seed 20261001 standalone $COMROOT_SA $NOS_PTMP/$LOGNAME/comin_atl $B/dcom
+# Once the source run has finished forecast and post, upgrade the same dataset with the default level and no FORCE (it adds the cycle references and
+# the ops products on top, giving what a fresh cycle seed gives):
+#   bash .cicd/scripts/stofs_3d_atl.sh seed 20261001 standalone $COMROOT_SA $NOS_PTMP/$LOGNAME/comin_atl $B/dcom
+# Any other re-seed of an existing dataset (cycle over cycle, smoke over anything) still needs FORCE=1. A Jenkins copy of the dataset under
+# RT_DATA_ROOT is refreshed by Bootstrap when the source in SEED_RT has a higher level. MJ (10/14/26)
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEFAULT_PTMP=/work2/noaa/nos-surge/mjisan/nos-run/ptmp
@@ -65,6 +74,13 @@ set_variant() {
     coupled|stofs_3d_atl_ufs)               VARIANT=coupled;    CARDS=stofs_3d_atl_ufs;            COMVAR=COMROOT_UFS; SIBLING=standalone ;;
     *) echo "FATAL: variant must be standalone or coupled (got '$1')" >&2; exit 2 ;;
   esac
+}
+
+# The level a dataset directory was seeded at: the level= line of .seeded_ok, cycle when it has none (older datasets). MJ (10/14/26)
+dataset_level() {
+  local l
+  l=$(sed -n 's/^level=//p' "$1/.seeded_ok" 2>/dev/null | head -1) || true
+  echo "${l:-cycle}"
 }
 
 # The cycle's single files under the dataset input/ (or a COMROOT-shaped tree). MJ (10/14/26)
@@ -179,6 +195,10 @@ cmd_stage() {
         echo "Seed it once: bash .cicd/scripts/stofs_3d_atl.sh seed ${PDY} ${VARIANT} (see the script header), or use DATA_MODE=live with DCOM_BUNDLE."
         exit 1
       }
+      if [ "${LEVEL}" != smoke ] && [ "$(dataset_level "${DS}")" = smoke ]; then
+        echo "FATAL: dataset ${DS} holds smoke references only; run LEVEL=smoke, or re-seed with SEED_LEVEL=cycle once the source run has forecast and post"
+        exit 1
+      fi
       local f miss=0 s
       for f in $(com_state_files | sed 's#^#com/#') $(dcom_required | sed 's#^#dcom/#'); do
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
@@ -361,8 +381,9 @@ cmd_seed() {
   local seed_rt
   seed_rt=$(realpath -m -- "${SEED_RT:-/work2/noaa/nos-surge/mjisan/nos-workflow-rt}")   # an absolute path: --link-dest resolves a relative one against the destination. MJ (10/14/26)
   local top="${seed_rt}/stofs_3d_atl" dest="${seed_rt}/stofs_3d_atl/${VARIANT}/${PDY}${CYC}"
-  local f s miss=0 refs
-  refs=$(python3 "${cmp}" files --variant "${VARIANT}" --level cycle --pdy "${PDY}") || { echo "FATAL: compare_atl.py files failed" >&2; exit 1; }
+  local f s miss=0 refs level=${SEED_LEVEL:-cycle}
+  case "${level}" in smoke|cycle) ;; *) echo "FATAL: SEED_LEVEL must be smoke or cycle (got '${level}')" >&2; exit 2 ;; esac
+  refs=$(python3 "${cmp}" files --variant "${VARIANT}" --level "${level}" --pdy "${PDY}") || { echo "FATAL: compare_atl.py files failed" >&2; exit 1; }
   for f in $(com_state_files) ${refs}; do
     [ -s "${src_com}/${f}" ] || { echo "MISSING: ${src_com}/${f}" >&2; miss=1; }
   done
@@ -385,8 +406,14 @@ cmd_seed() {
   fi
   [ "${miss}" = 0 ] || { echo "FATAL: the sources above are not a finished ${VARIANT} ${PDY}${CYC} run (COMROOT, comin, dcom arguments)" >&2; exit 1; }
   if [ -e "${dest}" ]; then
-    [ "${FORCE:-0}" = 1 ] || { echo "FATAL: ${dest} exists; FORCE=1 replaces it" >&2; exit 1; }
-    rm -rf "${dest}"
+    if [ "${FORCE:-0}" = 1 ]; then
+      rm -rf "${dest}"
+    elif [ -f "${dest}/.seeded_ok" ] && [ "${level}" = cycle ] && [ "$(dataset_level "${dest}")" = smoke ]; then
+      echo "upgrading the smoke dataset ${dest} to cycle"   # the copies below are idempotent and the marker changes last. MJ (10/14/26)
+    else
+      echo "FATAL: ${dest} exists; FORCE=1 replaces it (a smoke dataset is upgraded by seeding with the default SEED_LEVEL=cycle, no FORCE)" >&2
+      exit 1
+    fi
   fi
   mkdir -p "${dest}/input/com" "${dest}/input/comin" "${dest}/input/dcom" "${dest}/ref"
   echo "seeding ${dest} from ${src_com}, ${src_comin}, ${src_dcom}"
@@ -412,8 +439,8 @@ cmd_seed() {
   # a trailing slash plus -r makes --files-from copy the directory contents. MJ (10/14/26)
   dcom_groups | while read -r f; do [ ! -e "${src_dcom}/${f}" ] || echo "${f}"; done | rsync -ar "${PERM[@]}" --files-from=- "${src_dcom}/" "${dest}/input/dcom/"
   echo "${refs}" | rsync -arL "${PERM[@]}" --files-from=- "${src_com}/" "${dest}/ref/"
-  fetch_ops "${dest}/ref/ops"
-  touch "${dest}/.seeded_ok"
+  [ "${level}" = smoke ] || fetch_ops "${dest}/ref/ops"   # the ops products are compared at LEVEL=full only, and a smoke source has no post output. MJ (10/14/26)
+  echo "level=${level}" > "${dest}/.seeded_ok"
   chmod -R o+rX "${dest}" || true
   chmod o+x "${top}" "${top}/${VARIANT}" 2>/dev/null || true
   du -sh "${dest}"/* | sed 's/^/  /'

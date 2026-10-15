@@ -583,3 +583,102 @@ def test_deploy_atl_copies_nos_utils_and_a_secofs_deploy_removes_it(tmp_path, of
     (ci.ws / "ush/python/nos-utils/nos_utils/orchestrator.py").unlink()
     r = ci.run(script=SCRIPTS / "deploy.sh")
     assert r.returncode == 1 and "is empty" in r.stdout
+
+
+# ---- SEED_LEVEL=smoke: a dataset from a run that has finished nowcast only. MJ (10/14/26) ----
+
+def _nowcast_only(com: Path):
+    shutil.rmtree(com / "nos" / f"{RUN}.{PDY}" / f"{RUN}.t12z.forecast_outputs")
+
+
+def _fresh_cycle_files(ci: Ci, com, comin, dcom, sub: str) -> list:
+    """the file tree of a fresh default (cycle) seed into a separate SEED_RT. MJ (10/14/26)"""
+    rt = ci.tmp / sub
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(rt)).returncode == 0
+    return _tree(rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}")
+
+
+def test_smoke_seed_from_a_nowcast_only_run_copies_no_forecast_or_ops_files(ci):
+    com, comin, dcom = _source(ci)
+    _nowcast_only(com)
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt), SEED_LEVEL="smoke")
+    assert r.returncode == 0 and "seed PASS" in r.stdout, r.stderr + r.stdout
+    assert (ci.ds / ".seeded_ok").read_text().strip() == "level=smoke"
+    assert _tree(ci.ds / "ref") == [f"nos/{RUN}.{PDY}/{RUN}.t12z.restart_outputs/staout_1"]
+    assert not (ci.stubs / "curl.urls").exists()
+    assert "--level smoke" in (ci.stubs / "cmp.calls").read_text() and "ops-files" not in (ci.stubs / "cmp.calls").read_text()
+
+
+def test_the_default_seed_is_unchanged_and_needs_the_forecast_files(ci):
+    com, comin, dcom = _source(ci)
+    _nowcast_only(com)
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt))
+    assert r.returncode == 1 and "forecast_outputs/staout_1" in r.stderr and not ci.ds.exists()
+    com, comin, dcom = _source(ci)
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt)).returncode == 0
+    assert (ci.ds / ".seeded_ok").read_text().strip() == "level=cycle" and len(_tree(ci.ds / "ref")) == 4
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt), SEED_LEVEL="bogus").returncode == 2
+
+
+def test_cycle_and_full_refuse_a_smoke_dataset_at_stage_and_smoke_runs(ci):
+    com, comin, dcom = _source(ci)
+    _nowcast_only(com)
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt), SEED_LEVEL="smoke").returncode == 0
+    _touch(ci.root / "keep", "old")
+    for level in ("cycle", "full"):
+        r = ci.run("stage", LEVEL=level)
+        assert r.returncode == 1 and f"dataset {ci.ds} holds smoke references only; run LEVEL=smoke, or re-seed with SEED_LEVEL=cycle once the source run has forecast and post" in r.stdout
+        assert (ci.root / "keep").is_file()
+    r = ci.run("stage", LEVEL="smoke")
+    assert r.returncode == 0 and "stage_data PASS" in r.stdout, r.stderr + r.stdout
+
+
+def test_a_dataset_without_a_level_is_cycle(ci):
+    ci.dataset()
+    r = ci.run("stage", LEVEL="cycle")
+    assert r.returncode == 0 and "stage_data PASS" in r.stdout, r.stderr + r.stdout
+
+
+def test_reseeding_with_the_default_upgrades_a_smoke_dataset_to_what_a_fresh_cycle_seed_gives(ci):
+    com, comin, dcom = _source(ci)
+    fresh = _fresh_cycle_files(ci, com, comin, dcom, "rt_fresh")
+    _nowcast_only(com)
+    env = dict(SEED_RT=str(ci.rt))
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_LEVEL="smoke", **env).returncode == 0
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_LEVEL="smoke", **env).returncode == 1   # smoke over smoke still needs FORCE
+    # the source run finishes forecast and post, then the default seed adds to the same dataset without FORCE. MJ (10/14/26)
+    com, comin, dcom = _source(ci)
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), **env)
+    assert r.returncode == 0 and "upgrading" in r.stdout, r.stderr + r.stdout
+    assert (ci.ds / ".seeded_ok").read_text().strip() == "level=cycle"
+    assert _tree(ci.ds) == fresh
+    assert ci.run("stage", LEVEL="cycle").returncode == 0
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), **env)
+    assert r.returncode == 1 and "FORCE=1" in r.stderr   # cycle over cycle is not an upgrade
+
+
+def test_a_smoke_seed_never_overwrites_a_cycle_dataset(ci):
+    com, comin, dcom = _source(ci)
+    assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt)).returncode == 0
+    r = ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt), SEED_LEVEL="smoke")
+    assert r.returncode == 1 and (ci.ds / ".seeded_ok").read_text().strip() == "level=cycle"
+
+
+def test_bootstrap_keeps_the_level_and_refreshes_a_smoke_copy_after_the_upgrade(tmp_path):
+    ci = Ci(tmp_path, "stofs_3d_atl_ufs_standalone")
+    src = _atl_seed_src(ci, ci.ofs)
+    _stub(ci.venv / "bin" / "python")
+    _stub(ci.home / "exec" / "schism_combine_hotstart7.exe")
+    seed_rt = tmp_path / "seed_rt"
+    sd = seed_rt / "stofs_3d_atl" / "standalone" / f"{PDY}{CYC}"
+    _touch(sd / ".seeded_ok", "level=smoke\n")
+    _touch(sd / "ref" / "a", "a")
+    boot = dict(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt), DATA_MODE="frozen")
+    assert ci.run(**boot).returncode == 0
+    assert (ci.ds / ".seeded_ok").read_text().strip() == "level=smoke" and not (ci.ds / "ref" / "b").exists()
+    _touch(sd / ".seeded_ok", "level=cycle\n")
+    _touch(sd / "ref" / "b", "b")
+    r = ci.run(**boot)
+    assert r.returncode == 0 and "seeding frozen dataset" in r.stdout, r.stdout + r.stderr
+    assert (ci.ds / ".seeded_ok").read_text().strip() == "level=cycle" and (ci.ds / "ref" / "b").is_file()
+    assert "skipping" in ci.run(**boot).stdout or "already present" in ci.run(**boot).stdout
