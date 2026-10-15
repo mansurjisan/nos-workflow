@@ -183,7 +183,7 @@ def _epoch_seconds(var):
     try:
         sec = nc.date2num(nc.num2date(vals, units, only_use_cftime_datetimes=False), "seconds since 1970-01-01")
     except (ValueError, TypeError):
-        sec = vals
+        raise ValueError(f"time units {units!r} not parseable")  # no raw-value fallback: bases can differ. MJ (10/15/26)
     return np.round(np.asarray(sec)).astype("i8")
 
 
@@ -210,6 +210,7 @@ def _wet(a):
 
 def field_stats(a, b, var="zeta", chunk=8):
     """Stream two ADCIRC files; dict of per-node and global statistics. MJ (10/15/26)"""
+    chunk = max(1, int(chunk))
     timed = var in a.variables and a.variables[var].dimensions[:1] == ("time",)
     if var not in a.variables or var not in b.variables:
         if var == "zeta" and "zeta_max" in a.variables and "zeta_max" in b.variables:
@@ -219,6 +220,8 @@ def field_stats(a, b, var="zeta", chunk=8):
     if timed != (b.variables[var].dimensions[:1] == ("time",)):
         raise ValueError(f"{var}: time-dimension layout differs between the files")
     nn = a.variables[var].shape[-1]
+    dxy = [float(np.abs(np.asarray(a.variables[c][:], "f8") - np.asarray(b.variables[c][:], "f8")).max()) for c in ("x", "y")] \
+        if all(c in v.variables and v.variables[c].shape == (nn,) for c in ("x", "y") for v in (a, b)) else None  # MJ (10/15/26)
     if b.variables[var].shape[-1] != nn:
         raise ValueError(f"node counts differ: {nn} (this run) vs {b.variables[var].shape[-1]} (ops)")
     if timed:
@@ -226,7 +229,7 @@ def field_stats(a, b, var="zeta", chunk=8):
         common, ia, ib = np.intersect1d(ta, tb, return_indices=True)
         if not len(common):
             raise ValueError("no common times")
-        steps = [(ia[k:k + chunk], ib[k:k + chunk]) for k in range(0, len(common), max(1, chunk))]
+        steps = [(ia[k:k + chunk], ib[k:k + chunk]) for k in range(0, len(common), chunk)]
         ntimes = (len(common), len(ta), len(tb))
     else:
         steps = [(None, None)]
@@ -245,22 +248,24 @@ def field_stats(a, b, var="zeta", chunk=8):
         mis = wa != wb
         nmis += int(mis.sum())
         mism_nodes |= mis.any(axis=0)
-        d = np.where(both, np.abs(za - zb), -1.0)
         npair += int(both.sum())
-        dv = d[both]
+        np.subtract(za, zb, out=za)  # in place to bound the peak memory at 12.8 M nodes. MJ (10/15/26)
+        np.abs(za, out=za)
+        dv = za[both]
         sumabs += float(dv.sum())
-        sumsq += float((dv * dv).sum())
-        maxd = np.maximum(maxd, d.max(axis=0))
+        sumsq += float(np.dot(dv, dv))
+        za[~both] = -1.0
+        maxd = np.maximum(maxd, za.max(axis=0))
     ok = maxd >= 0
     nd = maxd[ok] * 1000.0
     return {"var": var, "ntimes": ntimes, "nnodes": nn, "ncompared": int(ok.sum()), "maxd": maxd, "ok": ok, "npair": npair,
             "mean": sumabs / npair if npair else 0.0, "rms": (sumsq / npair) ** 0.5 if npair else 0.0,
             "max": float(maxd[ok].max()) if ok.any() else 0.0, "pct": np.percentile(nd, [50, 99, 99.9]) if nd.size else None,
             "w1mm": int((nd <= 1).sum()), "w1cm": int((nd <= 10).sum()), "o10cm": int((nd > 100).sum()),
-            "nmis": nmis, "mis_nodes": int(mism_nodes.sum())}
+            "dxy": dxy, "nmis": nmis, "mis_nodes": int(mism_nodes.sum())}
 
 
-def _map(path, lon, lat, val_mm, title):
+def _map(path, lon, lat, val_mm, title, var="zeta"):
     """Scatter map of per-node max |d| (decimated to ~200k points); False when matplotlib is missing. MJ (10/15/26)"""
     try:
         import matplotlib
@@ -269,11 +274,15 @@ def _map(path, lon, lat, val_mm, title):
     except ImportError:
         return False
     step = max(1, int(np.ceil(len(val_mm) / 200000.0)))
-    lon, lat, v = lon[::step], lat[::step], val_mm[::step]
+    keep = val_mm > 10.0  # every node above 10 mm plus a stride of the rest, ascending so hotspots draw on top. MJ (10/15/26)
+    keep[::step] = True
+    lon, lat, v = lon[keep], lat[keep], val_mm[keep]
+    o = np.argsort(v)
+    lon, lat, v = lon[o], lat[o], v[o]
     fig, ax = plt.subplots(figsize=(12, 6.2))
     vmax = float(np.percentile(v, 99.9)) if v.size else 1.0
     sc = ax.scatter(lon, lat, c=v, s=1, cmap="viridis", vmin=0, vmax=max(vmax, 1e-6), linewidths=0, rasterized=True)
-    fig.colorbar(sc, ax=ax, label="per-node max |d| (mm), colour limit at the 99.9th percentile")
+    fig.colorbar(sc, ax=ax, label="per-node max |d| (mm of %s), colour limit at the 99.9th percentile" % var)
     ax.set_xlabel("lon")
     ax.set_ylabel("lat")
     ax.set_title(title)
@@ -285,7 +294,12 @@ def _map(path, lon, lat, val_mm, title):
 def fields(args) -> int:
     ours, theirs = Path(args.ours), Path(args.ops)
     try:
-        a, b = _open(ours), _open(theirs)
+        a = _open(ours)
+        try:
+            b = _open(theirs)
+        except (OSError, RuntimeError):
+            a.close()
+            raise
     except (OSError, RuntimeError) as exc:
         print(f"FAIL  {exc}")
         return 1
@@ -303,13 +317,17 @@ def fields(args) -> int:
     print(f"fields: {ours.name} ({st['var']}) vs {theirs}")
     print("  %d common times (%d this run, %d ops), %d nodes, %d nodes compared, %d node-time pairs"
           % (n, na, nb, st["nnodes"], st["ncompared"], st["npair"]))
+    print("  wet/dry mismatches: %d node-time pairs at %d nodes (wet in one file, dry or fill in the other)" % (st["nmis"], st["mis_nodes"]))
+    if st["dxy"] is not None:
+        print("  node coordinates: max |dx| %.3g deg, max |dy| %.3g deg%s" % (st["dxy"][0], st["dxy"][1],
+              "  WARN the meshes differ" if max(st["dxy"]) > 1e-4 else ""))
     if st["pct"] is None:
         print("  WARN no node is wet in both files")
         return 0
-    print("  |d| over wet pairs: max %.2f mm, mean %.3f mm, RMS %.3f mm" % (st["max"] * 1000, st["mean"] * 1000, st["rms"] * 1000))
-    print("  per-node max |d| percentiles 50/99/99.9: %.2f / %.2f / %.2f mm" % tuple(st["pct"]))
-    print("  per-node max |d|: within 1 mm %d, within 1 cm %d, over 10 cm %d" % (st["w1mm"], st["w1cm"], st["o10cm"]))
-    print("  wet/dry mismatches: %d node-time pairs at %d nodes (wet in one file, dry or fill in the other)" % (st["nmis"], st["mis_nodes"]))
+    u = st["var"]  # the "mm" are mm of the variable (zeta: water level). MJ (10/15/26)
+    print("  |d| over wet pairs: max %.2f mm, mean %.3f mm, RMS %.3f mm (%s)" % (st["max"] * 1000, st["mean"] * 1000, st["rms"] * 1000, u))
+    print("  per-node max |d| percentiles 50/99/99.9: %.2f / %.2f / %.2f mm (%s)" % (tuple(st["pct"]) + (u,)))
+    print("  per-node max |d|: within 1 mm %d, within 1 cm %d, over 10 cm %d (%s)" % (st["w1mm"], st["w1cm"], st["o10cm"], u))
     idx = np.flatnonzero(st["ok"])
     sel = idx[np.argsort(st["maxd"][idx])[::-1][:10]]
     for i in sel:
@@ -317,7 +335,7 @@ def fields(args) -> int:
     if args.map:
         v = np.where(st["ok"], st["maxd"] * 1000.0, np.nan)
         keep = np.isfinite(v)
-        if _map(args.map, x[keep], y[keep], v[keep], f"{ours.name}: per-node max |d| vs ops"):
+        if _map(args.map, x[keep], y[keep], v[keep], f"{ours.name}: per-node max |d| vs ops", st["var"]):
             print(f"  map: {args.map}")
         else:
             print("  map skipped: matplotlib is not available")
@@ -365,8 +383,11 @@ def met(args) -> int:
         print(fn)
         try:
             ta, tb = a.variables["time"], b.variables["time"]
-            same_t = np.array_equal(np.asarray(ta[:]), np.asarray(tb[:])) and getattr(ta, "units", "") == getattr(tb, "units", "")
-            print("  time: %s (%s vs %s)" % ("equal" if same_t else "DIFFERS", np.asarray(ta[:]).tolist(), np.asarray(tb[:]).tolist()))
+            ea, eb = _epoch_seconds(ta), _epoch_seconds(tb)  # absolute times, units strings may differ. MJ (10/15/26)
+            print("  time: %s (epoch %s vs %s)" % ("equal" if np.array_equal(ea, eb) else "DIFFERS", ea.tolist(), eb.tolist()))
+            if "lat" in a.variables and "lat" in b.variables and a.variables["lat"].shape == b.variables["lat"].shape:
+                dl = max(float(np.abs(np.asarray(a.variables[c][0], "f8") - np.asarray(b.variables[c][0], "f8")).max()) for c in ("lat", "lon"))
+                print("  record 0 lat/lon: max |d| %.3g deg" % dl)
             for name in names:
                 na, nb, bit, mx, mean, fm = _met_var(a, b, name)
                 flag = "" if na == nb == args.records else "  WARN record count is not %d" % args.records

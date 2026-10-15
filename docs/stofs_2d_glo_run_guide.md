@@ -221,10 +221,11 @@ python3 .cicd/scripts/compare_2dglo.py ops --out $COMROOT_2DGLO --ops-dir $OPS/s
 ```
 For `points.htp`, `points.cwl.noanomaly` and `points.swl` it takes the common times, computes the maximum absolute water-level difference per station, skips stations where ops itself exceeds 20 m, and prints the median, the counts within 1 mm, 1 cm and over 10 cm, and the five worst stations. It only reports: a median above `--warn-mm` (default 500) prints WARN and still exits 0.
 
-The 2D fields and the met products are compared the same way (reported only; a missing or unreadable file exits 1). Download the ops files of the cycle from `https://noaa-gestofs-pds.s3.amazonaws.com/stofs_2d_glo.$PDY/` with `curl -fLO` (the field files are 10 to 20 GB each), then on Hercules:
+The 2D fields and the met products are compared the same way (reported only; a missing or unreadable file exits 1). Download the ops files of the cycle from `https://noaa-gestofs-pds.s3.amazonaws.com/stofs_2d_glo.$PDY/` with `curl -fLO` (the field files are 10 to 20 GB each), then on Hercules (`OPS_S3` is the download directory; run it on a compute node with `srun`, or use `--chunk 2` on a login node, since a chunk of 8 holds about 2.5 GB):
 ```bash
-python3 .cicd/scripts/compare_2dglo.py fields --ours $COMROOT_2DGLO/nos/stofs_2d_glo.$PDY/stofs_2d_glo.t${CYC}z.fields.cwl.nc --ops $OPSDIR/stofs_2d_glo.t${CYC}z.fields.cwl.nc --chunk 8 --map cwl.png
-python3 .cicd/scripts/compare_2dglo.py met --ours-dir $COMROOT_2DGLO/nos/stofs_2d_glo.$PDY --ops-dir $OPSDIR --cyc $CYC
+OPS_S3=$NOS_PTMP/$LOGNAME/ops_s3/$PDY$CYC/fields   # download directory
+python3 .cicd/scripts/compare_2dglo.py fields --ours $COMROOT_2DGLO/nos/stofs_2d_glo.$PDY/stofs_2d_glo.t${CYC}z.fields.cwl.nc --ops $OPS_S3/stofs_2d_glo.t${CYC}z.fields.cwl.nc --chunk 8 --map cwl.png
+python3 .cicd/scripts/compare_2dglo.py met --ours-dir $COMROOT_2DGLO/nos/stofs_2d_glo.$PDY --ops-dir $OPS_S3 --cyc $CYC
 ```
 `fields` prints the per-node max |d| statistics, the ten worst nodes and the wet/dry mismatches (maxele files compare `zeta_max` directly); `met` checks the 149 records and bitwise equality of `pressfc`, `uvgrd10m` and `icec`.
 

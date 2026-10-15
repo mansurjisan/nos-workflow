@@ -25,16 +25,16 @@ cmp2d = _load()
 NN = 6
 
 
-def _adcirc(path, zeta=None, zmax=None, t0=0, ntime=5):
+def _adcirc(path, zeta=None, zmax=None, t0=0, ntime=5, units="seconds since 2026-05-26 12:00:00        ! NCDASE - BASE_DAT", dx=0.0):
     with nc.Dataset(path, "w") as d:
         d.createDimension("node", NN)
         x = d.createVariable("x", "f8", ("node",))
         y = d.createVariable("y", "f8", ("node",))
-        x[:], y[:] = np.arange(NN) * 1.5, np.arange(NN) * 0.5
+        x[:], y[:] = np.arange(NN) * 1.5 + dx, np.arange(NN) * 0.5
         if zeta is not None:
             d.createDimension("time", ntime)
             t = d.createVariable("time", "f8", ("time",))
-            t.units = "seconds since 2026-05-26 12:00:00        ! NCDASE - BASE_DAT"
+            t.units = units
             t[:] = (np.arange(ntime) + t0) * 3600.0
             d.createVariable("zeta", "f4", ("time", "node"))[:] = zeta
         if zmax is not None:
@@ -50,9 +50,9 @@ def test_stats_masking_and_wetdry(tmp_path):
     a, b = _base(), _base()
     b[:, 1] += 0.0005
     b[2, 2] += 0.5
-    a[0, 3] = -99999.0  # dry in ours only
+    a[0, 3] = -99999.0  # dry in ours only. MJ (10/15/26)
     b[1, 4] = -99999.0
-    a[1, 4] = -99999.0  # dry in both, not a mismatch
+    a[1, 4] = -99999.0  # dry in both, not a mismatch. MJ (10/15/26)
     fa, fb = _adcirc(tmp_path / "a.nc", a), _adcirc(tmp_path / "b.nc", b)
     with nc.Dataset(fa) as da, nc.Dataset(fb) as db:
         da.set_auto_mask(False)
@@ -171,3 +171,60 @@ def test_met_missing_file_exits_1(tmp_path, capsys):
     argv = ["met", "--ours-dir", str(tmp_path / "o"), "--ops-dir", str(tmp_path / "p"), "--cyc", "12", "--records", "2"]
     assert cmp2d.main(argv) == 1
     assert "FAIL  stofs_2d_glo.t12z.icec.nc" in capsys.readouterr().out
+
+
+U_OURS = "seconds since 2026-10-05 00:00:00 ! NCDASE - BASE_DAT"
+U_OPS = "seconds since 2026-05-26 12:00:00 ! NCDASE - BASE_DAT"
+OFF = (np.datetime64("2026-10-05T00:00:00") - np.datetime64("2026-05-26T12:00:00")).astype("timedelta64[s]").astype(int)
+
+
+def _stats(fa, fb, chunk=8):
+    with nc.Dataset(fa) as da, nc.Dataset(fb) as db:
+        da.set_auto_mask(False)
+        db.set_auto_mask(False)
+        return cmp2d.field_stats(da, db, "zeta", chunk)
+
+
+def test_different_time_bases(tmp_path):
+    a = _base(5)
+    b = _base(5)[2:] + 0.002
+    fa = _adcirc(tmp_path / "a.nc", a, units=U_OURS)
+    # ops hours 2..4 of ours, written against the other base: raw values differ by OFF seconds
+    fb = _adcirc(tmp_path / "b.nc", b, ntime=3, units=U_OPS, t0=OFF // 3600 + 2)
+    st = _stats(fa, fb)
+    assert st["ntimes"] == (3, 5, 3) and st["mean"] == pytest.approx(0.002, abs=1e-6)
+    assert st["maxd"].max() == pytest.approx(0.002, abs=1e-6)
+
+
+def test_decoy_raw_overlap_no_common_times(tmp_path, capsys):
+    fa = _adcirc(tmp_path / "a.nc", _base(5), units=U_OURS)
+    fb = _adcirc(tmp_path / "b.nc", _base(5), units=U_OPS)  # same raw 0..4 h, absolute times 4 months apart
+    assert cmp2d.main(["fields", "--ours", str(fa), "--ops", str(fb)]) == 1
+    assert "no common times" in capsys.readouterr().out
+
+
+def test_unparseable_units_fail(tmp_path, capsys):
+    fa = _adcirc(tmp_path / "a.nc", _base(), units="fortnights from the big bang")
+    fb = _adcirc(tmp_path / "b.nc", _base())
+    assert cmp2d.main(["fields", "--ours", str(fa), "--ops", str(fb)]) == 1
+    assert "not parseable" in capsys.readouterr().out
+
+
+def test_chunk_zero_and_coordinate_warning(tmp_path, capsys):
+    fa = _adcirc(tmp_path / "a.nc", _base())
+    fb = _adcirc(tmp_path / "b.nc", _base(), dx=0.5)
+    assert _stats(fa, fb, chunk=0)["npair"] == 5 * NN
+    assert cmp2d.main(["fields", "--ours", str(fa), "--ops", str(fb), "--chunk", "0"]) == 0
+    out = capsys.readouterr().out
+    assert "max |dx| 0.5 deg" in out and "WARN the meshes differ" in out
+
+
+def test_met_time_bases_differ_but_absolute_equal(tmp_path, capsys):
+    _met_day(tmp_path / "o", "12", 2)
+    _met_day(tmp_path / "p", "12", 2)
+    with nc.Dataset(tmp_path / "p" / "stofs_2d_glo.t12z.icec.nc", "a") as d:
+        d.variables["time"].units = "hours since 2026-10-12 00:00:00"
+        d.variables["time"][...] = 6.0
+    argv = ["met", "--ours-dir", str(tmp_path / "o"), "--ops-dir", str(tmp_path / "p"), "--cyc", "12", "--records", "2"]
+    assert cmp2d.main(argv) == 0
+    assert "DIFFERS" not in capsys.readouterr().out
