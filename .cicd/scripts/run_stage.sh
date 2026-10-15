@@ -24,7 +24,7 @@ case "${STAGE}" in
   *) echo "FATAL: unknown stage '${STAGE}' (expected prep|nowcast|forecast|post)"; exit 2 ;;
 esac
 
-# The STOFS-3D-ATL variants share this template; stofs_3d_atl.sh card-env supplies what differs (extra exports, CI log dir, RUN). MJ (10/15/26)
+# The STOFS-3D-ATL variants share this template; stofs_3d_atl.sh card-env supplies what differs (extra exports, the card's RPTDIR default, RUN). MJ (10/15/26)
 ATL_EXPORTS=""; ATL_LOGPFX=""; ATL_RPTDIR=""   # nothing inherited may leak into the SECOFS path. MJ (10/15/26)
 GATE_OFS="${OFS}"
 case "${OFS}" in
@@ -36,7 +36,7 @@ case "${OFS}" in
       forecast) TIMEOUT_S=23400 ;;
       post)     TIMEOUT_S=9000; [ "${OFS}" = stofs_3d_atl_ufs ] && TIMEOUT_S=16200 ;;
     esac
-    _env=$(bash "${SCRIPT_DIR}/stofs_3d_atl.sh" card-env "${STAGE}") || exit 2   # eval of a command substitution would hide its failure. MJ (10/15/26)
+    _env=$(PDY="${PDY}" CYC="${CYC}" bash "${SCRIPT_DIR}/stofs_3d_atl.sh" card-env "${STAGE}") || exit 2   # eval of a command substitution would hide its failure. MJ (10/15/26)
     eval "${_env}"
     COMROOT_STAGED="${ATL_COMIN}"
     GATE_OFS="${ATL_RUN}"

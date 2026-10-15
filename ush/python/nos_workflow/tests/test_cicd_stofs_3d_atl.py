@@ -16,7 +16,7 @@ SCRIPT = SCRIPTS / "stofs_3d_atl.sh"
 PDY, PDYM1, CYC, RUN = "20261001", "20260930", "12", "stofs_3d_atl_ufs"
 # the staged comin trees are nested below the day directory (what stage_comin.py lays out). MJ (10/14/26)
 NEST = {"gfs": "12/atmos", "hrrr": "conus", "rtofs": "", "nwm": "medium_range_mem1"}
-AMBIENT = ("ATL_CI_ROOT", "WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
+AMBIENT = ("WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
            "RT_DATA_ROOT", "DATA_MODE", "LEVEL", "CI_OFS", "SLURM_CI_ACCOUNT", "SLURM_CI_QOS", "PACKAGEROOT", "NOS_PTMP", "DCOMROOT",
            "DCOM_BUNDLE", "COMPARE_ATL", "STUB_DIR", "COMROOT_SA", "COMROOT_UFS")
 needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
@@ -65,8 +65,8 @@ class Ci:
         self.pk, self.ptmp, self.rt = tmp / "pk", tmp / "ptmp", tmp / "rt"
         self.home, self.ws, self.bin, self.stubs = self.pk / "nos-workflow", tmp / "ws", tmp / "bin", tmp / "stubs"
         self.venv = tmp / "venv"
-        self.root = self.ptmp / "tester" / f"atl_ci_{self.var}"
-        self.com = self.root / "com"
+        self.com = self.ptmp / "tester" / "com"
+        self.rpt = self.ptmp / "tester" / "rpt" / RUN   # the card's own RPTDIR default (OFS pinned to the run name). MJ (10/15/26)
         self.ds = self.rt / "stofs_3d_atl" / self.var / f"{PDY}{CYC}"
         for d in (self.home, self.ptmp, self.rt, self.ws, self.bin, self.stubs):
             d.mkdir(parents=True, exist_ok=True)
@@ -172,16 +172,17 @@ def test_common_sh_accepts_both_atl_variants_and_still_rejects_others(ci):
     assert ci.run(script=probe, CI_OFS="stofs_3d_atl").returncode == 2
 
 
-def test_frozen_stage_links_the_dataset_into_a_clean_root(ci):
+def test_frozen_stage_links_only_the_com_state_and_reads_comin_and_dcom_in_place(ci):
     ci.dataset()
-    _touch(ci.root / "stale", "old")
+    day = ci.com / "nos" / f"{RUN}.{PDY}"
+    _touch(day / "stale", "old")
+    _touch(ci.com / "nos" / f"{RUN}.{PDYM1}" / "stale", "old")
     r = ci.run("stage")
     assert r.returncode == 0 and "stage_data PASS" in r.stdout, r.stderr + r.stdout
-    assert _tree(ci.root) == _tree(ci.ds / "input")
-    init = f"com/nos/{RUN}.{PDY}/{RUN}.t12z.{PDY}.init.nowcast.nc"
-    assert (ci.root / init).samefile(ci.ds / "input" / init)
-    g = Path("comin/gfs") / f"gfs.{PDY}" / NEST["gfs"] / "f000"
-    assert (ci.root / g).samefile(ci.ds / "input" / g)
+    assert _tree(ci.com) == _tree(ci.ds / "input" / "com")
+    init = f"nos/{RUN}.{PDY}/{RUN}.t12z.{PDY}.init.nowcast.nc"
+    assert (ci.com / init).samefile(ci.ds / "input" / "com" / init)
+    assert not (ci.ptmp / "tester" / f"atl_ci_{ci.var}").exists() and not (ci.com.parent / "comin").exists() and not (ci.com.parent / "dcom").exists()
 
 
 def test_frozen_stage_lists_what_is_missing_and_needs_the_sentinel(ci):
@@ -191,23 +192,59 @@ def test_frozen_stage_lists_what_is_missing_and_needs_the_sentinel(ci):
     _touch(ds / ".seeded_ok", "")
     (ds / "input/com/nos" / f"{RUN}.{PDYM1}" / "staout_1").unlink()
     shutil.rmtree(ds / "input/comin/nwm")
-    _touch(ci.root / "keep", "old")
+    keep = _touch(ci.com / "nos" / f"{RUN}.{PDY}" / "keep", "old")
     r = ci.run("stage")
-    assert r.returncode == 1 and "staout_1" in r.stderr and "comin/nwm" in r.stderr and (ci.root / "keep").is_file()
+    assert r.returncode == 1 and "staout_1" in r.stderr and "comin/nwm" in r.stderr and keep.is_file()
 
 
-def test_stage_refuses_to_clear_shared_or_outside_roots(ci):
+def test_stage_deletes_only_the_two_atl_day_directories_and_keeps_secofs(ci):
     ci.dataset()
-    outside = _touch(ci.tmp / "precious" / "file", "keep")
-    assert ci.run("stage", ATL_CI_ROOT=str(ci.tmp / "precious")).returncode == 1 and outside.is_file()
-    assert "contains .." in ci.run("stage", ATL_CI_ROOT=f"{ci.ptmp}/a/../../precious").stderr
-    assert ci.run("stage", ATL_CI_ROOT=str(ci.ptmp)).returncode == 1
-    keep = _touch(ci.ptmp / "tester" / "com" / "nos" / "live", "keep")
+    secofs = _touch(ci.com / "nos" / f"secofs_ufs.{PDY}" / "f", "keep")
+    secofs2 = _touch(ci.com / "nos" / f"secofs_ufs.{PDYM1}" / "f", "keep")
+    other_day = _touch(ci.com / "nos" / f"{RUN}.20260929" / "f", "keep")
+    loose = _touch(ci.com / "other" / "f", "keep")
     hand = _touch(ci.ptmp / "tester" / "com_atl_sa" / "nos" / "mine", "keep")
-    for bad in (f"{ci.ptmp}/tester/com", f"{ci.ptmp}/tester/com/", f"{ci.ptmp}/tester", f"{ci.ptmp}/tester/com_atl_sa", f"{ci.ptmp}/tester/comin_atl"):
-        r = ci.run("stage", ATL_CI_ROOT=bad)
-        assert r.returncode == 1 and "refusing" in r.stderr and keep.is_file() and hand.is_file(), bad
-    assert ci.run("stage").returncode == 0 and keep.is_file()
+    gone = [_touch(ci.com / "nos" / f"{RUN}.{d}" / "stale", "old") for d in (PDY, PDYM1)]
+    assert ci.run("stage").returncode == 0
+    assert not any(g.exists() for g in gone)
+    assert all(f.is_file() for f in (secofs, secofs2, other_day, loose, hand))
+
+
+def test_stage_refuses_symlinked_or_odd_com_targets(ci):
+    ci.dataset()
+    victim = _touch(ci.tmp / "victim" / "f", "keep")
+    day = ci.com / "nos" / f"{RUN}.{PDY}"
+    day.parent.mkdir(parents=True)
+    day.symlink_to(victim.parent)
+    r = ci.run("stage")
+    assert r.returncode == 1 and "is a symlink" in r.stderr and victim.is_file()
+    day.unlink()
+    shutil.rmtree(ci.com)
+    ci.com.symlink_to(victim.parent)
+    r = ci.run("stage")
+    assert r.returncode == 1 and "refusing to clear" in r.stderr and victim.is_file()
+    ci.com.unlink()
+    ci.com.mkdir()
+    (ci.com / "nos").symlink_to(victim.parent)
+    assert ci.run("stage").returncode == 1 and victim.is_file()
+    for bad in ("..", "a/b"):
+        r = ci.run("stage", LOGNAME=bad)
+        assert r.returncode == 1 and "odd LOGNAME" in r.stderr, bad
+    assert victim.is_file()
+
+
+def test_stage_removes_the_old_per_variant_roots_once(ci):
+    ci.dataset()
+    old = [_touch(ci.ptmp / "tester" / f"atl_ci_{v}" / "com" / "f", "old") for v in ("standalone", "coupled")]
+    keep = _touch(ci.ptmp / "tester" / "atl_ci_other" / "f", "keep")
+    r = ci.run("stage")
+    assert r.returncode == 0 and r.stdout.count("removed the old per-variant CI root") == 2, r.stdout
+    assert not any(o.exists() for o in old) and keep.is_file()
+    assert "removed the old" not in ci.run("stage").stdout
+    link = ci.ptmp / "tester" / "atl_ci_standalone"
+    link.symlink_to(keep.parent)
+    r = ci.run("stage")
+    assert r.returncode == 0 and "leaving" in r.stderr and keep.is_file()
 
 
 def test_bad_arguments_are_rejected(ci):
@@ -225,6 +262,43 @@ def test_live_mode_needs_a_dcom_bundle_and_checks_it_before_downloading(ci):
     b = ci.tmp / "bundle"
     r = ci.run("stage", DATA_MODE="live", DCOM_BUNDLE=str(b))
     assert r.returncode == 1 and "MISSING" in r.stderr and "before the ~100 GB download" in r.stdout
+
+
+def _live(ci: Ci):
+    """A DCOM_BUNDLE and stub stage_comin.py / seed scripts that record their arguments. MJ (10/15/26)"""
+    b = ci.tmp / "bundle"
+    for d in (PDY, PDYM1):
+        _touch(b / "dcom" / d / "validation_data/marine/cmems/ssh" / f"nrt_global_allsat_phy_l4_{d}_{d}.nc", "adt")
+    sd = b / "seeds" / f"dyn_seed_{PDYM1}"
+    _touch(sd / "staout_1", "s")
+    _touch(sd / f"{RUN}.t12z.avg_bias", "b")
+    _stub(ci.home / "ush" / "stage_comin.py", "import os, sys\na = sys.argv[1:]\nopen(os.environ['STUB_DIR'] + '/stage.calls', 'a').write(' '.join(a) + '\\n')\nos.makedirs(a[a.index('--comroot') + 1] + '/gfs')\n")
+    for t in ("init", "prev"):
+        _stub(ci.home / "tools" / f"hercules_atl_seed_{t}.sh", f'#!/bin/bash\necho "$*" >> "$STUB_DIR/seed_{t}.calls"\n')
+    return b, sd
+
+
+def test_live_stage_puts_comin_under_rt_data_root_and_the_seeds_in_the_shared_com(ci):
+    b, sd = _live(ci)
+    stale = _touch(ci.com / "nos" / f"{RUN}.{PDY}" / "stale", "old")
+    live = ci.rt / "stofs_3d_atl" / "live" / f"{PDY}{CYC}"
+    r = ci.run("stage", DATA_MODE="live", DCOM_BUNDLE=str(b))
+    assert r.returncode == 0 and "stage_data PASS" in r.stdout, r.stdout + r.stderr
+    assert f"--comroot {live}/comin " in (ci.stubs / "stage.calls").read_text() and (live / "comin" / "gfs").is_dir()
+    assert (ci.stubs / "seed_init.calls").read_text().split() == [PDY, f"{ci.com}/nos/{RUN}.{PDY}"]
+    assert (ci.stubs / "seed_prev.calls").read_text().split() == [str(sd), str(ci.com), PDY]
+    assert not stale.exists() and not (ci.ptmp / "tester" / f"atl_ci_{ci.var}").exists()
+    env = ci.run("card-env", "prep", DATA_MODE="live", DCOM_BUNDLE=str(b)).stdout
+    assert f"ATL_COMIN={live}/comin" in env and f"DCOMROOT={b}/dcom" in env.replace("\\", "")
+
+
+def test_live_full_verify_keeps_the_ops_products_beside_the_live_comin(ci):
+    _stub(ci.bin / "curl", '#!/bin/bash\nwhile [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done\necho ops > "$out"\n')
+    r = ci.run("verify", LEVEL="full", DATA_MODE="live")
+    live = ci.rt / "stofs_3d_atl" / "live" / f"{PDY}{CYC}"
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (live / "ops" / "stofs_3d_atl.t12z.ncast.station.profile.nc").is_file()
+    assert _calls(ci)[-1][:3] == ["ops", "--ops-dir", str(live / "ops")] and _calls(ci)[-1][4] == str(ci.com)
 
 
 def test_stage_data_sh_hands_over_to_the_atl_stage(ci):
@@ -247,8 +321,8 @@ echo "Submitted batch job {jid}"
     _stub(ci.bin / "sacct", f'#!/bin/bash\necho "{state}"\n')
     _stub(ci.bin / "scancel", '#!/bin/bash\necho "$@" >> "$STUB_DIR/scancel.log"\n')
     pfx = "stofs_3d_atl_ufs_standalone" if ci.var == "standalone" else "stofs_3d_atl_ufs"
-    _touch(ci.root / "rpt" / f"{pfx}_{stage}_00.{jid}.out", f"STAGE_SUMMARY stage={stage} ofs={ofs_in_log} status={'PASS' if ok else 'FAIL'} runtime_s=1\n")
-    _touch(ci.root / "rpt" / f"{pfx}_{stage}_00.{jid}.err", "err")
+    _touch(ci.rpt / f"{pfx}_{stage}_00.{jid}.out", f"STAGE_SUMMARY stage={stage} ofs={ofs_in_log} status={'PASS' if ok else 'FAIL'} runtime_s=1\n")
+    _touch(ci.rpt / f"{pfx}_{stage}_00.{jid}.err", "err")
     _touch(ci.ws / f"slurm-{jid}.out", "epilogue")
 
 
@@ -263,15 +337,16 @@ def test_run_stage_submits_the_atl_card_with_its_exports_and_gates_on_the_run_na
     _job(ci, stage)
     r = _stage(ci, stage, SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch", COMOUT="/leak", RPTDIR="/leak/rpt", COMROOT="/leak/com")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert f"PASS[{stage}]: {ci.root}/rpt/" in r.stdout
+    assert f"PASS[{stage}]: {ci.rpt}/{carddir}_{stage}_00.101.out" in r.stdout
     line = (ci.stubs / "sbatch.calls").read_text()
     assert "--account=nosofs --qos=batch" in line and line.split()[-1] == f"{ci.home}/slurm/{carddir}/jnos_{stage}_00.sh"
-    for want in (f"PDY={PDY}", "CYC=12", f"PACKAGEROOT={ci.pk}", f"{comvar}={ci.com}", f"COMROOT_STAGED={ci.root}/comin",
-                 f"DCOMROOT={ci.root}/dcom", f"RPTDIR={ci.root}/rpt", f"EXECnos={ci.home}/exec", "COLDSTART=NO",
+    for want in (f"PDY={PDY}", "CYC=12", f"PACKAGEROOT={ci.pk}", f"{comvar}={ci.com}", f"COMROOT_STAGED={ci.ds}/input/comin",
+                 f"DCOMROOT={ci.ds}/input/dcom", f"EXECnos={ci.home}/exec", "COLDSTART=NO",
                  f"NOS_VENV={ci.venv}", f"NOS_PTMP={ci.ptmp}", f"OFS={RUN}"):
         assert want in line, (want, line)
-    assert line.count("COMROOT_STAGED=") == 1 and line.count("--export=") == 1
+    assert line.count("COMROOT_STAGED=") == 1 and line.count("--export=") == 1 and "RPTDIR" not in line and "atl_ci" not in line
     assert (ci.stubs / "sbatch.env").read_text().strip() == "COMOUT=unset RPTDIR=unset"
+    assert ci.rpt.is_dir() and not (ci.rpt.parent / "stofs_3d_atl_ufs_standalone").exists()
     assert (ci.ws / "ci_logs" / "current_jobid").read_text().strip() == "101"
     logs = sorted(p.name for p in (ci.ws / "ci_logs").iterdir())
     pfx = carddir
@@ -483,13 +558,6 @@ def test_a_failed_stage_leaves_its_directories_for_the_next_stage_data_to_clear(
     assert not w.exists() and secofs.is_file()
 
 
-def test_reset_root_refuses_a_root_inside_a_protected_directory(ci):
-    ci.dataset()
-    inside = _touch(ci.ptmp / "tester" / "com" / "sub" / "dir" / "f", "keep")
-    r = ci.run("stage", ATL_CI_ROOT=f"{ci.ptmp}/tester/com/sub/dir")
-    assert r.returncode == 1 and "inside the protected" in r.stderr and inside.is_file()
-
-
 def test_jenkinsfile_forces_cyc_12_for_atl():
     text = JENKINSFILE.read_text()
     assert "CYC          = \"${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}\"" in text
@@ -652,11 +720,11 @@ def test_cycle_and_full_refuse_a_smoke_dataset_at_stage_and_smoke_runs(ci):
     com, comin, dcom = _source(ci)
     _nowcast_only(com)
     assert ci.run("seed", PDY, "standalone", str(com), str(comin), str(dcom), SEED_RT=str(ci.rt), SEED_LEVEL="smoke").returncode == 0
-    _touch(ci.root / "keep", "old")
+    keep = _touch(ci.com / "nos" / f"{RUN}.{PDY}" / "keep", "old")
     for level in ("cycle", "full"):
         r = ci.run("stage", LEVEL=level)
         assert r.returncode == 1 and f"dataset {ci.ds} holds smoke references only; run LEVEL=smoke, or re-seed with SEED_LEVEL=cycle once the source run has forecast and post" in r.stdout
-        assert (ci.root / "keep").is_file()
+        assert keep.is_file()
     r = ci.run("stage", LEVEL="smoke")
     assert r.returncode == 0 and "stage_data PASS" in r.stdout, r.stderr + r.stdout
 

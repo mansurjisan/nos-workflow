@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # STOFS-3D-Atlantic stages of the Hercules Jenkins pipeline (OFS=stofs_3d_atl_ufs_standalone or stofs_3d_atl_ufs; manual builds only). MJ (10/14/26)
-#   stofs_3d_atl.sh stage    Stage Data (called by stage_data.sh): frozen = link the dataset for PDY into a clean CI root ATL_CI_ROOT;
+#   stofs_3d_atl.sh stage    Stage Data (called by stage_data.sh): frozen = hard-link the dataset's com state into the shared CI com;
 #                            live = stage_comin.py + hercules_atl_seed_init.sh + hercules_atl_seed_prev.sh on this login/front-end node
 #                            (compute nodes have no internet), with the dcom case bundle DCOM_BUNDLE the user supplies
 #   stofs_3d_atl.sh card-env <stage>   eval-able shell for run_stage.sh: the variant's extra sbatch exports (ATL_EXPORTS), log prefix, unset list
@@ -10,7 +10,7 @@
 # The variant comes from OFS: stofs_3d_atl_ufs_standalone = pschism (cards slurm/stofs_3d_atl_ufs_standalone, COMROOT_SA),
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh; optional
-# ATL_CI_ROOT (default $NOS_PTMP/$LOGNAME/atl_ci_<variant>), CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), DCOM_BUNDLE (live only),
+# CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), DCOM_BUNDLE (live only),
 # COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26)
 #
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits the variant's
@@ -21,8 +21,14 @@
 #   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (report only)
 # MJ (10/15/26)
 #
-# CI root ${ATL_CI_ROOT}: com/ (the variant's COMROOT), comin/ (COMROOT_STAGED), dcom/ (DCOMROOT), rpt/ (the cards' RPTDIR),
-# ops/ (live mode ops products). frozen clears it at stage.
+# Layout, the SECOFS one (no per-variant roots): com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work} and the cards' own defaults;
+# comin (COMROOT_STAGED) and dcom (DCOMROOT) are read in place from the frozen dataset's input/ (read-only to the CI; prep never writes there).
+#   com   $NOS_PTMP/$LOGNAME/com  COMROOT_SA or COMROOT_UFS; both variants run RUN=stofs_3d_atl_ufs, so they share com/nos/stofs_3d_atl_ufs.<day> and
+#         the second variant overwrites the first (one CI build at a time). Stage removes ONLY com/nos/stofs_3d_atl_ufs.<PDY-1> and .<PDY>, then
+#         hard-links the dataset's input/com back in (a copy if the dataset is on another filesystem); SECOFS's com/nos/secofs_ufs.* is never touched.
+#   rpt   the card's RPTDIR default $NOS_PTMP/$LOGNAME/rpt/stofs_3d_atl_ufs;  work/  the cards' shared work dir.
+#   live  comin is staged to $RT_DATA_ROOT/stofs_3d_atl/live/<PDY><CYC>/comin (ops/ there too), dcom is read from DCOM_BUNDLE/dcom.
+# Stage also removes the old per-variant roots $NOS_PTMP/$LOGNAME/atl_ci_standalone and atl_ci_coupled once. MJ (10/15/26)
 #
 # Dataset ${RT_DATA_ROOT}/stofs_3d_atl/<standalone|coupled>/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/ in frozen mode):
 #   .seeded_ok                                                                           one line, level=smoke|cycle (empty or no level = cycle)
@@ -104,10 +110,14 @@ dcom_groups() {
   done
 }
 
-# The CI root and its com, from the variant. MJ (10/15/26)
-ci_root() {
-  ATL_CI_ROOT=${ATL_CI_ROOT:-${NOS_PTMP}/${LOGNAME}/atl_ci_${VARIANT}}
-  CI_COM="${ATL_CI_ROOT}/com"
+# The shared com and the inputs the cards read (comin from the dataset, or the live staging dir), from the variant. MJ (10/15/26)
+ci_paths() {
+  : "${RT_DATA_ROOT:?RT_DATA_ROOT not set}"
+  CI_COM="${NOS_PTMP}/${LOGNAME}/com"
+  DS="${RT_DATA_ROOT}/stofs_3d_atl/${VARIANT}/${PDY}${CYC}"
+  LIVE="${RT_DATA_ROOT}/stofs_3d_atl/live/${PDY}${CYC}"
+  CI_COMIN="${DS}/input/comin"
+  [ "${DATA_MODE:-frozen}" != live ] || CI_COMIN="${LIVE}/comin"
 }
 
 # Everything the stage and verify commands share. MJ (10/15/26)
@@ -117,37 +127,34 @@ level_setup() {
   LEVEL=${LEVEL:-smoke}
   case "${LEVEL}" in smoke|cycle|full) ;; *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;; esac
   DATA_MODE=${DATA_MODE:-frozen}
-  : "${RT_DATA_ROOT:?RT_DATA_ROOT not set}"
-  ci_root
-  DS="${RT_DATA_ROOT}/stofs_3d_atl/${VARIANT}/${PDY}${CYC}"
+  ci_paths
   LOGDIR="${WORKSPACE:-${PWD}}/ci_logs"
   export NOS_PTMP
 }
 
-# Clears the CI root. It is normalized first (//, symlinks), must sit at least two levels below NOS_PTMP ($p/<x>/<y>) and must never be,
-# or contain, the shared com or the run guide's hand-run roots, which hold the live SECOFS cycles and the user's own ATL runs. MJ (10/14/26)
-reset_root() {
-  local c p s
-  case "${ATL_CI_ROOT}" in
-    *..*) echo "FATAL: refusing to clear ${ATL_CI_ROOT} (contains ..)" >&2; exit 1 ;;
-  esac
-  c=$(realpath -m -- "${ATL_CI_ROOT}")
+# Clears this cycle's ATL state from the shared com: exactly com/nos/${RUN}.<PDY-1> and .<PDY>, nothing else (SECOFS's secofs_ufs.* lives there too).
+# The com root must be the CI's $NOS_PTMP/$LOGNAME/com and neither it, nos/ nor a day directory may be a symlink. Then removes the old atl_ci_* roots. MJ (10/15/26)
+clear_com() {
+  local p c d t v
+  case "${LOGNAME}" in ""|*/*|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
   p=$(realpath -m -- "${NOS_PTMP}")
-  case "${c}" in
-    "${p}"/?*/?*) ;;
-    *) echo "FATAL: refusing to clear ${c}: it is not under NOS_PTMP (${p}) by at least two levels (<x>/<y>)" >&2; exit 1 ;;
-  esac
-  for s in com com_atl_sa com_atl_ufs comin_atl; do
-    s=$(realpath -m -- "${NOS_PTMP}/${LOGNAME}/${s}")
-    case "${s}/" in
-      "${c}"/*) echo "FATAL: refusing to clear ${c}: it is the shared ${s} or a parent of it" >&2; exit 1 ;;
-    esac
-    case "${c}/" in
-      "${s}"/*) echo "FATAL: refusing to clear ${c}: it sits inside the protected ${s}" >&2; exit 1 ;;
-    esac
+  c="${p}/${LOGNAME}/com"
+  [ "$(realpath -m -- "${CI_COM}")" = "${c}" ] || { echo "FATAL: refusing to clear ${CI_COM}: it is not ${c} (symlink?)" >&2; exit 1; }
+  for t in "${c}" "${c}/nos"; do
+    [ ! -L "${t}" ] || { echo "FATAL: refusing to clear under ${t}: it is a symlink" >&2; exit 1; }
   done
-  rm -rf -- "${c}"
+  for d in "${PDYM1}" "${PDY}"; do
+    t="${c}/nos/${RUN}.${d}"
+    [ ! -L "${t}" ] || { echo "FATAL: refusing to remove ${t}: it is a symlink" >&2; exit 1; }
+    rm -rf -- "${t}"
+  done
   mkdir -p -- "${c}"
+  for v in standalone coupled; do
+    t="${p}/${LOGNAME}/atl_ci_${v}"
+    if [ -L "${t}" ]; then echo "WARN: leaving ${t}: it is a symlink" >&2
+    elif [ -d "${t}" ]; then rm -rf -- "${t}"; echo "removed the old per-variant CI root ${t}"
+    fi
+  done
 }
 
 # The cards keep every job's run directory (KEEPDATA=YES, ~150 GB a cycle): $NOS_PTMP/$LOGNAME/work/<cards>/<job>.<jobid>. $1 = job ids to
@@ -208,12 +215,13 @@ cmd_stage() {
       compgen -G "${DS}/input/dcom/${PDY}/coops_waterlvlobs/*.xml" >/dev/null || { echo "MISSING: ${DS}/input/dcom/${PDY}/coops_waterlvlobs/*.xml" >&2; miss=1; }
       compgen -G "${DS}/input/dcom/*/can_streamgauge/02OA016_hydrometric.csv" >/dev/null || { echo "MISSING: ${DS}/input/dcom/<day>/can_streamgauge/02OA016_hydrometric.csv" >&2; miss=1; }
       [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what the ATL prep card reads (see the header of stofs_3d_atl.sh)"; exit 1; }
-      reset_root
+      clear_com
       clean_work
-      echo "staging ${DS}/input -> ${ATL_CI_ROOT} (LEVEL=${LEVEL}, ${VARIANT})"
-      # The cards only read these inputs (the init state is copied into the run directory), so they are hard-linked: ~125 GB would not copy in reasonable time. MJ (10/14/26)
-      rsync -a --link-dest="${DS}/input" "${DS}/input/" "${ATL_CI_ROOT}/"
-      du -sh "${ATL_CI_ROOT}"/*
+      echo "staging ${DS}/input/com -> ${CI_COM} (LEVEL=${LEVEL}, ${VARIANT}); comin and dcom are read in place from ${DS}/input"
+      # The cards only read the init state (it is copied into the run directory), so it is hard-linked: 26 GB would not copy quickly. rsync copies instead when the
+      # dataset is on another filesystem, so that is said up front. comin and dcom are not linked at all. MJ (10/15/26)
+      [ "$(stat -c %d "${DS}/input/com")" = "$(stat -c %d "${CI_COM}")" ] || echo "WARN: ${DS} and ${CI_COM} are on different filesystems: the init state is copied, not linked"
+      rsync -a --link-dest="${DS}/input/com" "${DS}/input/com/" "${CI_COM}/"
       ;;
     live)
       setup_modules
@@ -223,11 +231,11 @@ cmd_stage() {
         [ -s "${f}" ] || { echo "MISSING: ${f}" >&2; miss=1; }
       done
       [ "${miss}" = 0 ] || { echo "FATAL: DCOM_BUNDLE=${b} lacks the files above (before the ~100 GB download)"; exit 1; }
-      reset_root
+      clear_com
       clean_work
-      mkdir -p "${CI_COM}" "${ATL_CI_ROOT}/comin"
-      echo "staging the public inputs for ${PDY}${CYC} into ${ATL_CI_ROOT} (login node)"
-      python3 "${HOMEnos}/ush/stage_comin.py" --pdy "${PDY}" --cyc "${CYC}" --comroot "${ATL_CI_ROOT}/comin" --profile stofs_3d_atl --jobs 8 \
+      mkdir -p "${CI_COM}" "${CI_COMIN}"
+      echo "staging the public inputs for ${PDY}${CYC} into ${CI_COMIN} (login node)"
+      python3 "${HOMEnos}/ush/stage_comin.py" --pdy "${PDY}" --cyc "${CYC}" --comroot "${CI_COMIN}" --profile stofs_3d_atl --jobs 8 \
         || { echo "FATAL: stage_comin.py failed"; exit 1; }
       bash "${HOMEnos}/tools/hercules_atl_seed_init.sh" "${PDY}" "${CI_COM}/nos/${RUN}.${PDY}" \
         || { echo "FATAL: hercules_atl_seed_init.sh failed"; exit 1; }
@@ -239,23 +247,26 @@ cmd_stage() {
   echo "stage_data PASS"
 }
 
-# What run_stage.sh needs to submit this variant's <stage> card, as shell for it to eval (one --export value, so no commas).
-# The card's log is <RPTDIR>/<prefix>.<jobid>.out; the prefix comes from its _LOG_PREFIX line so the two cannot drift. MJ (10/15/26)
+# What run_stage.sh needs to submit this variant's <stage> card, as shell for it to eval (one --export value, so no commas). PDY and CYC come from the environment.
+# RPTDIR is the card's own default, read with OFS=${RUN} because the card pins that name (run_stage.sh's OFS is the variant name); the log is
+# <RPTDIR>/<prefix>.<jobid>.out, the prefix from its _LOG_PREFIX line so the two cannot drift. MJ (10/15/26)
 cmd_card_env() {
-  local st=${1:?usage: stofs_3d_atl.sh card-env <stage>} pfx dcom v
+  local st=${1:?usage: stofs_3d_atl.sh card-env <stage>} card pfx dcom rpt v
   set_variant "${OFS}"
-  ci_root
-  pfx=$(sed -n 's#^_LOG_PREFIX=.*/\([^/]*\)\.\${_JOBID}.*#\1#p' "${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh" | head -1)
-  [ -n "${pfx}" ] || { echo "FATAL: no _LOG_PREFIX in ${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh" >&2; exit 1; }
-  dcom="${ATL_CI_ROOT}/dcom"
+  ci_paths
+  card="${HOMEnos}/slurm/${CARDS}/jnos_${st}_00.sh"
+  pfx=$(sed -n 's#^_LOG_PREFIX=.*/\([^/]*\)\.\${_JOBID}.*#\1#p' "${card}" | head -1)
+  [ -n "${pfx}" ] || { echo "FATAL: no _LOG_PREFIX in ${card}" >&2; exit 1; }
+  rpt=$(unset RPTDIR; OFS=${RUN}; card_value "${card}" RPTDIR) || exit 1
+  dcom="${DS}/input/dcom"
   [ "${DATA_MODE:-frozen}" != live ] || dcom="${DCOM_BUNDLE:?DCOM_BUNDLE not set}/dcom"
-  for v in "${PACKAGEROOT}" "${HOMEnos}" "${CI_COM}" "${dcom}" "${NOS_PTMP}" "${VENV_PATH:-}"; do
+  for v in "${PACKAGEROOT}" "${HOMEnos}" "${CI_COM}" "${CI_COMIN}" "${dcom}" "${NOS_PTMP}" "${VENV_PATH:-}"; do
     case "${v}" in *,*) echo "FATAL: a comma in '${v}' would split the sbatch --export list" >&2; exit 1 ;; esac
   done
   # Inherited values would bypass what the cards derive; the cards also clear most of these themselves. MJ (10/15/26)
   echo "unset COMOUT COMOUTroot DATA COMIN COMINgfs COMINhrrr COMINrtofs_2d COMINrtofs_3d COMINnwm COMINrerun COMROOT DATAROOT RPTDIR OFS_CONFIG"
-  printf 'ATL_RUN=%q\nATL_COMIN=%q\nATL_RPTDIR=%q\nATL_LOGPFX=%q\nATL_EXPORTS=%q\n' "${RUN}" "${ATL_CI_ROOT}/comin" "${ATL_CI_ROOT}/rpt" "${ATL_CI_ROOT}/rpt/${pfx}" \
-    "OFS=${RUN},PACKAGEROOT=${PACKAGEROOT},${COMVAR}=${CI_COM},EXECnos=${HOMEnos}/exec,DCOMROOT=${dcom},RPTDIR=${ATL_CI_ROOT}/rpt,COLDSTART=NO"
+  printf 'ATL_RUN=%q\nATL_COMIN=%q\nATL_RPTDIR=%q\nATL_LOGPFX=%q\nATL_EXPORTS=%q\n' "${RUN}" "${CI_COMIN}" "${rpt}" "${rpt}/${pfx}" \
+    "OFS=${RUN},PACKAGEROOT=${PACKAGEROOT},${COMVAR}=${CI_COM},EXECnos=${HOMEnos}/exec,DCOMROOT=${dcom},COLDSTART=NO"
 }
 
 # After a passing stage: the cards keep the job's run directory (~150 GB a cycle); a failed one is kept for debugging until the next Stage Data. MJ (10/15/26)
@@ -270,7 +281,7 @@ cmd_verify() {
   mkdir -p "${LOGDIR}"
   local rc=0 ops_dir cmp="${COMPARE_ATL:-${SCRIPT_DIR}/compare_atl.py}"
   ops_dir="${DS}/ref/ops"
-  [ "${DATA_MODE}" != live ] || ops_dir="${ATL_CI_ROOT}/ops"
+  [ "${DATA_MODE}" != live ] || ops_dir="${LIVE}/ops"
   # The group runs in the pipeline's subshell, so it hands its verdict back through its exit status. MJ (10/14/26)
   {
     grc=0
