@@ -274,6 +274,62 @@ def _export(ctx: CycleContext, run_dir: Path) -> None:
         _publish(_need(run_dir, src), rerun_dir(ctx) / f"{ctx.run}_{name}")
 
 
+def _fort15_outputs(fort15: Path) -> Tuple[float, float, Dict[str, Tuple[float, float, int]]]:
+    """DTDP, RNDY and per output unit (TOUTS s, TOUTF s, NSPOOL) read from the rendered fort.15, so the expected
+    window is the one the run was configured with. MJ (10/15/26)"""
+    import re
+    dtdp = rnday = None
+    units: Dict[str, Tuple[float, float, int]] = {}
+    for ln in fort15.read_text().splitlines():
+        if "!" not in ln:
+            continue
+        head, tag = ln.split("!", 1)
+        f, m = head.split(), re.search(r"\(UNIT\s+(\d+)\)", tag)
+        if tag.split()[:1] == ["DTDP"]:
+            dtdp = float(f[0])
+        elif tag.split()[:1] == ["RNDY"]:
+            rnday = float(f[0])
+        elif m and len(f) >= 4 and int(f[0]) != 0:
+            units[m.group(1)] = (float(f[1]) * 86400, float(f[2]) * 86400, int(f[3]))
+    if dtdp is None or rnday is None:
+        raise AdcircConfigError(f"no DTDP or RNDY in {fort15}")
+    return dtdp, rnday, units
+
+
+def check_records(run_dir: Path, stream: str, step: str) -> None:
+    """Fail a finished ncst/fcst whose time series lost an hourly record (a sporadic padcirc writer drop that otherwise
+    surfaces only in post). Per fort.61-64 that exists: constant spacing of NSPOOL*DTDP, the first record at TOUTS or one
+    interval after it, the last at min(TOUTF, RNDAY) (ADCIRC end of run); the expected count follows from that window and
+    the first record found. Only the time variable is read. MJ (10/15/26)"""
+    import numpy as np
+    import netCDF4
+    dtdp, rnday, units = _fort15_outputs(run_dir / "fort.15")
+    redo = 'STAGES="nowcast forecast post"' if step == "ncst" else 'STAGES="forecast post"'
+    for src, _name in RERUN[stream]:
+        unit = src[len("fort."):-3]
+        f = run_dir / src
+        if not (src.startswith("fort.6") and f.is_file() and unit in units):
+            continue
+        touts, toutf, nspool = units[unit]
+        step_s, end = nspool * dtdp, min(toutf, rnday * 86400)
+        with netCDF4.Dataset(str(f)) as d:
+            t = np.asarray(d.variables["time"][:], dtype="f8")
+        if not t.size:
+            raise RuntimeError(f"{src} ({stream} {step}) has no records; padcirc dropped an output record; "
+                               f"re-run this step ({redo} STREAMS={stream})")
+        first = t[0]
+        if abs(first - touts) > 1.5:
+            first = touts + step_s
+        want = int(round((end - first) / step_s)) + 1
+        bad = np.flatnonzero(np.abs(np.diff(t) - step_s) > 1.5)
+        if t.size != want or bad.size or abs(t[-1] - end) > 1.5 or abs(t[0] - first) > 1.5:
+            gaps = ", ".join("%.0f->%.0f s" % (t[i], t[i + 1]) for i in bad) or "none inside the series"
+            raise RuntimeError(
+                f"{src} ({stream} {step}) has {t.size} records, expected {want} (every {step_s:g} s, first {first:g} s, "
+                f"last {end:g} s; found {t[0]:g} .. {t[-1]:g} s); gap times: {gaps}; padcirc dropped an output record; "
+                f"re-run this step ({redo} STREAMS={stream})")
+
+
 def _check_window(path: Path, want: int) -> None:
     import netCDF4
     if not path.is_file():
@@ -295,6 +351,7 @@ def _ncst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
         _check_window(rerun_dir(ctx) / f"{ctx.run}_ncst.221.nc", int((now - beg).total_seconds() // 3600) + 1)
     run_dir = _stage(ctx, stream, "ncst", seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hfile, int(seg.tokens["ihot"]))
     argv = _launch(ctx, run_dir, stream, "ncst", launcher, profile)
+    check_records(run_dir, stream, "ncst")  # before anything is published or the state is written MJ (10/15/26)
     _publish(_need(run_dir, f"fort.{parity_ihot(seg.state_time, WNDH) - 300}.nc"), ctx.cycle_dir(now, chain))
     _export(ctx, run_dir)
     # Written last, after success; the leading 0 keeps the ops hottime.out/retime.out layout. MJ (10/05/26)
@@ -319,6 +376,7 @@ def _fcst(ctx: CycleContext, launcher, profile, runner) -> List[str]:
     run_dir = _stage(ctx, stream, segment, seg.tokens, now.strftime("%Y%m%d%H"), nod, runner, hot, int(seg.tokens["ihot"]),
                      [(rr / f"{ctx.run}_{name}", src) for src, name in RERUN[stream]])
     argv = _launch(ctx, run_dir, stream, segment, launcher, profile)
+    check_records(run_dir, stream, "fcst")  # before the products are published and before the state is advanced MJ (10/15/26)
     for src, name in PRODUCTS[stream]:
         _publish(_need(run_dir, src), ctx.cycle_dir(now, name))
     sp.write_text("0 %s %s %s\n" % (seg.state_time, st[2], st[3]))
