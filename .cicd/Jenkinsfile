@@ -210,8 +210,18 @@ pipeline {
                                     INFO=$(cat "${LOCK_DIR}/info" 2>/dev/null)
                                     LOCK_EPOCH=$(printf '%s' "${INFO}" | awk '{print $NF}')
                                     AGE=$((NOW - ${LOCK_EPOCH:-0}))
-                                    if [ "${AGE}" -gt 64800 ]; then
-                                        echo "reclaiming stale CI lock (age ${AGE}s): ${INFO}" >&2
+                                    # This job runs with disableConcurrentBuilds, so a holder URL under JOB_URL is an earlier build that ended without releasing. MJ (10/16/26)
+                                    HOLDER=$(printf '%s' "${INFO}" | awk '{print $1}')
+                                    SAME_JOB=0
+                                    if [ -n "${JOB_URL:-}" ] && [ "${HOLDER}" != "${BUILD_URL}" ]; then
+                                        case "${HOLDER}" in "${JOB_URL}"*) SAME_JOB=1 ;; esac
+                                    fi
+                                    if [ "${SAME_JOB}" -eq 1 ] || [ "${AGE}" -gt 64800 ]; then
+                                        if [ "${SAME_JOB}" -eq 1 ]; then
+                                            echo "reclaiming the CI lock left by an earlier build of this job: ${INFO}" >&2
+                                        else
+                                            echo "reclaiming stale CI lock (age ${AGE}s): ${INFO}" >&2
+                                        fi
                                         rm -rf "${LOCK_DIR}"
                                         if try_acquire; then
                                             echo "ACQUIRED"
@@ -306,7 +316,7 @@ pipeline {
 
     post {
         always {
-            archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
+            // release the lock first: archiving takes seconds and a second abort landing there left the lock behind. MJ (10/16/26)
             script {
                 if (env.CI_LOCK_HELD == 'true') {
                     try {
@@ -322,6 +332,7 @@ pipeline {
                     }
                 }
             }
+            archiveArtifacts artifacts: 'ci_logs/**', allowEmptyArchive: true
             script {
                 if (env.CHANGE_ID?.trim() && env.RUN_CYCLE == 'true' && !isManualOfs(env.CI_OFS)) {
                     try {
@@ -344,13 +355,17 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh writes the current jobid here (SECOFS, ATL and 2D-GLO); best-effort scancel it on failure. MJ (10/15/26)
+            // run_stage.sh writes "<BUILD_NUMBER> <JOBID>" here (SECOFS, ATL and 2D-GLO); best-effort scancel it on failure, only when this build submitted it. MJ (10/16/26)
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then
-                    JID=$(cat "${JIDFILE}")
-                    echo "post/unsuccessful: scancel ${JID} (best-effort)"
-                    bash -l -c "scancel ${JID}" || true
+                    read -r JBUILD JID < "${JIDFILE}" || true
+                    if [ -n "${JID:-}" ] && [ "${JBUILD}" = "${BUILD_NUMBER}" ]; then
+                        echo "post/unsuccessful: scancel ${JID} (best-effort)"
+                        bash -l -c "scancel ${JID}" || true
+                    else
+                        echo "post/unsuccessful: skipping stale jobid ($(cat "${JIDFILE}")) not submitted by build ${BUILD_NUMBER}"
+                    fi
                 fi
             '''
             script {

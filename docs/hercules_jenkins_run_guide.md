@@ -24,7 +24,7 @@ Nothing on Hercules is needed for sections 2-7.
 
 ## 2. Before each build
 
-- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends; a build while a SECOFS build runs fails at Gate. Check both jobs' Build History first.
+- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate. Check both jobs' Build History first.
 - **The job builds the `develop` branch** (*Branches to build* = `*/develop`). Section 9 covers other branches.
 - **Never use Build Now** for these systems: it always runs the SECOFS defaults.
 - **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait counts against each stage's time limit (section 7).
@@ -45,7 +45,7 @@ Nothing on Hercules is needed for sections 2-7.
 | `PDY` | `20261001` | `20261001` | `20261012` |
 | `CYC` | `12` (forced to 12 anyway) | `12` (forced to 12 anyway) | `06` for smoke and cycle, `00` for full |
 
-To stop a running build, click the red **X** next to it in Build History (or **Abort** on the build page). The cleanup then cancels the Slurm job the build was waiting on. You can confirm with `squeue -A nosofs` on Hercules.
+To stop a running build, click the red **X** next to it in Build History (or **Abort** on the build page). The cleanup then cancels the Slurm job the build was waiting on. You can confirm with `squeue -A nosofs` on Hercules. Click Abort once and wait for the cleanup to finish: a second click can interrupt the cleanup and leave the CI lock behind. The next build of this job clears such a lock, but it blocks the SECOFS job (it shares the lock) for up to 18 h.
 
 **All parameters:**
 
@@ -125,7 +125,7 @@ Find the red column, open Console Output, then match the message below.
 
 | Stage | Message or symptom | Cause | Fix |
 | --- | --- | --- | --- |
-| Gate | `another CI cycle holds the lock` | Another build of this job or the SECOFS job is running | Wait for it. A lock older than 18 h is cleared automatically |
+| Gate | `another CI cycle holds the lock` | The SECOFS job is running (a lock left by an earlier build of this job is now cleared at once) | Wait for the SECOFS build. Abort a build only once and let its cleanup finish, or the lock stays behind. A SECOFS lock older than 18 h is cleared automatically |
 | (any) | The build ran SECOFS | Started with Build Now | Use Build with Parameters and set `OFS` |
 | (form) | A parameter is missing from the form | Jenkins shows a new parameter only after one build of the Jenkinsfile that adds it | Start one build, abort it, then use Build with Parameters again |
 | Bootstrap | `FATAL: ... is not readable by role-nosofs` or `not readable as role-nosofs`, with a `chmod` hint | `SEED_SRC` or `SEED_RT` is not readable by the CI account | The owner of that path runs the printed `chmod -R o+rX`, plus `chmod o+x` on every parent directory (section 8.4) |
@@ -147,7 +147,7 @@ Find the red column, open Console Output, then match the message below.
 
 If you cannot fix it, send the maintainer the build number, the failing stage and the `FAIL` lines from Console Output.
 
-Known quirk: after a failed build the cleanup may print `scancel <id>` for the last job the build submitted, even when that job already finished (for example when Verify fails). Cancelling a finished job does nothing. A build that fails before Deploy (at Gate or Bootstrap) still holds the previous build's `ci_logs/`: its Build Artifacts are the previous build's logs, and the `scancel` names the previous build's last job.
+A failed build cancels only the Slurm job it submitted itself (`ci_logs/current_jobid` records the build number). A build that fails before Deploy (at Gate or Bootstrap) still holds the previous build's `ci_logs/`: its Build Artifacts are the previous build's logs, and the cleanup prints `skipping stale jobid` instead of cancelling.
 
 ## 8. Add your own test case (from your Hercules account)
 
