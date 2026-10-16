@@ -398,6 +398,8 @@ The difference from operational does not grow materially on the chained day: the
 
 ## 10. Jenkins (Hercules, manual only)
 
+For a step-by-step build, how to read the result and fixes for common failures, see [hercules_jenkins_run_guide.md](hercules_jenkins_run_guide.md).
+
 Each ATL variant runs in the Hercules Jenkins pipeline only from **Build with Parameters**, like STOFS-2D-Global. The PR-label trigger is not used: a build started by a user with `OFS=stofs_3d_atl_ufs_standalone` (pschism) or `OFS=stofs_3d_atl_ufs` (UFS coupled) bypasses the label check, **Build Now** and PR-label builds keep running SECOFS, and no GitHub status is posted.
 
 ATL uses the same stage columns as SECOFS: Prep, Nowcast, Forecast and Post each submit the variant's card through `run_stage.sh` (CI account and qos), wait for it, and pass only when the job log has `STAGE_SUMMARY stage=<stage> ofs=stofs_3d_atl_ufs status=PASS`; then Verify runs.
