@@ -591,6 +591,7 @@ def convert_schout_to_split():
       - salinity_{i}.nc:       salinity
       - horizontalVelX_{i}.nc: horizontalVelX
       - horizontalVelY_{i}.nc: horizontalVelY
+      - zCoordinates_{i}.nc, verticalVelocity_{i}.nc, diffusivity_{i}.nc (when present). MJ (10/13/26)
     """
     # Variable name mapping: schout name -> (split file prefix, split var name)
     VAR_2D = {
@@ -603,6 +604,9 @@ def convert_schout_to_split():
         'temp': ('temperature', 'temperature'),
         'salt': ('salinity', 'salinity'),
         'zcor': ('zCoordinates', 'zCoordinates'),
+        # OLDIO names (schism_step.F90 writeout_nc); the scribe spelling is the split name. MJ (10/13/26)
+        'vertical_velocity': ('verticalVelocity', 'verticalVelocity'),
+        'diffusivity': ('diffusivity', 'diffusivity'),
         'horizontalVelX': ('horizontalVelX', 'horizontalVelX'),
         'horizontalVelY': ('horizontalVelY', 'horizontalVelY'),
     }

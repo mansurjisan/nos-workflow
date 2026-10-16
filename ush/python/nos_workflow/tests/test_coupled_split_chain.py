@@ -31,7 +31,7 @@ _REPO_USH = Path(__file__).resolve().parents[3]
 _COMBINE = _REPO_USH / "schism_combine_outputs.py"
 
 
-def _write_oldio_schout(path: Path, with_precip: bool = False) -> None:
+def _write_oldio_schout(path: Path, with_precip: bool = False, with_w_diff: bool = False) -> None:
     """A stack shaped like combine_output11 output.
 
     Note the deliberate details: the OLDIO bottom-index spelling, a
@@ -76,6 +76,9 @@ def _write_oldio_schout(path: Path, with_precip: bool = False) -> None:
         ds.createVariable("zcor", "f4", d3)[:] = -1.5
         ds.createVariable("temp", "f4", d3)[:] = 20.0
         ds.createVariable("salt", "f4", d3)[:] = 30.0
+        if with_w_diff:  # iof_hydro(17)/(21)=1, the OLDIO names. MJ (10/13/26)
+            ds.createVariable("vertical_velocity", "f4", d3)[:] = 0.01
+            ds.createVariable("diffusivity", "f4", d3)[:] = 0.002
         hv = ds.createVariable("hvel", "f4", d3 + ("two",))
         hv[..., 0] = 0.5
         hv[..., 1] = -0.5
@@ -115,6 +118,27 @@ def test_split_carries_mesh_and_vectors(tmp_path):
     with netCDF4.Dataset(tmp_path / "temperature_1.nc") as ds:
         assert ds["temperature"].dimensions == (
             "time", "nSCHISM_hgrid_node", "nSCHISM_vgrid_layers")
+
+
+def test_split_publishes_vertical_velocity_and_diffusivity(tmp_path):
+    """ATL coupled (iof_hydro(17)=iof_hydro(21)=1): OLDIO 'vertical_velocity' and 'diffusivity'
+    land in the scribe-named split stacks the fields product publishes. MJ (10/13/26)"""
+    _write_oldio_schout(tmp_path / "schout_1.nc", with_w_diff=True)
+    _split(tmp_path)
+
+    for name, val in (("verticalVelocity", 0.01), ("diffusivity", 0.002)):
+        with netCDF4.Dataset(tmp_path / f"{name}_1.nc") as ds:
+            assert ds[name].dimensions == (
+                "time", "nSCHISM_hgrid_node", "nSCHISM_vgrid_layers")
+            assert np.allclose(ds[name][:], val)
+
+
+def test_split_skips_vertical_velocity_and_diffusivity_when_absent(tmp_path):
+    _write_oldio_schout(tmp_path / "schout_1.nc")
+    _split(tmp_path)
+
+    assert not (tmp_path / "verticalVelocity_1.nc").exists()
+    assert not (tmp_path / "diffusivity_1.nc").exists()
 
 
 def test_slab2d_publishes_from_a_coupled_stack(tmp_path):
