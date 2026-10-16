@@ -361,6 +361,8 @@ Single mode adds `stofs_2d_glo_mesh_info.json` to COMGES and the `t<HH>z.nowcast
 
 ## 5. Jenkins (Hercules, manual only)
 
+For a step-by-step build, how to read the result and fixes for common failures, see [hercules_jenkins_run_guide.md](hercules_jenkins_run_guide.md).
+
 STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status).
 
 | Parameter | Values | Meaning |
