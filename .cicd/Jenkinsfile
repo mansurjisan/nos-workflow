@@ -208,7 +208,9 @@ pipeline {
                                         JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                                         if [ -s "${JIDFILE}" ]; then
                                             read -r JBUILD JID < "${JIDFILE}" || true
-                                            if [ -n "${JBUILD:-}" ] && [ "${JBUILD}" != "${BUILD_NUMBER}" ]; then
+                                            # numeric build numbers only: a "manual <id>" entry is a hand run of run_stage.sh that may still be running. MJ (10/16/26)
+                                            case "${JBUILD:-}" in ''|*[!0-9]*) JBUILD="" ;; esac
+                                            if [ -n "${JBUILD}" ] && [ -n "${BUILD_NUMBER:-}" ] && [ "${JBUILD}" != "${BUILD_NUMBER}" ]; then
                                                 case "${JID:-}" in
                                                     ''|*[!0-9]*) echo "Gate: ignoring a non-numeric jobid in current_jobid" >&2 ;;
                                                     *)

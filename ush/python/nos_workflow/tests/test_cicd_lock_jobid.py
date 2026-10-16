@@ -139,8 +139,8 @@ def test_orphan_job_of_another_build_is_cancelled_and_stdout_stays_clean(tmp_pat
         assert (rc, out) == (0, "ACQUIRED") and _cancelled(d) == "10137191" and "cancelling job 10137191 left by build 11" in err
 
 
-def test_gate_cancels_nothing_for_this_build_a_missing_file_or_a_bad_id(tmp_path):
-    for n, jobid in enumerate(["12 555\n", None, "11 555;echo INJECT\n", "11\n", "11 abc\n"]):
+def test_gate_cancels_nothing_for_this_build_a_missing_file_a_bad_id_or_a_hand_run(tmp_path):
+    for n, jobid in enumerate(["12 555\n", None, "11 555;echo INJECT\n", "11\n", "11 abc\n", "manual 555\n"]):
         d = tmp_path / str(n)
         d.mkdir()
         assert _gate(d, None, jobid=jobid)[1] == "ACQUIRED" and _cancelled(d) == ""
