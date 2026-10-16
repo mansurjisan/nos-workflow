@@ -203,17 +203,33 @@ pipeline {
                                         fi
                                         return 1
                                     }
-                                    if try_acquire; then
+                                    # disableConcurrentBuilds: any job recorded by another build of this job is an orphan (scancel of a finished job is a no-op); stdout carries only ACQUIRED or HELD. MJ (10/16/26)
+                                    acquired() {
+                                        JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
+                                        if [ -s "${JIDFILE}" ]; then
+                                            read -r JBUILD JID < "${JIDFILE}" || true
+                                            if [ -n "${JBUILD:-}" ] && [ "${JBUILD}" != "${BUILD_NUMBER}" ]; then
+                                                case "${JID:-}" in
+                                                    ''|*[!0-9]*) echo "Gate: ignoring a non-numeric jobid in current_jobid" >&2 ;;
+                                                    *)
+                                                        echo "cancelling job ${JID} left by build ${JBUILD}" >&2
+                                                        bash -l -c "scancel ${JID}" >&2 || true
+                                                        ;;
+                                                esac
+                                            fi
+                                        fi
                                         echo "ACQUIRED"
                                         exit 0
+                                    }
+                                    if try_acquire; then
+                                        acquired
                                     fi
                                     INFO=$(cat "${LOCK_DIR}/info" 2>/dev/null || true)
-                                    if [ -n "${INFO}" ]; then
-                                        LOCK_EPOCH=$(printf '%s' "${INFO}" | awk '{print $NF}')
-                                    else
-                                        LOCK_EPOCH=$(stat -c %Y "${LOCK_DIR}" 2>/dev/null || echo 0)
-                                    fi
-                                    AGE=$((NOW - ${LOCK_EPOCH:-0}))
+                                    LOCK_EPOCH=$(printf '%s' "${INFO}" | awk '{print $NF}')
+                                    case "${LOCK_EPOCH}" in
+                                        ''|*[!0-9]*) LOCK_EPOCH=$(stat -c %Y "${LOCK_DIR}" 2>/dev/null || echo 0) ;;
+                                    esac
+                                    AGE=$((NOW - LOCK_EPOCH))
                                     # This job runs with disableConcurrentBuilds, so a holder URL under JOB_URL is an earlier build that ended without releasing. MJ (10/16/26)
                                     HOLDER=$(printf '%s' "${INFO}" | awk '{print $1}')
                                     SAME_JOB=0
@@ -223,24 +239,12 @@ pipeline {
                                     if [ "${SAME_JOB}" -eq 1 ] || [ "${AGE}" -gt 64800 ]; then
                                         if [ "${SAME_JOB}" -eq 1 ]; then
                                             echo "reclaiming the CI lock left by an earlier build of this job: ${INFO}" >&2
-                                            # the ended build may have left its Slurm job running (killed or double-aborted before its cleanup); cancel only the job it recorded. MJ (10/16/26)
-                                            HBUILD="${HOLDER%/}"
-                                            HBUILD="${HBUILD##*/}"
-                                            JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
-                                            if [ -s "${JIDFILE}" ]; then
-                                                read -r JBUILD JID < "${JIDFILE}" || true
-                                                if [ -n "${JID:-}" ] && [ "${JBUILD}" = "${HBUILD}" ]; then
-                                                    echo "cancelling job ${JID} left by build ${HBUILD}" >&2
-                                                    bash -l -c "scancel ${JID}" || true
-                                                fi
-                                            fi
                                         else
                                             echo "reclaiming stale CI lock (age ${AGE}s): ${INFO}" >&2
                                         fi
                                         rm -rf "${LOCK_DIR}"
                                         if try_acquire; then
-                                            echo "ACQUIRED"
-                                            exit 0
+                                            acquired
                                         fi
                                         echo "HELD:$(cat "${LOCK_DIR}/info" 2>/dev/null)"
                                         exit 0
@@ -375,7 +379,8 @@ pipeline {
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then
                     read -r JBUILD JID < "${JIDFILE}" || true
-                    if [ -n "${JID:-}" ] && [ "${JBUILD}" = "${BUILD_NUMBER}" ]; then
+                    case "${JID:-}" in ''|*[!0-9]*) JID="" ;; esac
+                    if [ -n "${JID}" ] && [ "${JBUILD}" = "${BUILD_NUMBER}" ]; then
                         echo "post/unsuccessful: scancel ${JID} (best-effort)"
                         bash -l -c "scancel ${JID}" || true
                     else
