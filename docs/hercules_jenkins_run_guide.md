@@ -65,6 +65,8 @@ To stop a running build, click the red **X** next to it in Build History (or **A
 
 Every build runs the same stages in order. `LEVEL` decides only whether Forecast and Post run, and what Verify checks.
 
+Section 12 has what each stage does, system by system, including SECOFS.
+
 1. **Checkout:** the job's branch.
 2. **Gate:** lets a manual STOFS build through without a PR label, forces `CYC=12` for ATL, and takes the CI lock.
 3. **Bootstrap:** builds the CI Python venv. The first time a system runs in the CI root, it copies `fix/` and `exec/` from `SEED_SRC`; the first time a dataset is used, it copies the dataset from `SEED_RT` (the ATL smoke dataset, 118 GB, in 5.5 min; the 2D-Global dataset, 60 GB, in 2.5 min). Later builds reuse the copies (section 8.1).
@@ -263,3 +265,83 @@ Live mode has no reference run. At smoke, Verify checks nothing beyond the stage
 | 2D-Global ADCIRC build | `/work2/noaa/nos-surge/mjisan/packages_2dglo/adcirc_v56.1.0_exec` |
 | Pipeline and scripts | `.cicd/Jenkinsfile`, `.cicd/scripts/run_stage.sh`, `.cicd/scripts/bootstrap.sh`, `.cicd/scripts/stofs_3d_atl.sh`, `.cicd/scripts/stofs_2d_glo.sh` |
 | Slack | `#nos-notifications` |
+
+## 12. Stage by stage
+
+What each Jenkins stage does for each system. The three systems share the stage names and `.cicd/scripts/run_stage.sh`. SECOFS is included because it runs in the same pipeline (it is what **Build Now** runs) and in its own job, `NOS/nos-workflow-secofs-hercules`.
+
+The Slurm stages all work the same way. `run_stage.sh` submits the system's card with account `nosofs` and polls `sacct` every 30 s. A stage passes only when the job log has `STAGE_SUMMARY stage=<stage> ofs=<system> status=PASS` (`ofs=stofs_3d_atl_ufs` for both ATL variants). Its time limit counts from submission, so queue wait counts.
+
+### 12.1 STOFS-3D-Atlantic
+
+Both variants: standalone (`stofs_3d_atl_ufs_standalone`) and coupled (`stofs_3d_atl_ufs`).
+
+| Stage | Runs on | What it does | LEVEL | Time (smoke builds) |
+| --- | --- | --- | --- | --- |
+| Checkout | Jenkins agent | Checks out the job's branch (`*/develop`) | all | seconds |
+| Gate | Jenkins agent | Lets a manual ATL build run without the PR label, forces `CYC=12` (ATL has only the 12z cycle) and takes the CI lock shared with the SECOFS job | all | seconds |
+| Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies `fix/stofs_3d_atl_ufs` and the variant's executables from `SEED_SRC` (pschism for standalone, `fv3_stofs_3d_atl.exe` for coupled, plus `tide_fac`). Once per dataset, copies `stofs_3d_atl/<variant>/<PDY>12` from `SEED_RT` and makes its `input/` files read-only; the second variant hard-links what it shares with the first | all | first copy 118 GB in 5.5 min, then seconds |
+| Deploy | Jenkins agent | Copies the checked-out nos-workflow (cards, scripts, Python, nos-utils) into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | all | seconds |
+| Environment Check | Jenkins agent | Modules, Python imports, executables and wgrib2; fails before any Slurm job is submitted | all | seconds |
+| Stage Data | Jenkins agent | Removes earlier `com/nos/stofs_3d_atl_ufs.<day>` directories from the CI com, then hard-links the dataset's PDY-1 and PDY day directories in: the init state, plus `staout_1` and `avg_bias` for the dynamic adjustment. comin and dcom are read in place from the dataset. Refuses `cycle` and `full` on a smoke-only dataset | all | about 1 s |
+| Prep | Slurm, 1 node | The variant's `jnos_prep_00.sh` builds the model inputs: atmospheric forcing (standalone: GFS+HRRR sflux; coupled: DATM forcing and its ESMF mesh), NWM rivers and the St. Lawrence, RTOFS boundary conditions and nudging, ADT-blended SSH, tides, and the dynamic water-level adjustment | all | 511 s standalone, 1592 s coupled |
+| Nowcast | Slurm, 62 nodes (standalone) or 63 (coupled) | The 24 h nowcast from the init state; writes the station output and the hotstart the forecast continues from | all | 1562 s standalone, 3094 s coupled |
+| Forecast | Slurm, 62 or 63 nodes | The 96 h forecast from the nowcast hotstart | cycle, full | not yet run in CI |
+| Post | Slurm, 1 node | Station products (`points.cwl`, `station.profile`) and field products, nowcast and forecast | cycle, full | not yet run in CI |
+| Verify | Jenkins agent | `compare_atl.py regress` against the dataset's reference. smoke: the 8 nowcast `staout` files. cycle: also the 8 forecast `staout` files, `points.cwl` and `station.profile`. full: also the ops comparison (report only). Report: `compare_atl.txt` | all | seconds |
+| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
+
+Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing stage deletes its own work directory (about 150 GB a cycle); a failed one keeps it for debugging. Verify tolerance: `CMP_TOL` (default 1e-3) for water level, velocity and wind, 10 times that for temperature and salinity, 100 times for pressure.
+
+### 12.2 STOFS-2D-Global
+
+`smoke` and `cycle` continue from the previous cycle (`COLD=0`); `full` is a cold start (`COLD=1`).
+
+| Stage | Runs on | What it does | LEVEL | Time (smoke build #10) |
+| --- | --- | --- | --- | --- |
+| Checkout | Jenkins agent | Checks out the job's branch (`*/develop`) | all | seconds |
+| Gate | Jenkins agent | Lets a manual 2D build run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full) | all | seconds |
+| Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies `fix/stofs_2d_glo` and `stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build (`padcirc`, `adcprep`) from `adcirc_v56.1.0_exec` beside it. Once per dataset, copies `stofs_2d_glo/<PDY><CYC>` from `SEED_RT`; its forcing, decomposition tar and `nod_equi` become read-only | all | first copy 60 GB in 2.5 min, then seconds |
+| Deploy | Jenkins agent | Copies the checked-out nos-workflow into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | all | seconds |
+| Environment Check | Jenkins agent | Modules, Python imports, `tide_fac`, `padcirc`, `adcprep`, the NCO tools (`ncdiff`, `ncrcat`, `ncks`) and `sbatch`/`sacct` | all | seconds |
+| Stage Data | Jenkins agent | Removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<day>` from the CI com, then links the dataset in: the cycle's forcing into `rerun/`, read-only; for smoke and cycle also `nod_equi` and the 4064-rank decomposition tar, read-only, and the previous cycle's chain files (`hotstart` for tide, `restart` for surf) as writable copies | all | seconds |
+| Prep | Slurm, 1 node, 64 GB | `gfs_ncst` and `gfs_fcst` (the forcing build) skip, because the dataset already holds the forcing. At `full`, `adcprep` runs first and builds `nod_equi` and the decomposition | all | 30 s (`full`: about 1.9 h more) |
+| Nowcast | Slurm, 52 nodes | The 6 h nowcast from the previous cycle's chain files: tide (NWS=0, 4064 ranks on 51 nodes), then surf (NWS=14014, 4064 + 32 writer ranks). Writes this cycle's chain files and checks every output for dropped records. At `full`, the 162 h spin-up runs first | all | 1352 s (`full`: spin-up about 26 min more) |
+| Forecast | Slurm, 52 nodes | The 180 h forecast: tide, then surf, each followed by the record-gap check | cycle, full | not yet run in CI; about 77 min in hand runs |
+| Post | Slurm, 1 node, 100 GB (on the prep card) | `ncdiff` makes the surge-only products, swl = cwl - htp, for the station and field files. `ncrcat` joins the met forcing into the ops met files (`pressfc`, `uvgrd10m`, `icec`): hourly to 120 h, then 3-hourly to 180 h, 7 + 121 + 21 = 149 records. anomaly, bias and GRIB2 are not run on Hercules | cycle, full | not yet run in CI; about 15 min in hand runs |
+| Verify | Jenkins agent | `compare_2dglo.py` against the dataset's reference. smoke: `rerun/stofs_2d_glo_{tide,surf}.61.nc`. cycle and full: also the `points.*.nc` station files, plus the station comparison with ops (report only; warns above 500 mm). Report: `compare_2dglo.txt` | all | seconds |
+| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
+
+Time limit per Slurm stage: the launcher walltime plus 1 h (section 7). The jobs run with `KEEPDATA=NO` and remove their own work directories. Verify tolerance: bitwise, or the largest difference in zeta, u-vel and v-vel within `CMP_TOL` (default 1e-3 m or m/s).
+
+### 12.3 SECOFS
+
+`OFS=secofs_ufs`: DATM and SCHISM coupled through UFS-Coastal, a 6 h nowcast and a 48 h forecast. `LEVEL` is ignored; every build runs all four model stages.
+
+| Stage | Runs on | What it does | Time limit |
+| --- | --- | --- | --- |
+| Checkout | Jenkins agent | Checks out the job's branch, or the PR merge commit on a PR build | - |
+| Gate | Jenkins agent | A PR build runs only when the PR carries the `hercules-nos-RT` label; Build Now and branch builds always run. Takes the CI lock and posts a `pending` GitHub status (`hercules-ci/cycle`) on the PR head commit, or on the branch commit for a branch build | - |
+| Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies the whole `fix/` and `exec/` trees from `SEED_SRC` and checks for `fv3_coastalS.exe`. In frozen mode, once per dataset, copies `comin_<PDY><CYC>` (about 80 GB) from `SEED_RT` | - |
+| Deploy | Jenkins agent | Copies the checked-out nos-workflow into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | - |
+| Environment Check | Jenkins agent | Modules, Python imports, `fv3_coastalS.exe`, `schism_combine_hotstart7.exe` and `wgrib2 -config` | - |
+| Stage Data | Jenkins agent | live (the default): `ush/stage_comin.py` downloads the cycle's public inputs (GFS, HRRR, RTOFS, NWM) into `$RT_DATA_ROOT/comin_<PDY><CYC>`. frozen: checks the stored dataset. Then makes sure the nowcast init file exists: frozen copies it from the dataset, live makes a cold-start rest state when it is missing | - |
+| Prep | Slurm, 1 node | Builds the DATM atmospheric forcing (GFS/HRRR GRIB2) and its ESMF mesh, NWM rivers, RTOFS boundary conditions and nudging, and tides | 2:10 |
+| Nowcast | Slurm, 37 nodes | The 6 h coupled nowcast from the init state; writes the hotstart the forecast continues from | 3:00 (the 1:30 walltime doubled, a value taken from the WCOSS2 PBS launcher, whose cards retry after a ParMETIS crash; the Hercules card does not retry) |
+| Forecast | Slurm, 37 nodes | The 48 h coupled forecast | 5:40 |
+| Post | Slurm, 1 node | Station and field products | 2:10 |
+| Verify | Jenkins agent | `verify.sh`: all four stage logs have `STAGE_SUMMARY ... status=PASS`, and `restart_outputs` exists with files over 1 MB. There is no comparison against a reference | - |
+| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the current Slurm job. Posts `success` or `failure` to `hercules-ci/cycle` on the same commit; on a PR build also removes the `hercules-nos-RT` label. Posts to Slack | - |
+
+### 12.4 SECOFS against the STOFS systems
+
+| | SECOFS | STOFS-3D-ATL and STOFS-2D-Global |
+| --- | --- | --- |
+| Trigger | the `hercules-nos-RT` PR label, Build Now, or a branch build | Build with Parameters only |
+| `LEVEL` | ignored: always Prep, Nowcast, Forecast, Post | smoke, cycle or full |
+| Data | live (downloads the cycle's inputs), the default | frozen (a stored dataset), which you must set; `DATA_MODE` defaults to live for every system |
+| Verify | stage PASS and output present | regression against a reference run, bitwise or within tolerance |
+| GitHub status | `hercules-ci/cycle` on the PR head or branch commit | none |
+| Stage time limits | fixed in `run_stage.sh` (above) | ATL: card walltime + 30 min; 2D-Global: launcher walltime + 1 h |
+
+A SECOFS build shows that the cycle ran, not that its numbers match a reference.
