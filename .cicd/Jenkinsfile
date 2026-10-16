@@ -109,7 +109,7 @@ pipeline {
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
         choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo, stofs_3d_atl_ufs_standalone (pschism) or stofs_3d_atl_ufs (UFS coupled), never the PR label; Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
         string(name: 'DCOM_BUNDLE', defaultValue: '', description: 'stofs_3d_atl_* with DATA_MODE=live only: case bundle dir holding dcom/ and seeds/dyn_seed_<PDY-1>/ (run guide section 4.2); must be readable by the CI account. Not needed for frozen')
-        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo and stofs_3d_atl_*. 2D-GLO smoke: COLD=0 nowcast job (tide then surf), compared with the frozen reference. 2D-GLO cycle: COLD=0 full 4-job chain (prep, nowcast, forecast, post), compared with the frozen reference. 2D-GLO full: COLD=1 cold start + cycle (the same 4 jobs, longer), compared with the frozen reference, ops comparison reported. 2D-GLO frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full. ATL smoke: Prep, Nowcast, Verify. ATL cycle and full: Prep, Nowcast, Forecast, Post, Verify; full adds the report-only ops comparison. ATL needs a seeded frozen dataset (stofs_3d_atl.sh seed); CYC is forced to 12. Use DATA_MODE=frozen')
+        choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo and stofs_3d_atl_*, which run the Prep, Nowcast, Forecast and Post stages. smoke: Prep, Nowcast, Verify. cycle and full: Prep, Nowcast, Forecast, Post, Verify. 2D-GLO smoke and cycle continue from the previous cycle (COLD=0); 2D-GLO full is the COLD=1 cold start, which adds adcprep to Prep and the spin-up to Nowcast. The report-only ops comparison runs at cycle and full for 2D-GLO and at full for ATL. 2D-GLO frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full. ATL needs a seeded frozen dataset (stofs_3d_atl.sh seed); CYC is forced to 12. Use DATA_MODE=frozen')
     }
 
     environment {
@@ -263,53 +263,43 @@ pipeline {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/stage_data.sh"'
             }
         }
-        // Prep..Verify run for SECOFS and STOFS-3D-ATL (ATL smoke stops after Nowcast); the STOFS-2D-Global stages below keep their own chain. MJ (10/15/26)
+        // Prep..Verify run for SECOFS, STOFS-3D-ATL and STOFS-2D-Global (the manual systems stop after Nowcast at LEVEL=smoke). MJ (10/15/26)
         stage('Prep') {
-            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS) || env.CI_OFS == 'stofs_2d_glo') } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" prep "${PDY}" "${CYC}"'
             }
         }
         stage('Nowcast') {
-            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS) || env.CI_OFS == 'stofs_2d_glo') } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" nowcast "${PDY}" "${CYC}"'
             }
         }
         stage('Forecast') {
-            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || ((isAtlOfs(env.CI_OFS) || env.CI_OFS == 'stofs_2d_glo') && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" forecast "${PDY}" "${CYC}"'
             }
         }
         stage('Post') {
-            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || (isAtlOfs(env.CI_OFS) && env.LEVEL != 'smoke')) } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || ((isAtlOfs(env.CI_OFS) || env.CI_OFS == 'stofs_2d_glo') && env.LEVEL != 'smoke')) } }
             steps {
                 sh 'bash -l "${WORKSPACE}/.cicd/scripts/run_stage.sh" post "${PDY}" "${CYC}"'
             }
         }
         stage('Verify') {
-            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS)) } }
+            when { expression { env.RUN_CYCLE == 'true' && (env.CI_OFS == 'secofs_ufs' || isAtlOfs(env.CI_OFS) || env.CI_OFS == 'stofs_2d_glo') } }
             steps {
                 script {
                     if (isAtlOfs(env.CI_OFS)) {
                         sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_3d_atl.sh" verify'
+                    } else if (env.CI_OFS == 'stofs_2d_glo') {
+                        sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" verify'
                     } else {
                         sh 'bash -l "${WORKSPACE}/.cicd/scripts/verify.sh"'
                     }
                 }
-            }
-        }
-        stage('Run 2D-GLO') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'stofs_2d_glo' } }
-            steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" run'
-            }
-        }
-        stage('Verify 2D-GLO') {
-            when { expression { env.RUN_CYCLE == 'true' && env.CI_OFS == 'stofs_2d_glo' } }
-            steps {
-                sh 'bash -l "${WORKSPACE}/.cicd/scripts/stofs_2d_glo.sh" verify'
             }
         }
     }
@@ -354,7 +344,7 @@ pipeline {
             }
         }
         unsuccessful {
-            // run_stage.sh writes the current jobid here (SECOFS and ATL); best-effort scancel it on failure. MJ (10/15/26)
+            // run_stage.sh writes the current jobid here (SECOFS, ATL and 2D-GLO); best-effort scancel it on failure. MJ (10/15/26)
             sh '''
                 JIDFILE="${WORKSPACE}/ci_logs/current_jobid"
                 if [ -s "${JIDFILE}" ]; then

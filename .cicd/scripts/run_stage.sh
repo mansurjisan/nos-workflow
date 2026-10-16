@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Submit one SECOFS or STOFS-3D-ATL Hercules Slurm card and gate on its STAGE_SUMMARY.
+# Submit one SECOFS, STOFS-3D-ATL or STOFS-2D-Global Hercules Slurm card and gate on its STAGE_SUMMARY. MJ (10/15/26)
 # Usage: run_stage.sh <prep|nowcast|forecast|post> <PDY> <CYC>
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -25,7 +25,7 @@ case "${STAGE}" in
 esac
 
 # The STOFS-3D-ATL variants share this template; stofs_3d_atl.sh card-env supplies what differs (extra exports, the card's RPTDIR default, RUN). MJ (10/15/26)
-ATL_EXPORTS=""; ATL_LOGPFX=""; ATL_RPTDIR=""   # nothing inherited may leak into the SECOFS path. MJ (10/15/26)
+ATL_EXPORTS=""; ATL_LOGPFX=""; ATL_RPTDIR=""; ATL_CLEAN=0; STAGE_CARD=""; STAGE_SBATCH=""   # nothing inherited may leak into the SECOFS path. MJ (10/15/26)
 GATE_OFS="${OFS}"
 case "${OFS}" in
   stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs)
@@ -40,10 +40,19 @@ case "${OFS}" in
     eval "${_env}"
     COMROOT_STAGED="${ATL_COMIN}"
     GATE_OFS="${ATL_RUN}"
+    ATL_CLEAN=1
+    ;;
+  stofs_2d_glo)
+    # The same hook for STOFS-2D-Global: card-env also gives the card (post runs on the prep card), the job's sbatch flags and walltime, and the timeout; the jobs run
+    # with KEEPDATA=NO, so there is no run directory to clean. MJ (10/15/26)
+    _env=$(PDY="${PDY}" CYC="${CYC}" bash "${SCRIPT_DIR}/stofs_2d_glo.sh" card-env "${STAGE}") || exit 2
+    eval "${_env}"
+    COMROOT_STAGED="${ATL_COMIN}"
+    GATE_OFS="${ATL_RUN}"
     ;;
 esac
 
-CARD="${HOMEnos}/slurm/${OFS}/jnos_${STAGE}_00.sh"
+CARD="${STAGE_CARD:-${HOMEnos}/slurm/${OFS}/jnos_${STAGE}_00.sh}"
 [ -r "${CARD}" ] || { echo "FATAL: card not found: ${CARD}"; exit 2; }
 
 if [ -n "${ATL_EXPORTS}" ]; then RPTDIR="${ATL_RPTDIR}"; else RPTDIR=$(card_value "${CARD}" RPTDIR); fi
@@ -55,7 +64,7 @@ echo "submitting ${CARD} (PDY=${PDY} CYC=${CYC})"
 ACCT_ARGS=()
 [ -n "${SLURM_CI_ACCOUNT:-}" ] && ACCT_ARGS+=(--account="${SLURM_CI_ACCOUNT}")
 [ -n "${SLURM_CI_QOS:-}" ] && ACCT_ARGS+=(--qos="${SLURM_CI_QOS}")
-SBATCH_OUT=$(sbatch ${ACCT_ARGS[@]+"${ACCT_ARGS[@]}"} --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}"${ATL_EXPORTS:+,"${ATL_EXPORTS}"} "${CARD}")
+SBATCH_OUT=$(sbatch ${ACCT_ARGS[@]+"${ACCT_ARGS[@]}"} ${STAGE_SBATCH} --export=ALL,PDY="${PDY}",CYC="${CYC}",COMROOT_STAGED="${COMROOT_STAGED}",NOS_VENV="${VENV_PATH:-}",NOS_PTMP="${NOS_PTMP}"${ATL_EXPORTS:+,"${ATL_EXPORTS}"} "${CARD}")
 echo "${SBATCH_OUT}"
 JOBID=$(awk '/Submitted batch job/{print $NF}' <<<"${SBATCH_OUT}")
 [ -n "${JOBID}" ] || { echo "FATAL: could not parse jobid from sbatch output"; exit 2; }
@@ -98,7 +107,7 @@ done
 
 if [ -r "${LOG}" ] && grep -q "STAGE_SUMMARY stage=${STAGE} ofs=${GATE_OFS} status=PASS" "${LOG}"; then
   # A passing ATL stage no longer needs its run directory (~150 GB a cycle); a failed one is kept for debugging. MJ (10/15/26)
-  [ -z "${ATL_EXPORTS}" ] || bash "${SCRIPT_DIR}/stofs_3d_atl.sh" clean-job "${JOBID}" || echo "WARN: could not clean the run directory of job ${JOBID}"
+  [ "${ATL_CLEAN}" != 1 ] || bash "${SCRIPT_DIR}/stofs_3d_atl.sh" clean-job "${JOBID}" || echo "WARN: could not clean the run directory of job ${JOBID}"
   echo "PASS[${STAGE}]: ${LOG}"
   exit 0
 fi

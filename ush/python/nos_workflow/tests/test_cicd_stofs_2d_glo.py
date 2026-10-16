@@ -1,4 +1,4 @@
-"""Manual STOFS-2D-Global support in the Hercules Jenkins pipeline (.cicd), against stub sbatch/sacct/module/rsync inputs. Offline. MJ (10/13/26)"""
+"""Manual STOFS-2D-Global support in the Hercules Jenkins pipeline (.cicd): the shared Prep/Nowcast/Forecast/Post stages through run_stage.sh, Stage Data, Verify and the seed, against stub sbatch/sacct/module/rsync inputs. Offline. MJ (10/15/26)"""
 from __future__ import annotations
 
 import importlib.util
@@ -21,6 +21,7 @@ JENKINSFILE = CICD / "Jenkinsfile"
 SCRIPT = SCRIPTS / "stofs_2d_glo.sh"
 LAUNCHER = REPO / "slurm" / "stofs_2d_glo" / "launch_stofs_2d_glo.sh"
 STATUS = REPO / "slurm" / "stofs_2d_glo" / "status_stofs_2d_glo.sh"
+needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
 PDY, CYC = "20261012", "06"
 PREV = ("20261012", "00")
 AMBIENT = ("COMROOT_2DGLO", "WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WORK", "OPS_WARN_MM", "SEED_RT", "SEED_ADCIRC", "FORCE",
@@ -54,10 +55,12 @@ class Ci:
         self.bin = tmp / "bin"
         self.stubs = tmp / "stubs"
         self.venv = tmp / "venv"
-        self.com = self.ptmp / "tester" / "com_2dglo_ci"
+        self.com = self.ptmp / "tester" / "com"   # the shared com, as SECOFS and ATL. MJ (10/15/26)
+        self.rpt = self.ptmp / "tester" / "rpt" / "stofs_2d_glo"
         self.ds = self.rt / "stofs_2d_glo" / f"{PDY}{CYC}"
         for d in (self.home, self.ptmp, self.rt, self.ws, self.bin, self.stubs):
             d.mkdir(parents=True, exist_ok=True)
+        (self.home / "slurm").symlink_to(REPO / "slurm")   # run_stage.sh and card-env read the real cards. MJ (10/15/26)
         _touch(self.venv / "bin" / "activate", "")
         _stub(self.bin / "module")
         self.env = {k: v for k, v in os.environ.items() if k not in AMBIENT}
@@ -125,15 +128,35 @@ def _stage_conditions():
     return dict(re.findall(r"stage\('([^']+)'\) \{\n\s+when \{ (.+?) \}\n\s+steps", text))
 
 
-def test_secofs_stages_run_only_for_secofs_and_2dglo_stages_only_for_2dglo():
+def _runs(cond: str, ofs: str, level: str) -> bool:
+    """Evaluates a stage `when` expression for one (OFS, LEVEL): only the operators and isAtlOfs() the Jenkinsfile uses. MJ (10/15/26)"""
+    py = re.sub(r"^expression \{ | \}$", "", cond).replace("env.RUN_CYCLE == 'true'", "True").replace("&&", " and ").replace("||", " or ")
+    py = py.replace("isAtlOfs(env.CI_OFS)", str(ofs.startswith("stofs_3d_atl"))).replace("!=", " != ")
+    return bool(eval(re.sub(r"env\.CI_OFS", repr(ofs), re.sub(r"env\.LEVEL", repr(level), py))))
+
+
+MODEL_STAGES = ["Prep", "Nowcast", "Forecast", "Post", "Verify"]
+
+
+@pytest.mark.parametrize("ofs", ["secofs_ufs", "stofs_2d_glo", "stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs"])
+@pytest.mark.parametrize("level", ["smoke", "cycle", "full"])
+def test_jenkinsfile_stage_conditions_for_every_ofs_and_level(ofs, level):
+    """SECOFS always runs all five; the manual systems (2D-GLO and both ATL variants) drop Forecast and Post at smoke. MJ (10/15/26)"""
     cond = _stage_conditions()
-    for name in ("Prep", "Nowcast", "Forecast", "Post", "Verify"):
-        assert "env.CI_OFS == 'secofs_ufs'" in cond[name] and "env.RUN_CYCLE == 'true'" in cond[name], name
-    for name in ("Run 2D-GLO", "Verify 2D-GLO"):
-        assert "env.CI_OFS == 'stofs_2d_glo'" in cond[name] and "env.RUN_CYCLE == 'true'" in cond[name], name
-    # the shared stages (Bootstrap, Deploy, Environment Check, Stage Data) run for both systems. MJ (10/13/26)
+    ran = [n for n in MODEL_STAGES if _runs(cond[n], ofs, level)]
+    want = ["Prep", "Nowcast", "Verify"] if ofs != "secofs_ufs" and level == "smoke" else MODEL_STAGES
+    assert ran == want, (ofs, level, ran)
     for name in ("Bootstrap", "Deploy", "Environment Check", "Stage Data"):
         assert cond[name] == "environment name: 'RUN_CYCLE', value: 'true'", name
+    for name in MODEL_STAGES:
+        assert "env.RUN_CYCLE == 'true'" in cond[name], name
+
+
+def test_jenkinsfile_has_no_2dglo_run_chain_and_verifies_2dglo_through_the_shared_stage():
+    text = JENKINSFILE.read_text()
+    assert not {"Run 2D-GLO", "Verify 2D-GLO"} & set(_stage_conditions())
+    assert 'stofs_2d_glo.sh" run' not in text and 'stofs_2d_glo.sh" verify' in text
+    assert not re.search(r"\brun\)|cmd_run|afterok|WAIT_S|POLL_S|BAD_STATES", SCRIPT.read_text().split("\nset -euo pipefail\n", 1)[1])
 
 
 def test_2dglo_is_never_selected_by_the_pr_label_path():
@@ -158,33 +181,13 @@ def test_common_sh_defaults_to_secofs_and_rejects_an_unknown_system(ci):
     assert r.returncode == 2 and "CI_OFS must be" in r.stderr
 
 
-def _hms(text: str) -> int:
-    h, m, s = (int(x) for x in text.split(":"))
-    return h * 3600 + m * 60 + s
-
-
-def test_poll_limits_cover_the_critical_path_of_each_level():
-    """A limit below the chain's own walltimes would only ever mislabel a healthy run (same rule as run_stage.sh's TIMEOUT_S). MJ (10/13/26)"""
-    launcher = LAUNCHER.read_text()
-    warm = [_hms(x) for x in re.search(r"PW=([0-9:]+); NSEG=ncst; NW=([0-9:]+)\n", launcher).groups()]
-    cold = [_hms(x) for x in re.search(r"1\)\s+PSEG=.*?PW=([0-9:]+);.*?NW=([0-9:]+) ;;", launcher).groups()]
-    fcst, post = (_hms(re.search(rf"W_{k}:-([0-9:]+)\}}", launcher).group(1)) for k in ("FORECAST", "POST"))
-    script = SCRIPT.read_text()
-    wait = {lv: int(re.search(rf'{lv}\) +COLD=\d; STAGES=(?:\w+|"[^"]*"); +EXPECT=\d; WAIT_DEFAULT=(\d+)', script).group(1)) for lv in ("smoke", "cycle", "full")}
-    crit = {"smoke": warm[1], "cycle": sum(warm) + fcst + post, "full": sum(cold) + fcst + post}
-    for lv in wait:
-        assert wait[lv] >= crit[lv] + 3600, (lv, wait[lv], crit[lv])
-    pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
-    assert wait["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"
-
-
 def _tree(root: Path):
     return sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
 
 
-def test_frozen_smoke_stages_state_and_the_ncst_forcing_only(ci):
+def test_frozen_smoke_stages_state_and_both_forcing_segments(ci):
     ci.dataset()
-    _touch(ci.com / "stale_from_an_earlier_build", "old")
+    _touch(ci.com / "nos" / "stofs_2d_glo.20260101" / "stale_from_an_earlier_build", "old")
     r = ci.script("stage")
     assert r.returncode == 0, r.stderr + r.stdout
     assert "stage_data PASS" in r.stdout
@@ -193,7 +196,7 @@ def test_frozen_smoke_stages_state_and_the_ncst_forcing_only(ci):
     assert got == sorted([
         "nos/stofs_2d_glo/stofs_2d_glo_4064.tar", "nos/stofs_2d_glo/stofs_2d_glo_4064.tar.json", "nos/stofs_2d_glo/stofs_2d_glo_nod_equi",
         f"nos/stofs_2d_glo.{PREV[0]}/stofs_2d_glo.t{PREV[1]}z.hotstart", f"nos/stofs_2d_glo.{PREV[0]}/stofs_2d_glo.t{PREV[1]}z.restart",
-        *[f"{day}/stofs_2d_glo_ncst.{n}.nc" for n in (221, 222, 225)]])
+        *[f"{day}/stofs_2d_glo_{seg}.{n}.nc" for seg in ("ncst", "fcst") for n in (221, 222, 225)]])
     assert (ci.com / day / "stofs_2d_glo_ncst.221.nc").read_text() == "forcing ncst 221"
     # the big read-only inputs are hard links of the dataset, the .json (rewritten in place on a rebuild) is a copy. MJ (10/13/26)
     ges = Path("nos/stofs_2d_glo")
@@ -235,24 +238,94 @@ def test_frozen_stage_needs_the_sentinel(ci):
     assert ci.script("stage", LEVEL="full").stdout.count("seed 20261012 06 cold") == 1
 
 
-def test_stage_refuses_to_clear_a_comroot_outside_nos_ptmp(ci):
+COM_RUN = "stofs_2d_glo"
+
+
+def test_stage_deletes_only_the_2dglo_directories_and_keeps_everything_else(ci):
     ci.dataset()
-    outside = ci.tmp / "precious"
-    _touch(outside / "file", "keep")
-    r = ci.script("stage", COMROOT_2DGLO=str(outside))
-    assert r.returncode == 1 and "not under NOS_PTMP" in r.stderr and (outside / "file").read_text() == "keep"
-    r = ci.script("stage", COMROOT_2DGLO=f"{ci.ptmp}/a/../../precious")
-    assert r.returncode == 1 and "contains .." in r.stderr and (outside / "file").is_file()
-    r = ci.script("stage", COMROOT_2DGLO=str(ci.ptmp))
-    assert r.returncode == 1
-    # the shared com (live SECOFS and ATL cycles) and its parent are refused even though they sit under NOS_PTMP. MJ (10/13/26)
-    keep = _touch(ci.ptmp / "tester" / "com" / "nos" / "live", "keep")
-    for shared, why in ((f"{ci.ptmp}/tester/com", "shared com"), (f"{ci.ptmp}/tester/com/", "shared com"), (f"{ci.ptmp}/tester", "two levels")):
-        r = ci.script("stage", COMROOT_2DGLO=shared)
-        assert r.returncode == 1 and why in r.stderr and keep.read_text() == "keep", shared
-    stale = _touch(ci.com / "stale", "old")
+    nos = ci.com / "nos"
+    keep = [_touch(nos / n / "f", "keep") for n in (
+        f"secofs_ufs.{PDY}", f"secofs_ufs.20261011", "secofs_ufs", f"stofs_3d_atl_ufs.{PDY}", "stofs_3d_atl_ufs", "stofs_3d_atl_ufs.20261011",
+        "stofs_2d_glo.2026101", "stofs_2d_glo.20261011x", "stofs_2d_glo_ww3.20261011", "stofs_2d_glo.latest", "stofs_2d_glo_x", "xstofs_2d_glo.20261011")]
+    keep += [_touch(ci.com / "other" / "f", "keep"), _touch(ci.ptmp / "tester" / "com_atl_sa" / "nos" / "mine", "keep"), _touch(ci.ptmp / "tester" / "com_other" / "f", "keep"),
+             _touch(ci.ptmp / "tester" / "work" / "stofs_2d_glo" / "job.1" / "f", "keep"), _touch(ci.rt / "stofs_2d_glo" / "2026101012" / "f", "keep"),
+             _touch(ci.ptmp / "other_user" / "com" / "nos" / "stofs_2d_glo.20261011" / "f", "keep")]
+    gone = [_touch(nos / n / "f", "old") for n in (f"stofs_2d_glo.{PDY}", "stofs_2d_glo.20261011", "stofs_2d_glo.20260101", "stofs_2d_glo")]
     r = ci.script("stage")
-    assert r.returncode == 0 and not stale.exists() and keep.read_text() == "keep"
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert not any(g.exists() for g in gone), [g for g in gone if g.exists()]
+    assert all(k.is_file() for k in keep), [k for k in keep if not k.is_file()]
+
+
+def test_stage_refuses_symlinked_or_odd_com_targets_and_deletes_nothing_first(ci):
+    ci.dataset()
+    victim = _touch(ci.tmp / "victim" / "f", "keep")
+    nos = ci.com / "nos"
+    # a valid target that sorts before the bad one must survive: every target is checked before the first rm. MJ (10/15/26)
+    early = _touch(nos / "stofs_2d_glo.20260101" / "f", "must survive a refusal")
+    (nos / "stofs_2d_glo.20261011").symlink_to(victim.parent)
+    r = ci.script("stage")
+    assert r.returncode == 1 and "is a symlink or not a plain directory" in r.stderr and victim.is_file() and early.is_file()
+    (nos / "stofs_2d_glo.20261011").unlink()
+    ges = nos / "stofs_2d_glo"
+    ges.symlink_to(victim.parent)
+    r = ci.script("stage")
+    assert r.returncode == 1 and victim.is_file() and early.is_file()
+    ges.unlink()
+    shutil.rmtree(ci.com)
+    ci.com.symlink_to(victim.parent)
+    r = ci.script("stage")
+    assert r.returncode == 1 and "refusing to clear" in r.stderr and victim.is_file()
+    ci.com.unlink()
+    ci.com.mkdir()
+    (ci.com / "nos").symlink_to(victim.parent)
+    r = ci.script("stage")
+    assert r.returncode == 1 and "is a symlink" in r.stderr and victim.is_file()
+    (ci.com / "nos").unlink()
+    for bad in ("..", ".", "a/b"):
+        r = ci.script("stage", LOGNAME=bad)
+        assert r.returncode == 1 and "odd LOGNAME" in r.stderr, bad
+    assert victim.is_file()
+
+
+def test_stage_ignores_an_inherited_comroot_2dglo_and_clears_the_old_ci_root_once(ci):
+    ci.dataset()
+    precious = _touch(ci.tmp / "precious" / "nos" / "stofs_2d_glo.20261011" / "f", "keep")
+    old = _touch(ci.ptmp / "tester" / "com_2dglo_ci" / "nos" / "f", "old")
+    r = ci.script("stage", COMROOT_2DGLO=str(ci.tmp / "precious"))
+    assert r.returncode == 0 and precious.is_file() and not old.exists() and r.stdout.count("removed the old CI com") == 1
+    assert (ci.com / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc").is_file()
+    assert "removed the old CI com" not in ci.script("stage").stdout
+    link = ci.ptmp / "tester" / "com_2dglo_ci"
+    link.symlink_to(precious.parent)
+    r = ci.script("stage")
+    assert r.returncode == 0 and "leaving" in r.stderr and precious.is_file()
+
+
+@needs_rsync
+def test_stage_links_the_forcing_into_a_writable_rerun_directory_from_a_read_only_dataset(ci):
+    ds = ci.dataset()
+    for f in ds.rglob("*"):
+        if f.is_file() and ("rerun" in f.parts or f.parent.name == "stofs_2d_glo") and f.suffix != ".json":
+            f.chmod(0o444)
+    for d in sorted((ds / "input").rglob("*"), reverse=True):
+        if d.is_dir():
+            d.chmod(0o555)
+    try:
+        r = ci.script("stage")
+        assert r.returncode == 0, r.stderr + r.stdout
+        rr = ci.com / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun"
+        assert os.access(rr, os.W_OK) and os.access(ci.com / "nos" / "stofs_2d_glo", os.W_OK) and os.access(ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}", os.W_OK)
+        # the jobs publish their products beside the forcing, and a rebuilt decomposition replaces the tar by rename and rewrites the .json. MJ (10/15/26)
+        (rr / "stofs_2d_glo_tide.61.nc").write_text("product")
+        (ci.com / "nos" / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").write_text("{}")
+        assert (rr / "stofs_2d_glo_ncst.221.nc").samefile(ds / "input" / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc")
+        assert (ds / "input" / "nos" / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").read_text() == "ges stofs_2d_glo_4064.tar.json"
+        assert ci.script("stage").returncode == 0     # a second stage clears the linked tree and links it again. MJ (10/15/26)
+    finally:
+        for d in (ds / "input").rglob("*"):
+            if d.is_dir():
+                d.chmod(0o755)
 
 
 def test_bad_arguments_are_rejected(ci):
@@ -305,112 +378,182 @@ def test_live_stage_tolerates_only_the_reference_download_failure(ci):
     assert ci.script("stage", DATA_MODE="sometimes").returncode == 1
 
 
-LABELS = {"smoke": "nowcast", "cycle": "prep nowcast forecast post", "full": "prep nowcast forecast post"}
-ALL_STAGES = "prep nowcast forecast post"
+# ---- Prep/Nowcast/Forecast/Post: run_stage.sh with the 2D-GLO card-env ---- MJ (10/15/26)
+
+RUN_STAGE = SCRIPTS / "run_stage.sh"
+WALL = {("prep", False): "0:50:00", ("prep", True): "3:50:00", ("nowcast", False): "1:20:00", ("nowcast", True): "2:20:00",
+        ("forecast", False): "2:00:00", ("forecast", True): "2:00:00", ("post", False): "1:15:00", ("post", True): "1:15:00"}
+# stage: (card, ADCIRC_SEGMENT warm, cold, ADCIRC_STREAM, sbatch node flags). MJ (10/15/26)
+JOB = {"prep": ("prep", "ncst fcst", "adcprep ncst fcst", "", "-N 1 -n 1 --mem=64G"),
+       "nowcast": ("nowcast", "ncst", "spinup ncst", "tide surf", "-N 52"),
+       "forecast": ("forecast", "fcst", "fcst", "tide surf", "-N 52"),
+       "post": ("prep", "ncdiff ncrcat", "ncdiff ncrcat", "", "-N 1 -n 1 --mem=100G")}
 
 
-def _chain_stubs(ci: Ci, states, labels: str, passed=None):
-    """Stub launcher (records its environment, writes the job list), real status script, sacct that steps through `states`
-    (one snapshot per poll; the last repeats), scancel recorder, and the cards' STAGE_SUMMARY logs. MJ (10/13/26)"""
-    sl = ci.home / "slurm" / "stofs_2d_glo"
-    _stub(sl / "launch_stofs_2d_glo.sh", r'''#!/bin/bash
-echo "$@" > "$STUB_DIR/launch.args"
-env | grep -E '^(COLD|STAGES|SUBMIT_GFS|KEEPDATA|SLURM_CI_ACCOUNT|SLURM_CI_QOS|ADCIRC_EXEC_DIR|COMROOT_2DGLO|NOS_VENV)=' | sort > "$STUB_DIR/launch.env"
-J="$NOS_PTMP/$LOGNAME/slurm_2dglo/jobs_$1$2.txt"; mkdir -p "$(dirname "$J")"; : > "$J"
-i=100; for l in $STUB_LABELS; do i=$((i+1)); echo "$l $i" >> "$J"; done
-''')
-    shutil.copy(STATUS, sl / "status_stofs_2d_glo.sh")
-    ids = [101 + i for i in range(len(labels.split()))]
-    for i, snap in enumerate(states):
-        _touch(ci.stubs / f"snap.{i}", "".join(f"{jid}|{st}\n" for jid, st in zip(ids, snap)))
-    _touch(ci.stubs / "snap.last", "".join(f"{jid}|{st}\n" for jid, st in zip(ids, states[-1])))
-    _stub(ci.bin / "sacct", r'''#!/bin/bash
-cols=""; while [ $# -gt 0 ]; do case "$1" in -o) cols=$2; shift ;; -j) list=$2; shift ;; esac; shift; done
-if [ "$cols" = "JobID,State" ]; then
-  n=$(cat "$STUB_DIR/n" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/n"
-  f="$STUB_DIR/snap.$n"; [ -f "$f" ] || f="$STUB_DIR/snap.last"; cat "$f"
-else
-  awk -F'|' -v i="$list" '$1==i{print $2"|00:10:00"}' "$STUB_DIR/snap.last"
-fi
-''')
+def _job(ci: Ci, stage: str, state="COMPLETED", ok=True, summary_stage=None, jid=101):
+    """Stub sbatch (prints the jobid, records its arguments and the inherited variables the hook sets), sacct, scancel, and the job's log. MJ (10/15/26)"""
+    _stub(ci.bin / "sbatch", f"""#!/bin/bash
+echo "$*" >> "$STUB_DIR/sbatch.calls"
+echo "SEG=[${{ADCIRC_SEGMENT-unset}}] STREAM=[${{ADCIRC_STREAM-unset}}] MODE=[${{ADCIRC_MODE-unset}}] PYTHONPATH=[${{PYTHONPATH-unset}}] COMOUT=[${{COMOUT-unset}}] RPTDIR=[${{RPTDIR-unset}}]" >> "$STUB_DIR/sbatch.env"
+echo "Submitted batch job {jid}"
+""")
+    _stub(ci.bin / "sacct", f'#!/bin/bash\necho "{state}"\n')
     _stub(ci.bin / "scancel", '#!/bin/bash\necho "$@" >> "$STUB_DIR/scancel.log"\n')
-    rpt = ci.ptmp / "tester" / "rpt" / "stofs_2d_glo"
-    for i, label in enumerate(labels.split()):
-        ok = True if passed is None else passed.get(label, True)
-        _touch(rpt / f"stofs_2d_glo_nowcast_00.{101 + i}.out",
-               f"run of {label}\nSTAGE_SUMMARY stage=nowcast ofs=stofs_2d_glo status={'PASS' if ok else 'FAIL'} runtime_s=10.0\n")
-        _touch(rpt / f"stofs_2d_glo_nowcast_00.{101 + i}.err", "")
+    pfx = f"stofs_2d_glo_{JOB[stage][0]}_00"
+    _touch(ci.rpt / f"{pfx}.{jid}.out", f"STAGE_SUMMARY stage={summary_stage or stage} ofs=stofs_2d_glo status={'PASS' if ok else 'FAIL'} runtime_s=1\n")
+    _touch(ci.rpt / f"{pfx}.{jid}.err", "err")
+    _touch(ci.ws / f"slurm-{jid}.out", "epilogue")
+    return pfx
 
 
-def _all(state: str, n: int):
-    return [state] * n
+def _stage(ci: Ci, stage: str, **extra):
+    return ci.run(RUN_STAGE, stage, PDY, CYC, **extra)
 
 
-@pytest.mark.parametrize("level,cold,stages", [("smoke", "0", "nowcast"), ("cycle", "0", ALL_STAGES), ("full", "1", ALL_STAGES)])
-def test_run_launches_the_level_with_the_ci_account_and_waits_for_all_jobs(ci, level, cold, stages):
-    labels = LABELS[level]
-    n = len(labels.split())
-    _chain_stubs(ci, [_all("PENDING", n), _all("RUNNING", n), _all("COMPLETED", n)], labels)
-    r = ci.script("run", LEVEL=level, STUB_LABELS=labels, POLL_S="0", SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch")
+@pytest.mark.parametrize("level", ["smoke", "cycle", "full"])
+@pytest.mark.parametrize("stage", ["prep", "nowcast", "forecast", "post"])
+def test_run_stage_submits_the_2dglo_job_with_the_launchers_flags_lists_and_exports(ci, stage, level):
+    cold = level == "full"
+    card, seg_warm, seg_cold, stream, flags = JOB[stage]
+    pfx = _job(ci, stage)
+    r = _stage(ci, stage, LEVEL=level, SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch", ADCIRC_SEGMENT="leak", ADCIRC_MODE="single", PYTHONPATH="/leak",
+               COMOUT="/leak", RPTDIR="/leak/rpt", COMROOT="/leak/com", COMROOT_2DGLO="/leak/com2d")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert f"PASS[run]: LEVEL={level}, {n} jobs COMPLETED with status=PASS" in r.stdout
-    env = dict(ln.split("=", 1) for ln in (ci.stubs / "launch.env").read_text().splitlines())
-    assert (env["COLD"], env["STAGES"], env["SUBMIT_GFS"], env["KEEPDATA"]) == (cold, stages, "0", "NO")
-    assert "SERIAL" not in env
-    assert (env["SLURM_CI_ACCOUNT"], env["SLURM_CI_QOS"]) == ("nosofs", "batch")
-    assert env["COMROOT_2DGLO"] == str(ci.com) and env["ADCIRC_EXEC_DIR"] == str(ci.pk / "adcirc_v56.1.0_exec")
-    assert env["NOS_VENV"] == str(ci.venv)
-    assert (ci.stubs / "launch.args").read_text().split() == [PDY, CYC]
-    # the Jenkinsfile's post/unsuccessful scancels this file, so all ids sit on one line. MJ (10/13/26)
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == " ".join(str(101 + i) for i in range(n)) + " "
-    assert len(list((ci.ws / "ci_logs").glob("stofs_2d_glo_nowcast_00.*.out"))) == n
-    assert not (ci.stubs / "scancel.log").exists()
+    assert f"PASS[{stage}]: {ci.rpt}/{pfx}.101.out" in r.stdout
+    line = (ci.stubs / "sbatch.calls").read_text().strip()
+    assert "--account=nosofs --qos=batch" in line and line.split()[-1] == f"{ci.home}/slurm/stofs_2d_glo/jnos_{card}_00.sh"
+    assert f"-J stofs_2d_glo_{stage} -t {WALL[(stage, cold)]} {flags} --export=" in line, line
+    export = re.search(r"--export=(\S+)", line).group(1)
+    for want in ("ALL", f"PDY={PDY}", f"CYC={CYC}", f"COMROOT_STAGED={ci.ptmp}/tester/comin_2dglo", f"NOS_VENV={ci.venv}", f"NOS_PTMP={ci.ptmp}", "ADCIRC_MODE=ops", "KEEPDATA=NO",
+                 f"COMROOT_2DGLO={ci.com}", f"ADCIRC_EXEC_DIR={ci.pk}/adcirc_v56.1.0_exec", f"PACKAGEROOT={ci.pk}"):
+        assert want in export.split(","), (want, export)
+    assert "ADCIRC_SEGMENT" not in line and "ADCIRC_STREAM" not in line and line.count("--export=") == 1
+    # the space separated lists travel in the environment (--export=ALL), the inherited leaks are replaced or gone. MJ (10/15/26)
+    seg = seg_cold if cold else seg_warm
+    assert (ci.stubs / "sbatch.env").read_text().strip() == f"SEG=[{seg}] STREAM=[{stream}] MODE=[unset] PYTHONPATH=[unset] COMOUT=[unset] RPTDIR=[unset]"
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text().strip() == "101"
+    logs = sorted(p.name for p in (ci.ws / "ci_logs").iterdir())
+    assert f"{pfx}.101.out" in logs and f"{pfx}.101.err" in logs and "slurm_epilogue.slurm-101.out" in logs
 
 
-def test_run_fails_fast_on_a_failed_job_and_cancels_the_rest(ci):
-    labels = LABELS["cycle"]
-    states = [["RUNNING"] * 4, ["COMPLETED", "FAILED", "PENDING", "PENDING"]]
-    _chain_stubs(ci, states, labels, passed={"nowcast": False})
-    r = ci.script("run", LEVEL="cycle", STUB_LABELS=labels, POLL_S="0")
-    assert r.returncode == 1 and "chain verdict: BAD 102:FAILED" in r.stdout and "FAIL[run]" in r.stdout
-    assert (ci.stubs / "scancel.log").read_text().split() == [str(i) for i in range(101, 105)]
+@needs_rsync
+def test_stage_keeps_the_mode_of_the_shared_com_nos_and_copies_the_chain_files(ci):
+    """MJ (10/15/26): --no-implied-dirs keeps the mode of com/nos (shared with SECOFS and ATL); the chain files and json are copies, the rest links."""
+    ds = ci.dataset()
+    nos = ci.com / "nos"
+    nos.mkdir(parents=True)
+    nos.chmod(0o2770)
+    before = nos.stat()
+    assert ci.script("stage").returncode == 0
+    after = nos.stat()
+    assert after.st_mode == before.st_mode, oct(after.st_mode)
+    inp = ds / "input" / "nos"
+    for kind in ("hotstart", "restart"):
+        f = Path("nos") / f"stofs_2d_glo.{PREV[0]}" / f"stofs_2d_glo.t{PREV[1]}z.{kind}"
+        assert (ci.com / f).read_text() == f"chain {kind}" and not (ci.com / f).samefile(ds / "input" / f)
+    assert (ci.com / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_fcst.222.nc").samefile(inp / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_fcst.222.nc")
 
 
-@pytest.mark.parametrize("bad", ["CANCELLED by 12345", "OUT_OF_MEMORY"])
-def test_run_treats_every_bad_slurm_state_as_failure(ci, bad):
-    _chain_stubs(ci, [["COMPLETED", bad, "PENDING", "PENDING"]], LABELS["cycle"])
-    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
-    assert r.returncode == 1 and "chain verdict: BAD 102:" in r.stdout
+def test_stage_makes_an_existing_dataset_read_only_for_the_linked_kinds(ci):
+    ds = ci.dataset()
+    assert ci.script("stage").returncode == 0
+    inp = ds / "input" / "nos"
+    ro = [inp / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc", inp / "stofs_2d_glo" / "stofs_2d_glo_4064.tar", inp / "stofs_2d_glo" / "stofs_2d_glo_nod_equi"]
+    assert os.geteuid() == 0 or not any(os.access(f, os.W_OK) for f in ro)
+    assert (inp / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").stat().st_mode & 0o200
 
 
-def test_run_requires_status_pass_in_the_log_not_just_completed(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 4)], LABELS["cycle"], passed={"forecast": False})
-    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
-    assert r.returncode == 1 and "not COMPLETED with status=PASS: forecast" in r.stdout
-    (ci.ptmp / "tester" / "rpt" / "stofs_2d_glo" / "stofs_2d_glo_nowcast_00.101.out").write_text("no summary at all\n")
-    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["cycle"], POLL_S="0")
-    assert r.returncode == 1 and "prep forecast" in r.stdout
+def test_the_post_job_runs_on_the_prep_card_and_logs_under_its_name(ci):
+    pfx = _job(ci, "post")
+    assert pfx == "stofs_2d_glo_prep_00"
+    r = _stage(ci, "post")
+    assert r.returncode == 0 and "slurm/stofs_2d_glo/jnos_prep_00.sh" in (ci.stubs / "sbatch.calls").read_text()
+    assert "jnos_post_00" not in (ci.stubs / "sbatch.calls").read_text()
 
 
-def test_run_times_out_and_cancels(ci):
-    _chain_stubs(ci, [_all("RUNNING", 1)], LABELS["smoke"])
-    r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="1", WAIT_S="1")
-    assert r.returncode == 1 and "TIMEOUT after" in r.stdout
-    assert (ci.stubs / "scancel.log").read_text().split() == ["101"]
+@pytest.mark.parametrize("state,ok,summary", [("COMPLETED", False, None), ("FAILED", False, None), ("COMPLETED", True, "prep")])
+def test_run_stage_fails_on_a_bad_log_state_or_stage_name(ci, state, ok, summary):
+    _job(ci, "post", state=state, ok=ok, summary_stage=summary)
+    r = _stage(ci, "post")
+    assert r.returncode == 1 and "FAIL[post]" in r.stdout
 
 
-def test_run_checks_the_number_of_queued_jobs(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 1)], LABELS["smoke"])
-    r = ci.script("run", LEVEL="cycle", STUB_LABELS=LABELS["smoke"], POLL_S="0")
-    assert r.returncode == 1 and "1 jobs queued, LEVEL=cycle expects 4" in r.stdout
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text() == "101 "   # the queued jobs are still cancelled by post/unsuccessful. MJ (10/13/26)
+def test_run_stage_gate_needs_the_run_name_in_the_summary(ci):
+    pfx = _job(ci, "nowcast")
+    (ci.rpt / f"{pfx}.101.out").write_text("STAGE_SUMMARY stage=nowcast ofs=secofs_ufs status=PASS runtime_s=1\n")
+    assert _stage(ci, "nowcast").returncode == 1
 
 
-def test_run_stops_when_the_launcher_preflight_fails(ci):
-    _chain_stubs(ci, [_all("COMPLETED", 1)], LABELS["smoke"])
-    _stub(ci.home / "slurm" / "stofs_2d_glo" / "launch_stofs_2d_glo.sh", '#!/bin/bash\necho "MISSING: x" >&2\nexit 1\n')
-    r = ci.script("run", LEVEL="smoke", STUB_LABELS=LABELS["smoke"], POLL_S="0")
-    assert r.returncode == 1 and "MISSING: x" in r.stderr and not (ci.ws / "ci_logs" / "current_jobid").exists()
+def test_run_stage_keeps_the_work_directory_alone_and_never_calls_clean_job(ci):
+    """The jobs run with KEEPDATA=NO and remove their own work directory; the CI must not delete anything else there. MJ (10/15/26)"""
+    keep = [_touch(ci.ptmp / "tester" / "work" / "stofs_2d_glo" / "nc.101" / "x", "keep"), _touch(ci.ptmp / "tester" / "work" / "stofs_3d_atl_ufs" / "j.101" / "x", "keep")]
+    _job(ci, "nowcast")
+    assert _stage(ci, "nowcast").returncode == 0 and all(k.is_file() for k in keep)
+    assert "KEEPDATA=NO" in (ci.stubs / "sbatch.calls").read_text()
+
+
+@pytest.mark.parametrize("stage,level,secs", [(s, lv, int(re.sub(r"(\d+):(\d+):(\d+)", lambda m: str(int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])), WALL[(s, lv == "full")])) + 3600)
+                                              for s in ("prep", "nowcast", "forecast", "post") for lv in ("cycle", "full")])
+def test_run_stage_timeout_is_the_card_walltime_plus_margin_and_cancels(ci, stage, level, secs):
+    # a stub date that jumps past the limit on its second +%s call; the first is t0. MJ (10/15/26)
+    _job(ci, stage, state="RUNNING", ok=False)
+    _stub(ci.bin / "date", f'#!/bin/bash\n[ "$1" = +%s ] || exec /bin/date "$@"\nn=$(cat "$STUB_DIR/d" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/d"\n[ $n -eq 0 ] && echo 1000 || echo {1000 + secs}\n')
+    r = _stage(ci, stage, LEVEL=level)
+    assert r.returncode == 1 and "rc=timeout" in r.stdout and (ci.stubs / "scancel.log").read_text().split() == ["101"]
+    assert f"after {secs}s" in r.stdout
+
+
+def test_the_walltimes_and_flags_are_the_launchers_and_fit_the_pipeline_timeout(ci):
+    """card-env repeats the launcher's per-job sbatch flags and walltimes; a drift in either shows here. MJ (10/15/26)"""
+    launcher = LAUNCHER.read_text()
+    warm = re.search(r"PW=([0-9:]+); NSEG=ncst; NW=([0-9:]+)\n", launcher).groups()
+    cold = re.search(r"1\)\s+PSEG=.*?PW=([0-9:]+);.*?NW=([0-9:]+) ;;", launcher).groups()
+    fcst, post = (re.search(rf"W_{k}:-([0-9:]+)\}}", launcher).group(1) for k in ("FORECAST", "POST"))
+    assert (WALL[("prep", False)], WALL[("nowcast", False)], WALL[("prep", True)], WALL[("nowcast", True)]) == (warm[0], warm[1], cold[0], cold[1])
+    assert (WALL[("forecast", False)], WALL[("post", False)]) == (fcst, post)
+    assert f'PFLAGS="{JOB["prep"][4]}"' in launcher
+    for label, stage in (("nowcast", "nowcast"), ("forecast", "forecast"), ("post", "post")):   # MJ (10/15/26)
+        assert re.search(rf'sub {label} "\$\{{\w+\}}" "\$\{{W_\w+:-\S+\}}" "{JOB[stage][4]}" ', launcher), label
+    # the segment and stream lists of card-env are the launcher's. MJ (10/15/26)
+    assert f'PSEG="{JOB["prep"][1]}"' in launcher and f'PSEG="adcprep ${{PSEG}}"' in launcher and f'NSEG="spinup ${{NSEG}}"' in launcher
+    assert f"NSEG={JOB['nowcast'][1]};" in launcher and f'-N 52" {JOB["forecast"][1]} "${{STREAMS}}"' in launcher and f'"{JOB["post"][1]}"' in launcher
+    assert "STREAMS:-tide surf" in launcher and JOB["nowcast"][3] == JOB["forecast"][3] == "tide surf"
+    assert JOB["prep"][2] == "adcprep " + JOB["prep"][1] and JOB["nowcast"][2] == "spinup " + JOB["nowcast"][1]
+    assert 'sub post "${PREP}"' in launcher
+    totals = {lv: sum(int(h) * 3600 + int(m) * 60 + int(x) + 3600 for h, m, x in (w.split(":") for w in (WALL[(s, lv == "full")] for s in JOB))) for lv in ("cycle", "full")}
+    pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
+    assert totals["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"   # +1 h queue margin per job. MJ (10/15/26)
+    cards = REPO / "slurm" / "stofs_2d_glo"
+    for stage, (card, *_rest) in JOB.items():     # no walltime above the card's own limit. MJ (10/15/26)
+        h, m, x = map(int, re.search(r"^#SBATCH\s+--time=(\d+):(\d+):(\d+)", (cards / f"jnos_{card}_00.sh").read_text(), re.M).groups())
+        for cold in (False, True):
+            hh, mm, xx = map(int, WALL[(stage, cold)].split(":"))
+            assert hh * 3600 + mm * 60 + xx <= h * 3600 + m * 60 + x, (stage, cold)
+
+
+def test_card_env_refuses_a_comma_in_a_path_and_an_unknown_stage(ci):
+    r = ci.run(SCRIPT, "card-env", "prep", PACKAGEROOT=str(ci.tmp / "a,b"))
+    assert r.returncode != 0
+    assert ci.run(SCRIPT, "card-env", "bogus").returncode == 2
+    assert ci.run(SCRIPT, "card-env").returncode != 0
+
+
+def test_run_stage_never_submits_when_card_env_fails(ci):
+    _job(ci, "prep")
+    r = _stage(ci, "prep", LEVEL="weekly")
+    assert r.returncode == 2 and not (ci.stubs / "sbatch.calls").exists()
+
+
+def test_the_secofs_and_atl_paths_of_run_stage_still_see_no_2dglo_state(tmp_path):
+    ci = Ci(tmp_path)
+    (ci.home / "slurm").unlink()
+    _stub(ci.bin / "sbatch", '#!/bin/bash\necho "$*" >> "$STUB_DIR/sbatch.calls"\necho "Submitted batch job 7"\n')
+    _stub(ci.bin / "sacct", '#!/bin/bash\necho COMPLETED\n')
+    card = _touch(ci.home / "slurm" / "secofs_ufs" / "jnos_prep_00.sh", "RPTDIR=" + str(ci.tmp / "rptdir") + "\n")
+    _touch(ci.tmp / "rptdir" / "secofs_ufs_prep_00.7.out", "STAGE_SUMMARY stage=prep ofs=secofs_ufs status=PASS\n")
+    r = _stage(ci, "prep", CI_OFS="secofs_ufs", ADCIRC_SEGMENT="x", STAGE_SBATCH="-N 9", STAGE_CARD="/nonexistent", ATL_EXPORTS="X=1")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert (ci.stubs / "sbatch.calls").read_text().strip() == f"--export=ALL,PDY={PDY},CYC={CYC},COMROOT_STAGED={ci.rt}/comin_{PDY}{CYC},NOS_VENV={ci.venv},NOS_PTMP={ci.ptmp} {card}"
 
 
 def _load_compare():
@@ -704,7 +847,7 @@ def test_seed_builds_the_dataset_the_stage_reads(ci):
     assert sorted(Path(f).name for f in _tree(dest / "ops")) == [f"stofs_2d_glo.t{CYC}z.points.{p}.nc" for p in ("cwl.noanomaly", "htp", "swl")]
     # the seeded directory is what Bootstrap copies into the RT root and Stage Data then reads. MJ (10/13/26)
     shutil.copytree(dest, ci.ds)
-    for level, n in (("smoke", 5 + 3), ("cycle", 5 + 6), ("full", 6)):
+    for level, n in (("smoke", 5 + 6), ("cycle", 5 + 6), ("full", 6)):
         r = ci.script("stage", LEVEL=level)
         assert r.returncode == 0, (level, r.stdout, r.stderr)
         assert len(_tree(ci.com)) == n, level
@@ -744,6 +887,18 @@ def test_seed_refuses_an_unfinished_run_and_an_existing_dataset(ci):
     assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", FORCE="1", **env).returncode == 1
 
 
+def test_seed_makes_forcing_tar_and_nod_equi_read_only_and_leaves_the_chain_files_and_json_writable(ci):
+    run = _finished_run(ci.tmp / "run")
+    assert ci.run(SCRIPT, "seed", PDY, CYC, **_seed_env(ci, run)).returncode == 0
+    inp = ci.tmp / "seed_rt" / "stofs_2d_glo" / f"{PDY}{CYC}" / "input"
+    for f in _tree(inp):
+        ro = bool(re.search(r"\.2[0-9][0-9]\.nc$|_4064\.tar$|_nod_equi$", f))
+        assert os.access(inp / f, os.W_OK) != ro or os.geteuid() == 0, f
+    assert not os.access(inp / "nos" / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_fcst.225.nc", os.W_OK) or os.geteuid() == 0
+    assert (inp / "nos" / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").stat().st_mode & 0o200
+    assert (inp / "nos" / f"stofs_2d_glo.{PREV[0]}" / f"stofs_2d_glo.t{PREV[1]}z.hotstart").stat().st_mode & 0o200
+
+
 def test_seed_without_comroot_reads_the_shared_com(ci):
     r = ci.run(SCRIPT, "seed", PDY, CYC, SEED_RT=str(ci.tmp / "seed_rt"))
     missing = [l for l in r.stderr.splitlines() if l.startswith("MISSING:")]
@@ -759,8 +914,6 @@ def test_seed_warns_about_missing_ops_products_and_validates_arguments(ci):
     assert ci.run(SCRIPT, "seed", PDY).returncode != 0
     assert ci.run(SCRIPT, "seed", "2026", CYC).returncode == 2
 
-
-needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
 
 
 def _seed_src(ci: Ci, system: str, also_secofs: bool = False):
@@ -799,6 +952,22 @@ def test_bootstrap_seeds_the_2dglo_tree_once(ci):
     assert (ci.rt / "stofs_2d_glo" / f"{PDY}{CYC}" / ".seeded_ok").is_file() and "bootstrap PASS" in r.stdout
     r = ci.run(SCRIPTS / "bootstrap.sh", **env)
     assert r.returncode == 0 and "skipping the ADCIRC seed" in r.stdout and "frozen dataset already present" in r.stdout
+
+
+@needs_rsync
+def test_bootstrap_copy_makes_the_same_files_read_only_and_a_recopy_over_them_works(ci):
+    src = _seed_src(ci, "stofs_2d_glo")
+    _fake_venv(ci)
+    seed_rt = ci.tmp / "seed_rt"
+    shutil.copytree(_seeded_dataset(ci), seed_rt / "stofs_2d_glo" / f"{PDY}{CYC}")
+    env = dict(SEED_SRC=str(src), SEED_RT=str(seed_rt), DATA_MODE="frozen")
+    assert ci.run(SCRIPTS / "bootstrap.sh", **env).returncode == 0
+    inp = ci.ds / "input" / "nos"
+    assert not os.access(inp / f"stofs_2d_glo.{PDY}" / CYC / "rerun" / "stofs_2d_glo_ncst.221.nc", os.W_OK) or os.geteuid() == 0
+    assert (inp / "stofs_2d_glo" / "stofs_2d_glo_4064.tar.json").stat().st_mode & 0o200
+    assert (inp / f"stofs_2d_glo.{PREV[0]}" / f"stofs_2d_glo.t{PREV[1]}z.hotstart").stat().st_mode & 0o200
+    shutil.rmtree(ci.ds / ".seeded_ok", ignore_errors=True) if (ci.ds / ".seeded_ok").is_dir() else (ci.ds / ".seeded_ok").unlink()
+    assert ci.run(SCRIPTS / "bootstrap.sh", **env).returncode == 0 and (ci.ds / ".seeded_ok").is_file()
 
 
 def _seeded_dataset(ci: Ci) -> Path:

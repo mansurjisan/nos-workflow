@@ -1,25 +1,40 @@
 #!/usr/bin/env bash
-# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds only). MJ (10/13/26)
-#   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = link (hard links, copy across file systems) the dataset for
-#                            PDY/CYC from the RT root into a clean CI COMROOT_2DGLO; live = tools/hercules_2d_glo_stage_forcing.sh
-#                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too,
-#                            since compute nodes have no internet
-#   stofs_2d_glo.sh run      Run 2D-GLO: slurm/stofs_2d_glo/launch_stofs_2d_glo.sh with the CI account/qos, then wait for the chain
-#   stofs_2d_glo.sh verify   Verify 2D-GLO: compare_2dglo.py against the dataset's reference / ops products
+# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds only). MJ (10/15/26)
+#   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = clear the 2D-Global state of earlier cycles from the shared CI com, then link (hard
+#                            links, copy across file systems) the dataset for PDY/CYC from the RT root into it; live = tools/hercules_2d_glo_stage_forcing.sh
+#                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too, since compute nodes have
+#                            no internet
+#   stofs_2d_glo.sh card-env <stage>   eval-able shell for run_stage.sh: the card, sbatch flags, timeout, exports and log prefix of the stage's job
+#   stofs_2d_glo.sh verify   Verify: compare_2dglo.py against the dataset's reference / ops products
 #   stofs_2d_glo.sh seed <PDY> <CYC> [cold]   one-time, by hand: build the frozen dataset from a finished run (see below)
-# Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH SLURM_CI_ACCOUNT SLURM_CI_QOS; optional
-# COMROOT_2DGLO (default $NOS_PTMP/$LOGNAME/com_2dglo_ci), WAIT_S POLL_S (poll limit and interval, seconds), CMP_TOL (default 1e-3),
-# OPS_WARN_MM (default 500). MJ (10/13/26)
+# Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh;
+# optional CMP_TOL (default 1e-3), OPS_WARN_MM (default 500). MJ (10/15/26)
 #
-# LEVEL   launcher                  jobs  verify
-#   smoke  COLD=0 STAGES=nowcast      1    rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference (bitwise, else <= CMP_TOL)
-#   cycle  COLD=0                     4    the same plus points.*.nc against the reference; ops comparison reported
-#   full   COLD=1                     4    the same as cycle (a cold start is deterministic); ops comparison reported
-# The jobs are the launcher's prep, nowcast, forecast and post; the tide and surf streams run one after the other inside each, and a cold start adds adcprep to prep and the spin-up to nowcast. MJ (10/14/26)
-# smoke and cycle continue from the previous cycle's hotstart/restart, so they use the 06z-type dataset; full cold-starts and uses the
-# 00z-type dataset. A job in FAILED, CANCELLED, TIMEOUT or any other bad state, or without STAGE_SUMMARY status=PASS, fails the run
-# stage. DATA_MODE=live continues from the state already in COMROOT_2DGLO (LEVEL=full first, then cycle at +6 h) and does not clear it;
-# the smoke/cycle stage checks that state before it downloads. frozen clears it and starts from the dataset. MJ (10/13/26)
+# The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits one job of the
+# ops chain, waits (timeout = the job's walltime + 1 h), gates on its STAGE_SUMMARY and moves on. Then Verify calls `verify`. The jobs are the ones
+# slurm/stofs_2d_glo/launch_stofs_2d_glo.sh queues, with the same sbatch flags and walltimes (card-env repeats them; a test compares the two):
+#   Prep      adcprep (COLD=1 only), gfs ncst, gfs fcst   prep card      -N 1 -n 1 --mem=64G   0:50 (3:50 cold)
+#   Nowcast   spinup (COLD=1 only), tide ncst, surf ncst  nowcast card   -N 52                 1:20 (2:20 cold)
+#   Forecast  tide fcst, surf fcst                        forecast card  -N 52                 2:00
+#   Post      ncdiff, ncrcat                              prep card      -N 1 -n 1 --mem=100G  1:15       (the post job logs under the prep card's name)
+# LEVEL   Jenkins stages run                       COLD   Verify
+#   smoke  Prep Nowcast                              0      regress --level smoke: rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference
+#   cycle  Prep Nowcast Forecast Post                0      regress --level cycle: the same plus points.*.nc; ops comparison reported
+#   full   Prep Nowcast Forecast Post                1      the same as cycle (a cold start is deterministic); ops comparison reported
+# Prep finds the staged ops forcing and skips its GFS steps, so SUBMIT_GFS is not used. smoke and cycle continue from the previous cycle's hotstart/restart, so
+# they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
+# stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and does not clear it; the smoke/cycle stage
+# checks that state before it downloads. frozen clears it and starts from the dataset. MJ (10/15/26)
+#
+# Layout, the SECOFS one: com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work}, the cards' own defaults; COMROOT_2DGLO is that com (an inherited
+# value is ignored). RUN stofs_2d_glo is unique, so the 2D-Global state sits beside SECOFS's and ATL's without touching it: COMGES is com/nos/stofs_2d_glo and a
+# cycle is com/nos/stofs_2d_glo.<PDY>. Stage (frozen) removes only those two kinds of names (nos/stofs_2d_glo and nos/stofs_2d_glo.<8 digits>), then the old
+# $NOS_PTMP/$LOGNAME/com_2dglo_ci root once. The jobs run with KEEPDATA=NO, so a job removes its own work directory.
+# What the jobs write into the linked files: nothing in place. The forcing (rerun/stofs_2d_glo_{ncst,fcst}.{221,222,225}.nc) is only read (symlinked into the
+# ADCIRC run directory, read by ncks/ncrcat), but rerun/ also receives the jobs' own products, so it is a real, writable directory in com holding hard links of
+# the dataset's forcing. nod_equi and the 4064 tar are replaced by rename, never written. These three kinds are read-only (seed and Bootstrap chmod a-w; com shares
+# their inodes). The chain files (hotstart, restart) are copied into the run directory with their mode and ADCIRC rewrites that copy, so a read-only chain file
+# would fail the run: they stay writable. The .json beside the tar is rewritten in place when the decomposition is rebuilt, so it is copied, not linked. MJ (10/15/26)
 #
 # Dataset ${RT_DATA_ROOT}/stofs_2d_glo/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/stofs_2d_glo/<PDY><CYC>/ in frozen mode):
 #   .seeded_ok
@@ -41,6 +56,7 @@
 set -euo pipefail
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DEFAULT_PTMP=/work2/noaa/nos-surge/mjisan/nos-run/ptmp
+RUN=stofs_2d_glo
 
 usage() { sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; }
 
@@ -64,45 +80,48 @@ check_cycle_args() {
   PREV=$(date -u -d "${PDY} ${CYC}:00 6 hours ago" +%Y%m%d%H)
 }
 
-# Everything the stage, run and verify commands share. MJ (10/13/26)
+# Everything the stage, card-env and verify commands share. MJ (10/15/26)
 level_setup() {
   check_cycle_args
   LEVEL=${LEVEL:-smoke}
   case "${LEVEL}" in
-    smoke) COLD=0; STAGES=nowcast; EXPECT=1; WAIT_DEFAULT=14400 ;;
-    cycle) COLD=0; STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=28800 ;;
-    full)  COLD=1; STAGES="prep nowcast forecast post"; EXPECT=4; WAIT_DEFAULT=43200 ;;
+    smoke|cycle) COLD=0 ;;
+    full)        COLD=1 ;;
     *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;;
   esac
   DATA_MODE=${DATA_MODE:-frozen}
   : "${RT_DATA_ROOT:?RT_DATA_ROOT not set}"
-  COMROOT_2DGLO=${COMROOT_2DGLO:-${NOS_PTMP}/${LOGNAME}/com_2dglo_ci}
+  CI_COM="${NOS_PTMP}/${LOGNAME}/com"
+  COMROOT_2DGLO="${CI_COM}"
   DS="${RT_DATA_ROOT}/stofs_2d_glo/${PDY}${CYC}"
-  JOBS="${NOS_PTMP}/${LOGNAME}/slurm_2dglo/jobs_${PDY}${CYC}.txt"
-  OUTDAY="${COMROOT_2DGLO}/nos/stofs_2d_glo.${PDY}"
   LOGDIR="${WORKSPACE:-.}/ci_logs"
   export NOS_PTMP COMROOT_2DGLO
 }
 
-# Clears the CI COMROOT. It is normalized first (//, symlinks), must sit at least two levels below NOS_PTMP ($p/<x>/<y>) and must
-# never be the shared com or a parent of it, which holds the live SECOFS and ATL cycles. MJ (10/13/26)
-reset_comroot() {
-  local c p shared
-  case "${COMROOT_2DGLO}" in
-    *..*) echo "FATAL: refusing to clear ${COMROOT_2DGLO} (contains ..)" >&2; exit 1 ;;
-  esac
-  c=$(realpath -m -- "${COMROOT_2DGLO}")
+# Clears the 2D-Global state of earlier cycles from the shared com: nos/stofs_2d_glo (COMGES) and every nos/stofs_2d_glo.<8 digits>, names matched exactly, so
+# SECOFS's and ATL's directories and anything else stay. The com root must be the CI's $NOS_PTMP/$LOGNAME/com; no root, parent or target may be a symlink.
+# All targets are validated before the first rm, so a refusal never follows a delete. Then removes the old com_2dglo_ci root once. MJ (10/15/26)
+clear_com() {
+  local p c t rm=()
+  case "${LOGNAME}" in ""|*/*|.|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
   p=$(realpath -m -- "${NOS_PTMP}")
-  shared=$(realpath -m -- "${NOS_PTMP}/${LOGNAME}/com")
-  case "${c}" in
-    "${p}"/?*/?*) ;;
-    *) echo "FATAL: refusing to clear ${c}: it is not under NOS_PTMP (${p}) by at least two levels (<x>/<y>)" >&2; exit 1 ;;
-  esac
-  case "${shared}/" in
-    "${c}"/*) echo "FATAL: refusing to clear ${c}: it is the shared com (${shared}) or a parent of it" >&2; exit 1 ;;
-  esac
-  rm -rf -- "${c}"
-  mkdir -p -- "${c}"
+  c="${p}/${LOGNAME}/com"
+  [ "$(realpath -m -- "${CI_COM}")" = "${c}" ] || { echo "FATAL: refusing to clear ${CI_COM}: it is not ${c} (symlink?)" >&2; exit 1; }
+  for t in "${c}" "${c}/nos"; do
+    [ ! -L "${t}" ] || { echo "FATAL: refusing to clear under ${t}: it is a symlink" >&2; exit 1; }
+  done
+  for t in "${c}/nos/${RUN}" "${c}/nos/${RUN}."*; do
+    [[ "${t##*/}" =~ ^${RUN}(\.[0-9]{8})?$ ]] && { [ -e "${t}" ] || [ -L "${t}" ]; } && rm+=("${t}")
+  done
+  for t in ${rm[@]+"${rm[@]}"}; do
+    { [ ! -L "${t}" ] && [ -d "${t}" ] && [ "$(realpath -m -- "${t}")" = "${t}" ]; } || { echo "FATAL: refusing to remove ${t}: it is a symlink or not a plain directory" >&2; exit 1; }
+  done
+  for t in ${rm[@]+"${rm[@]}"}; do rm -rf -- "${t}"; done
+  mkdir -p -- "${c}/nos"
+  t="${p}/${LOGNAME}/com_2dglo_ci"
+  if [ -L "${t}" ]; then echo "WARN: leaving ${t}: it is a symlink" >&2
+  elif [ -d "${t}" ]; then rm -rf -- "${t}"; echo "removed the old CI com ${t}"
+  fi
 }
 
 cmd_stage() {
@@ -114,32 +133,36 @@ cmd_stage() {
         echo "Seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC}$([ "${LEVEL}" = full ] && echo ' cold') (see the script header), or set DATA_MODE=live."
         exit 1
       }
-      local segs=(ncst fcst) with_state=1 f miss=0 files
-      [ "${LEVEL}" != smoke ] || segs=(ncst)
+      local with_state=1 f miss=0 files
       [ "${LEVEL}" != full ] || with_state=0
-      for f in $(input_files "${with_state}" "${segs[@]}"); do
+      # prep runs both GFS steps at every level and skips each when its forcing is staged, so ncst and fcst are staged even for smoke. MJ (10/15/26)
+      for f in $(input_files "${with_state}" ncst fcst); do
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
       done
-      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs (a cold dataset has no COMGES/previous-cycle files; use the dataset of a COLD=0 cycle)"; exit 1; }
-      reset_comroot
-      echo "staging ${DS}/input -> ${COMROOT_2DGLO} (LEVEL=${LEVEL})"
-      # The run only reads these files (ADCIRC works on copies in $DATA; the forcing is symlinked), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied. MJ (10/13/26)
-      files=$(input_files "${with_state}" "${segs[@]}")
-      { grep -v '\.json$' <<<"${files}" || true; } | rsync -a --files-from=- --link-dest="${DS}/input" "${DS}/input/" "${COMROOT_2DGLO}/"
-      { grep '\.json$' <<<"${files}" || true; } | rsync -a --files-from=- "${DS}/input/" "${COMROOT_2DGLO}/"
-      du -sh "${COMROOT_2DGLO}"
+      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs: the ncst and fcst forcing, and for smoke/cycle COMGES and the previous cycle's chain files (a cold dataset has none; use the dataset of a COLD=0 cycle, or re-seed it)"; exit 1; }
+      clear_com
+      echo "staging ${DS}/input -> ${CI_COM} (LEVEL=${LEVEL})"
+      # The run never writes into these files in place (see the header), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied.
+      # The directories are made writable (Du+w) whatever the dataset's modes: rerun/ receives the jobs' own products. MJ (10/15/26)
+      files=$(input_files "${with_state}" ncst fcst)
+      # --no-implied-dirs: the shared com/nos (SECOFS and ATL too) must keep its own mode, mtime and group; missing parents are still created. The json and the chain files
+      # (rewritten through their copies) are copied, the rest linked. MJ (10/15/26)
+      find "${DS}/input" -type f \( -name '*.2[0-9][0-9].nc' -o -name '*_4064.tar' -o -name '*_nod_equi' \) -exec chmod a-w {} +   # existing datasets too; idempotent. MJ (10/15/26)
+      { grep -vE '\.json$|\.t[0-9]{2}z\.(hotstart|restart)$' <<<"${files}" || true; } | rsync -a --no-implied-dirs --chmod=Du+w --files-from=- --link-dest="$(realpath -- "${DS}")/input" "${DS}/input/" "${CI_COM}/"
+      { grep -E '\.json$|\.t[0-9]{2}z\.(hotstart|restart)$' <<<"${files}" || true; } | rsync -a --no-implied-dirs --chmod=Du+w --files-from=- "${DS}/input/" "${CI_COM}/"
+      du -sh "${CI_COM}/nos/${RUN}"* | sed 's/^/  /'   # MJ (10/15/26)
       ;;
     live)
       local rc=0 f miss=0
       # Before the 39 GB download: the COLD=0 levels continue from the chain state already in COMROOT_2DGLO. MJ (10/13/26)
       if [ "${LEVEL}" != full ]; then
         for f in $(input_files 1); do
-          [ -s "${COMROOT_2DGLO}/${f}" ] || { echo "MISSING: ${COMROOT_2DGLO}/${f}" >&2; miss=1; }
+          [ -s "${CI_COM}/${f}" ] || { echo "MISSING: ${CI_COM}/${f}" >&2; miss=1; }
         done
-        [ "${miss}" = 0 ] || { echo "FATAL: LEVEL=${LEVEL} continues from the chain state in ${COMROOT_2DGLO}, which lacks the files above; run LEVEL=full DATA_MODE=live for the previous 6-hourly cycle first, or use DATA_MODE=frozen"; exit 1; }
+        [ "${miss}" = 0 ] || { echo "FATAL: LEVEL=${LEVEL} continues from the chain state in ${CI_COM}, which lacks the files above; run LEVEL=full DATA_MODE=live for the previous 6-hourly cycle first, or use DATA_MODE=frozen"; exit 1; }
       fi
-      mkdir -p "${COMROOT_2DGLO}"
-      echo "staging the ops forcing for ${PDY}${CYC} into ${COMROOT_2DGLO} (login node, no clearing: the chain state stays)"
+      mkdir -p "${CI_COM}"
+      echo "staging the ops forcing for ${PDY}${CYC} into ${CI_COM} (login node, no clearing: the chain state stays)"
       bash "${HOMEnos}/tools/hercules_2d_glo_stage_forcing.sh" --rm-raw "${PDY}" "${CYC}" || rc=$?
       case "${rc}" in
         0) ;;
@@ -152,64 +175,39 @@ cmd_stage() {
   echo "stage_data PASS"
 }
 
-# sacct states that end a job unsuccessfully; --kill-on-invalid-dep turns the jobs behind a failure into CANCELLED. MJ (10/13/26)
-BAD_STATES='FAILED|CANCELLED|TIMEOUT|NODE_FAIL|OUT_OF_MEMORY|BOOT_FAIL|DEADLINE|PREEMPTED|REVOKED|SPECIAL_EXIT'
-
-cmd_run() {
+# What run_stage.sh needs to submit this stage's job, as shell for it to eval: the sbatch flags and walltimes are those of launch_stofs_2d_glo.sh (a test
+# compares them; the launcher cannot be sourced, it queues the whole chain), the segment and stream lists are space separated and go in the environment of sbatch
+# (--export=ALL), as the launcher does, since --export splits at commas, and the timeout is the walltime plus 1 h of queue margin (the 52-node exclusive jobs can wait). Post runs on the prep card. The
+# log is <RPTDIR>/<prefix>.<jobid>.out with RPTDIR and the prefix read from the card, so the post job logs under the prep name. MJ (10/15/26)
+cmd_card_env() {
+  local st=${1:?usage: stofs_2d_glo.sh card-env <stage>} card seg stream="" flags wall pfx rpt v h m s
   level_setup
-  mkdir -p "${LOGDIR}"
-  local wait_s=${WAIT_S:-${WAIT_DEFAULT}} poll_s=${POLL_S:-60}
-  export NOS_VENV="${VENV_PATH:-}" ADCIRC_EXEC_DIR="${PACKAGEROOT}/adcirc_v56.1.0_exec"
-  export COLD STAGES KEEPDATA=NO SUBMIT_GFS=0
-  echo "launching LEVEL=${LEVEL} (COLD=${COLD} STAGES=${STAGES}) for ${PDY}${CYC}, account=${SLURM_CI_ACCOUNT:-card} qos=${SLURM_CI_QOS:-card}"
-  bash "${HOMEnos}/slurm/stofs_2d_glo/launch_stofs_2d_glo.sh" "${PDY}" "${CYC}"
-
-  [ -s "${JOBS}" ] || { echo "FATAL: the launcher left no job list at ${JOBS}"; exit 1; }
-  # post/unsuccessful in the Jenkinsfile scancels whatever is in this file, space separated; written before the count check so a mismatch still cancels what was queued. MJ (10/13/26)
-  awk 'NF>=2{printf "%s ", $2}' "${JOBS}" > "${LOGDIR}/current_jobid"
-  local n idlist
-  n=$(awk 'NF>=2' "${JOBS}" | wc -l)
-  [ "${n}" -eq "${EXPECT}" ] || { echo "FATAL: ${n} jobs queued, LEVEL=${LEVEL} expects ${EXPECT} (${JOBS})"; exit 1; }
-  idlist=$(awk 'NF>=2{printf "%s%s", sep, $2; sep=","}' "${JOBS}")
-
-  local t0 snap verdict last="" elapsed
-  t0=$(date +%s)
-  while true; do
-    snap=$(sacct -j "${idlist}" -X -n -P -o JobID,State 2>/dev/null || true)
-    verdict=$(awk -F'|' -v n="${EXPECT}" -v bad="^(${BAD_STATES})" '
-      NF >= 2 { st = $2; sub(/ .*/, "", st)
-                if (st ~ bad) badlist = badlist " " $1 ":" st; else if (st == "COMPLETED") done++ }
-      END { if (badlist != "") print "BAD" badlist; else if (done == n) print "DONE"; else print "WAIT" }' <<<"${snap}")
-    if [ "${snap}" != "${last}" ]; then
-      echo "[$(date -u +%T)] $(awk -F'|' 'NF>=2{printf "%s=%s ", $1, $2}' <<<"${snap}")"
-      last="${snap}"
-    fi
-    case "${verdict}" in DONE|BAD*) break ;; esac
-    elapsed=$(( $(date +%s) - t0 ))
-    if [ "${elapsed}" -ge "${wait_s}" ]; then
-      verdict="TIMEOUT after ${elapsed}s"
-      break
-    fi
-    sleep "${poll_s}"
+  case "${st}" in
+    prep)     card=prep;     seg="ncst fcst"; flags="-N 1 -n 1 --mem=64G"; wall=0:50:00
+              [ "${COLD}" != 1 ] || { seg="adcprep ${seg}"; wall=3:50:00; } ;;
+    nowcast)  card=nowcast;  seg=ncst; stream="tide surf"; flags="-N 52"; wall=1:20:00
+              [ "${COLD}" != 1 ] || { seg="spinup ${seg}"; wall=2:20:00; } ;;
+    forecast) card=forecast; seg=fcst; stream="tide surf"; flags="-N 52"; wall=2:00:00 ;;
+    post)     card=prep;     seg="ncdiff ncrcat"; flags="-N 1 -n 1 --mem=100G"; wall=1:15:00 ;;
+    *) echo "FATAL: unknown stage '${st}' (expected prep|nowcast|forecast|post)" >&2; exit 2 ;;
+  esac
+  card="${HOMEnos}/slurm/${RUN}/jnos_${card}_00.sh"
+  [ -r "${card}" ] || { echo "FATAL: card not found: ${card}" >&2; exit 2; }
+  pfx=$(sed -n 's#^_LOG_PREFIX=.*/\([^/]*\)\.\${_JOBID}.*#\1#p' "${card}" | head -1)
+  [ -n "${pfx}" ] || { echo "FATAL: no _LOG_PREFIX in ${card}" >&2; exit 1; }
+  rpt=$(unset RPTDIR; card_value "${card}" RPTDIR) || exit 1
+  for v in "${PACKAGEROOT}" "${CI_COM}" "${NOS_PTMP}" "${VENV_PATH:-}"; do
+    case "${v}" in *,*) echo "FATAL: a comma in '${v}' would split the sbatch --export list" >&2; exit 1 ;; esac
   done
-  echo "chain verdict: ${verdict} (elapsed $(( $(date +%s) - t0 ))s)"
-  case "${verdict}" in DONE) ;; *) scancel ${idlist//,/ } 2>/dev/null || true ;; esac
-
-  local rpt="${NOS_PTMP}/${LOGNAME}/rpt/stofs_2d_glo" id f
-  for id in ${idlist//,/ }; do
-    for f in "${rpt}"/*."${id}".out "${rpt}"/*."${id}".err; do
-      [ -r "${f}" ] && cp -p "${f}" "${LOGDIR}/" || true
-    done
-  done
-  local table bad
-  table=$(bash "${HOMEnos}/slurm/stofs_2d_glo/status_stofs_2d_glo.sh" "${JOBS}")
-  echo "${table}"
-  bad=$(awk 'NR>1 && ($3 != "COMPLETED" || $0 !~ /status=PASS/) {printf "%s ", $1}' <<<"${table}")
-  if [ "${verdict}" != DONE ] || [ -n "${bad}" ]; then
-    echo "FAIL[run]: LEVEL=${LEVEL} ${verdict}; not COMPLETED with status=PASS: ${bad:-none listed}"
-    exit 1
-  fi
-  echo "PASS[run]: LEVEL=${LEVEL}, ${EXPECT} jobs COMPLETED with status=PASS"
+  IFS=: read -r h m s <<<"${wall}"
+  # The launcher's own unset list (inherited values would bypass what the cards derive), without HOMEnos, which run_stage.sh still uses and the card sets itself. MJ (10/15/26)
+  echo "unset HOMEstofs EXECnos FIXnos FIXofs NOS_WORKFLOW_DIR NOS_UTILS_DIR PYTHONPATH OFS_CONFIG COMROOT DATAROOT COMIN COMINgfs COMOUT COMOUTroot COMGES DATA ADCIRC_MODE COLDSTART NCPU NUM_WRITERS TOT_NCPU NOWCAST_HOURS COLDSTART_SPINUP_DAYS ATMOSPHERIC_FORCING RPTDIR"
+  printf 'export ADCIRC_SEGMENT=%q ADCIRC_STREAM=%q\n' "${seg}" "${stream}"
+  # the ATL_ names of the hook variables are historical; this hook fills the same ones. MJ (10/15/26)
+  printf 'ATL_RUN=%q\nATL_COMIN=%q\nATL_RPTDIR=%q\nATL_LOGPFX=%q\nATL_EXPORTS=%q\nSTAGE_CARD=%q\nSTAGE_SBATCH=%q\nTIMEOUT_S=%q\n' \
+    "${RUN}" "${NOS_PTMP}/${LOGNAME}/comin_2dglo" "${rpt}" "${rpt}/${pfx}" \
+    "ADCIRC_MODE=ops,KEEPDATA=NO,COMROOT_2DGLO=${CI_COM},ADCIRC_EXEC_DIR=${PACKAGEROOT}/adcirc_v56.1.0_exec,PACKAGEROOT=${PACKAGEROOT}" \
+    "${card}" "-J ${RUN}_${st} -t ${wall} ${flags}" "$(( 10#${h} * 3600 + 10#${m} * 60 + 10#${s} + 3600 ))"
 }
 
 cmd_verify() {
@@ -224,7 +222,7 @@ cmd_verify() {
     grc=0
     # full compares the same files as cycle, against the ref/ the cold seed stored: tide_fac, adcprep and ADCIRC on the same inputs reproduce. MJ (10/13/26)
     if [ -d "${DS}/ref" ]; then
-      python3 "${cmp}" regress --ref "${DS}/ref" --out "${COMROOT_2DGLO}" --pdy "${PDY}" --cyc "${CYC}" --level "${LEVEL/full/cycle}" --tol "${CMP_TOL:-1e-3}" || grc=1
+      python3 "${cmp}" regress --ref "${DS}/ref" --out "${CI_COM}" --pdy "${PDY}" --cyc "${CYC}" --level "${LEVEL/full/cycle}" --tol "${CMP_TOL:-1e-3}" || grc=1
     elif [ "${DATA_MODE}" = frozen ]; then
       echo "FAIL: ${DS}/ref is missing; the frozen dataset has no reference outputs"
       grc=1
@@ -232,7 +230,7 @@ cmd_verify() {
       echo "no frozen reference for ${PDY}${CYC} (live mode): regression comparison skipped"
     fi
     if [ "${LEVEL}" != smoke ]; then
-      python3 "${cmp}" ops --out "${COMROOT_2DGLO}" --ops-dir "${ops_dir}" --pdy "${PDY}" --cyc "${CYC}" --warn-mm "${OPS_WARN_MM:-500}" || grc=1
+      python3 "${cmp}" ops --out "${CI_COM}" --ops-dir "${ops_dir}" --pdy "${PDY}" --cyc "${CYC}" --warn-mm "${OPS_WARN_MM:-500}" || grc=1
     fi
     exit "${grc}"
   } 2>&1 | tee "${LOGDIR}/compare_2dglo.txt" || rc=$?
@@ -281,6 +279,7 @@ cmd_seed() {
     fi
   done
   touch "${dest}/.seeded_ok"
+  find "${dest}/input" -type f \( -name '*.2[0-9][0-9].nc' -o -name '*_4064.tar' -o -name '*_nod_equi' \) -exec chmod a-w {} +   # com shares these inodes; none is written in place, the chain files and the .json must stay writable (see the header). MJ (10/15/26)
   chmod -R o+rX "${dest}" || true
   du -sh "${dest}"/* | sed 's/^/  /'
   echo "seed PASS: ${dest}"
@@ -291,11 +290,11 @@ CMD=${1:-}
 [ "$#" -eq 0 ] || shift
 case "${CMD}" in
   seed) cmd_seed "$@" ;;
-  stage|run|verify)
+  stage|verify|card-env)
     # shellcheck disable=SC1091
     source "${SCRIPT_DIR}/common.sh"
     [ "${OFS}" = stofs_2d_glo ] || { echo "FATAL: ${CMD} runs with CI_OFS=stofs_2d_glo (got ${OFS})" >&2; exit 2; }
-    "cmd_${CMD}"
+    "cmd_${CMD//-/_}" "$@"
     ;;
   *) usage >&2; exit 2 ;;
 esac
