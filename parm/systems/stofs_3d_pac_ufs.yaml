@@ -12,8 +12,6 @@ execution:
   mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
 
 # Applied only when execution.mode == standalone: 4912 compute ranks
-# + 8 scribes = 4920, (stofs_3d_atl_pschism, copied then renamed from ops
-# to $EXECnos)
 # Grid/forcing blocks below are shared. MJ (10/02/26)
 standalone:
   nws: 2
