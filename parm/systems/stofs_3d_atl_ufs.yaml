@@ -122,6 +122,7 @@ forcing:
         y2: 835
     adt:
       enabled: true
+      datum_offset: -0.45
       weight_file: stofs_3d_atl_adt_weight.nc  # ops ESMF (nearest) map, staged by the fetch tool. MJ (10/02/26)
 
   tidal:
