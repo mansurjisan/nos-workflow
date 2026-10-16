@@ -1,0 +1,263 @@
+# STOFS-3D-PAC Configuration, copied from Atlantic
+
+_base: schism
+
+system:
+  name: stofs_3d_pac
+  description: "Storm Surge and Tide Operational Forecast System - 3D Pacific (UFS-Coastal)"
+  framework: stofs_ufs
+  prefix: stofs_3d_pac_ufs
+
+execution:
+  mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
+
+# Applied only when execution.mode == standalone: 4912 compute ranks
+# + 8 scribes = 4920, (stofs_3d_atl_pschism, copied then renamed from ops
+# to $EXECnos)
+# Grid/forcing blocks below are shared. MJ (10/02/26)
+standalone:
+  nws: 2
+  executable: stofs_3d_pac_pschism_v3.1.5
+  nscribes: 8
+  nprocs: 3960
+
+# Extra steps if needed
+prep:
+  extras:
+    # glofas?
+
+grid:
+  n_nodes: 2961412
+  n_elements: 5774631 
+  n_levels: 84
+  files:
+    horizontal: stofs_3d_pac_ufs.hgrid.gr3
+    vertical: stofs_3d_pac_ufs.vgrid.in
+    horizontal_ll: stofs_3d_pac_ufs.hgrid.ll
+    station: stofs_3d_pac_ufs.station.in
+  domain: # taken from hgrid bbox
+    lon_min: 93.11
+    lon_max: 289.675
+    lat_min: -33.039
+    lat_max: 66.325
+
+# Standalone: sflux prep. Coupled: the same GFS/HRRR processors feed the DATM blend. MJ (10/03/26)
+forcing:
+  atmospheric:
+    met_num: 2
+    gfs:
+      resolution: "0.25"
+      ops_timeline: true  # Use ops GFS setup logic
+    # Ops keeps HRRR winds grid-relative (about 17 deg off over the Atlantic); no rotation in
+    # extraction or in the DATM blender reproduces it. Parity only: SECOFS keeps its rotation. MJ (10/03/26)
+#    hrrr:
+#      rotate_winds: false
+#      blend_rotate_winds: false
+#      blend_weight: 0.99  # ops sflux inside HRRR coverage: 0.99*HRRR + 0.01*GFS (default sflux weights 99 / 1). MJ (10/03/26)
+#      small_grib: true
+#    hrrr_blend:
+#      enabled: true
+#      lon_min: -98.5
+#      lon_max: -49.5
+#      lat_min: 5.5
+#      lat_max: 50.0
+#
+#  river:
+#    primary: GLOFAS?
+#    version: "v3.0"
+#    n_list_target: 121
+#    n_list_min: 97
+#    # Ops v3.1.5 river inputs (1.99M sinks, source_sink.in / msource.th / vsink.th from the FIX
+#    # files) for coupled too: fv3_stofs_3d_atl.exe is built with PREC_EVAP. MJ (10/03/26)
+#    ops_static_files: true
+#    files:
+#      sources_json: stofs_3d_atl_river_sources_conus.json
+#    st_lawrence:
+#      enabled: true
+#      # v3.1 ops layout: $COMINlaw/<pdy>/can_streamgauge/, climatology fallback
+#      # from the fix dir. MJ (09/28/26)
+#      clim_name: stofs_3d_atl_StLawrence_clim.txt
+#      csv_name: 02OA016_hydrometric.csv
+#      subdir: can_streamgauge
+
+  ocean:
+    rtofs_3d_region: ""
+    rtofs_freq: daily
+    obc:
+      # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
+      # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
+      # mesh: 756 + 22 elevation, 3 flow). MJ (09/30/26)
+      elev_segments: [0, 1]
+      wl_source: RTOFS
+      # TODO: Relevant in pacific?
+#      ssh_offset: 0.04
+#      obc_mode: dynamic_adjust
+      # Ops gen_3Dth chain (non_adjust.sh): same-day RTOFS, 6-hourly records from the
+      # nowcast start, triangle interp (mode 1), elev2D held at record 0. MJ (10/02/26)
+      ops_timeline: true
+      interp_mode: 1
+      ssh_hold_first_record: true
+      roi_2ds:
+        x1: 222
+        x2: 2703
+        x_stride: 2
+        y1: 1051
+        y2: 2641
+        y_stride: 2
+      roi_3dz:
+        x1: 222
+        x2: 2703
+        x_stride: 2
+        y1: 1051
+        y2: 2641
+        y_stride: 2
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+      roi_3dz:
+        x1: 222
+        x2: 2703
+        x_stride: 2
+        y1: 1051
+        y2: 2641
+        y_stride: 2
+    adt:
+      enabled: true
+      datum_offset: -0.4715517
+      weight_file: stofs_3d_pac_adt_weight.nc  # ops ESMF (nearest) map, staged by the fetch tool. MJ (10/02/26)
+
+  tidal:
+    create_forcing: 1
+    nodal_reference: cycle  # nodal factors over the whole nowcast+forecast, as ops tide_fac. MJ (10/02/26)
+    files:
+      harmonic_constants_obc: stofs_3d_pac.tidal_hc.nc
+      harmonic_constants_ofs: stofs_3d_pac_ufs.bctides.in_template  # FIX name; a bare name resolves to the forecast work copy. MJ (10/01/26)
+
+model:
+  physics:
+    dt: 90.0
+    nws: 4  # NUOPC atmospheric coupling (nws=2 is sflux files)
+  run:
+    hindcast_days: 1.0
+    forecast_days: 3.0
+    nowcast_hours: 24
+    forecast_hours: 72
+    base_date: "2011010100"
+  runtime:
+    ctl_file: stofs_3d_pac_ufs.param.nml
+
+# TODO: Enable, adjust parameters & test
+#ufs_coastal:
+#  enabled: true
+#  # Coupled ATL binary (-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPREC_EVAP=ON, TVD_LIM=VL),
+#  # kept apart from SECOFS's fv3_coastalS.exe; the resolver exports it as UFS_EXEC_NAME and
+#  # stage_executable fails before the launch when it is not in $EXECnos. MJ (10/03/26)
+#  executable: fv3_stofs_3d_atl.exe
+#  datm_domain: STOFS3D_ATL  # preset in nos_utils ForcingConfig.from_yaml
+#  coupling_interval: 150  # must match runSeq @150 in ufs.configure and dt in param.nml
+#  datm_tasks: 120
+#  schism_tasks: 4912  # same rank count as standalone, so the same partition.prop is reused
+#  total_tasks: 5032
+#  blend_resolution: 0.025
+#  nhours_fcst: 96
+#  dt_atmos: 900
+#
+#resources:
+#  nprocs: 5032
+#  nscribes: 0
+
+# TODO: How different this is from Atlantic?
+post:
+  archive_fields: true   # run stages normalize + stage global field stacks
+  products:
+    # points_cwl (surface station series, the ops points.cwl.nc) needs
+    # stofs_3d_atl_staout_nc.json/.csv in $FIXofs or it skips; the 3D station
+    # profiles come from the profiles product below. MJ (10/05/26)
+    - points_cwl
+    - fields_nc
+    - bias_correct
+    # profiles: verified against the S3 ncast profile on PDY 20261001 (161 of
+    # 166 stations exact). The other 5 lie outside the mesh, where production
+    # writes extrapolated junk; "fill" keeps all 166 in station.in order and
+    # writes -99999 for those 5, so indices still line up with ops.
+    # geopkg stays off: geopandas + shapely>=1.8 are not in the WCOSS2 python
+    # 3.8 module set, and nos-utils geopkg does not yet apply the production
+    # isolatedPondNode mask or xGEOID20b datum string. MJ (10/05/26)
+    - maxele
+    - slab2d
+    - adcirc
+    - name: profiles
+      options:
+        outside: fill
+
+shell_mappings:
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+
+    RUNTIME_CTL: model.runtime.ctl_file
+    BASE_DATE: model.run.base_date
+
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+
+    USE_DATM: ufs_coastal.enabled
+    UFS_EXEC_NAME: ufs_coastal.executable
+    SCHISM_TASKS: ufs_coastal.schism_tasks
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+
+# TODO: Explore enabling this for Pacific
+#ensemble:
+#  enabled: true
+#  n_members: 6
+#  method: gefs
+#  seed: 42
+#  gefs:
+#    enabled: true
+#    n_gefs_members: 5
+#    resolution: "0p25"
+#    product: "pgrb2sp25"
+#    control_member: "gec00"
+#    perturbation_prefix: "gep"
+#    members:
+#      "000":
+#        label: "control (GFS+HRRR)"
+#        met_source_1: GFS
+#        met_source_2: HRRR
+#      "001":
+#        label: "GEFS p01"
+#        met_source_1: GEFS_01
+#        met_source_2: null
+#      "002":
+#        label: "GEFS p02"
+#        met_source_1: GEFS_02
+#        met_source_2: null
+#      "003":
+#        label: "GEFS p03"
+#        met_source_1: GEFS_03
+#        met_source_2: null
+#      "004":
+#        label: "GEFS p04"
+#        met_source_1: GEFS_04
+#        met_source_2: null
+#      "005":
+#        label: "RRFS"
+#        met_source_1: RRFS
+#        met_source_2: null
+#    extra_sources:
+#      - GEFS_01
+#      - GEFS_02
+#      - GEFS_03
+#      - GEFS_04
+#      - RRFS
+#  # Atmospheric forcing differences only; parameters are ignored while false.
+#  perturb_physics: false

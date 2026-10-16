@@ -1,0 +1,7 @@
+# STOFS-3D-PAC standalone (pschism) copied from Atlantic counterpart
+_base: stofs_3d_pac_ufs
+execution:
+  mode: standalone
+forcing:
+  river:
+    ops_static_files: true
