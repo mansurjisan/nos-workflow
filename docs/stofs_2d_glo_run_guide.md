@@ -340,6 +340,7 @@ Steps (use a separate shell or tmux window, so the shared com stays untouched):
 1. Set up the environment, a COMROOT of its own and the paths. `P` is the 2D-Global package clone.
 ```bash
 P=/work2/noaa/nos-surge/$LOGNAME/packages_2dglo/nos-workflow
+export NOS_PTMP=/work2/noaa/nos-surge/$LOGNAME/nos-run/ptmp     # as in section 3.1
 module use $P/modulefiles
 . $P/versions/run.hercules.ver
 module load nos_hercules.intel     # Intel runtime for tide_fac; ncdump
@@ -531,7 +532,7 @@ The worst stations are macro-tidal (Bristol Bay, Valdez, Anchorage). SA816 (Sea 
 The close comparison is a start from the ops state (sections 2.6 and 3.4): same chain time, nodal factors, forcing and rank count, so with the ops chain files (section 2.6, WCOSS2) the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. With the public files (section 3.4) this holds for the tide stream; for surf a start-state offset remains (the 66.5 mm below). Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc).
 
 The first result is from Hercules, 20261013 06z, started from the public ops `.68` files of 20261008 00z with a regenerated `nod_equi` (section 3.4). The metric is as above over the 1860 common times; the last two rows of the table are this run and the cold-start chain at the same cycle:
-- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (its ops value exceeds 20 m, so the other products skip it) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
+- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (its cwl and swl ops values exceed 20 m, so those comparisons skip it) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
 - `points.cwl.noanomaly` 66.5 mm and `points.swl` 70.2 mm, against 102.1 and 96.4 mm for the cold-start chain. The surf gap is most likely the start state (ops' 120 h forecast state, not its analysis). The worst stations are in the Southern Ocean (Bluff NZ, Ushuaia, Kerguelen) and the Gulf of Alaska (Valdez, Skagway, Seward, Anchorage). It should shrink over a few ops-state cycles on ops forcing; this guide records no such multi-cycle result yet.
 
 ## 8. Known limitations
