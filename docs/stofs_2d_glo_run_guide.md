@@ -191,7 +191,7 @@ cd <your nos-workflow>/pbs/stofs_2d_glo && ADCIRC_MODE=ops ./launch_stofs_2d_glo
 - The decomposition does not depend on the start time, so reuse the tar of an earlier ops-mode run (it is keyed on the rank count and on the mesh and attribute file sizes). Without it, the first `ncst` step of the nowcast job runs the full adcprep inside the job's 0:50 walltime. A tar made in single mode has no fort.24 and is refused (section 9).
 - This is a 4-job cycle, no cold start.
 - Put `database.tar.gz` in the day directory of the cycle you run (06, 12, 18z) or in the previous day's directory (00z, and a once-a-day 12z run falls back to it too). Without it the anomaly history starts empty, so `points.cwl.nc` and `points.swl.nc` differ from ops at the anomaly-corrected stations. Ops overwrites its tar every cycle, so the copy may be from a later cycle than the one you start.
-- This procedure is for WCOSS2, where the ops COM is readable. On Hercules the ops chain files are not in a COM, but the public bucket has an equivalent state and `nod_equi` can be regenerated: section 3.4.
+- This procedure is for WCOSS2, where the ops COM is readable. On Hercules the ops chain files are not in a COM, but the public bucket has ops' state at cycle + 120 h (exact for the tide stream, a forecast state for surf) and `nod_equi` can be regenerated: section 3.4.
 
 ### 2.7 Checking a run
 
@@ -334,38 +334,41 @@ This is the Hercules version of section 2.6, using public files only. Result: se
 
 Example: target 20261013 06z. The chain time is 20261013 00z. The files come from `stofs_2d_glo.20261008/00/rerun`.
 
-**Base date.** The ops time base is in the file (`time` units `seconds since 2026-05-26 12:00:00`; check with `ncdump -h`). The runner takes the fort.15 base date from line 1 of `nod_equi`, so `nod_equi` must carry the same base date as the `.68` units. Nothing checks this. `nod_equi` is not public, but it is a function of the ops cold-start date only: ops runs `stofs_2d_glo_tide_fac --length 365` from its spin-up start (cycle - 6 h - 162 h), and ops cold-started at 2026-06-02 12z, so the base is 2026-05-26 12z. If ops cold-starts again, the base date in the `.68` units changes and `nod_equi` must follow.
+**Base date.** The ops time base is in the file (`time` units `seconds since 2026-05-26 12:00:00`; check with `ncdump -h`). The runner takes the fort.15 base date from line 1 of `nod_equi`, so `nod_equi` must carry the same base date as the `.68` units. Nothing checks this. `nod_equi` is not public, but it is a function of the ops cold-start date only: ops runs `stofs_2d_glo_tide_fac --length 365` from its spin-up start (cycle - 6 h - 162 h), and the ops fort.15 fills its NCDATE / BASE_DATE line from line 1 of `nod_equi`. So the base date of the `.68` units is the start date of the ops `nod_equi` (here 2026-05-26 12z), and you regenerate `nod_equi` for that date. The units string carries trailing fort.15 comment text (`seconds since 2026-05-26 12:00:00        ! NCDASE - BASE_DAT`); that is normal. If ops cold-starts again, the base date in the `.68` units changes and `nod_equi` must follow.
 
 Steps (use a separate shell or tmux window, so the shared com stays untouched):
-1. Set up a COMROOT of its own and the paths.
+1. Set up the environment, a COMROOT of its own and the paths. `P` is the 2D-Global package clone.
 ```bash
+P=/work2/noaa/nos-surge/$LOGNAME/packages_2dglo/nos-workflow
+module use $P/modulefiles
+. $P/versions/run.hercules.ver
+module load nos_hercules.intel     # Intel runtime for tide_fac; ncdump
 export COMROOT_2DGLO=$NOS_PTMP/$LOGNAME/com_2dglo_opsstate
 SHARED=$NOS_PTMP/$LOGNAME/com/nos/stofs_2d_glo       # shared com, for the decomposition
 PDY=20261013; CYC=06; PREV=20261013; PCYC=00         # chain time = cycle - 6 h
 SRC=20261008; SCYC=00                                # cycle - 126 h
 B=https://noaa-gestofs-pds.s3.amazonaws.com
 G=$COMROOT_2DGLO/nos/stofs_2d_glo; D=$G.$PREV
-mkdir -p $D
+mkdir -p $G $D
 ```
 2. Download the two files on a login node (resumable):
 ```bash
 for s in tide surf; do
-  curl -f -C - -o $D/$s.68.nc \
+  [ $s = tide ] && out=hotstart || out=restart
+  curl -f -C - -o $D/stofs_2d_glo.t${PCYC}z.$out \
     $B/stofs_2d_glo.$SRC/$SCYC/rerun/stofs_2d_glo_$s.68.nc
 done
-mv $D/tide.68.nc $D/stofs_2d_glo.t${PCYC}z.hotstart
-mv $D/surf.68.nc $D/stofs_2d_glo.t${PCYC}z.restart
 ```
-3. Check the sizes and the model time. The time is a big-endian double at byte 605752524 (this mesh); it printed 12052800 for 20261013 00z.
+3. Check the sizes and the model time (12052800 s for 20261013 00z). The `od` line is an optional fast check for this mesh: the time is a big-endian double at byte 605752524.
 ```bash
 ls -l $D/stofs_2d_glo.t${PCYC}z.{hotstart,restart}      # 1472354116 bytes each
 f=$D/stofs_2d_glo.t${PCYC}z.hotstart
 ncdump -h $f | grep 'time:units'
+ncdump -v time $f | tail -2
 od -An -t f8 --endian=big -j 605752524 -N 8 $f
 ```
 4. Regenerate `nod_equi` with the base date of the `.68` units:
 ```bash
-P=<your nos-workflow>
 $P/exec/stofs_2d_glo_tide_fac --length 365 \
   --year 2026 --month 05 --day 26 --hour 12 \
   --outputformat simple --outputdir $G \
@@ -387,7 +390,7 @@ COLD=0 slurm/stofs_2d_glo/launch_stofs_2d_glo.sh $PDY $CYC
 8. Compare with ops as in section 3.3 (`compare_2dglo.py ops`).
 
 - The job list file is per cycle (`slurm_2dglo/jobs_<PDY><CC>.txt`). A second launch of the same cycle from another COMROOT moves the first list to a timestamped backup, and `status_stofs_2d_glo.sh` then reports the newer run.
-- A hung step (for example a filesystem stall; `adcirc.err` shows only the time-limit kill) is redone with `COLD=0 STAGES="forecast post"` (section 3.3).
+- A failed or hung step is redone as in section 3.3, with `COLD=0`: `STAGES="forecast post"` after `tide_fcst` (the hang here was likely a filesystem stall; `adcirc.err` showed only the time-limit kill), add `STREAMS=surf` after `surf_fcst`, and `STAGES="nowcast forecast post"` after a nowcast step.
 - No `database.tar.gz` is public, so the anomaly history is not seeded; the Hercules post has no anomaly step anyway.
 - Surf caveat: the surf state is ops' 120 h forecast state, not its analysis. The surf gap to ops is larger than the tide gap (section 7) and should shrink over a few ops-state cycles on ops forcing.
 
@@ -525,11 +528,11 @@ WCOSS2 and Hercules agree. The differences are cold-start effects, not the run m
 
 The worst stations are macro-tidal (Bristol Bay, Valdez, Anchorage). SA816 (Sea of Azov) and SA803 (Black Sea) are non-physical in the operational output as well, so differences there are not a nos-workflow problem. The forcing itself matches ops exactly (section 1).
 
-The close comparison is a start from the ops state (sections 2.6 and 3.4): same chain time, nodal factors, forcing and rank count, so the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc).
+The close comparison is a start from the ops state (sections 2.6 and 3.4): same chain time, nodal factors, forcing and rank count, so with the ops chain files (section 2.6, WCOSS2) the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. With the public files (section 3.4) this holds for the tide stream; for surf a start-state offset remains (the 66.5 mm below). Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc).
 
 The first result is from Hercules, 20261013 06z, started from the public ops `.68` files of 20261008 00z with a regenerated `nod_equi` (section 3.4). The metric is as above over the 1860 common times; the last two rows of the table are this run and the cold-start chain at the same cycle:
-- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (ops value above 20 m) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
-- `points.cwl.noanomaly` 66.5 mm and `points.swl` 70.2 mm, against 102.1 and 96.4 mm for the cold-start chain. The surf gap is mostly the start state (ops' 120 h forecast state, not its analysis), largest in the Southern Ocean and the Gulf of Alaska. It should shrink over a few ops-state cycles on ops forcing; this guide records no such multi-cycle result yet.
+- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (its ops value exceeds 20 m, so the other products skip it) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
+- `points.cwl.noanomaly` 66.5 mm and `points.swl` 70.2 mm, against 102.1 and 96.4 mm for the cold-start chain. The surf gap is most likely the start state (ops' 120 h forecast state, not its analysis). The worst stations are in the Southern Ocean (Bluff NZ, Ushuaia, Kerguelen) and the Gulf of Alaska (Valdez, Skagway, Seward, Anchorage). It should shrink over a few ops-state cycles on ops forcing; this guide records no such multi-cycle result yet.
 
 ## 8. Known limitations
 
