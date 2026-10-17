@@ -24,7 +24,7 @@ Nothing on Hercules is needed for sections 2-7.
 
 ## 2. Before each build
 
-- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends; a build while a SECOFS build runs fails at Gate. Check both jobs' Build History first.
+- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
 - **The job builds the `develop` branch** (*Branches to build* = `*/develop`). Section 9 covers other branches.
 - **Never use Build Now** for these systems: it always runs the SECOFS defaults.
 - **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait counts against each stage's time limit (section 7).
@@ -45,7 +45,7 @@ Nothing on Hercules is needed for sections 2-7.
 | `PDY` | `20261001` | `20261001` | `20261012` |
 | `CYC` | `12` (forced to 12 anyway) | `12` (forced to 12 anyway) | `06` for smoke and cycle, `00` for full |
 
-To stop a running build, click the red **X** next to it in Build History (or **Abort** on the build page). The cleanup then cancels the Slurm job the build was waiting on. You can confirm with `squeue -A nosofs` on Hercules.
+To stop a running build, click the red **X** next to it in Build History (or **Abort** on the build page). The cleanup then cancels the Slurm job the build was waiting on. You can confirm with `squeue -A nosofs` on Hercules. Click Abort once and wait for the cleanup to finish: a second click can interrupt the cleanup and leave the CI lock behind. The next build of this job clears such a lock, but it blocks the SECOFS job (it shares the lock) for up to 18 h.
 
 **All parameters:**
 
@@ -125,7 +125,7 @@ Find the red column, open Console Output, then match the message below.
 
 | Stage | Message or symptom | Cause | Fix |
 | --- | --- | --- | --- |
-| Gate | `another CI cycle holds the lock` | Another build of this job or the SECOFS job is running | Wait for it. A lock older than 18 h is cleared automatically |
+| Gate | `another CI cycle holds the lock` | The SECOFS job is running (a lock left by an earlier build of this job is cleared at once) | Wait for the SECOFS build. Abort a build only once and let its cleanup finish, or the lock stays behind. A SECOFS lock older than 18 h is cleared automatically. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. |
 | (any) | The build ran SECOFS | Started with Build Now | Use Build with Parameters and set `OFS` |
 | (form) | A parameter is missing from the form | Jenkins shows a new parameter only after one build of the Jenkinsfile that adds it | Start one build, abort it, then use Build with Parameters again |
 | Bootstrap | `FATAL: ... is not readable by role-nosofs` or `not readable as role-nosofs`, with a `chmod` hint | `SEED_SRC` or `SEED_RT` is not readable by the CI account | The owner of that path runs the printed `chmod -R o+rX`, plus `chmod o+x` on every parent directory (section 8.4) |
@@ -147,7 +147,7 @@ Find the red column, open Console Output, then match the message below.
 
 If you cannot fix it, send the maintainer the build number, the failing stage and the `FAIL` lines from Console Output.
 
-Known quirk: after a failed build the cleanup may print `scancel <id>` for the last job the build submitted, even when that job already finished (for example when Verify fails). Cancelling a finished job does nothing. A build that fails before Deploy (at Gate or Bootstrap) still holds the previous build's `ci_logs/`: its Build Artifacts are the previous build's logs, and the `scancel` names the previous build's last job.
+A failed build cancels only the Slurm job it submitted itself (`ci_logs/current_jobid` records the build number). A build that fails before Deploy (at Gate or Bootstrap) still holds the previous build's `ci_logs/`: its Build Artifacts are the previous build's logs, and the cleanup prints `skipping stale jobid` instead of cancelling.
 
 ## 8. Add your own test case (from your Hercules account)
 
@@ -289,7 +289,7 @@ Both variants: standalone (`stofs_3d_atl_ufs_standalone`) and coupled (`stofs_3d
 | Forecast | Slurm, 62 or 63 nodes | The 96 h forecast from the nowcast hotstart | cycle, full | not yet run in CI |
 | Post | Slurm, 1 node | Station products (`points.cwl`, `station.profile`) and field products, nowcast and forecast | cycle, full | not yet run in CI |
 | Verify | Jenkins agent | `compare_atl.py regress` against the dataset's reference. smoke: the 8 nowcast `staout` files. cycle: also the 8 forecast `staout` files, `points.cwl` and `station.profile`. full: also the ops comparison (report only). Report: `compare_atl.txt` | all | seconds |
-| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
+| post-build | Jenkins agent | Releases the lock and archives `ci_logs/`; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
 
 Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing stage deletes its own work directory (about 150 GB a cycle); a failed one keeps it for debugging. Verify tolerance: `CMP_TOL` (default 1e-3) for water level, velocity and wind, 10 times that for temperature and salinity, 100 times for pressure.
 
@@ -310,7 +310,7 @@ Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing
 | Forecast | Slurm, 52 nodes | The 180 h forecast: tide, then surf, each followed by the record-gap check | cycle, full | not yet run in CI; about 77 min in hand runs |
 | Post | Slurm, 1 node, 100 GB (on the prep card) | `ncdiff` makes the surge-only products, swl = cwl - htp, for the station and field files. `ncrcat` joins the met forcing into the ops met files (`pressfc`, `uvgrd10m`, `icec`): hourly to 120 h, then 3-hourly to 180 h, 7 + 121 + 21 = 149 records. anomaly, bias and GRIB2 are not run on Hercules | cycle, full | not yet run in CI; about 15 min in hand runs |
 | Verify | Jenkins agent | `compare_2dglo.py` against the dataset's reference. smoke: `rerun/stofs_2d_glo_{tide,surf}.61.nc`. cycle and full: also the `points.*.nc` station files, plus the station comparison with ops (report only; warns above 500 mm). Report: `compare_2dglo.txt` | all | seconds |
-| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
+| post-build | Jenkins agent | Releases the lock and archives `ci_logs/`; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
 
 Time limit per Slurm stage: the launcher walltime plus 1 h (section 7). The jobs run with `KEEPDATA=NO` and remove their own work directories. Verify tolerance: bitwise, or the largest difference in zeta, u-vel and v-vel within `CMP_TOL` (default 1e-3 m or m/s).
 
@@ -331,7 +331,7 @@ Time limit per Slurm stage: the launcher walltime plus 1 h (section 7). The jobs
 | Forecast | Slurm, 37 nodes | The 48 h coupled forecast | 5:40 |
 | Post | Slurm, 1 node | Station and field products | 2:10 |
 | Verify | Jenkins agent | `verify.sh`: all four stage logs have `STAGE_SUMMARY ... status=PASS`, and `restart_outputs` exists with files over 1 MB. There is no comparison against a reference | - |
-| post-build | Jenkins agent | Archives `ci_logs/` and releases the lock; on failure or abort, cancels the current Slurm job. Posts `success` or `failure` to `hercules-ci/cycle` on the same commit; on a PR build also removes the `hercules-nos-RT` label. Posts to Slack | - |
+| post-build | Jenkins agent | Releases the lock and archives `ci_logs/`; on failure or abort, cancels the current Slurm job. Posts `success` or `failure` to `hercules-ci/cycle` on the same commit; on a PR build also removes the `hercules-nos-RT` label. Posts to Slack | - |
 
 ### 12.4 SECOFS against the STOFS systems
 

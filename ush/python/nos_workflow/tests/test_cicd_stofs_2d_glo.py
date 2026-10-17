@@ -431,7 +431,7 @@ def test_run_stage_submits_the_2dglo_job_with_the_launchers_flags_lists_and_expo
     # the space separated lists travel in the environment (--export=ALL), the inherited leaks are replaced or gone. MJ (10/15/26)
     seg = seg_cold if cold else seg_warm
     assert (ci.stubs / "sbatch.env").read_text().strip() == f"SEG=[{seg}] STREAM=[{stream}] MODE=[unset] PYTHONPATH=[unset] COMOUT=[unset] RPTDIR=[unset]"
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text().strip() == "101"
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text().split()[-1] == "101"
     logs = sorted(p.name for p in (ci.ws / "ci_logs").iterdir())
     assert f"{pfx}.101.out" in logs and f"{pfx}.101.err" in logs and "slurm_epilogue.slurm-101.out" in logs
 

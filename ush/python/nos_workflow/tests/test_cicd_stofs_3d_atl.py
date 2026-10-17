@@ -422,7 +422,7 @@ def test_run_stage_submits_the_atl_card_with_its_exports_and_gates_on_the_run_na
     assert line.count("COMROOT_STAGED=") == 1 and line.count("--export=") == 1 and "RPTDIR" not in line and "atl_ci" not in line
     assert (ci.stubs / "sbatch.env").read_text().strip() == "COMOUT=unset RPTDIR=unset"
     assert ci.rpt.is_dir() and not (ci.rpt.parent / "stofs_3d_atl_ufs_standalone").exists()
-    assert (ci.ws / "ci_logs" / "current_jobid").read_text().strip() == "101"
+    assert (ci.ws / "ci_logs" / "current_jobid").read_text().split()[-1] == "101"
     logs = sorted(p.name for p in (ci.ws / "ci_logs").iterdir())
     pfx = carddir
     assert f"{pfx}_{stage}_00.101.out" in logs and f"{pfx}_{stage}_00.101.err" in logs and "slurm_epilogue.slurm-101.out" in logs

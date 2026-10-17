@@ -69,7 +69,8 @@ echo "${SBATCH_OUT}"
 JOBID=$(awk '/Submitted batch job/{print $NF}' <<<"${SBATCH_OUT}")
 [ -n "${JOBID}" ] || { echo "FATAL: could not parse jobid from sbatch output"; exit 2; }
 echo "jobid=${JOBID}"
-echo "${JOBID}" > "${WORKSPACE:-.}/ci_logs/current_jobid"
+# "<build> <jobid>": the Jenkinsfile post step cancels only a job its own build submitted. MJ (10/16/26)
+echo "${BUILD_NUMBER:-manual} ${JOBID}" > "${WORKSPACE:-.}/ci_logs/current_jobid"
 
 LOGPFX="${ATL_LOGPFX:-${RPTDIR}/${OFS}_${STAGE}_00}"
 LOG="${LOGPFX}.${JOBID}.out"
