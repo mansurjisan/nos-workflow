@@ -191,7 +191,7 @@ cd <your nos-workflow>/pbs/stofs_2d_glo && ADCIRC_MODE=ops ./launch_stofs_2d_glo
 - The decomposition does not depend on the start time, so reuse the tar of an earlier ops-mode run (it is keyed on the rank count and on the mesh and attribute file sizes). Without it, the first `ncst` step of the nowcast job runs the full adcprep inside the job's 0:50 walltime. A tar made in single mode has no fort.24 and is refused (section 9).
 - This is a 4-job cycle, no cold start.
 - Put `database.tar.gz` in the day directory of the cycle you run (06, 12, 18z) or in the previous day's directory (00z, and a once-a-day 12z run falls back to it too). Without it the anomaly history starts empty, so `points.cwl.nc` and `points.swl.nc` differ from ops at the anomaly-corrected stations. Ops overwrites its tar every cycle, so the copy may be from a later cycle than the one you start.
-- The ops restart files are not public, so this works on WCOSS2 only.
+- This procedure is for WCOSS2, where the ops COM is readable. On Hercules the ops chain files are not in a COM, but the public bucket has an equivalent state and `nod_equi` can be regenerated: section 3.4.
 
 ### 2.7 Checking a run
 
@@ -233,12 +233,12 @@ Forcing comparison (a maintainer helper, not in the repo; ask for it): compare t
 
 ## 3. Hercules (RDHPCS, Slurm)
 
-Hercules runs ops mode (the Slurm launcher submits no single-mode chain), as a cold start followed by 6-hourly cycles. Differences from WCOSS2:
+Hercules runs ops mode (the Slurm launcher submits no single-mode chain), as a cold start or a start from the ops state (section 3.4), followed by 6-hourly cycles. Differences from WCOSS2:
 - **No GFS build.** GFS `sfcf` netCDF files are not public past f012, so the surf forcing is taken from the operational files on the public S3 bucket (`noaa-gestofs-pds`) and staged into `rerun/` by a tool. The prep job's `gfs_ncst` and `gfs_fcst` steps find the staged files and skip.
 - **No anomaly, bias or GRIB2/SHEF steps.** They run the unchanged ops ex-scripts and need the ops package, `mpirun`, `cfp` and `tocgrib2`. The post job is `ncdiff` and `ncrcat`.
 - **ADCIRC and tide_fac are built here** from the public NCO source; there is no adcirc module.
 - **Compute nodes have no internet.** Every download (source, fix files, forcing) runs on a login node.
-- **Cold start only.** The ops restart files and `nod_equi` are not public, so a start from the ops state is WCOSS2 only.
+- **Cold start, or a start from the public ops state.** The ops COM is not readable, but the bucket holds ADCIRC hotstart files that serve as the ops state, and `nod_equi` can be regenerated (section 3.4).
 
 ### 3.1 One-time setup
 
@@ -325,6 +325,71 @@ Outputs, checks and the station comparison are as on WCOSS2 (sections 2.7 and 2.
 ```bash
 python3 .cicd/scripts/compare_2dglo.py ops --out $COMROOT_2DGLO --ops-dir $NOS_PTMP/$LOGNAME/ops_s3/20261012${CYC}/products --pdy 20261012 --cyc $CYC
 ```
+
+### 3.4 Starting from the ops state
+
+This is the Hercules version of section 2.6, using public files only. Result: section 7.
+
+**Which file.** The bucket has, for every cycle, `stofs_2d_glo.<PDY>/<CC>/rerun/stofs_2d_glo_tide.68.nc` and `stofs_2d_glo_surf.68.nc`. They are ADCIRC netCDF hotstart files (netCDF classic, 1472354116 bytes each), the same layout as the chain files, so the runner uses them unchanged. They are not the state at the cycle time. Each is the end of the ops `fcst1` run, the state at cycle + 120 h, which ops publishes for its `fcst2`. Tide and surf of a cycle hold the same model time. To start cycle C, the chain time is C - 6 h, so use the `.68` of the cycle C - 126 h. The bucket held them back to at least 20261005 on 2026-10-17.
+
+Example: target 20261013 06z. The chain time is 20261013 00z. The files come from `stofs_2d_glo.20261008/00/rerun`.
+
+**Base date.** The ops time base is in the file (`time` units `seconds since 2026-05-26 12:00:00`; check with `ncdump -h`). The runner takes the fort.15 base date from line 1 of `nod_equi`, so `nod_equi` must carry the same base date as the `.68` units. Nothing checks this. `nod_equi` is not public, but it is a function of the ops cold-start date only: ops runs `stofs_2d_glo_tide_fac --length 365` from its spin-up start (cycle - 6 h - 162 h), and ops cold-started at 2026-06-02 12z, so the base is 2026-05-26 12z. If ops cold-starts again, the base date in the `.68` units changes and `nod_equi` must follow.
+
+Steps (use a separate shell or tmux window, so the shared com stays untouched):
+1. Set up a COMROOT of its own and the paths.
+```bash
+export COMROOT_2DGLO=$NOS_PTMP/$LOGNAME/com_2dglo_opsstate
+SHARED=$NOS_PTMP/$LOGNAME/com/nos/stofs_2d_glo       # shared com, for the decomposition
+PDY=20261013; CYC=06; PREV=20261013; PCYC=00         # chain time = cycle - 6 h
+SRC=20261008; SCYC=00                                # cycle - 126 h
+B=https://noaa-gestofs-pds.s3.amazonaws.com
+G=$COMROOT_2DGLO/nos/stofs_2d_glo; D=$G.$PREV
+mkdir -p $D
+```
+2. Download the two files on a login node (resumable):
+```bash
+for s in tide surf; do
+  curl -f -C - -o $D/$s.68.nc \
+    $B/stofs_2d_glo.$SRC/$SCYC/rerun/stofs_2d_glo_$s.68.nc
+done
+mv $D/tide.68.nc $D/stofs_2d_glo.t${PCYC}z.hotstart
+mv $D/surf.68.nc $D/stofs_2d_glo.t${PCYC}z.restart
+```
+3. Check the sizes and the model time. The time is a big-endian double at byte 605752524 (this mesh); it printed 12052800 for 20261013 00z.
+```bash
+ls -l $D/stofs_2d_glo.t${PCYC}z.{hotstart,restart}      # 1472354116 bytes each
+f=$D/stofs_2d_glo.t${PCYC}z.hotstart
+ncdump -h $f | grep 'time:units'
+od -An -t f8 --endian=big -j 605752524 -N 8 $f
+```
+4. Regenerate `nod_equi` with the base date of the `.68` units:
+```bash
+P=<your nos-workflow>
+$P/exec/stofs_2d_glo_tide_fac --length 365 \
+  --year 2026 --month 05 --day 26 --hour 12 \
+  --outputformat simple --outputdir $G \
+  --outputname stofs_2d_glo_nod_equi
+head -1 $G/stofs_2d_glo_nod_equi                     # 12 26  5 2026
+```
+5. Copy (not link) the decomposition from the shared com:
+```bash
+cp $SHARED/stofs_2d_glo_4064.tar{,.json} $G/
+```
+6. Stage the ops forcing for the cycle into this COMROOT (it also downloads the ops station files):
+```bash
+cd $P && tools/hercules_2d_glo_stage_forcing.sh --rm-raw $PDY $CYC
+```
+7. Launch, without `SUBMIT_GFS`:
+```bash
+COLD=0 slurm/stofs_2d_glo/launch_stofs_2d_glo.sh $PDY $CYC
+```
+8. Compare with ops as in section 3.3 (`compare_2dglo.py ops`).
+
+- The job list file is per cycle (`slurm_2dglo/jobs_<PDY><CC>.txt`). A second launch of the same cycle from another COMROOT moves the first list to a timestamped backup, and `status_stofs_2d_glo.sh` then reports the newer run.
+- A hung step (for example a filesystem stall; `adcirc.err` shows only the time-limit kill) is redone with `COLD=0 STAGES="forecast post"` (section 3.3).
+- No `database.tar.gz` is public, so the anomaly history is not seeded; the Hercules post has no anomaly step anyway.
+- Surf caveat: the surf state is ops' 120 h forecast state, not its analysis. The surf gap to ops is larger than the tide gap (section 7) and should shrink over a few ops-state cycles on ops forcing.
 
 ## 4. COMROOT layout and defaults
 
@@ -450,15 +515,21 @@ Metric: for each station, the maximum absolute water-level difference from ops o
 | Cold start 20261012 00z, WCOSS2 | 59 | 173 | 164 |
 | Cold start 20261012 00z, Hercules | 59 | 173 | 164 |
 | 20261012 06z, `COLD=0`, Hercules | 52.6 | 154.5 | 141.8 |
+| 20261013 06z, cold-start chain, Hercules | 35.3 | 102.1 | 96.4 |
+| 20261013 06z, ops state (section 3.4), Hercules | 0.06 | 66.5 | 70.2 |
 
 WCOSS2 and Hercules agree. The differences are cold-start effects, not the run mechanics:
 - ops has cycled for months, while a cold start spins up tide-only for 162 h (6.75 days) from rest and then runs the 6 h nowcast, so the cycle is 7 days after the start;
 - the DRAMP ramp is 6.75 days (tanh), about 0.97 at the cycle time, so the tide is not fully developed;
-- the nodal factors come from the cold-start date (`nod_equi` starts at the spin-up start), while ops uses its own `nod_equi`; a start from the ops state copies that file.
+- the nodal factors come from the cold-start date (`nod_equi` starts at the spin-up start), while ops uses its own `nod_equi`; a start from the ops state copies that file (WCOSS2) or regenerates it with the ops base date (Hercules, section 3.4).
 
 The worst stations are macro-tidal (Bristol Bay, Valdez, Anchorage). SA816 (Sea of Azov) and SA803 (Black Sea) are non-physical in the operational output as well, so differences there are not a nos-workflow problem. The forcing itself matches ops exactly (section 1).
 
-The close comparison is a start from the ops state (section 2.6): same chain files, nodal factors, forcing and rank count, so the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc). This is WCOSS2 only, and this guide records no result for it yet.
+The close comparison is a start from the ops state (sections 2.6 and 3.4): same chain time, nodal factors, forcing and rank count, so the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc).
+
+The first result is from Hercules, 20261013 06z, started from the public ops `.68` files of 20261008 00z with a regenerated `nod_equi` (section 3.4). The metric is as above over the 1860 common times; the last two rows of the table are this run and the cold-start chain at the same cycle:
+- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (ops value above 20 m) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
+- `points.cwl.noanomaly` 66.5 mm and `points.swl` 70.2 mm, against 102.1 and 96.4 mm for the cold-start chain. The surf gap is mostly the start state (ops' 120 h forecast state, not its analysis), largest in the Southern Ocean and the Gulf of Alaska. It should shrink over a few ops-state cycles on ops forcing; this guide records no such multi-cycle result yet.
 
 ## 8. Known limitations
 
@@ -467,7 +538,7 @@ The close comparison is a start from the ops state (section 2.6): same chain fil
 - No watchdogs.
 - No unattended 4-a-day cycling (cron or ecFlow cards): use the launchers.
 - Anomaly, bias and GRIB2/SHEF run on WCOSS2 only (they need the ops package, `cfp` and `tocgrib2`).
-- A cold start from rest is the only start on Hercules; a start from the ops state is WCOSS2 only.
+- On Hercules a start from the ops state uses the public `.68` files, which are the ops 120 h forecast state, not the analysis at the cycle time (section 3.4). They exist only for cycles still in the bucket.
 - Single mode has no post stage.
 - The first ops-mode cycle without a seeded `database.tar.gz` has an empty anomaly history.
 - `nod_equi` is fixed for 365 days from the spin-up start; there is no check for its age, so run `COLDSTART=YES` again (or copy the ops file) well before then.
