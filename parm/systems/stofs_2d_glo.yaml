@@ -35,7 +35,7 @@ model:
 adcirc:
   name: stofs2dglobal
   # ADCIRC_MODE=ops (set per job at submit time) runs the stofs.v3.1.5 structure; surf ncst and fcst
-  # add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files per output step
+  # add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files every output hour
   # (fort.63, 64, 73, 74 and the ice file fort.93). ADCIRC hands each output event to the next writer in turn, so with five
   # writers each file always goes to the same writer and its records stay in order; with 32 one hourly record was sometimes
   # lost. MJ (10/17/26)
