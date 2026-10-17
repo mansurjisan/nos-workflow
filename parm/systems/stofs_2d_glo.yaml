@@ -35,10 +35,11 @@ model:
 adcirc:
   name: stofs2dglobal
   # ADCIRC_MODE=ops (set per job at submit time) runs the stofs.v3.1.5 structure; surf ncst and fcst
-  # add this many -W writers (4064 + 4 = 4068 ranks). Four, the number of global files the surf run writes per output step
-  # (fort.63/64/73/74): ADCIRC hands each output event to the next writer in turn, so each file then always goes to the same
-  # writer and its records stay in order. With 32 writers one hourly record was sometimes lost. MJ (10/17/26)
-  ops_surf_writers: 4
+  # add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files per output step
+  # (fort.63, 64, 73, 74 and the ice file fort.93). ADCIRC hands each output event to the next writer in turn, so with five
+  # writers each file always goes to the same writer and its records stay in order; with 32 one hourly record was sometimes
+  # lost. MJ (10/17/26)
+  ops_surf_writers: 5
   # Seconds the ops GFS prep jobs (ADCIRC_SEGMENT=ncst|fcst) wait in total for a late sfcf file, inside the walltimes
   # 0:10 (ecf) and 0:40 (ecf fcst1 + fcst2); ops waits until the walltime kills it. MJ (10/11/26)
   # fcst leaves 600 s of the 0:40 for the 181 records (40 interpolated: hours 121-179 minus the 19 that are 3-hourly GFS records). MJ (10/14/26)

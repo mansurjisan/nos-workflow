@@ -51,7 +51,7 @@ def test_wcoss2_node_math(wcoss2):
         assert f"#PBS  -l place=vscatter:excl,select={nodes}:ncpus=128:mpiprocs=128:ompthreads=1" in pbs
         assert f"#PBS  -l walltime={WALL[stage]}" in pbs
         assert f"#PBS  -A {wcoss2.account}" in pbs and f"#PBS  -q {wcoss2.queue}" in pbs
-    # 4064 + up to 32 writer ranks must fit the 32 x 128 slots (the surf default is 4 writers). MJ (10/17/26)
+    # 4064 + up to 32 writer ranks must fit the 32 x 128 slots (the surf default is 5 writers). MJ (10/17/26)
     assert nodes * 128 - RANKS == 32
 
 
@@ -439,5 +439,5 @@ def test_atl_launchers_forward_own_clone(launcher, tmp_path):
 def test_surf_writers_fit_both_machines():
     import yaml
     w = yaml.safe_load((REPO / "parm" / "systems" / "stofs_2d_glo.yaml").read_text())["adcirc"]["ops_surf_writers"]
-    assert w == 4
+    assert w == 5
     assert RANKS + w <= 51 * 80 and RANKS + w <= 32 * 128

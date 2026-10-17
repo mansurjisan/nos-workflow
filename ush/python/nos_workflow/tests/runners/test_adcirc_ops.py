@@ -234,7 +234,7 @@ def test_surf_chain_writers_and_forcing(tmp_path):
     ctx0 = _cold(tmp_path)
     _ncst221(ctx0, 7)   # window = chain start .. cycle, hourly, inclusive ends MJ (10/06/26)
     ctx, fa = _go(tmp_path, "surf", "ncst")
-    assert fa.argv[0][1:3] == ["-n", "8"] and fa.argv[0][-2:] == ["-W", "4"]
+    assert fa.argv[0][1:3] == ["-n", "9"] and fa.argv[0][-2:] == ["-W", "5"]
     assert hotstart.file_time(ctx.cycle_dir(CYCLE, "restart")) == 604800
     f222 = ops.rerun_dir(ctx) / f"{RUN}_fcst.222.nc"
     f222.unlink()
@@ -242,7 +242,7 @@ def test_surf_chain_writers_and_forcing(tmp_path):
         _go(tmp_path, "surf", "fcst")
     f222.write_text("fcst")
     _, fa = _go(tmp_path, "surf", "fcst")
-    assert fa.argv[0][-2:] == ["-W", "4"]
+    assert fa.argv[0][-2:] == ["-W", "5"]
     assert (tmp_path / "work" / "surf_fcst" / "fort.221.nc").read_text() == "fcst"
     assert ctx.cycle_dir(CYCLE, "fields.cwl.maxwvel.nc").is_file()
 
@@ -270,8 +270,8 @@ def test_fcst_needs_its_nowcast_and_ranks_must_fit(tmp_path, monkeypatch):
     _ncst221(_cold(tmp_path), 7)
     with pytest.raises(AdcircConfigError, match="run the tide nowcast first"):
         _go(tmp_path, "tide", "fcst")
-    monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "7")
-    with pytest.raises(AdcircConfigError, match="8 ranks.*7 allocated"):
+    monkeypatch.setenv("ADCIRC_ALLOC_RANKS", "8")
+    with pytest.raises(AdcircConfigError, match="9 ranks.*8 allocated"):
         _go(tmp_path, "surf", "ncst")
 
 

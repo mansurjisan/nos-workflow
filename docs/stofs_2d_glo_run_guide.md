@@ -145,8 +145,8 @@ In ops mode `KEEPDATA` defaults to `NO` and is forwarded, and the launcher print
 | Job | Resources | Walltime | Steps | Waits for |
 |---|---|---|---|---|
 | prep | 1 core, prepost, 400 GB | 0:50 (cold start 3:50) | [`adcprep`,] `gfs_ncst`, `gfs_fcst` | |
-| nowcast | 32 nodes x 128 (surf: 4064 + 4 writers) | 0:50 (cold start 1:50) | [`spinup`,] `tide_ncst`, `surf_ncst` | prep |
-| forecast | 32 nodes x 128 (surf: 4064 + 4 writers) | 2:00 | `tide_fcst`, `surf_fcst` | nowcast |
+| nowcast | 32 nodes x 128 (surf: 4064 + 5 writers) | 0:50 (cold start 1:50) | [`spinup`,] `tide_ncst`, `surf_ncst` | prep |
+| forecast | 32 nodes x 128 (surf: 4064 + 5 writers) | 2:00 | `tide_fcst`, `surf_fcst` | nowcast |
 | post | 8 nodes x 32 cores, prepost, 800 GB, exclusive | 3:10 | `anomaly`, `bias`, `ncdiff`, `grib2`, `ncrcat` | forecast |
 
 The walltimes are the sums of the former per-job values, which were the ops ecf values except `adcprep` 3:00 (full adcprep with fort.24, plus the cache tar), `ncst` 0:25 (the first WCOSS2 cycle took 750 and 821 s of the ecf 0:15) and `ncrcat` 0:25: prep 0:10 + 0:40 (+ 3:00); nowcast 2 x 0:25 (+ 1:00 spin-up); forecast 0:55 + 1:05; post 0:15 + 2:00 + 0:10 + 0:20 + 0:25. The post job takes the bias shape (8 x 32 cores, exclusive), which also covers the 7 cores of `grib2` and the one-core steps. That is 4 jobs, with or without a cold start. If `qsub` rejects a job, the launcher stops partway: `qdel` the ids it printed and fix the message.
@@ -313,7 +313,7 @@ Run from the clone you want the cards to use. The launcher unsets package-select
 | Job | Resources | Walltime | Steps | Waits for |
 |---|---|---|---|---|
 | prep | 1 node, 1 task, 64 GB | 0:50:00 (cold start 3:50:00) | [`adcprep`,] `gfs_ncst`, `gfs_fcst` | |
-| nowcast | 52 nodes x 80 (surf: 4064 + 4 writers) | 1:20:00 (with `spinup` 2:20:00) | [`spinup`,] `tide_ncst`, `surf_ncst` | prep |
+| nowcast | 52 nodes x 80 (surf: 4064 + 5 writers) | 1:20:00 (with `spinup` 2:20:00) | [`spinup`,] `tide_ncst`, `surf_ncst` | prep |
 | forecast | 52 nodes x 80 | 2:00:00 | `tide_fcst`, `surf_fcst` | nowcast |
 | post | 1 node, 1 task, 100 GB | 1:15:00 | `ncdiff`, `ncrcat` | forecast |
 
@@ -488,9 +488,8 @@ The close comparison is a start from the ops state (section 2.6): same chain fil
 | `FATAL ERROR: GFS surface forcing does not exist: <path>` | The surf segment ran without its forcing. WCOSS2: the prep job did not pass. Hercules: run `tools/hercules_2d_glo_stage_forcing.sh <PDY> <CYC>` first. |
 | `ops package (STOFS_RUNVER=...) or tools missing for post <segment>: ...` | The post preflight lists the missing ops package files, modules or tools. Check `STOFS_RUNVER` and the section 2.4 check. |
 | `ncdiff not found on PATH (module load nco)` | NCO is not on the job's `PATH`. The WCOSS2 prep card loads `nco` and `nos_hercules.intel` provides it on Hercules; check `module list` in the job log. |
-| `<N> ranks (compute + writers) exceed the <M> allocated; raise the node count at submit time` | The allocation is too small. Surf needs 4064 + 4 = 4068 ranks: 32 x 128 on WCOSS2, 51 x 80 on Hercules (the jobs request 52). |
-| `padcirc dropped an output record: re-run this step ...` with the surf fcst, even with the right allocation | With many writers ADCIRC hands consecutive hourly records of one file to different writer ranks, and two writes that overlap take the same record slot, so one record is lost. The surf run uses 4 writers, one per global output file (`fort.63`, `fort.64`, `fort.73`, `fort.74`), so each file keeps one writer and its records stay in order; if it still happens, re-run with `STAGES="forecast post" STREAMS=surf` for a surf fcst. |
-| `padcirc dropped an output record: re-run this step (STAGES=... [STREAMS=...]); fort.63.nc (surf fcst) has 185 records, expected 186; gap times: ...` | A sporadic padcirc writer drop left a gap in a `fort.61` to `fort.64` series; the step fails before it publishes anything or advances the state, so it re-runs cleanly. Use the `STAGES`/`STREAMS` the message prints: after `ncst` `STAGES="nowcast forecast post"`; after `tide_fcst` `STAGES="forecast post"`; after `surf_fcst` `STAGES="forecast post" STREAMS=surf` (section 2.5). |
+| `<N> ranks (compute + writers) exceed the <M> allocated; raise the node count at submit time` | The allocation is too small. Surf needs 4064 + 5 = 4069 ranks: 32 x 128 on WCOSS2, 51 x 80 on Hercules (the jobs request 52). |
+| `padcirc dropped an output record: re-run this step (STAGES=... [STREAMS=...]); fort.63.nc (surf fcst) has 185 records, expected 186; gap times: ...` | A padcirc writer drop left a gap in a `fort.61` to `fort.64` series. The surf run writes five files per output step (`fort.63`, `fort.64`, `fort.73`, `fort.74`, and the ice file `fort.93`) and ADCIRC hands each event to the next writer in turn, so with many writers two overlapping writes of one file can take the same record slot and one record is lost; the surf run uses 5 writers, one per file, which avoids it. the step fails before it publishes anything or advances the state, so it re-runs cleanly. Use the `STAGES`/`STREAMS` the message prints: after `ncst` `STAGES="nowcast forecast post"`; after `tide_fcst` `STAGES="forecast post"`; after `surf_fcst` `STAGES="forecast post" STREAMS=surf` (section 2.5). |
 | `... has advanced past this fcst ... redo the cycle from ncst`, or `missing or empty ...hottime.out; run the tide nowcast first` | The forecast ran before its nowcast, or twice. Re-run the stream from `ncst`. |
 | `nod_equi starts ... but this cycle's spin-up starts ...; run the adcprep segment for this cycle first (COLDSTART=YES / COLD=1)` | `COLD=spinup` only works for the same PDY and CYC as the `adcprep` step that made `nod_equi`. |
 | `ADCIRC execution failed with return code N` or `ADCIRC crashed (rc=0 but log reports): ...` | The job log shows the last 30 lines of `adcirc.out` and `adcirc.err`. To keep the whole work directory, relaunch with `KEEPDATA=YES`. |
