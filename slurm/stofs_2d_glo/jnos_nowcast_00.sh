@@ -25,7 +25,7 @@
 # (the sums of the former per-job ones, not the ecf values); status_stofs_2d_glo.sh <PDY> <CYC> reports it. A cycle is four jobs, prep ->
 # nowcast -> forecast -> post, and each runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list one after the other (tide, then
 # surf) on its own allocation. The surf runs launch 4064 + 5 writers = 4069 ranks, which fit 51 x 80 slots. The launcher and the
-# CI card-env still request -N 52 (unchanged here); both streams now run on 51 of the nodes (srun -N 51), so -N 51 is a possible
+# CI card-env request -N 52; both streams run on 51 of the nodes (srun -N 51), so -N 51 is a possible
 # follow-up. MJ (10/17/26)
 # --export splits values at commas, so the lists are space separated and go in the environment of sbatch (the default
 # --export=ALL), and a hand-typed --export value goes in one pair of quotes. A list is in the order of the examples (spinup ncst; tide surf;
