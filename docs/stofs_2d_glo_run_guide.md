@@ -191,7 +191,7 @@ cd <your nos-workflow>/pbs/stofs_2d_glo && ADCIRC_MODE=ops ./launch_stofs_2d_glo
 - The decomposition does not depend on the start time, so reuse the tar of an earlier ops-mode run (it is keyed on the rank count and on the mesh and attribute file sizes). Without it, the first `ncst` step of the nowcast job runs the full adcprep inside the job's 0:50 walltime. A tar made in single mode has no fort.24 and is refused (section 9).
 - This is a 4-job cycle, no cold start.
 - Put `database.tar.gz` in the day directory of the cycle you run (06, 12, 18z) or in the previous day's directory (00z, and a once-a-day 12z run falls back to it too). Without it the anomaly history starts empty, so `points.cwl.nc` and `points.swl.nc` differ from ops at the anomaly-corrected stations. Ops overwrites its tar every cycle, so the copy may be from a later cycle than the one you start.
-- This procedure is for WCOSS2, where the ops COM is readable. On Hercules the ops chain files are not in a COM, but the public bucket has ops' state at cycle + 120 h (exact for the tide stream, a forecast state for surf) and `nod_equi` can be regenerated: section 3.4.
+- This procedure is for WCOSS2, where the ops COM is readable. On Hercules the ops chain files are not in a COM, but the public bucket has ops' state at cycle + 120 h (the same tide-only trajectory as ops, to round-off; a forecast state for surf) and `nod_equi` can be regenerated: section 3.4.
 
 ### 2.7 Checking a run
 
@@ -522,7 +522,7 @@ Metric: for each station, the maximum absolute water-level difference from ops o
 | 20261013 06z, cold-start chain, Hercules | 35.3 | 102.1 | 96.4 |
 | 20261013 06z, ops state (section 3.4), Hercules | 0.06 | 66.5 | 70.2 |
 
-WCOSS2 and Hercules agree. The differences are cold-start effects, not the run mechanics:
+WCOSS2 and Hercules agree. The cold-start rows' differences are cold-start effects, not the run mechanics:
 - ops has cycled for months, while a cold start spins up tide-only for 162 h (6.75 days) from rest and then runs the 6 h nowcast, so the cycle is 7 days after the start;
 - the DRAMP ramp is 6.75 days (tanh), about 0.97 at the cycle time, so the tide is not fully developed;
 - the nodal factors come from the cold-start date (`nod_equi` starts at the spin-up start), while ops uses its own `nod_equi`; a start from the ops state copies that file (WCOSS2) or regenerates it with the ops base date (Hercules, section 3.4).
@@ -532,7 +532,7 @@ The worst stations are macro-tidal (Bristol Bay, Valdez, Anchorage). SA816 (Sea 
 The close comparison is a start from the ops state (sections 2.6 and 3.4): same chain time, nodal factors, forcing and rank count, so with the ops chain files (section 2.6, WCOSS2) the nowcast and the first 120 h of the forecast should be very close to ops, with small differences after 120 h from the interpolated forcing. With the public files (section 3.4) this holds for the tide stream; for surf a start-state offset remains (the 66.5 mm below). Last-bit agreement needs the ops adcirc module (its adcprep partition and padcirc).
 
 The first result is from Hercules, 20261013 06z, started from the public ops `.68` files of 20261008 00z with a regenerated `nod_equi` (section 3.4). The metric is as above over the 1860 common times; the last two rows of the table are this run and the cold-start chain at the same cycle:
-- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (its cwl and swl ops values exceed 20 m, so those comparisons skip it) and Bodega Bay CA (180 mm). The tide stream reproduces ops.
+- `points.htp`: median 0.06 mm. 1425 of 1686 stations are within 1 mm, 1612 within 1 cm and 2 are over 10 cm: SA816 (its cwl and swl ops values exceed 20 m, so those comparisons skip it) and Bodega Bay CA (180 mm, not yet explained). The tide stream matches ops closely.
 - `points.cwl.noanomaly` 66.5 mm and `points.swl` 70.2 mm, against 102.1 and 96.4 mm for the cold-start chain. The surf gap is most likely the start state (ops' 120 h forecast state, not its analysis). The worst stations are in the Southern Ocean (Bluff NZ, Ushuaia, Kerguelen) and the Gulf of Alaska (Valdez, Skagway, Seward, Anchorage). It should shrink over a few ops-state cycles on ops forcing; this guide records no such multi-cycle result yet.
 
 ## 8. Known limitations
