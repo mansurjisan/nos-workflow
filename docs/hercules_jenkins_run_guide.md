@@ -10,7 +10,7 @@ Every build runs on Hercules as the CI account `role-nosofs`, whoever starts it.
 | --- | --- | --- |
 | Run a build on an existing dataset | A Jenkins login with Build permission | sections 1-7 |
 | Add my own test case (a new PDY/CYC) | The above, plus a Hercules account and a finished hand run | section 8 |
-| Test a branch or PR | The above, plus Configure permission on the job and push access to `github.com/mansurjisan/nos-workflow` | section 9 |
+| Test a branch or PR | The above, plus Configure permission on the job and push access to `github.com/oceanmodeling/nos-workflow` | section 9 |
 
 The system details are in the Jenkins sections of the run guides: [STOFS-3D-ATL section 10](stofs_3d_atl_run_guide.md#10-jenkins-hercules-manual-only) and [STOFS-2D-Global section 5](stofs_2d_glo_run_guide.md#5-jenkins-hercules-manual-only).
 
@@ -231,7 +231,7 @@ Each dataset copy uses space in the CI tree (ATL about 110-130 GB, 2D-Global abo
 
 The job runs the branch named under Configure, and Deploy copies that branch's cards and scripts into the CI package. You need Configure permission.
 
-1. Push the branch to `github.com/mansurjisan/nos-workflow` (the job's repository; forks are not built).
+1. Push the branch to `github.com/oceanmodeling/nos-workflow` (the job's repository; forks are not built).
 2. Tell the team on Slack: the job is shared, and it runs one build at a time.
 3. Open the job, click **Configure**, set *Branches to build* to `*/<your-branch>`, and click **Save**.
 4. If the branch adds or changes a Jenkins parameter, start one build and abort it, so the form shows the new parameter.

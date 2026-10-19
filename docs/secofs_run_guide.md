@@ -126,7 +126,7 @@ Do not build the SECOFS executable from a SCHISM tree that carries a local "ihot
 
 ```bash
 cd /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-git clone https://github.com/mansurjisan/nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ```

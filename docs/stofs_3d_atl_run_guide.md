@@ -67,7 +67,7 @@ The two `param.nml` templates are tracked in git.
 Clone anywhere, with any directory name:
 ```bash
 cd /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages          # or any directory you own
-git clone https://github.com/mansurjisan/nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ./tools/fetch_stofs_3d_atl_fix.sh
@@ -113,7 +113,7 @@ Do this instead. The maintainer's WCOSS2 package (Mansur Jisan) holds a complete
 | Executables | `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec` |
 
 ```bash
-git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow.git && cd nos-workflow
 git submodule update --init ush/python/nos-utils
 MJFIX=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/fix/stofs_3d_atl_ufs
 MJEXE=/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/nos-workflow/exec
