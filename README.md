@@ -42,11 +42,12 @@ git submodule update --init ush/python/nos-utils
 
 ## Documentation
 
+- [docs/secofs_run_guide.md](docs/secofs_run_guide.md)
 - [docs/stofs_3d_atl_run_guide.md](docs/stofs_3d_atl_run_guide.md)
 - [docs/stofs_2d_glo_run_guide.md](docs/stofs_2d_glo_run_guide.md)
 - [docs/hercules_jenkins_run_guide.md](docs/hercules_jenkins_run_guide.md)
 
-SECOFS, SECOFS with waves and STOFS-3D-AK are documented in their launcher headers.
+STOFS-3D-AK is documented in its launcher header.
 
 ## Tests and CI
 
