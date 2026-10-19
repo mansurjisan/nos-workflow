@@ -95,7 +95,7 @@ Untracked, named by `secofs_ufs.yaml`, all in `fix/secofs_ufs` with the `secofs_
 - Ocean boundary and nudging: `obc.ctl`, `nudge.gr3`, `nobc_nudge_index.dat`, and `nosofs.clim.WOA05.nc`.
 - Tides: `bctides.in`, `bctides.in_template`, and `nosofs.HC_NWLON.nc`.
 - Met control: `sflux_inputs.txt` (the yaml `met_ctl_file`).
-- `secofs_ufs.partition.prop` (2794 SCHISM ranks), required: the executables are `NO_PARMETIS` builds. `tvd.prop` and `fluxflag.prop` are staged if present. In UFS mode a missing `partition.prop` is skipped silently (`stage_partition_props`), so check the log (section 9).
+- `secofs_ufs.partition.prop` (2794 SCHISM ranks), required: `fv3_coastalS.exe` is a `NO_PARMETIS` build on both machines. `tvd.prop` and `fluxflag.prop` are staged if present. In UFS mode a missing `partition.prop` is skipped silently (`stage_partition_props`), so check the log (section 9).
 
 `fix/secofs_ufs_ww3` must also carry every `secofs_ufs.*` static above (including `secofs_ufs.mllw_datum.csv`), because `$FIXofs` points there for the wave config, plus the wave-only files (all named `secofs_ufs.*`):
 - `mod_def.ww3` (the preprocessed WW3 grid)
@@ -149,7 +149,7 @@ cp -L $M/exec/nos_ofs_create_tide_fac_schism exec/                         # opt
 cp -L $M/exec/fv3_coastalSW.exe $M/exec/ww3_bound exec/                    # wave config only
 ls exec fix/secofs_ufs | head -50
 ```
-If a copy fails with "Permission denied", ask the maintainer to run `chmod -R g+rX` on the source.  `$FIXofs` defaults to `<pkg>/fix/secofs_ufs_ww3` for the wave config, and the wave statics are there in the maintainer package.
+If a copy fails with "Permission denied", ask the maintainer to run `chmod -R g+rX` on the source. `$FIXofs` defaults to `<pkg>/fix/secofs_ufs_ww3` for the wave config, and the wave statics are there in the maintainer package.
 
 ### 3.2 Cards and launchers
 
@@ -197,24 +197,27 @@ A stage that is still retrying after its timeout is reported `FAIL ... TIMEOUT` 
 
 ### 3.4 Cron
 
-Launch each cycle about 2 h 15 min after cycle time. Crontab of the maintainer's package (UTC; `$P` is the clone):
+Launch each cycle about 2 h 15 min after cycle time (UTC). Once, on the login node that will run cron:
 ```bash
-mkdir -p /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3   # the cron redirect fails before the launcher creates them
-P=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow
-15 2  * * * $P/pbs/launch_secofs_ufs.sh 00 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.00.log 2>&1
-15 8  * * * $P/pbs/launch_secofs_ufs.sh 06 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.06.log 2>&1
-15 14 * * * $P/pbs/launch_secofs_ufs.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.12.log 2>&1
-15 20 * * * $P/pbs/launch_secofs_ufs.sh 18 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.18.log 2>&1
-15 18 * * * $P/pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3/launch.12.log 2>&1
-05 2,8,14,20 * * * $P/pbs/clean_work.sh >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/clean_work.log 2>&1
+mkdir -p /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3
+crontab -e
 ```
-Cron does not expand `$P` or `$LOGNAME` reliably; write the full paths in the crontab. The wave cycle starts at 18:15 UTC, after the GFS-Wave tarball arrives (about 16:30 UTC). Install on the same login node each time and check `crontab -l`: a multi-line paste can drop lines. The launchers set `PATH`, `USER` and `HOME` themselves.
+Add these lines, the maintainer's crontab. Cron runs each line through `/bin/sh`, which expands `$LOGNAME`:
+```
+15 2  * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 00 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.00.log 2>&1
+15 8  * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 06 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.06.log 2>&1
+15 14 * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.12.log 2>&1
+15 20 * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 18 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.18.log 2>&1
+15 18 * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3/launch.12.log 2>&1
+05 2,8,14,20 * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/clean_work.sh >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/clean_work.log 2>&1
+```
+The wave cycle starts at 18:15 UTC, after the GFS-Wave tarball arrives (about 16:30 UTC, as of 2026-08-21). Check `crontab -l` afterwards: a multi-line paste can drop lines. The launchers set `PATH`, `USER` and `HOME` themselves.
 
 `clean_work.sh [run ...]` keeps the newest work directory per stage and run (default runs: `secofs_ufs secofs_ufs_ww3`, `KEEP=2` keeps more, `DRYRUN=1` lists only). It never removes a directory of a job PBS still tracks. The cards set `KEEPDATA=YES`, so work directories otherwise accumulate.
 
 ### 3.5 Warm-start experiment launcher (wave config)
 
-`pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3_warm.sh [PDY]` runs only the nowcast leg of the 12 z cycle, warm-started from the previous cycle, into a scratch COMOUT (`$P/warmtest/com/nos`). It waits for the operational prep of the same cycle, copies prep's inputs, submits `jnos_nowcast_00.pbs` with `WAV_NOWCAST_WARM_START=YES` and logs one `RESULT` line per day to `$WARM_BASE/launch_secofs_ufs_ww3_warm.chain.log`. It never touches the operational chain. Since the yaml now enables warm start, the operational chain warm-starts too; this launcher is an experiment tool. `DRYRUN=1` stages and prints the qsub.
+`pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3_warm.sh [PDY]` runs only the nowcast leg of the 12 z cycle, warm-started from the previous cycle, into a scratch COMOUT (`/lfs/h1/nos/ptmp/$LOGNAME/warmtest/com/nos`). It waits for the operational prep of the same cycle, copies prep's inputs, submits `jnos_nowcast_00.pbs` with `WAV_NOWCAST_WARM_START=YES` and logs one `RESULT` line per day to `$WARM_BASE/launch_secofs_ufs_ww3_warm.chain.log`. It never touches the operational chain. Since the yaml now enables warm start, the operational chain warm-starts too; this launcher is an experiment tool. `DRYRUN=1` stages and prints the qsub.
 
 ## 4. Hercules (Slurm), `secofs_ufs` only
 
@@ -331,7 +334,7 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 | Prep fails with a `HotstartStagingError` about format | A seed in COMOUT is not NETCDF4_CLASSIC. `nccopy -k 'netCDF-4 classic model'`. |
 | Prep warns the restart is N h before or after the anchor | Cycles were skipped or repeated. Run the missing cycles, or accept the relabel. |
 | `PARMETIS_RETRY: ... resubmitting` in a log | Normal blind retry (section 3.3). Follow the new job id. |
-| `PARMETIS_RETRY: max retries (8) exhausted` | Eight crashes in a row. Check the signature in `.err`, and that the log has the `Staged partition.prop` line (a missing `secofs_ufs.partition.prop` is skipped silently and ParMETIS then runs). |
+| `PARMETIS_RETRY: max retries (8) exhausted` | Eight crashes in a row. Check that the log has `Staged partition.prop` and that `exec/fv3_coastalS.exe` is the NO_PARMETIS build. With that build a missing `partition.prop` aborts SCHISM at startup; it does not fall back to ParMETIS. |
 | Launcher says `FAIL ... TIMEOUT` but the job is alive | The timeout is the card walltime plus headroom. Read the job's own log. |
 | Manual retry of a 06, 12 or 18 z cycle ran as 00 z | `CYC` was lowercase or missing in `qsub -v`. Pass `CYC=<cycle>`. |
 | A job exited 0 but the stage failed | Check `STAGE_SUMMARY ... status=PASS`. |
