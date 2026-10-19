@@ -828,9 +828,10 @@ def test_nonzero_rc_fails_and_logs_the_tail(tmp_path, caplog):
 
 def test_missing_pe_dirs_fail_before_launch(tmp_path, monkeypatch):
     _cold(tmp_path)
-    monkeypatch.setattr(execute.decomp, "pe_dirs", lambda run_dir: [])
+    from types import SimpleNamespace
+    monkeypatch.setattr(execute, "decomp", SimpleNamespace(pe_dirs=lambda run_dir: []))  # only check_inputs sees none MJ (10/18/26)
     called = []
-    with pytest.raises(Exception, match="PE directories"):
+    with pytest.raises(AdcircConfigError, match="0 PE directories, expected"):
         _go(tmp_path, "tide", "ncst", lambda a, c: called.append(1) or 0)
     assert called == []
 
