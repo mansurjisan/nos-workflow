@@ -1,6 +1,6 @@
 # Running SECOFS with nos-workflow on WCOSS2 and Hercules
 
-Applies to nos-workflow `develop` 4ac0f15 (2026-10-19). Update this guide in the same PR as any change to the SECOFS yaml, cards, launchers or fix set. Statements marked "as of <date>" come from run records that this repository does not hold; "to be confirmed" means no source in the repository settles it.
+Applies to nos-workflow `develop` 4ac0f15 (2026-10-19). Update this guide in the same PR as any change to the SECOFS yaml, cards, launchers or fix set. Statements marked "as of <date>" come from run records that this repository does not hold.
 
 ## 1. What you are running
 
@@ -47,11 +47,14 @@ How the file appears:
 2. **You seed it.** If the init file already exists and is NETCDF4_CLASSIC, prep keeps it. With a previous restart present it logs that the seed is preserved, not overwritten. A seed that is not NETCDF4_CLASSIC fails prep.
 3. **Nothing exists.** The nowcast fails. Make a seed as below.
 
-A seed valid at a different time than cycle minus nowcast length is relabelled to the cycle anchor, and prep warns that ocean evolution is skipped or re-simulated.
+A restart that prep finds, valid at a different time than cycle minus nowcast length, is relabelled to the cycle anchor, and prep warns that ocean evolution is skipped or re-simulated. A hand-made seed gets no time check; prep logs `Using operator-provided seed ... as-is`.
 
 Ways to make a seed:
 ```bash
 # rest state: elevation 0, velocity 0, uniform T/S (defaults 5 C, 32 psu)
+# run from the clone root, with a python that has numpy and netCDF4
+COMOUT=/lfs/h1/nos/ptmp/$LOGNAME/com/nos/<RUN>.<PDY>      # Hercules: $NOS_PTMP/$LOGNAME/com/nos/<RUN>.<PDY>
+mkdir -p $COMOUT
 FIX=fix/secofs_ufs
 NVRT=$(awk 'NR==2{print $1; exit}' $FIX/secofs_ufs.vgrid.in)      # 63
 python3 tools/make_cold_start_hotstart.py --hgrid $FIX/secofs_ufs.hgrid.gr3 --nvrt $NVRT \
@@ -61,7 +64,7 @@ nccopy -k 'netCDF-4 classic model' <restart>.nc $COMOUT/<RUN>.t<cyc>z.<PDY>.init
 ```
 The rest state has no baroclinic structure and needs spin-up; use a real restart when you have one. `make_cold_start_hotstart.py --verify` checks a file. The Jenkins stage data step uses the rest-state recipe in live mode (`.cicd/scripts/stage_data.sh`). For `secofs_ufs_ww3` the seed name uses `secofs_ufs_ww3`; a `secofs_ufs` restart of the same mesh has been used for this (August 2026 bring-up).
 
-Wave state (`secofs_ufs_ww3`): WW3 and the mediator do not use the SCHISM hotstart. The nowcast writes `<RUN>.t<cyc>z.wave_restart/` (WW3 and CMEPS restarts) to COMOUT, and the same cycle's forecast reads it. The next cycle's nowcast also reads it (warm start, `forcing.waves.nowcast_warm_start: true`, enabled by PR #183 on 2026-09-03). It searches back up to `WAV_NOWCAST_WARM_START_BACK_HOURS` (default 24). With no usable restart the nowcast cold-starts the waves and logs a warning. Roll back with `WAV_NOWCAST_WARM_START=0` in the launcher environment.
+Wave state (`secofs_ufs_ww3`): WW3 and the mediator do not use the SCHISM hotstart. The nowcast writes `<RUN>.t<cyc>z.wave_restart/` (WW3 and CMEPS restarts) to COMOUT, and the same cycle's forecast reads it. The next cycle's nowcast also reads it (warm start, `forcing.waves.nowcast_warm_start: true`, enabled by PR #183 on 2026-09-03). It searches back up to `WAV_NOWCAST_WARM_START_BACK_HOURS` (default 24). With no usable restart the nowcast cold-starts the waves and logs a warning. Roll back with `nowcast_warm_start: false` in `secofs_ufs_ww3.yaml`, or `qsub` the nowcast card by hand with `-v ...,WAV_NOWCAST_WARM_START=0`. The launcher does not forward that variable.
 
 ### Inputs read by prep
 
@@ -92,7 +95,7 @@ Untracked, named by `secofs_ufs.yaml`, all in `fix/secofs_ufs` with the `secofs_
 - Ocean boundary and nudging: `obc.ctl`, `nudge.gr3`, `nobc_nudge_index.dat`, and `nosofs.clim.WOA05.nc`.
 - Tides: `bctides.in`, `bctides.in_template`, and `nosofs.HC_NWLON.nc`.
 - Met control: `sflux_inputs.txt` (the yaml `met_ctl_file`).
-- Optional: `secofs_ufs.partition.prop` (and `tvd.prop`, `fluxflag.prop`). If present it is staged and bypasses ParMETIS (needed for a `NO_PARMETIS` build).
+- `secofs_ufs.partition.prop` (2794 SCHISM ranks), required: the executables are `NO_PARMETIS` builds. `tvd.prop` and `fluxflag.prop` are staged if present. In UFS mode a missing `partition.prop` is skipped silently (`stage_partition_props`), so check the log (section 9).
 
 `fix/secofs_ufs_ww3` must also carry every `secofs_ufs.*` static above (including `secofs_ufs.mllw_datum.csv`), because `$FIXofs` points there for the wave config, plus the wave-only files (all named `secofs_ufs.*`):
 - `mod_def.ww3` (the preprocessed WW3 grid)
@@ -108,7 +111,7 @@ In `exec/`:
 
 | File | Needed by | How it was built |
 |---|---|---|
-| `fv3_coastalS.exe` | both (non-wave) | oceanmodeling `ufs-weather-model` fork, `tests/compile.sh`, app `CSTLS`. Hercules flags: `-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_UTILS=ON` (`sorc/build_hercules.sh`). The WCOSS2 flags are to be confirmed against the production build tree; the ParMETIS retry in the cards (section 3.3) implies ParMETIS is on there. |
+| `fv3_coastalS.exe` | both (non-wave) | oceanmodeling `ufs-weather-model` fork, `tests/compile.sh`, app `CSTLS`. Hercules flags: `-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_UTILS=ON` (`sorc/build_hercules.sh`). The WCOSS2 build is also `-DNO_PARMETIS=ON`, so `partition.prop` is required (section 2, fix files). |
 | `fv3_coastalSW.exe` | wave config | same fork, app `CSTLSW`, built with the `USE_WW3` flag (without it the `RADFLAG` parameters in the param.nml are ignored). Carries three local patches (one CMEPS, two WW3) that are kept outside the repo. Ask the maintainer. |
 | `schism_combine_hotstart7.exe` | both | `combine_hotstart7` from the same build tree, renamed |
 | `combine_output11`, `combine_output11_MPI` | both | same build tree |
@@ -127,7 +130,7 @@ git clone https://github.com/mansurjisan/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ```
-The cards default `PACKAGEROOT` to `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages` and use the `nos-workflow` directory under it. Keep that directory name, or edit `PACKAGEROOT` in the cards. A `PACKAGEROOT` or `HOMEnos` in `~/.bashrc` that is a plain assignment overrides what the cards set; write it as a default (`PACKAGEROOT=${PACKAGEROOT:-/path}`) or remove it.
+The cards set `PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages` by plain assignment and `HOMEnos=${PACKAGEROOT}/nos-workflow`, so `~/.bashrc` cannot override them. The jobs always run `$LOGNAME/packages/nos-workflow`. Clone at that path, or edit `PACKAGEROOT` in all 8 cards (4 per config). `PKG` only selects which card files a launcher submits.
 
 Cards submit with `#PBS -A ESTOFS-DEV -q dev`. Without that project, change `#PBS -A`.
 
@@ -146,7 +149,7 @@ cp -L $M/exec/nos_ofs_create_tide_fac_schism exec/                         # opt
 cp -L $M/exec/fv3_coastalSW.exe $M/exec/ww3_bound exec/                    # wave config only
 ls exec fix/secofs_ufs | head -50
 ```
-If a copy fails with "Permission denied", ask the maintainer to run `chmod -R g+rX` on the source. Whether the wave statics are in `$M/fix/secofs_ufs_ww3` is to be confirmed.
+If a copy fails with "Permission denied", ask the maintainer to run `chmod -R g+rX` on the source.  `$FIXofs` defaults to `<pkg>/fix/secofs_ufs_ww3` for the wave config, and the wave statics are there in the maintainer package.
 
 ### 3.2 Cards and launchers
 
@@ -169,7 +172,7 @@ DRYRUN=1 ./launch_secofs_ufs.sh 12                    # stage nothing, print the
 PDY=20261019 STAGES="forecast post" ./launch_secofs_ufs.sh 12    # re-run only some stages
 ./secofs_ufs_ww3/launch_secofs_ufs_ww3.sh 12
 ```
-The launchers submit one stage, wait for `STAGE_SUMMARY ... status=PASS` in that stage's log, then submit the next. They do not use `afterok`, because a retry resubmits the stage under a new job id. A failed stage stops the cycle. Launcher logs and status files: `$RPTDIR/launch_<RUN>.<PDY>t<cyc>z.{log,status}`. A second launch for the same PDY and cycle exits at once while the first holds the lock. The post-stage knobs `NOS_POST_PRODUCTS`, `NOS_POST_MAX_WORKERS`, `NOS_PROFILES_OUTSIDE`, `POST_FIELDS_DEFLATE`, `NOS_ARCHIVE_FIELDS` and `NOS_COMBINE_OUTPUTS_SCRIPT` are forwarded when set. `PKG` overrides the clone location.
+The launchers submit one stage, wait for `STAGE_SUMMARY ... status=PASS` in that stage's log, then submit the next. They do not use `afterok`, because a retry resubmits the stage under a new job id. A failed stage stops the cycle. Launcher logs and status files: `$RPTDIR/launch_<RUN>.<PDY>t<cyc>z.{log,status}`. A second launch for the same PDY and cycle exits at once while the first holds the lock. The post-stage knobs `NOS_POST_PRODUCTS`, `NOS_POST_MAX_WORKERS`, `NOS_PROFILES_OUTSIDE`, `POST_FIELDS_DEFLATE`, `NOS_ARCHIVE_FIELDS` and `NOS_COMBINE_OUTPUTS_SCRIPT` are forwarded when set.
 
 If you run a card by hand, pass what it needs; `qsub -v` replaces the job environment:
 ```bash
@@ -179,7 +182,7 @@ Use uppercase `CYC`. A retry passes `CYC` on, and a lowercase variable silently 
 
 ### 3.3 Timeouts and the ParMETIS retry
 
-The nowcast and forecast cards retry blindly on the nondeterministic ParMETIS crash (`partition_hgrid`, `double free or corruption`, `Failed during initial partitioning`). The crash happens at about 2914 ranks. The card decides from the log, not the exit code: if that signature is in `.out` or `.err` and there is no `status=PASS`, it resubmits itself with `PARMETIS_RETRY` incremented, up to 8 times. The log shows `PARMETIS_RETRY: ... resubmitting attempt N/8`. Post and prep do not retry.
+The nowcast and forecast cards carry a blind retry, a dormant safety net with the `NO_PARMETIS` builds, for the nondeterministic ParMETIS crash (`partition_hgrid`, `double free or corruption`, `Failed during initial partitioning`). The crash happens at about 2914 ranks. The card decides from the log, not the exit code: if that signature is in `.out` or `.err` and there is no `status=PASS`, it resubmits itself with `PARMETIS_RETRY` incremented, up to 8 times. The log shows `PARMETIS_RETRY: ... resubmitting attempt N/8`. Post and prep do not retry.
 
 Launcher stage timeouts (seconds). Each is at least the card walltime; the launcher only stops watching and never runs `qdel`:
 
@@ -194,20 +197,18 @@ A stage that is still retrying after its timeout is reported `FAIL ... TIMEOUT` 
 
 ### 3.4 Cron
 
-Launch each cycle about 1 h 15 min after cycle time. From the launcher header (UTC; use your clone path):
+Launch each cycle about 2 h 15 min after cycle time. Crontab of the maintainer's package (UTC; `$P` is the clone):
+```bash
+mkdir -p /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3   # the cron redirect fails before the launcher creates them
+P=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow
+15 2  * * * $P/pbs/launch_secofs_ufs.sh 00 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.00.log 2>&1
+15 8  * * * $P/pbs/launch_secofs_ufs.sh 06 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.06.log 2>&1
+15 14 * * * $P/pbs/launch_secofs_ufs.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.12.log 2>&1
+15 20 * * * $P/pbs/launch_secofs_ufs.sh 18 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.18.log 2>&1
+15 18 * * * $P/pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3.sh 12 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3/launch.12.log 2>&1
+05 2,8,14,20 * * * $P/pbs/clean_work.sh >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/clean_work.log 2>&1
 ```
-15 1  * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 00
-15 7  * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 06
-15 13 * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 12
-15 19 * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 18
-05 1,7,13,19 * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/clean_work.sh >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/clean_work.log 2>&1
-```
-Install them on the same login node each time, and check `crontab -l` afterwards: a multi-line paste can drop lines. Cron has a bare environment; the launchers set `PATH`, `USER` and `HOME` themselves.
-
-The wave launcher header has no cron line. The 12 z cycle starts about 17:15 UTC, after the GFS-Wave tarball arrives (about 16:30 UTC), as of 2026-08-21. Confirm against your own crontab:
-```
-15 17 * * *  /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3.sh 12
-```
+Cron does not expand `$P` or `$LOGNAME` reliably; write the full paths in the crontab. The wave cycle starts at 18:15 UTC, after the GFS-Wave tarball arrives (about 16:30 UTC). Install on the same login node each time and check `crontab -l`: a multi-line paste can drop lines. The launchers set `PATH`, `USER` and `HOME` themselves.
 
 `clean_work.sh [run ...]` keeps the newest work directory per stage and run (default runs: `secofs_ufs secofs_ufs_ww3`, `KEEP=2` keeps more, `DRYRUN=1` lists only). It never removes a directory of a job PBS still tracks. The cards set `KEEPDATA=YES`, so work directories otherwise accumulate.
 
@@ -226,6 +227,7 @@ The wave launcher header has no cron line. The 12 z cycle starts about 17:15 UTC
 - Fix files: copy from a WCOSS2 or Hercules package as in section 3.1a.
 - Inputs: Hercules has no COMIN trees. Stage the public NODD files (GFS, HRRR, RTOFS, NWM) of a completed published cycle:
 ```bash
+COMROOT_STAGED=$NOS_PTMP/$LOGNAME/comin_2026101912    # any empty directory you own
 python3 ush/stage_comin.py --pdy 20261019 --cyc 12 --comroot $COMROOT_STAGED
 ```
 An unpublished or partial cycle exits nonzero on missing files. The cards read `$COMROOT_STAGED/{gfs,hrrr,rtofs,nwm}`.
@@ -254,14 +256,14 @@ grep STAGE_SUMMARY /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/secofs_ufs_nowcast_0
 ```
 Always check `status=PASS`; the job exit code is not reliable. Model progress: `grep "TIME STEP" $DATA/outputs/mirror.out | tail -1` (180 steps for the 6 h nowcast, 1440 for the 48 h forecast, at dt 120 s). `KEEPDATA=YES` leaves `$DATA` in the work directory.
 
-Prep log lines worth checking: the NWM river overlay line `(+ real-time NWM for 6/6 columns)`, and for the wave config `Staged: nest.ww3`. If the boundary spectra fail, wave prep degrades to wind sea only; `nest.ww3` is not a critical source.
+Prep log lines worth checking: the NWM river overlay line `(+ real-time NWM for 6/6 columns)`, and for the wave config `Wrote nest.ww3 from N boundary spectra` (the nowcast and forecast logs show `Staged: nest.ww3`). If the boundary spectra fail, wave prep degrades to wind sea only; `nest.ww3` is not a critical source.
 
 Outputs in `COMOUT=<COMROOT>/nos/<RUN>.<PDY>/` (`<p>` = `<RUN>.t<cyc>z`):
 
 | Path | Contents |
 |---|---|
 | `<p>.<PDY>.init.nowcast.nc`, `<p>.<PDY>.rst.nowcast.nc` | nowcast start state and nowcast-end restart (next cycle's seed) |
-| `<p>.restart_outputs/` | raw SCHISM outputs |
+| `<p>.restart_outputs/`, `<p>.forecast_outputs/` | raw SCHISM outputs of the nowcast and forecast |
 | `<p>.<PDY>.stations.{nowcast,forecast}.nc` | station time series (430 stations) |
 | `<p>.<PDY>.stations.mllw.{nowcast,forecast}.nc` | MLLW-referenced water level at gauges with a published datum |
 | `<p>.<PDY>.field2d.*.nc` | 2D slab stacks (`slab2d`) |
@@ -315,7 +317,7 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 - **No operational wave product** exists to compare with; wave skill is judged against buoys only.
 - **Water level near the Upper Chesapeake and Potomac** differed from operations by several centimeters in two independent wave-config cycles (as of 2026-08-21); the cause is not established.
 - The SCHISM `ifltype=5` open boundary clamps the subtidal boundary velocity to zero, in operations and in the UFS runs. It is a known open question.
-- Nowcast stations files of the 24 h wave config were found stamped with the forecast start in the time units (data correct, label wrong, 2026-08-21). Whether this is fixed on develop is to be confirmed.
+- Time labels of some nowcast products are one day late (open on 4ac0f15). The nowcast start is built as PDY plus ((cyc - nowcast length) mod 24) h with no day rollback (`stages/post.py`, used for the time units in `schism_combine_outputs.py`). The wave 12z 24 h nowcast is stamped PDY 12z instead of PDY-1 12z, and the `secofs_ufs` 00z nowcast PDY 18z instead of PDY-1 18z. The values are correct.
 - The WCOSS2 SECOFS cards set `COMROOT` and paths directly (no `qsub -v` override for `COMROOT`); use `COMOUT` overrides or edit the cards for a separate tree.
 - The wave config is WCOSS2 only; Hercules has no wave cards or executable.
 - No ecFlow cards (`ecf/` is empty). Cron plus the launchers is the cycling mechanism.
@@ -329,11 +331,11 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 | Prep fails with a `HotstartStagingError` about format | A seed in COMOUT is not NETCDF4_CLASSIC. `nccopy -k 'netCDF-4 classic model'`. |
 | Prep warns the restart is N h before or after the anchor | Cycles were skipped or repeated. Run the missing cycles, or accept the relabel. |
 | `PARMETIS_RETRY: ... resubmitting` in a log | Normal blind retry (section 3.3). Follow the new job id. |
-| `PARMETIS_RETRY: max retries (8) exhausted` | Eight crashes in a row. Check nodes and the ParMETIS signature in `.err`; consider a `NO_PARMETIS` build with a staged `partition.prop`. |
+| `PARMETIS_RETRY: max retries (8) exhausted` | Eight crashes in a row. Check the signature in `.err`, and that the log has the `Staged partition.prop` line (a missing `secofs_ufs.partition.prop` is skipped silently and ParMETIS then runs). |
 | Launcher says `FAIL ... TIMEOUT` but the job is alive | The timeout is the card walltime plus headroom. Read the job's own log. |
 | Manual retry of a 06, 12 or 18 z cycle ran as 00 z | `CYC` was lowercase or missing in `qsub -v`. Pass `CYC=<cycle>`. |
 | A job exited 0 but the stage failed | Check `STAGE_SUMMARY ... status=PASS`. |
-| Jobs run another package's code | `PACKAGEROOT` or `HOMEnos` set in your shell or `~/.bashrc` (section 3.1). |
+| Jobs run another package's code | The cards fix `PACKAGEROOT` (section 3.1). Check that `$LOGNAME/packages/nos-workflow` is the clone you mean. |
 | Wave nowcast aborts before launch with a PET layout message | Stale nos-utils pin (3-component `ufs.configure` patcher). Update the submodule. |
 | Wave prep: `ww3_bound` not found or `nest.ww3` missing | Install `exec/ww3_bound`; stage `secofs_ufs.mod_def.ww3` and `secofs_ufs.ww3_bound_points.list`. Prep continues with wind sea only. |
 | Wave nowcast runs cold although warm start is on | No usable `wave_restart` within the search window. Look for the warm-start line in the nowcast log. |
