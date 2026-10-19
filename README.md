@@ -46,8 +46,8 @@ mkdir -p exec                                        # a fresh clone has no exec
 - First cycle: the launchers do not create the initial state.
   - SCHISM systems (SECOFS, SECOFS with waves, AK, ATL) have no cold start: nowcast fails on a fresh COMROOT unless `$COMOUT/<RUN>.t<cyc>z.<PDY>.init.nowcast.nc` exists (the `stage_hotstart` input; `tools/make_cold_start_hotstart.py` writes a rest-state one for a new domain). Later cycles use the previous nowcast restart.
   - STOFS-3D-ATL needs the operational restart converted to NETCDF4_CLASSIC as that file, plus the dynamic-adjustment seeds, on both machines (ATL guide, sections 3.2 and 4.2; on Hercules `tools/hercules_atl_seed_*.sh`).
-  - STOFS-2D-Global launchers default to a warm start (the previous cycle's chain files in COMOUT): a first cycle needs `COLDSTART=YES` (WCOSS2) or `COLD=1` (Hercules, the default), or the ops state (2D-Global guide, sections 2.6 and 3.4).
-- Logs: one `.out`/`.err` pair per job, named after its card and job id, under `/lfs/h1/nos/ptmp/$LOGNAME/rpt/<OFS>/` (WCOSS2) or `$NOS_PTMP/$LOGNAME/rpt/<OFS>/` (Hercules); Slurm also writes empty `%x.%j.out`/`.err` files in the submit directory. Outputs: `${COMROOT}/nos/<RUN>.<PDY>/`.
+  - STOFS-2D-Global: the WCOSS2 launcher defaults to a warm start (the previous cycle's chain files in COMOUT), so a first cycle needs `COLDSTART=YES` or the ops state (2D-Global guide, section 2.6). The Hercules launcher defaults to `COLD=1`, a cold start; later cycles need `COLD=0` (sections 3.3 and 3.4).
+- Logs: one `.out`/`.err` pair per job, named after its card and job id, under `/lfs/h1/nos/ptmp/$LOGNAME/rpt/<OFS>/` (WCOSS2) or `$NOS_PTMP/$LOGNAME/rpt/<OFS>/` (Hercules); Slurm also writes nearly empty `%x.%j.out`/`.err` files in the submit directory. Outputs: `${COMROOT}/nos/<RUN>.<PDY>/`.
 
 ## How a cycle runs
 
