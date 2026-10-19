@@ -35,8 +35,8 @@ class Steps:
 def run_stage(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
 
-    def go(stage, segment, stream="", step=None, mode="ops"):
-        ctx = _ctx(tmp_path, ADCIRC_SEGMENT=segment, ADCIRC_STREAM=stream, ADCIRC_MODE=mode)
+    def go(stage, segment, stream="", step=None):
+        ctx = _ctx(tmp_path, ADCIRC_SEGMENT=segment, ADCIRC_STREAM=stream, ADCIRC_MODE="ops")
         monkeypatch.setattr(_adcirc, "load_context", lambda d: ctx)
         step = step or Steps()
         return step, _adcirc.run_model_stage(DESC, stage, step)
@@ -142,15 +142,6 @@ def test_the_post_order_lists_exactly_the_post_jobs():
     assert sorted(ops.SEGMENTS["post"]) == sorted(post.JOBS)
 
 
-def test_single_mode_runs_the_step_once_with_the_old_summary(run_stage):
-    step, _ = run_stage("nowcast", "tide,surf", "tide,surf", mode="single")
-    assert step.calls == [("tide,surf", "tide,surf")]
-    assert re.search(r"status=PASS runtime_s=\d+\.\d launch=mpiexec -n 4$", _summary(run_stage))
-    with pytest.raises(StageFailedError, match="ADCIRC nowcast failed: boom$"):
-        run_stage("nowcast", "", "", Steps(fail="*"), mode="single")
-    assert re.search(r"status=FAIL runtime_s=\d+\.\d reason=boom$", _summary(run_stage))
-
-
 def test_the_summary_keeps_the_pass_gate_and_the_status_script_fields(run_stage):
     run_stage("nowcast", "ncst", "tide,surf")
     line = _summary(run_stage)
@@ -208,3 +199,24 @@ def test_a_cold_cycle_runs_prep_nowcast_forecast_through_the_list_dispatch(tmp_p
     with pytest.raises(StageFailedError, match=r"tide_fcst: .*advanced past"):
         job("forecast", "fcst", "tide,surf")
     assert "status=FAIL" in [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]
+
+
+REAL_YAML = Path(__file__).resolve().parents[4] / "parm" / "systems" / "stofs_2d_glo.yaml"
+
+
+def _real_env(tmp_path, monkeypatch, **extra):
+    env = {"OFS_CONFIG": str(REAL_YAML), "PDY": "20261005", "cyc": "12", "COMOUT": str(tmp_path / "com" / "stofs_2d_glo.20261005"),
+           "HOMEnos": str(tmp_path), "ADCIRC_SEGMENT": "ncst", "ADCIRC_STREAM": "tide", **extra}
+    monkeypatch.delenv("ADCIRC_MODE", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_real_yaml_loads_with_unset_mode_and_refuses_single(tmp_path, monkeypatch):
+    _real_env(tmp_path, monkeypatch)
+    steps = []
+    assert _adcirc.run_model_stage(DESC, "nowcast", lambda c: steps.append((c.segment, c.stream)) or []) == 0  # MJ (10/18/26)
+    assert steps == [("ncst", "tide")]
+    _real_env(tmp_path, monkeypatch, ADCIRC_MODE="single")
+    with pytest.raises(StageFailedError, match="ADCIRC_MODE=single was removed"):
+        _adcirc.run_model_stage(DESC, "nowcast", lambda c: [])

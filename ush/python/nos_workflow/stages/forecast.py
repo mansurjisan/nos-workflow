@@ -35,10 +35,10 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if descriptor.framework == "stofs":
         raise NotImplementedError("STOFS-3D-ATL forecast not yet ported")
     if descriptor.framework == "adcirc":
-        from ..runners.adcirc import run as adcirc_run
+        from ..runners.adcirc import ops as adcirc_ops
         from ._adcirc import run_model_stage
 
-        return run_model_stage(descriptor, _STAGE, lambda ctx: adcirc_run.run_forecast(ctx))
+        return run_model_stage(descriptor, _STAGE, lambda ctx: adcirc_ops.run_forecast(ctx))
     if descriptor.framework == "comf_standalone":
         raise NotImplementedError(
             "comf_standalone forecast (ROMS/FVCOM standalone) not yet wired; "

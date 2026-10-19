@@ -2,7 +2,7 @@
 # launch_stofs_2d_glo.sh
 #
 # Chain one STOFS-2D-Global (ADCIRC) ops-mode cycle on Hercules with Slurm afterok dependencies: the Slurm counterpart of
-# pbs/stofs_2d_glo/launch_stofs_2d_glo.sh (ops mode only; the single-mode chain is not submitted from here). MJ (10/13/26)
+# pbs/stofs_2d_glo/launch_stofs_2d_glo.sh (ops is the only mode; this launcher always sets ADCIRC_MODE=ops for the jobs). MJ (10/18/26)
 #
 # Usage:    ./launch_stofs_2d_glo.sh <PDY:YYYYMMDD> <CYC:HH (00|06|12|18)>
 # Example:  ./launch_stofs_2d_glo.sh 20261012 06

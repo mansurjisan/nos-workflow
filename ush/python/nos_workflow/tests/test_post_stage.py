@@ -104,10 +104,16 @@ def test_post_stofs_branch_raises_not_implemented(fake_env):
     assert "STOFS-3D-ATL" in str(exc_info.value)
 
 
-def test_post_adcirc_branch_raises_not_implemented(fake_env):
-    with pytest.raises(NotImplementedError) as exc_info:
-        post_stage.run(_adcirc_desc(), fake_env)
-    assert "STOFS-2D-GLO" in str(exc_info.value)
+def test_post_adcirc_branch_runs_the_ops_post(fake_env, monkeypatch):
+    from nos_workflow.runners.adcirc import post as adcirc_post
+    from nos_workflow.stages import _adcirc
+
+    seen = []
+    monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("anomaly", c)])
+    monkeypatch.setattr(adcirc_post, "run_post", lambda c: seen.append(c) or [])
+    assert post_stage.run(_adcirc_desc(), fake_env) == 0  # MJ (10/18/26)
+    assert len(seen) == 1
 
 
 def test_post_unknown_framework_raises_stage_failed(fake_env):

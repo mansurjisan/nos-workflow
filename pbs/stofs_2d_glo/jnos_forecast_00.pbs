@@ -71,7 +71,8 @@ export PDY=${PDY:?set PDY (YYYYMMDD)}
 export job=stofs_2d_glo_fc_00_$envir
 export platform=ptmp
 export framework=adcirc
-export ADCIRC_MODE=${ADCIRC_MODE:-single}
+export ADCIRC_MODE=${ADCIRC_MODE:-ops}
+[ "${ADCIRC_MODE,,}" = ops ] || { echo "ERROR: ADCIRC_MODE=${ADCIRC_MODE} was removed: STOFS-2D-Global runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)" >&2; exit 2; }  # MJ (10/18/26)
 
 export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO

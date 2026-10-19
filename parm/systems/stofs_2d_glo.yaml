@@ -17,25 +17,17 @@ grid:
     attributes: stofs_2d_glo_attr
 
 model:
-  physics:
-    dt: 6.0
   run:
-    hindcast_days: 0.25     # nowcast_interval 6 h
-    forecast_days: 7.5      # forecast_duration 180 h
-    # 6 h suits a 4-cycles-a-day run. A once-a-day (12z only) run must set NOWCAST_HOURS=24 so the
-    # restart lookup finds the previous day's 12z nowcast instead of cold-starting daily. MJ (10/05/26)
-    nowcast_hours: 6
-    forecast_hours: 180
-    # Cold-start spin-up is tide-only; COLDSTART_SPINUP_DAYS in the job env overrides it. MJ (10/05/26)
-    coldstart_spinup_days: 18.0
+    hindcast_days: 0.25     # nowcast interval 6 h
+    forecast_days: 7.5      # forecast duration 180 h
 
 # Total ranks = ncpu_compute + ncpu_writer. One knob sets both the adcprep partition count and
 # the padcirc compute ranks; the 12.8M-node mesh crashes in the first GWCE solve at 256 ranks
 # (June fix 2), so never size this down. MJ (10/05/26)
 adcirc:
   name: stofs2dglobal
-  # ADCIRC_MODE=ops (set per job at submit time) runs the stofs.v3.1.5 structure; surf ncst and fcst
-  # add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files every output hour
+  # The jobs run the stofs.v3.1.5 structure (ADCIRC_MODE=ops is optional now). MJ (10/18/26)
+  # Surf ncst and fcst add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files every output hour
   # (fort.63, 64, 73, 74 and the ice file fort.93). ADCIRC hands each output event to the next writer in turn, so with five
   # writers each file always goes to the same writer and its records stay in order; with 32 one hourly record was sometimes
   # lost. MJ (10/17/26)
@@ -53,25 +45,7 @@ adcirc:
     directory: null       # ADCIRC_EXEC_DIR overrides; else $EXECnos, then PATH
   ncpu_compute: 4064
   ncpu_writer: 0          # -W writers start only when this is > 0
-  atmospheric_forcing: true   # false = tide-only (NWS=0)
-  attributes:
-    - mannings_n_at_sea_floor
-  physics:
-    preset: jjw
-    coordinate_rotation: [114.16991, 0.77432]
-    coordinate_system: 22   # ICS -22 on the rotated global mesh (June fix 1). MJ (10/05/26)
-  decomposition_cache: true   # $COMGES/<RUN>_<ncpu>.tar, then adcprep --prep15 only
-
-forcing:
-  atmospheric:
-    primary: gfs
-    # Exact wgrib2 inventory strings: bare UGRD/VGRD would match every pressure level. MJ (10/05/26)
-    variables: ["PRMSL:mean sea level", "UGRD:10 m above ground", "VGRD:10 m above ground", "ICEC:surface"]
-  tidal:
-    # Zach's 15 constituents; ops uses 8 (parity phase). Nodal factors are computed from the
-    # cold-start time over the whole run, as his Tide class does. MJ (10/05/26)
-    constituents: [K1, O1, P1, Q1, M2, S2, N2, K2, MF, MM, M4, MS4, MN4, SA, SSA]
-    adcirc_nodal_reference: midrun
+  atmospheric_forcing: true   # fallback only: ops takes NWS from the rendered fort.15 and uses this for a fort.15 without an "! NWS" line. MJ (10/18/26)
 
 resources:
   nprocs: 4064
@@ -87,5 +61,4 @@ shell_mappings:
     PREFIXNOS: system.prefix
     NCPU: adcirc.ncpu_compute
     NUM_WRITERS: adcirc.ncpu_writer
-    COLDSTART_SPINUP_DAYS: model.run.coldstart_spinup_days
     GRIDFILE_ATTR: grid.files.attributes

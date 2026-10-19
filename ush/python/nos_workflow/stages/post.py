@@ -61,8 +61,6 @@ def run(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
     if descriptor.framework == "adcirc":
         from ._adcirc import run_model_stage
 
-        if os.environ.get("ADCIRC_MODE", "").strip().lower() != "ops":
-            raise NotImplementedError("STOFS-2D-GLO post not yet ported")
         from ..runners.adcirc import post as adcirc_post
 
         return run_model_stage(descriptor, _STAGE, adcirc_post.run_post)
