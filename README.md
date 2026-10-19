@@ -15,7 +15,7 @@ These are development configurations run by their maintainers, not NCO operation
 | STOFS-3D-AK (`stofs_3d_ak_ufs`) | DATM + SCHISM through UFS-Coastal, 2513 | 24 h / 48 h; 12z default | WCOSS2 | `pbs/stofs_3d_ak_ufs/launch_stofs_3d_ak_ufs.sh <PDY> [CYC]` | launcher header |
 | STOFS-2D-Global (`stofs_2d_glo`) | ADCIRC v56.1 in the operational stofs.v3.1.5 layout: tide and surf streams, ops fort.15 templates, Fortran tide_fac, ops post chain; 4064 compute ranks (surf adds 5 writers, one per output file) | 6 h nowcast and one 180 h forecast per stream; 00, 06, 12, 18z; four jobs: prep, nowcast, forecast, post | WCOSS2 (all post steps except GEMPAK); Hercules (post is ncdiff and ncrcat only) | `pbs/stofs_2d_glo/launch_stofs_2d_glo.sh <PDY> <CYC>`; Hercules: `slurm/stofs_2d_glo/launch_stofs_2d_glo.sh <PDY> <CYC>` (the four jobs are chained with afterok) | [docs/stofs_2d_glo_run_guide.md](docs/stofs_2d_glo_run_guide.md) (jobs, options, products, start from the ops state) |
 
-Ops is the only 2D-Global mode: `ADCIRC_MODE=ops` is optional (unset means ops), and any other value stops the WCOSS2 launcher and the cards.
+2D-Global has no post card: the post job runs on the prep card (`jnos_prep_00`) with the post steps selected. Ops is the only 2D-Global mode: `ADCIRC_MODE=ops` is optional (unset means ops), and any other value stops the WCOSS2 launcher and the cards.
 
 Other names printed by `python3 -m nos_workflow list` are placeholders; see Known gaps.
 
@@ -35,6 +35,7 @@ Other names printed by `python3 -m nos_workflow list` are placeholders; see Know
 git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow   # keep the name: the cards run $PACKAGEROOT/nos-workflow
 git submodule update --init ush/python/nos-utils     # pinned to a commit; the ATL and 2D-Global Hercules cards refuse a mismatched checkout
 tools/fetch_<system>_fix.sh                           # stofs_3d_atl, stofs_3d_ak, stofs_2d_glo; SECOFS fix files are copied from an existing package
+mkdir -p exec                                        # a fresh clone has no exec/
 # executables: the run guide (ATL, 2D-Global); SECOFS and AK run exec/fv3_coastalS.exe, SECOFS with waves exec/fv3_coastalSW.exe
 <launcher from the table> <PDY> <CYC>                 # the SECOFS launchers take <CYC> only (PDY defaults to today UTC); on Hercules submit the slurm/<system>/ cards, or the 2D-Global Slurm launcher (`slurm/stofs_2d_glo/launch_stofs_2d_glo.sh`)
 ```
@@ -42,7 +43,11 @@ tools/fetch_<system>_fix.sh                           # stofs_3d_atl, stofs_3d_a
 - WCOSS2: the SECOFS, SECOFS with waves and STOFS-3D-AK cards hard-code `PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages` and `COMROOT=/lfs/h1/nos/ptmp/$LOGNAME/com`; clone there or edit the cards. The ATL and 2D-Global launchers pass `PACKAGEROOT` and `HOMEnos` from the clone they run from and forward `COMROOT_SA`, `COMROOT_UFS` or `COMROOT_2DGLO`. Every WCOSS2 card charges `ESTOFS-DEV`.
 - Hercules: export `PACKAGEROOT` (the clone's parent; the ATL and 2D-Global cards require it, the SECOFS cards default it) and `NOS_PTMP` first; the card defaults are the maintainer's directories.
 - A stage that finishes writes `STAGE_SUMMARY ... status=PASS` or `status=FAIL` to its log; treat a job whose log has no `status=PASS` as failed, whatever the scheduler reports.
-- Logs: one `.out`/`.err` pair per job, named after its card and job id, under `/lfs/h1/nos/ptmp/$LOGNAME/rpt/<OFS>/` (WCOSS2) or `$NOS_PTMP/$LOGNAME/rpt/<OFS>/` (Hercules). Outputs: `${COMROOT}/nos/<RUN>.<PDY>/`.
+- First cycle: the launchers do not create the initial state.
+  - SCHISM systems (SECOFS, SECOFS with waves, AK, ATL) have no cold start: nowcast fails on a fresh COMROOT unless `$COMOUT/<RUN>.t<cyc>z.<PDY>.init.nowcast.nc` exists (the `stage_hotstart` input; `tools/make_cold_start_hotstart.py` writes a rest-state one for a new domain). Later cycles use the previous nowcast restart.
+  - STOFS-3D-ATL needs the operational restart converted to NETCDF4_CLASSIC as that file, plus the dynamic-adjustment seeds, on both machines (ATL guide, sections 3.2 and 4.2; on Hercules `tools/hercules_atl_seed_*.sh`).
+  - STOFS-2D-Global launchers default to a warm start (the previous cycle's chain files in COMOUT): a first cycle needs `COLDSTART=YES` (WCOSS2) or `COLD=1` (Hercules, the default), or the ops state (2D-Global guide, sections 2.6 and 3.4).
+- Logs: one `.out`/`.err` pair per job, named after its card and job id, under `/lfs/h1/nos/ptmp/$LOGNAME/rpt/<OFS>/` (WCOSS2) or `$NOS_PTMP/$LOGNAME/rpt/<OFS>/` (Hercules); Slurm also writes empty `%x.%j.out`/`.err` files in the submit directory. Outputs: `${COMROOT}/nos/<RUN>.<PDY>/`.
 
 ## How a cycle runs
 
@@ -58,7 +63,7 @@ launcher (pbs/ or slurm/)
                                     DATM streams, ADCIRC met and tides, WW3 boundary) and post products
 ```
 
-For SCHISM the MPI launch and the hotstart combine stay in shell (`ush/nos_run.sh`, called from the Python runner) because the module environment does not survive a Python subprocess. The ADCIRC runner builds its command lines from the machine profile and does not source `nos_run.sh`. `python3 -m nos_workflow.machine card|mpi` renders the scheduler header and the MPI launch line from the machine profile: `ush/nos_run.sh` takes its MPI line from it, the cards keep literal headers, and `ush/python/nos_workflow/tests/test_job_card_render.py` checks the WCOSS2 ones against the rendered output.
+For SCHISM the MPI launch and the hotstart combine stay in shell (`ush/nos_run.sh`, called from the Python runner) because the module environment does not survive a Python subprocess. The ADCIRC runner builds its command lines from the machine profile and does not source `nos_run.sh`. `python3 -m nos_workflow.machine card|mpi` renders the scheduler header and the MPI launch line from the machine profile: `ush/nos_run.sh` takes its MPI line from it, the cards keep literal headers, and `ush/python/nos_workflow/tests/test_job_card_render.py` checks 14 WCOSS2 cards against the rendered output (SECOFS, ATL coupled and standalone, 2D-Global; not SECOFS with waves, AK or the ATL standalone post).
 
 ## Repository layout
 
@@ -81,8 +86,8 @@ nos-workflow/
 │   ├── systems/     one yaml per system (`_base:` inheritance; stofs_3d_atl_ufs_standalone.yaml is an overlay)
 │   └── machines/    wcoss2.yaml, hercules.yaml
 ├── fix/<ofs>/       tracked templates, param.nml files and small tables only; grids, partition.prop and
-│                    river files are staged by tools/fetch_*_fix.sh and gitignored
-├── exec/            executables (not tracked)
+│                    river files are untracked (staged by tools/fetch_*_fix.sh); do not add them
+├── exec/            executables (not tracked; absent in a fresh clone, so `mkdir -p exec`)
 ├── tools/           fix fetch, Hercules builds, forcing staging, seeds, cold-start hotstart, comparisons
 ├── versions/        run.ver (WCOSS2), run.hercules.ver, build.ver
 ├── modulefiles/     modules.fv3.lua (WCOSS2 UFS runtime), nos_hercules.intel.lua
@@ -138,18 +143,18 @@ cd ush/python/nos-utils && python3 -m pytest -q                              # n
 
 ## Continuous integration
 
-- Jenkins on Hercules (`.cicd/Jenkinsfile`, agent `hercules-nos`) runs every system on one stage template: Prep, Nowcast, Forecast, Post and Verify, each submitted through `.cicd/scripts/run_stage.sh` and gated on its `STAGE_SUMMARY`.
-  - SECOFS (bootstrap, deploy, environment check and stage data first) runs on a PR carrying the `hercules-nos-RT` label or on Build Now, and posts the `hercules-ci/cycle` status to GitHub.
-  - STOFS-3D-ATL (standalone `stofs_3d_atl_ufs_standalone` and coupled `stofs_3d_atl_ufs`) and STOFS-2D-Global run only from Build with Parameters (`OFS`, `LEVEL=smoke|cycle|full`, `DATA_MODE=live|frozen`, `PDY`, `CYC`), normally against frozen datasets, and report in the Jenkins build only.
+- Jenkins on Hercules (`.cicd/Jenkinsfile`, agent `hercules-nos`) has two jobs from one Jenkinsfile. Bootstrap, Deploy, Environment Check and Stage Data run for every system; Prep, Nowcast, Forecast and Post are submitted through `.cicd/scripts/run_stage.sh` and gated on the card's `STAGE_SUMMARY`; Verify runs the system's own script.
+  - `NOS/nos-workflow-secofs-hercules`: SECOFS, on a PR carrying the `hercules-nos-RT` label, on Build Now or on branch builds; it posts the `hercules-ci/cycle` status to GitHub. `hercules-ci.yml` dispatches it by hand.
+  - `NOS/nos-workflow-atl-hercules`: STOFS-3D-ATL (standalone `stofs_3d_atl_ufs_standalone` and coupled `stofs_3d_atl_ufs`) and STOFS-2D-Global, from Build with Parameters on `develop` (`OFS`, `LEVEL=smoke|cycle|full`, `DATA_MODE=live|frozen`, `PDY`, `CYC`), normally against frozen datasets; the result is in the Jenkins build only.
   - Step-by-step use: [docs/hercules_jenkins_run_guide.md](docs/hercules_jenkins_run_guide.md); system details in section 10 of the ATL guide and section 5 of the 2D-Global guide.
-- GitHub Actions: `stage_parity.yml` (golden-manifest checks and the nos_workflow unit suite on hosted runners; Docker parity on a self-hosted runner, opt-in through the `ENABLE_DOCKER_PARITY` repository variable), `ci-tier2-docker.yml` (SECOFS prep image), `r2o-check.yml` (NCO compliance lint, advisory), `hercules-ci.yml` (manual dispatch of the Jenkins job).
+- GitHub Actions: `stage_parity.yml` (golden-manifest checks and the nos_workflow unit suite on hosted runners; Docker parity on a self-hosted runner, opt-in through the `ENABLE_DOCKER_PARITY` repository variable) runs only when its paths change (the four SECOFS stage modules, `yaml_to_env.py`, nos-utils, the SECOFS ex-scripts, `ush/nos_run.sh`, `secofs_ufs.yaml`, `tests/integration`), so a PR that touches only `runners/adcirc`, cards or other yamls gets no unit-suite run there: run pytest locally. `ci-tier2-docker.yml` (SECOFS prep image) is path-filtered (`docker/`, `jobs/`, `scripts/`, `ush/`, `parm/`, ...) and also runs nightly. `r2o-check.yml` is an advisory NCO compliance lint; `hercules-ci.yml` is a manual dispatch of the SECOFS Jenkins job.
 
 ## Documentation
 
 - [docs/stofs_3d_atl_run_guide.md](docs/stofs_3d_atl_run_guide.md): both ATL variants on WCOSS2 and Hercules, and the Jenkins job.
 - [docs/stofs_2d_glo_run_guide.md](docs/stofs_2d_glo_run_guide.md): 2D-Global (ops mode) on WCOSS2 and Hercules, including a start from the ops state on Hercules (section 3.4), and the Jenkins job.
 - [docs/hercules_jenkins_run_guide.md](docs/hercules_jenkins_run_guide.md): running, reading and extending the Hercules Jenkins builds for STOFS-3D-ATL and STOFS-2D-Global.
-- SECOFS, SECOFS with waves and STOFS-3D-AK have no run guide: their launcher headers cover launching and cron, not fix files or executables (`exec/fv3_coastalS.exe`; `fv3_coastalSW.exe` with waves).
+- SECOFS, SECOFS with waves and STOFS-3D-AK have no run guide: their launcher headers cover launching and cron, not fix files, executables (`exec/fv3_coastalS.exe`; `fv3_coastalSW.exe` with waves) or the first-cycle init file. Only `pbs/launch_secofs_ufs.sh` has a crontab example in its header; the AK launcher requires `<PDY>`.
 
 Each guide states the `develop` date it applies to. A change to a system's cards, launchers, fetch, build or staging tools, or CI scripts updates its guide in the same PR.
 
@@ -159,7 +164,7 @@ PRs target `develop` and follow [.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_
 
 ## Known gaps
 
-- No ecFlow cards (`ecf/` holds only `.gitkeep`). Each launcher submits one cycle per call; the SECOFS, SECOFS with waves and STOFS-3D-AK launchers are written to be run from cron.
+- No ecFlow cards (`ecf/` holds only `.gitkeep`). Each launcher submits one cycle per call; the SECOFS, SECOFS with waves and STOFS-3D-AK launchers are written to be run from cron (only the SECOFS header has a crontab example).
 - `cbofs`, `dbofs`, `ngofs2` (ROMS and FVCOM standalone) and `stofs_3d_atl` (legacy STOFS framework) are registered and listed by `python3 -m nos_workflow list`, but their prep is not implemented; they are placeholders.
 - SECOFS and SECOFS with waves have no fix fetch tool; their fix files are copied from an existing package (CI seeds them from `SEED_SRC`).
 - Per-system limitations are in section 8 of each run guide.
