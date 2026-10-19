@@ -177,8 +177,8 @@ cmd_stage() {
 
 # What run_stage.sh needs to submit this stage's job, as shell for it to eval: the sbatch flags and walltimes are those of launch_stofs_2d_glo.sh (a test
 # compares them; the launcher cannot be sourced, it queues the whole chain), the segment and stream lists are space separated and go in the environment of sbatch
-# (--export=ALL), as the launcher does, since --export splits at commas, and the timeout is the walltime plus 1 h of queue margin (the 52-node exclusive jobs can wait). Post runs on the prep card. The
-# log is <RPTDIR>/<prefix>.<jobid>.out with RPTDIR and the prefix read from the card, so the post job logs under the prep name. MJ (10/15/26)
+# (--export=ALL), as the launcher does, since --export splits at commas, and the timeout is the walltime plus 1 h of headroom (run_stage.sh counts it from the job's start). Post runs on the prep card. The
+# log is <RPTDIR>/<prefix>.<jobid>.out with RPTDIR and the prefix read from the card, so the post job logs under the prep name. MJ (10/19/26)
 cmd_card_env() {
   local st=${1:?usage: stofs_2d_glo.sh card-env <stage>} card seg stream="" flags wall pfx rpt v h m s
   level_setup

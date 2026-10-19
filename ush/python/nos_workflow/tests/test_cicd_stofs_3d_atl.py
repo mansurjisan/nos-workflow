@@ -483,6 +483,29 @@ def test_run_stage_timeout_cancels_a_hung_atl_job_after_its_limit(tmp_path, ofs,
     assert f"after {secs}s" in r.stdout
 
 
+def test_run_stage_queue_wait_does_not_count_against_the_limit(tmp_path):
+    ci = Ci(tmp_path, "stofs_3d_atl_ufs_standalone")
+    # PENDING for twice the limit, then COMPLETED: the clock restarts while queued, so the stage passes (build #24 timed out this way). MJ (10/19/26)
+    _job(ci, "nowcast")
+    _stub(ci.bin / "sacct", '#!/bin/bash\nn=$(cat "$STUB_DIR/s" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/s"\n[ $n -eq 0 ] && echo PENDING || echo COMPLETED\n')
+    _stub(ci.bin / "date", '#!/bin/bash\n[ "$1" = +%s ] || exec /bin/date "$@"\nn=$(cat "$STUB_DIR/d" 2>/dev/null || echo 0); echo $((n+1)) > "$STUB_DIR/d"\n[ $n -eq 0 ] && echo 1000 || echo 22600\n')
+    _stub(ci.bin / "squeue", "#!/bin/bash\necho Priority\n")
+    _stub(ci.bin / "sleep", "#!/bin/bash\n")
+    r = _stage(ci, "nowcast")
+    assert r.returncode == 0 and "PASS[nowcast]" in r.stdout and "rc=timeout" not in r.stdout
+    assert not (ci.stubs / "scancel.log").exists()
+
+
+@pytest.mark.parametrize("why", ["JobHeldUser", "QOSMaxNodePerJobLimit", "PartitionTimeLimit", "InvalidAccount"])
+def test_run_stage_cancels_a_job_that_can_never_start(tmp_path, why):
+    ci = Ci(tmp_path, "stofs_3d_atl_ufs_standalone")
+    _job(ci, "nowcast", state="PENDING", ok=False)
+    _stub(ci.bin / "squeue", f"#!/bin/bash\necho {why}\n")
+    r = _stage(ci, "nowcast")
+    assert r.returncode == 1 and f"rc=unstartable -- jobid 101 pending ({why})" in r.stdout
+    assert (ci.stubs / "scancel.log").read_text().split() == ["101"]
+
+
 @pytest.mark.parametrize("stage,card", [(s, c) for s in ("prep", "nowcast", "forecast", "post") for c in ("stofs_3d_atl_ufs_standalone", "stofs_3d_atl_ufs")])
 def test_atl_timeouts_cover_the_card_walltimes(stage, card):
     text = (REPO / ".cicd" / "scripts" / "run_stage.sh").read_text()

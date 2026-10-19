@@ -27,7 +27,7 @@ Nothing on Hercules is needed for sections 2-7.
 - **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
 - **The job builds the `develop` branch** (*Branches to build* = `*/develop`). Section 9 covers other branches.
 - **Never use Build Now** for these systems: it always runs the SECOFS defaults.
-- **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait counts against each stage's time limit (section 7).
+- **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait does not count against a stage's time limit, only against the 16 h build limit (section 7).
 
 ## 3. Start a build
 
@@ -132,11 +132,12 @@ Find the red column, open Console Output, then match the message below.
 | Bootstrap | `FATAL: <SEED_RT>/<system>/<PDY><CYC> not readable as role-nosofs.` followed by `If the dataset does not exist yet, seed it once` | Usually a PDY/CYC with no dataset (section 5) | Check `PDY`/`CYC` first, then the permissions (section 8.4) |
 | Bootstrap | `FATAL: .../fix/stofs_2d_glo not readable` or the ADCIRC directory not readable, on the first 2D-Global build in a CI root | `SEED_SRC` was left at its default, which has no 2D-Global files | Set `SEED_SRC` to the 2D package (section 11) |
 | Stage Data | Refuses `LEVEL=cycle` or `full` | The ATL dataset was seeded at smoke level | Run smoke, or upgrade the seed (section 8.3) |
-| Prep to Post | `rc=timeout` | Queue wait plus run time passed the stage limit (table below) | Rebuild when the queue is quieter. Check queue load with `squeue -A nosofs` |
+| Prep to Post | `rc=timeout` | `sacct` still showed the job as live past the stage limit, counted from when it started (accounting lag, or a suspended or requeued job). A run longer than its walltime is ended by Slurm first and shows as `no STAGE_SUMMARY PASS` with `sacct final state: TIMEOUT` | Check `sacct -j <jobid>` and `squeue -j <jobid>` on Hercules, then rebuild |
+| Prep to Post | `rc=unstartable` | The job could never start: held, over a per-job or partition limit, or a bad account or QOS (the reason is printed) | Fix the account, QOS or card resources, then rebuild |
 | Prep to Post | `FAIL[<stage>]: no STAGE_SUMMARY PASS` | The job failed | Read the stage's `.out` and `.err` in Build Artifacts. A failed ATL stage keeps its work directory until the next build of the same variant |
 | Verify | Every compared file differs slightly | The reference came from a different environment (venv or MPI build) | Seed a new dataset (new PDY/CYC) from a run in the CI environment; a re-seed of the same cycle never reaches the CI (section 8.1). Not seen so far |
 
-**Stage time limits** (from submission, so queue wait counts). ATL: the card walltime plus 30 min. 2D-Global: the launcher walltime plus 1 h. The whole build is also capped at 16 h, which a slow ATL cycle or full build can reach before Post ends (the coupled limits add up to 17.5 h).
+**Stage time limits** (from when the job starts; queue wait does not count). ATL: the card walltime plus 30 min. 2D-Global: the launcher walltime plus 1 h. The whole build is also capped at 16 h, which a slow ATL cycle or full build can reach before Post ends (the coupled limits add up to 17.5 h).
 
 | Stage | ATL limit | 2D-Global limit |
 | --- | --- | --- |
@@ -270,7 +271,7 @@ Live mode has no reference run. At smoke, Verify checks nothing beyond the stage
 
 What each Jenkins stage does for each system. The three systems share the stage names and `.cicd/scripts/run_stage.sh`. SECOFS is included because it runs in the same pipeline (it is what **Build Now** runs) and in its own job, `NOS/nos-workflow-secofs-hercules`.
 
-The Slurm stages all work the same way. `run_stage.sh` submits the system's card with account `nosofs` and polls `sacct` every 30 s. A stage passes only when the job log has `STAGE_SUMMARY stage=<stage> ofs=<system> status=PASS` (`ofs=stofs_3d_atl_ufs` for both ATL variants). Its time limit counts from submission, so queue wait counts.
+The Slurm stages all work the same way. `run_stage.sh` submits the system's card with account `nosofs` and polls `sacct` every 30 s. A stage passes only when the job log has `STAGE_SUMMARY stage=<stage> ofs=<system> status=PASS` (`ofs=stofs_3d_atl_ufs` for both ATL variants). Its time limit counts from when the job starts running, so queue wait does not count; the 16 h build limit still does.
 
 ### 12.1 STOFS-3D-Atlantic
 
