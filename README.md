@@ -23,7 +23,7 @@ git submodule update --init ush/python/nos-utils
 ```
 
 - Fix files and executables: see the run guide for your system (`tools/fetch_<system>_fix.sh` fetches the fix files).
-- A first cycle needs an initial state (a hotstart or restart file); the launchers do not create it. See the guide.
+- A first cycle needs an initial state: a hotstart or restart file, or for STOFS-2D-Global a cold start. See the guide.
 - Launch with the command in the table.
 - Logs: `.out`/`.err` per job under the `rpt/<OFS>/` directory of your scratch. Outputs: `${COMROOT}/nos/<RUN>.<PDY>/`. A stage log ends with `STAGE_SUMMARY ... status=PASS` or `FAIL`.
 
@@ -50,5 +50,5 @@ SECOFS, SECOFS with waves and STOFS-3D-AK are documented in their launcher heade
 
 ## Tests and CI
 
-- Unit tests: `cd ush/python/nos_workflow && PYTHONPATH=$PWD/..:$PWD/../nos-utils python3 -m pytest -q`
+- Unit tests: `cd ush/python && PYTHONPATH=$PWD:$PWD/nos-utils python3 -m pytest -q nos_workflow/tests`
 - CI: Jenkins on Hercules and GitHub Actions; see the Jenkins guide.
