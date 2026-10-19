@@ -134,10 +134,16 @@ def _times(path):
         return list(d.variables["time"][:])
 
 
-def test_single_is_the_default_and_bad_mode_fails():
-    assert AdcircSettings.from_yaml(YAML, {}).mode == "single"
-    with pytest.raises(AdcircConfigError, match="single or ops"):
-        AdcircSettings.from_yaml(YAML, {"ADCIRC_MODE": "both"})
+@pytest.mark.parametrize("mode", [None, "", "ops", "OPS"])
+def test_ops_is_the_only_mode_and_unset_means_ops(mode):
+    env = {} if mode is None else {"ADCIRC_MODE": mode}
+    assert AdcircSettings.from_yaml(YAML, env).ncpu_compute == 4064
+
+
+@pytest.mark.parametrize("mode", ["single", "both"])
+def test_removed_mode_stops_with_a_clear_error(mode):
+    with pytest.raises(AdcircConfigError, match=f"ADCIRC_MODE={mode} was removed"):  # MJ (10/19/26)
+        AdcircSettings.from_yaml(YAML, {"ADCIRC_MODE": mode})
 
 
 def test_cold_start_seeds_both_chains(tmp_path):

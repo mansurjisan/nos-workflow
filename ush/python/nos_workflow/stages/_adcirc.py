@@ -51,7 +51,7 @@ def ops_steps(ctx, stage: str) -> List[Tuple[str, object]]:
 
 
 def run_model_stage(descriptor: OFSDescriptor, stage: str, step: Callable) -> int:
-    """Run ``step(ctx)``; any failure becomes a StageFailedError with a FAIL summary. In ops mode the job runs ``step`` for each
+    """Run ``step(ctx)``; any failure becomes a StageFailedError with a FAIL summary. The job runs ``step`` for each
     (segment, stream) of ops_steps, one after the other, and the first failure stops it. The PASS and FAIL summaries list the
     seconds each finished step took (steps=tide_ncst:671,surf_ncst:791) and a failure names its step. MJ (10/14/26)"""
     sl = stage_logger(stage, descriptor.name)
@@ -59,8 +59,7 @@ def run_model_stage(descriptor: OFSDescriptor, stage: str, step: Callable) -> in
     name, done, argv = None, [], None
     try:
         ctx = load_context(descriptor)
-        is_ops = ctx.settings.mode == "ops"
-        for name, c in (ops_steps(ctx, stage) if is_ops else [(None, ctx)]):
+        for name, c in ops_steps(ctx, stage):
             t1 = time.monotonic()
             with timed_step(sl, name or f"run_{stage}"):
                 argv = step(c)
@@ -71,7 +70,7 @@ def run_model_stage(descriptor: OFSDescriptor, stage: str, step: Callable) -> in
                            extras={**({"steps": ",".join(done)} if done else {}), "reason": why[:200]})
         raise StageFailedError(stage=stage, ofs=descriptor.name, returncode=1,
                                msg=f"ADCIRC {stage} failed: {why}") from exc
-    extras = {"steps": ",".join(done)} if is_ops else {}
+    extras = {"steps": ",".join(done)}
     if argv:
         extras["launch"] = " ".join(argv)
     emit_stage_summary(sl, status="PASS", runtime_s=time.monotonic() - t0, extras=extras)

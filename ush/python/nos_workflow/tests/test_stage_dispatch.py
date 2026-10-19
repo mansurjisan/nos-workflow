@@ -83,34 +83,29 @@ def test_prep_stofs_branch_raises_not_implemented(fake_env):
     assert "STOFS-3D-ATL" in str(exc_info.value)
 
 
-def test_prep_adcirc_branch_runs_both_phases(fake_env, monkeypatch, tmp_path):
-    from nos_workflow.runners.adcirc import prep as adcirc_prep
+def test_prep_adcirc_branch_runs_the_ops_prep(fake_env, monkeypatch):
+    from nos_workflow.runners.adcirc import ops as adcirc_ops
+    from nos_workflow.stages import _adcirc
 
     calls = []
-    monkeypatch.setattr(adcirc_prep, "prep_nowcast", lambda ctx: calls.append("nowcast"))
-    monkeypatch.setattr(adcirc_prep, "prep_forecast", lambda ctx: calls.append("forecast"))
-    repo = Path(__file__).resolve().parents[4]
-    monkeypatch.setenv("OFS_CONFIG", str(repo / "parm" / "systems" / "stofs_2d_glo.yaml"))
-    for k, v in (("PDY", "20261004"), ("cyc", "12"), ("COMOUT", str(tmp_path / "c" / "x")),
-                 ("HOMEnos", str(repo))):
-        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("ncst", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(adcirc_ops, "run_prep", lambda c: calls.append("ncst") or [])
     assert prep_stage.run(_adcirc_desc(), fake_env) == 0
-    assert calls == ["nowcast", "forecast"]
+    assert calls == ["ncst"]
 
 
-def test_prep_adcirc_failure_is_stage_failed(fake_env, monkeypatch, tmp_path):
+def test_prep_adcirc_failure_is_stage_failed(fake_env, monkeypatch):
     from nos_workflow.errors import StageFailedError
-    from nos_workflow.runners.adcirc import prep as adcirc_prep
+    from nos_workflow.runners.adcirc import ops as adcirc_ops
+    from nos_workflow.stages import _adcirc
 
     def boom(ctx):
         raise RuntimeError("adcprep --partmesh failed with return code 1")
 
-    monkeypatch.setattr(adcirc_prep, "prep_nowcast", boom)
-    repo = Path(__file__).resolve().parents[4]
-    monkeypatch.setenv("OFS_CONFIG", str(repo / "parm" / "systems" / "stofs_2d_glo.yaml"))
-    for k, v in (("PDY", "20261004"), ("cyc", "12"), ("COMOUT", str(tmp_path / "c" / "x")),
-                 ("HOMEnos", str(repo))):
-        monkeypatch.setenv(k, v)
+    monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("adcprep", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(adcirc_ops, "run_prep", boom)
     with pytest.raises(StageFailedError, match="adcprep"):
         prep_stage.run(_adcirc_desc(), fake_env)
 

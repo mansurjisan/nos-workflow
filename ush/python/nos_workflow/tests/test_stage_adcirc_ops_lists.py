@@ -35,8 +35,8 @@ class Steps:
 def run_stage(tmp_path, monkeypatch, caplog):
     caplog.set_level(logging.INFO)
 
-    def go(stage, segment, stream="", step=None, mode="ops"):
-        ctx = _ctx(tmp_path, ADCIRC_SEGMENT=segment, ADCIRC_STREAM=stream, ADCIRC_MODE=mode)
+    def go(stage, segment, stream="", step=None):
+        ctx = _ctx(tmp_path, ADCIRC_SEGMENT=segment, ADCIRC_STREAM=stream, ADCIRC_MODE="ops")
         monkeypatch.setattr(_adcirc, "load_context", lambda d: ctx)
         step = step or Steps()
         return step, _adcirc.run_model_stage(DESC, stage, step)
@@ -140,15 +140,6 @@ def test_the_error_gives_the_required_order(run_stage):
 def test_the_post_order_lists_exactly_the_post_jobs():
     from nos_workflow.runners.adcirc import ops, post
     assert sorted(ops.SEGMENTS["post"]) == sorted(post.JOBS)
-
-
-def test_single_mode_runs_the_step_once_with_the_old_summary(run_stage):
-    step, _ = run_stage("nowcast", "tide,surf", "tide,surf", mode="single")
-    assert step.calls == [("tide,surf", "tide,surf")]
-    assert re.search(r"status=PASS runtime_s=\d+\.\d launch=mpiexec -n 4$", _summary(run_stage))
-    with pytest.raises(StageFailedError, match="ADCIRC nowcast failed: boom$"):
-        run_stage("nowcast", "", "", Steps(fail="*"), mode="single")
-    assert re.search(r"status=FAIL runtime_s=\d+\.\d reason=boom$", _summary(run_stage))
 
 
 def test_the_summary_keeps_the_pass_gate_and_the_status_script_fields(run_stage):

@@ -144,17 +144,13 @@ def test_launcher():
     subprocess.run(["bash", "-n", str(LAUNCH)], check=True)
     text = LAUNCH.read_text()
     assert os.access(LAUNCH, os.X_OK)
-    assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast}"' in text
+    assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast post}"' in text
     assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "")
-    for v in ("ATMOSPHERIC_FORCING", "COLDSTART_SPINUP_DAYS", "NOWCAST_HOURS"):
-        assert v in text.split("for _v in")[1].split(";")[0], v
+    fwd = text.split("for _v in")[1].split(";")[0]
+    assert "ATMOSPHERIC_FORCING" in fwd and "COLDSTART_SPINUP_DAYS" not in fwd and "NOWCAST_HOURS" not in fwd  # MJ (10/19/26)
 
 
-def test_prep_cards_preflight_cfgrib():
-    for card in (PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"):
-        text = card.read_text()
-        assert "import xarray, cfgrib, eccodes" in text, card
-        assert text.index("import xarray, cfgrib, eccodes") < text.index("jobs/JNOS_PREP"), card
+def test_launcher_rejects_a_bad_cycle():
     r = subprocess.run(["bash", str(LAUNCH), "20261005", "07"], capture_output=True, text=True)
     assert r.returncode == 2 and "CYC must be" in r.stderr
     assert subprocess.run(["bash", str(LAUNCH)], capture_output=True).returncode == 2
@@ -196,7 +192,7 @@ def test_fetch_tool(tmp_path):
 @pytest.mark.parametrize("card", sorted(PBS.glob("jnos_*.pbs")) + sorted(SLURM.glob("jnos_*.sh")))
 def test_ops_mode_is_chosen_at_submit_time(card):
     text = card.read_text()
-    assert "export ADCIRC_MODE=${ADCIRC_MODE:-single}\n" in text
+    assert "export ADCIRC_MODE=${ADCIRC_MODE:-ops}\n" in text and "ADCIRC_MODE:-single" not in text  # MJ (10/19/26)
     assert not [l for l in text.splitlines() if l.startswith(("export ADCIRC_STREAM", "export ADCIRC_SEGMENT",
                                                               "export ADCIRC_MODE=ops"))]
     if "nowcast" in card.name:
@@ -268,9 +264,9 @@ def test_launcher_ops_job_graph(tmp_path):
 
 
 def test_launcher_ops_cold_start_and_forwarded_overrides(tmp_path):
-    j = _ops_launch(tmp_path, COLDSTART="YES", NOWCAST_HOURS="24", KEEPDATA="YES")
+    j = _ops_launch(tmp_path, COLDSTART="YES", ATMOSPHERIC_FORCING="false", KEEPDATA="YES")
     assert list(j) == ["prep", "nowcast", "forecast", "post"] and _deps(j)["nowcast"] == ["prep"]
-    assert all(v["v"]["KEEPDATA"] == "YES" and v["v"]["NOWCAST_HOURS"] == "24" for v in j.values())
+    assert all(v["v"]["KEEPDATA"] == "YES" and v["v"]["ATMOSPHERIC_FORCING"] == "false" for v in j.values())
     assert (j["prep"]["v"]["ADCIRC_SEGMENT"], j["prep"]["wall"]) == ("adcprep ncst fcst", "3:50:00")
     assert (j["nowcast"]["v"]["ADCIRC_SEGMENT"], j["nowcast"]["wall"]) == ("spinup ncst", "1:50:00")
     assert (j["forecast"]["wall"], j["post"]["wall"]) == ("2:00:00", "3:10:00")
@@ -328,19 +324,24 @@ def _launcher_stdout(tmp_path, **env):
     return r.stdout
 
 
-def test_launcher_single_mode_graph_unchanged(tmp_path):
-    qsub = tmp_path / "bin" / "qsub"
-    qsub.parent.mkdir()
-    qsub.write_text('#!/bin/bash\necho "$*" >> $QLOG; echo j$RANDOM.pbs\n')
-    qsub.chmod(0o755)
-    env = {**os.environ, "PATH": f"{qsub.parent}:{os.environ['PATH']}", "QLOG": str(tmp_path / "q.log"), "PKG": str(REPO)}
-    env.pop("ADCIRC_MODE", None)
-    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env=env, capture_output=True, text=True)
-    assert r.returncode == 0, r.stderr
-    lines = (tmp_path / "q.log").read_text().splitlines()
-    assert [Path(l.split()[-1]).name for l in lines] == [f"jnos_{s}_00.pbs" for s in STAGES]
-    assert "depend" not in lines[0] and all("afterok:j" in l for l in lines[1:])
-    assert not any("ADCIRC_MODE" in l or "-N" in l.split() for l in lines)
+def test_launcher_unset_mode_means_ops_and_single_is_refused(tmp_path):
+    base = _launcher_stdout(tmp_path / "a", ADCIRC_MODE="ops")
+    e = {k: v for k, v in os.environ.items() if k != "ADCIRC_MODE"}
+    qsub = tmp_path / "a" / "bin"
+    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env={**e, "PATH": f"{qsub}:{e['PATH']}", "PKG": str(REPO)},
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and r.stdout == base  # MJ (10/19/26)
+    r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env={**e, "PATH": f"{qsub}:{e['PATH']}", "PKG": str(REPO), "ADCIRC_MODE": "single"},
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and r.stdout == "" and r.stderr.count("\n") == 1 and "ADCIRC_MODE=single was removed" in r.stderr
+
+
+@pytest.mark.parametrize("card", sorted(PBS.glob("jnos_*.pbs")) + sorted(SLURM.glob("jnos_*.sh")))
+def test_cards_refuse_the_removed_mode(card):
+    text = card.read_text()
+    line = [l for l in text.splitlines() if l.startswith('[ "${ADCIRC_MODE}" = ops ] ||')][0]
+    r = subprocess.run(["bash", "-c", 'ADCIRC_MODE=single; ' + line + '; echo reached'], capture_output=True, text=True)
+    assert r.returncode == 2 and "reached" not in r.stdout and "ADCIRC_MODE=single was removed" in r.stderr and r.stderr.count("\n") == 1  # MJ (10/19/26)
 
 
 @pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])
