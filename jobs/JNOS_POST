@@ -145,7 +145,7 @@ case "${OFS_FRAMEWORK}" in
         esac
         ;;
     adcirc)
-        # Ops is the only mode, so post always runs the ops post steps. MJ (10/19/26)
+        # Ops is the only mode, so post always runs the ops post steps. MJ (10/18/26)
         $SCRIPTSnos/exnos_adcirc.sh post
         ;;
     comf|*)

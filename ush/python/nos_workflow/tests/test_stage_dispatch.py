@@ -89,7 +89,7 @@ def test_prep_adcirc_branch_runs_the_ops_prep(fake_env, monkeypatch):
 
     calls = []
     monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
-    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("ncst", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("ncst", c)])  # MJ (10/18/26)
     monkeypatch.setattr(adcirc_ops, "run_prep", lambda c: calls.append("ncst") or [])
     assert prep_stage.run(_adcirc_desc(), fake_env) == 0
     assert calls == ["ncst"]
@@ -104,7 +104,7 @@ def test_prep_adcirc_failure_is_stage_failed(fake_env, monkeypatch):
         raise RuntimeError("adcprep --partmesh failed with return code 1")
 
     monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
-    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("adcprep", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("adcprep", c)])  # MJ (10/18/26)
     monkeypatch.setattr(adcirc_ops, "run_prep", boom)
     with pytest.raises(StageFailedError, match="adcprep"):
         prep_stage.run(_adcirc_desc(), fake_env)

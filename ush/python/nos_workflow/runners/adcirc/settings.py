@@ -3,7 +3,7 @@
 Adapted from Zach Cobell's StofsWorkflow (oceanmodeling/nos-workflow, branch
 zcobell/stofs_2d_global), stofs_config.py: the knobs the ops run reads (ncpu_compute/writer,
 atmospheric toggle), read from parm/systems/stofs_2d_glo.yaml and the NCO environment instead of his
-standalone YAML and StofsConfig. Ops is the only mode; the single-run knobs were removed. MJ (10/19/26)
+standalone YAML and StofsConfig.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ class AdcircSettings:
             v = env.get(name)
             return cast(v) if (v not in (None, "") and cast) else v
 
-        # Ops is the only mode: ADCIRC_MODE unset or ops is accepted, anything else stops here. MJ (10/19/26)
+        # Ops is the only mode: ADCIRC_MODE unset or ops is accepted, anything else stops here. MJ (10/18/26)
         mode = (pick("ADCIRC_MODE") or "ops").strip().lower()
         if mode != "ops":
             raise AdcircConfigError(f"ADCIRC_MODE={mode} was removed: STOFS-2D-GLO runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)")

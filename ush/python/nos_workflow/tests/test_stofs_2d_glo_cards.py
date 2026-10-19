@@ -147,7 +147,7 @@ def test_launcher():
     assert "afterok" in text and 'STAGES="${STAGES:-prep nowcast forecast post}"' in text
     assert "COMROOT_2DGLO" in text and "OFS=" not in text.replace("OFS_", "")
     fwd = text.split("for _v in")[1].split(";")[0]
-    assert "ATMOSPHERIC_FORCING" in fwd and "COLDSTART_SPINUP_DAYS" not in fwd and "NOWCAST_HOURS" not in fwd  # MJ (10/19/26)
+    assert "ATMOSPHERIC_FORCING" in fwd and "COLDSTART_SPINUP_DAYS" not in fwd and "NOWCAST_HOURS" not in fwd  # MJ (10/18/26)
 
 
 def test_launcher_rejects_a_bad_cycle():
@@ -192,7 +192,7 @@ def test_fetch_tool(tmp_path):
 @pytest.mark.parametrize("card", sorted(PBS.glob("jnos_*.pbs")) + sorted(SLURM.glob("jnos_*.sh")))
 def test_ops_mode_is_chosen_at_submit_time(card):
     text = card.read_text()
-    assert "export ADCIRC_MODE=${ADCIRC_MODE:-ops}\n" in text and "ADCIRC_MODE:-single" not in text  # MJ (10/19/26)
+    assert "export ADCIRC_MODE=${ADCIRC_MODE:-ops}\n" in text and "ADCIRC_MODE:-single" not in text  # MJ (10/18/26)
     assert not [l for l in text.splitlines() if l.startswith(("export ADCIRC_STREAM", "export ADCIRC_SEGMENT",
                                                               "export ADCIRC_MODE=ops"))]
     if "nowcast" in card.name:
@@ -330,7 +330,7 @@ def test_launcher_unset_mode_means_ops_and_single_is_refused(tmp_path):
     qsub = tmp_path / "a" / "bin"
     r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env={**e, "PATH": f"{qsub}:{e['PATH']}", "PKG": str(REPO)},
                        capture_output=True, text=True)
-    assert r.returncode == 0 and r.stdout == base  # MJ (10/19/26)
+    assert r.returncode == 0 and r.stdout == base  # MJ (10/18/26)
     r = subprocess.run(["bash", str(LAUNCH), "20261005", "12"], env={**e, "PATH": f"{qsub}:{e['PATH']}", "PKG": str(REPO), "ADCIRC_MODE": "single"},
                        capture_output=True, text=True)
     assert r.returncode == 2 and r.stdout == "" and r.stderr.count("\n") == 1 and "ADCIRC_MODE=single was removed" in r.stderr
@@ -339,9 +339,9 @@ def test_launcher_unset_mode_means_ops_and_single_is_refused(tmp_path):
 @pytest.mark.parametrize("card", sorted(PBS.glob("jnos_*.pbs")) + sorted(SLURM.glob("jnos_*.sh")))
 def test_cards_refuse_the_removed_mode(card):
     text = card.read_text()
-    line = [l for l in text.splitlines() if l.startswith('[ "${ADCIRC_MODE}" = ops ] ||')][0]
+    line = [l for l in text.splitlines() if l.startswith('[ "${ADCIRC_MODE,,}" = ops ] ||')][0]
     r = subprocess.run(["bash", "-c", 'ADCIRC_MODE=single; ' + line + '; echo reached'], capture_output=True, text=True)
-    assert r.returncode == 2 and "reached" not in r.stdout and "ADCIRC_MODE=single was removed" in r.stderr and r.stderr.count("\n") == 1  # MJ (10/19/26)
+    assert r.returncode == 2 and "reached" not in r.stdout and "ADCIRC_MODE=single was removed" in r.stderr and r.stderr.count("\n") == 1  # MJ (10/18/26)
 
 
 @pytest.mark.parametrize("card", [PBS / "jnos_prep_00.pbs", SLURM / "jnos_prep_00.sh"])

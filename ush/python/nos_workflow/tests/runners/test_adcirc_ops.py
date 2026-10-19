@@ -12,7 +12,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(REPO / "ush" / "python"))
 from nos_workflow.machine import MachineProfile  # noqa: E402
-from nos_workflow.runners.adcirc import hotstart, ops, post  # noqa: E402
+from nos_workflow.runners.adcirc import execute, hotstart, ops, post  # noqa: E402
 from nos_workflow.runners.adcirc.settings import AdcircConfigError, AdcircSettings, CycleContext  # noqa: E402
 from nos_workflow.tests.runners.test_adcirc_prep import YAML, _restart  # noqa: E402
 
@@ -142,7 +142,7 @@ def test_ops_is_the_only_mode_and_unset_means_ops(mode):
 
 @pytest.mark.parametrize("mode", ["single", "both"])
 def test_removed_mode_stops_with_a_clear_error(mode):
-    with pytest.raises(AdcircConfigError, match=f"ADCIRC_MODE={mode} was removed"):  # MJ (10/19/26)
+    with pytest.raises(AdcircConfigError, match=f"ADCIRC_MODE={mode} was removed"):  # MJ (10/18/26)
         AdcircSettings.from_yaml(YAML, {"ADCIRC_MODE": mode})
 
 
@@ -768,3 +768,77 @@ def test_real_template_windows_have_literal_values(tmp_path):
     f15.write_text(ops.render(tpl, nod, seg.tokens, "2026100512"))
     dtdp, rnday, units = ops._fort15_outputs(f15)
     assert rnday == 15.25 and min(units["63"][1], rnday * 86400) == 1317600.0
+
+
+# ---- launch lines, failure reporting, restart time (kept from the removed single-mode run tests) MJ (10/18/26) ----
+
+RPN = {"wcoss2": 128}
+
+
+def _profile(name):
+    return MachineProfile.load(name, validate=False)
+
+
+def _s(**env):
+    return AdcircSettings.from_yaml(YAML, env)
+
+
+def test_wcoss2_launch_line_matches_june():
+    argv = execute.padcirc_argv(_s(), _profile("wcoss2"), "padcirc", RPN)
+    assert argv == ["mpiexec", "-n", "4064", "-ppn", "128", "--cpu-bind", "core", "padcirc"]
+
+
+def test_hercules_launch_line():
+    argv = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN)
+    assert argv == ["srun", "-n", "4064", "--label", "-N", "51", "--cpu-bind=cores", "padcirc"]
+
+
+def test_writers_add_ranks_and_w_flag():
+    argv = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("wcoss2"), "padcirc", RPN, 32)
+    assert argv == ["mpiexec", "-n", "4096", "-ppn", "128", "--cpu-bind", "core",
+                    "padcirc", "-W", "32"]
+    h = execute.padcirc_argv(_s(NUM_WRITERS="32"), _profile("hercules"), "padcirc", RPN, 32)
+    assert h[-3:] == ["padcirc", "-W", "32"] and h[2] == "4096"
+    assert h[h.index("-N") + 1] == "52"
+
+
+def test_srun_node_count_pins_layout_and_is_not_duplicated():
+    import dataclasses
+    tide = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN)
+    surf = execute.padcirc_argv(_s(), _profile("hercules"), "padcirc", RPN, 32)
+    assert tide[tide.index("-N") + 1] == "51" and surf[surf.index("-N") + 1] == "52"
+    assert "-N" not in execute.padcirc_argv(_s(), _profile("wcoss2"), "padcirc", RPN, 32)
+    p = _profile("hercules")
+    p = dataclasses.replace(p, mpi=dataclasses.replace(p.mpi, fixed_args=("--nodes=7",)))
+    argv = execute.padcirc_argv(_s(), p, "padcirc", RPN)
+    assert "-N" not in argv and argv.count("--nodes=7") == 1
+
+
+def test_nonzero_rc_fails_and_logs_the_tail(tmp_path, caplog):
+    _cold(tmp_path)
+
+    def launcher(argv, cwd):
+        (cwd / "adcirc.err").write_text("".join("line %d\n" % i for i in range(50)) + "forrtl: severe (174)\n")
+        return 9
+
+    with pytest.raises(RuntimeError, match="return code 9"):
+        _go(tmp_path, "tide", "ncst", launcher)
+    assert "forrtl: severe (174)" in caplog.text and "line 21\n" in caplog.text and "line 20\n" not in caplog.text
+
+
+def test_missing_pe_dirs_fail_before_launch(tmp_path, monkeypatch):
+    _cold(tmp_path)
+    monkeypatch.setattr(execute.decomp, "pe_dirs", lambda run_dir: [])
+    called = []
+    with pytest.raises(Exception, match="PE directories"):
+        _go(tmp_path, "tide", "ncst", lambda a, c: called.append(1) or 0)
+    assert called == []
+
+
+def test_fill_value_restart_time_is_skipped(tmp_path):
+    pytest.importorskip("netCDF4")
+    p = tmp_path / "fort.67.nc"
+    _restart(p, 0, fill=True)
+    assert hotstart.file_time(p) is None
+    _restart(p, 3600.0)
+    assert hotstart.file_time(p) == 3600.0

@@ -19,14 +19,14 @@ grid:
 model:
   run:
     hindcast_days: 0.25     # nowcast interval 6 h
-    forecast_days: 7.5      # forecast duration 180 h. Ops is the only mode, so the single-run keys (nowcast_hours, spin-up days) are gone. MJ (10/19/26)
+    forecast_days: 7.5      # forecast duration 180 h
 
 # Total ranks = ncpu_compute + ncpu_writer. One knob sets both the adcprep partition count and
 # the padcirc compute ranks; the 12.8M-node mesh crashes in the first GWCE solve at 256 ranks
 # (June fix 2), so never size this down. MJ (10/05/26)
 adcirc:
   name: stofs2dglobal
-  # The jobs run the stofs.v3.1.5 structure (ADCIRC_MODE=ops is optional now). MJ (10/19/26)
+  # The jobs run the stofs.v3.1.5 structure (ADCIRC_MODE=ops is optional now). MJ (10/18/26)
   # Surf ncst and fcst add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files every output hour
   # (fort.63, 64, 73, 74 and the ice file fort.93). ADCIRC hands each output event to the next writer in turn, so with five
   # writers each file always goes to the same writer and its records stay in order; with 32 one hourly record was sometimes
@@ -45,7 +45,7 @@ adcirc:
     directory: null       # ADCIRC_EXEC_DIR overrides; else $EXECnos, then PATH
   ncpu_compute: 4064
   ncpu_writer: 0          # -W writers start only when this is > 0
-  atmospheric_forcing: true   # false = tide-only (NWS=0)
+  atmospheric_forcing: true   # fallback only: ops takes NWS from the rendered fort.15 and uses this for a fort.15 without an "! NWS" line. MJ (10/18/26)
 
 resources:
   nprocs: 4064

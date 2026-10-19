@@ -106,7 +106,7 @@ def test_nowcast_adcirc_branch_dispatches_to_runner(fake_env, monkeypatch):
 
     seen, ctx = [], SimpleNamespace()
     monkeypatch.setattr(_adcirc, "load_context", lambda d: ctx)
-    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("step", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("step", c)])  # MJ (10/18/26)
     monkeypatch.setattr(adcirc_ops, "run_nowcast", lambda ctx: seen.append(ctx) or ["mpiexec"])
     assert nowcast_stage.run(_adcirc_desc(), fake_env) == 0
     assert seen == [ctx]
@@ -121,7 +121,7 @@ def test_nowcast_adcirc_failure_is_stage_failed(fake_env, monkeypatch):
         raise RuntimeError("ADCIRC crashed")
 
     monkeypatch.setattr(_adcirc, "load_context", lambda d: SimpleNamespace())
-    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("step", c)])  # MJ (10/19/26)
+    monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("step", c)])  # MJ (10/18/26)
     monkeypatch.setattr(adcirc_ops, "run_nowcast", boom)
     with pytest.raises(StageFailedError, match="ADCIRC crashed"):
         nowcast_stage.run(_adcirc_desc(), fake_env)

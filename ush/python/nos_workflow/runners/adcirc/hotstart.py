@@ -1,4 +1,4 @@
-"""Reads the model time of an ADCIRC restart file (the one hotstart helper the ops chain uses). MJ (10/19/26)"""
+"""Reads the model time of an ADCIRC restart file (the one hotstart helper the ops chain uses). MJ (10/18/26)"""
 from __future__ import annotations
 
 import logging

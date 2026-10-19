@@ -112,7 +112,7 @@ def test_post_adcirc_branch_runs_the_ops_post(fake_env, monkeypatch):
     monkeypatch.setattr(_adcirc, "load_context", lambda d: object())
     monkeypatch.setattr(_adcirc, "ops_steps", lambda c, stage: [("anomaly", c)])
     monkeypatch.setattr(adcirc_post, "run_post", lambda c: seen.append(c) or [])
-    assert post_stage.run(_adcirc_desc(), fake_env) == 0  # MJ (10/19/26)
+    assert post_stage.run(_adcirc_desc(), fake_env) == 0  # MJ (10/18/26)
     assert len(seen) == 1
 
 

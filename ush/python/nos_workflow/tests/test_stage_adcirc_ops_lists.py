@@ -199,3 +199,24 @@ def test_a_cold_cycle_runs_prep_nowcast_forecast_through_the_list_dispatch(tmp_p
     with pytest.raises(StageFailedError, match=r"tide_fcst: .*advanced past"):
         job("forecast", "fcst", "tide,surf")
     assert "status=FAIL" in [r.getMessage() for r in caplog.records if r.getMessage().startswith("STAGE_SUMMARY")][-1]
+
+
+REAL_YAML = Path(__file__).resolve().parents[4] / "parm" / "systems" / "stofs_2d_glo.yaml"
+
+
+def _real_env(tmp_path, monkeypatch, **extra):
+    env = {"OFS_CONFIG": str(REAL_YAML), "PDY": "20261005", "cyc": "12", "COMOUT": str(tmp_path / "com" / "stofs_2d_glo.20261005"),
+           "HOMEnos": str(tmp_path), "ADCIRC_SEGMENT": "ncst", "ADCIRC_STREAM": "tide", **extra}
+    monkeypatch.delenv("ADCIRC_MODE", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_real_yaml_loads_with_unset_mode_and_refuses_single(tmp_path, monkeypatch):
+    _real_env(tmp_path, monkeypatch)
+    steps = []
+    assert _adcirc.run_model_stage(DESC, "nowcast", lambda c: steps.append((c.segment, c.stream)) or []) == 0  # MJ (10/18/26)
+    assert steps == [("ncst", "tide")]
+    _real_env(tmp_path, monkeypatch, ADCIRC_MODE="single")
+    with pytest.raises(StageFailedError, match="ADCIRC_MODE=single was removed"):
+        _adcirc.run_model_stage(DESC, "nowcast", lambda c: [])

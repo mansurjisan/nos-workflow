@@ -1,4 +1,4 @@
-"""STOFS-2D-GLO prep helper shared by the ops steps: link the fix mesh files into a run directory. MJ (10/19/26)"""
+"""STOFS-2D-GLO prep helper shared by the ops steps: link the fix mesh files into a run directory. MJ (10/18/26)"""
 from __future__ import annotations
 
 from pathlib import Path

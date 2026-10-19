@@ -4,7 +4,7 @@ Applies to nos-workflow `develop` as of 2026-10-15. Update this guide in the sam
 
 ## 1. What you are running
 
-STOFS-2D-Global is ADCIRC v56.1 (`padcirc`, `adcprep`) on the 12.8 M node global mesh: 4064 compute ranks, time step 6 s, cycles at 00, 06, 12 and 18z. One yaml (`parm/systems/stofs_2d_glo.yaml`) and one set of cards run the operational stofs.v3.1.5 layout inside the nos-workflow structure. Ops is the only mode: `ADCIRC_MODE=ops` is optional (unset means ops), and any other value, such as the removed `single`, stops the launcher and the cards with an error.
+STOFS-2D-Global is ADCIRC v56.1 (`padcirc`, `adcprep`) on the 12.8 M node global mesh: 4064 compute ranks, time step 6 s, cycles at 00, 06, 12 and 18z. One yaml (`parm/systems/stofs_2d_glo.yaml`) and one set of cards run the operational stofs.v3.1.5 layout inside the nos-workflow structure. Ops is the only mode: `ADCIRC_MODE=ops` is optional (unset means ops), and any other value, such as the removed `single`, stops the WCOSS2 launcher and the cards with an error. The Hercules Slurm launcher ignores a leaked `ADCIRC_MODE` and always runs ops.
 
 | | ops |
 |---|---|
@@ -113,7 +113,7 @@ for sel in "1:ncpus=1:prepost=true:mem=400gb" "8:ncpus=32:prepost=true:mem=800gb
 
 ### 2.5 Run
 
-Run the launcher from your clone. It passes `PDY`, `CYC`, `PACKAGEROOT` and `HOMEnos`, and forwards these when set: `COMROOT_2DGLO`, `ADCIRC_EXEC_DIR`, `ADCIRC_MODULE_PATH`, `STOFS_RUNVER`, `DCOMROOT`, `ATMOSPHERIC_FORCING` (false = tide only). `PKG` overrides the clone location. The cycle argument defaults to 12.
+Run the launcher from your clone. It passes `PDY`, `CYC`, `PACKAGEROOT` and `HOMEnos`, and forwards these when set: `COMROOT_2DGLO`, `ADCIRC_EXEC_DIR`, `ADCIRC_MODULE_PATH`, `STOFS_RUNVER`, `DCOMROOT`, `ATMOSPHERIC_FORCING` (a fallback only: the run takes NWS from the rendered fort.15, so this matters only for a fort.15 without an `! NWS` line). `PKG` overrides the clone location. The cycle argument defaults to 12.
 
 **First cycle** (cold start). Pick a cycle old enough that its GFS `sfcf000` to `sfcf180` are in `COMINgfs` and, for the comparison, that ops has finished its post:
 ```bash

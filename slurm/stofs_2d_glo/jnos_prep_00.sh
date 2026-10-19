@@ -77,7 +77,7 @@ export job=stofs_2d_glo_prep_${cyc}_$envir
 export platform=ptmp
 export framework=adcirc
 export ADCIRC_MODE=${ADCIRC_MODE:-ops}
-[ "${ADCIRC_MODE}" = ops ] || { echo "ERROR: ADCIRC_MODE=${ADCIRC_MODE} was removed: STOFS-2D-Global runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)" >&2; exit 2; }  # MJ (10/19/26)
+[ "${ADCIRC_MODE,,}" = ops ] || { echo "ERROR: ADCIRC_MODE=${ADCIRC_MODE} was removed: STOFS-2D-Global runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)" >&2; exit 2; }  # MJ (10/18/26)
 
 export KEEPDATA=${KEEPDATA:-YES}
 export SENDCOM=NO

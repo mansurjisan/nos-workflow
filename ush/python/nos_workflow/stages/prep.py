@@ -97,7 +97,7 @@ def _run_comf_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
 
 
 def _run_adcirc_prep(descriptor: OFSDescriptor, env: "NCOEnv") -> int:
-    """STOFS-2D-GLO prep: runs the ADCIRC_SEGMENT list (adcprep, ncst, fcst) through the shared ADCIRC stage driver. MJ (10/19/26)"""
+    """STOFS-2D-GLO prep: runs the ADCIRC_SEGMENT list (adcprep, ncst, fcst) through the shared ADCIRC stage driver. MJ (10/18/26)"""
     from ..runners.adcirc import ops as adcirc_ops
     from ._adcirc import run_model_stage
 

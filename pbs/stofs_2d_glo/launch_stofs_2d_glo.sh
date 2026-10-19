@@ -7,8 +7,8 @@
 # Example:  ./launch_stofs_2d_glo.sh 20261005 12
 #
 # Override $PKG via env if needed. COMROOT_2DGLO (default ptmp/.../com, as SECOFS and coupled ATL) is forwarded when set. MJ (10/13/26)
-# ATMOSPHERIC_FORCING is forwarded when set. NCPU/NUM_WRITERS are tied to the card node counts, so they come from the yaml only. MJ (10/19/26)
-# Ops is the only mode: ADCIRC_MODE=ops is optional, unset means ops, and any other value (the removed single mode) stops here. MJ (10/19/26)
+# ATMOSPHERIC_FORCING is forwarded when set. NCPU/NUM_WRITERS are tied to the card node counts, so they come from the yaml only. MJ (10/18/26)
+# Ops is the only mode: ADCIRC_MODE=ops is optional, unset means ops, and any other value (the removed single mode) stops here. MJ (10/18/26)
 # The launcher submits one cycle as four jobs, prep -> nowcast -> forecast -> post, each afterok on the one before. The tide and surf
 # streams run one after the other inside a job, on the same 32 nodes. Each job runs the steps of its ADCIRC_SEGMENT / ADCIRC_STREAM list
 # in order (the stofs.v3.1.5 jobs it replaces, with their walltimes summed: the ecf values except ncst 0:25, adcprep 3:00 and ncrcat 0:25):
@@ -50,7 +50,7 @@ for _v in COMROOT_2DGLO ADCIRC_EXEC_DIR ADCIRC_MODULE_PATH STOFS_RUNVER DCOMROOT
   fi
 done
 
-[ -z "${ADCIRC_MODE:-}" ] || [ "${ADCIRC_MODE}" = ops ] || { echo "ERROR: ADCIRC_MODE=${ADCIRC_MODE} was removed: STOFS-2D-Global runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)" >&2; exit 2; }  # MJ (10/19/26)
+[ -z "${ADCIRC_MODE:-}" ] || [ "${ADCIRC_MODE,,}" = ops ] || { echo "ERROR: ADCIRC_MODE=${ADCIRC_MODE} was removed: STOFS-2D-Global runs ops mode only (unset ADCIRC_MODE or set ADCIRC_MODE=ops)" >&2; exit 2; }  # MJ (10/18/26)
 
 OPSVARS="${VARS},KEEPDATA=${KEEPDATA:-NO},ADCIRC_MODE=ops"
 declare -A J
