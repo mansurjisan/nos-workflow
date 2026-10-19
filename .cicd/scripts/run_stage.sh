@@ -29,7 +29,7 @@ ATL_EXPORTS=""; ATL_LOGPFX=""; ATL_RPTDIR=""; ATL_CLEAN=0; STAGE_CARD=""; STAGE_
 GATE_OFS="${OFS}"
 case "${OFS}" in
   stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs)
-    # Walltime of the ATL card + 30 min of queue margin (62/63-node jobs); the coupled post card is 4 h. MJ (10/15/26)
+    # Walltime of the ATL card + 30 min of headroom (Slurm's --time ends a long run first); the coupled post card is 4 h. MJ (10/19/26)
     case "${STAGE}" in
       prep)     TIMEOUT_S=12600 ;;
       nowcast)  TIMEOUT_S=10800 ;;
@@ -82,6 +82,14 @@ while true; do
   STATE=$(sacct -j "${JOBID}" -o State%20 -n 2>/dev/null | head -1 | tr -d ' ')
   case "${STATE}" in
     COMPLETED|FAILED|CANCELLED*|TIMEOUT|NODE_FAIL|PREEMPTED|OUT_OF_MEM*|BOOT_FAIL|DEADLINE|REVOKED) break ;;
+    # The limit is run time: the clock starts when the job leaves the queue, so a long Hercules queue wait cannot use it up (build #24); the 16 h build timeout
+    # bounds the wait, and a job that can never start (held, over a per-job or partition limit, bad account or QOS) fails at once. MJ (10/19/26)
+    PENDING)
+      WHY=$(squeue -h -j "${JOBID}" -o %r 2>/dev/null || true)
+      case "${WHY}" in
+        *[Hh]eld*|*PerJob*|Partition*Limit|Invalid*) echo "FATAL: stage=${STAGE} rc=unstartable -- jobid ${JOBID} pending (${WHY})"; scancel "${JOBID}" || true; break ;;
+      esac
+      t0=$(date +%s) ;;
   esac
   elapsed=$(( $(date +%s) - t0 ))
   if [ "${elapsed}" -ge "${TIMEOUT_S}" ]; then
