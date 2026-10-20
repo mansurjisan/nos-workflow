@@ -22,8 +22,9 @@
 #   qsub -v "PDY=20260322,CYC=18,OFS=secofs_ufs" jnos_post_00.pbs
 # ------------------------------------------------------------------
 
-PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
-. ${PACKAGEROOT}/nos-workflow/versions/run.ver
+PACKAGEROOT=${PACKAGEROOT:-/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages}
+HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+. ${HOMEnos}/versions/run.ver
 
 # Working directory
 export OFS=${OFS:-secofs_ufs}
@@ -106,7 +107,7 @@ export SENDSMS=NO
 
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
 # nos_ofs_ver removed (tree unversioned)
-export PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages
+export PACKAGEROOT=${HOMEnos%/*}   # module prod_envir sets the ops PACKAGEROOT; take it back from the clone. MJ (10/19/26)
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos
@@ -121,7 +122,7 @@ export job=${job:-$PBS_JOBNAME}
 export jobid=${jobid:-$job.$PBS_JOBID}
 
 # YAML configuration for secofs_ufs
-export HOMEnos=${PACKAGEROOT}/nos-workflow
+export HOMEnos
 export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS}.yaml
 export PYTHONPATH=${HOMEnos}/ush/python:${PYTHONPATH:-}
 

@@ -29,7 +29,7 @@ export USER LOGNAME=${LOGNAME:-$USER}
 export HOME=${HOME:-/u/${USER}}
 
 # ---- config (override via env) ----------------------------------------------
-PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)" || { echo "FATAL: cannot resolve package root" >&2; exit 2; }
 PBSDIR="${PKG}/pbs/secofs_ufs_ww3"
 RPTDIR=${RPTDIR:-/lfs/h1/nos/ptmp/${USER}/rpt/secofs_ufs_ww3}
 DRYRUN=${DRYRUN:-0}
@@ -111,7 +111,7 @@ submit_and_wait(){
   : > "$sentinel"          # mtime reference; fresh = .out newer than this
   local t0; t0=$(date +%s)
 
-  local vars="PDY=${PDY},CYC=${cyc}"
+  local vars="PDY=${PDY},CYC=${cyc},PACKAGEROOT=$(dirname "$PKG"),HOMEnos=${PKG}"
   for _v in NOS_POST_PRODUCTS NOS_POST_MAX_WORKERS NOS_PROFILES_OUTSIDE \
             POST_FIELDS_DEFLATE NOS_ARCHIVE_FIELDS NOS_COMBINE_OUTPUTS_SCRIPT; do
     eval "_val=\${${_v}:-}"

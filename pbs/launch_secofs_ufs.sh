@@ -34,7 +34,7 @@ export USER LOGNAME=${LOGNAME:-$USER}
 export HOME=${HOME:-/u/${USER}}
 
 # ---- config (override via env) ----------------------------------------------
-PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/..}" && pwd)" || { echo "FATAL: cannot resolve package root" >&2; exit 2; }
 RPTDIR=${RPTDIR:-/lfs/h1/nos/ptmp/${USER}/rpt/secofs_ufs}
 DRYRUN=${DRYRUN:-0}
 POLL=${POLL:-60}                       # seconds between status polls
@@ -121,7 +121,7 @@ submit_and_wait(){
   # before calling this script would quietly do nothing. Forward them
   # when set. Values may contain spaces (a product list); PBS splits -v
   # on commas only, so a space-separated value survives.
-  local vars="PDY=${PDY},CYC=${cyc}"
+  local vars="PDY=${PDY},CYC=${cyc},PACKAGEROOT=$(dirname "$PKG"),HOMEnos=${PKG}"
   # qsub -v replaces the job environment wholesale, so anything not listed
   # here is silently dropped. Enumerating them one at a time already cost a
   # test run -- NOS_PROFILES_OUTSIDE was missing, so `--outside drop` was
