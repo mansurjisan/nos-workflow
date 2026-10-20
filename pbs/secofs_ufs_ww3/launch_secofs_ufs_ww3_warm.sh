@@ -31,7 +31,7 @@ export PATH=/opt/pbs/default/bin:/opt/pbs/bin:/usr/bin:/bin:${PATH:-}
 
 PDY=${PDY:-${1:-$(date -u +%Y%m%d)}}
 CYC=12                                  # the experiment is 12z only
-PKG=${PKG:-/lfs/h1/nos/estofs/noscrub/${USER}/packages/nos-workflow}
+PKG="$(cd "${PKG:-$(dirname "$(readlink -f "$0")")/../..}" && pwd)" || { echo "FATAL: cannot resolve package root" >&2; exit 2; }
 P=${PTMPROOT:-/lfs/h1/nos/ptmp/${USER}}
 RPT=$P/rpt/secofs_ufs_ww3
 ROOT=${WARM_ROOT:-$P/warmtest/com/nos}
@@ -134,11 +134,11 @@ fi
 
 # ---- 3. submit -------------------------------------------------------------
 if [ "${DRYRUN:-0}" = "1" ]; then
-  log "DRYRUN $PDY: would qsub -v PDY=$PDY,CYC=$CYC,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES"
+  log "DRYRUN $PDY: would qsub -v PDY=$PDY,CYC=$CYC,PACKAGEROOT=$(dirname "$PKG"),HOMEnos=$PKG,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES"
   exit 0
 fi
 cd "$PKG" || { log "ABORT: cannot cd $PKG"; exit 2; }
-raw=$(qsub -v "PDY=$PDY,CYC=$CYC,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES" \
+raw=$(qsub -v "PDY=$PDY,CYC=$CYC,PACKAGEROOT=$(dirname "$PKG"),HOMEnos=$PKG,COMOUT=$SCRATCH,WAV_NOWCAST_WARM_START=YES" \
         pbs/secofs_ufs_ww3/jnos_nowcast_00.pbs 2>&1) || { log "ABORT $PDY: qsub failed: $raw"; exit 2; }
 JID=$(echo "$raw" | grep -oE '^[0-9]+' | head -1)
 log "SUBMIT $PDY: jobid=${JID:-?} ($raw)"

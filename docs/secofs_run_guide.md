@@ -130,7 +130,7 @@ git clone https://github.com/mansurjisan/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ```
-The cards set `PACKAGEROOT=/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages` by plain assignment and `HOMEnos=${PACKAGEROOT}/nos-workflow`, so `~/.bashrc` cannot override them. The jobs always run `$LOGNAME/packages/nos-workflow`. Clone at that path, or edit `PACKAGEROOT` in all 8 cards (4 per config). `PKG` only selects which card files a launcher submits.
+No card edits are needed. Clone anywhere: each launcher works out its own clone location and passes `PACKAGEROOT` and `HOMEnos` (the clone path) to every job, including the ParMETIS retries. A card run directly with `qsub` needs `-v PACKAGEROOT=<parent dir>,HOMEnos=<clone path>`, or it uses the default `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow`. If `~/.bashrc` sets either variable, write it as a default (`HOMEnos=${HOMEnos:-/path}`), or it overrides the clone the launcher passes.
 
 Cards submit with `#PBS -A ESTOFS-DEV -q dev`. Without that project, change `#PBS -A`.
 
@@ -176,8 +176,9 @@ The launchers submit one stage, wait for `STAGE_SUMMARY ... status=PASS` in that
 
 If you run a card by hand, pass what it needs; `qsub -v` replaces the job environment:
 ```bash
-qsub -v PDY=20261019,CYC=12 pbs/jnos_prep_00.pbs
+qsub -v PDY=20261019,CYC=12,PACKAGEROOT=<parent dir>,HOMEnos=<clone path> pbs/jnos_prep_00.pbs
 ```
+Without the last two variables the card uses the default clone path (section 3.1).
 Use uppercase `CYC`. A retry passes `CYC` on, and a lowercase variable silently re-runs non-00z cycles as 00z.
 
 ### 3.3 Timeouts and the ParMETIS retry
@@ -202,7 +203,7 @@ Launch each cycle about 2 h 15 min after cycle time (UTC). Once, on the login no
 mkdir -p /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs_ww3
 crontab -e
 ```
-Add these lines, the maintainer's crontab. Cron runs each line through `/bin/sh`, which expands `$LOGNAME`:
+Add these lines, the maintainer's crontab; use the path of your own clone in place of `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow`. Cron runs each line through `/bin/sh`, which expands `$LOGNAME`:
 ```
 15 2  * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 00 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.00.log 2>&1
 15 8  * * * /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow/pbs/launch_secofs_ufs.sh 06 >> /lfs/h1/nos/ptmp/$LOGNAME/rpt/secofs_ufs/launch.06.log 2>&1
