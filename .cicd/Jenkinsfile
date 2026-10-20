@@ -22,7 +22,7 @@ def resolveTargetSha() {
                         set -e
                         BODY=$(printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
                             -H "Accept: application/vnd.github+json" \
-                            "https://api.github.com/repos/mansurjisan/nos-workflow/pulls/${GH_CHANGE_ID}")
+                            "https://api.github.com/repos/oceanmodeling/nos-workflow/pulls/${GH_CHANGE_ID}")
                         printf '%s' "${BODY}" | python3 -c 'import json,sys; print(json.load(sys.stdin)["head"]["sha"])'
                     ''',
                     returnStdout: true
@@ -76,7 +76,7 @@ def postStatus(String state, String description) {
                     printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
                         -X POST \
                         -H "Accept: application/vnd.github+json" \
-                        "https://api.github.com/repos/mansurjisan/nos-workflow/statuses/${GH_COMMIT}" \
+                        "https://api.github.com/repos/oceanmodeling/nos-workflow/statuses/${GH_COMMIT}" \
                         --data "${payload}" >/dev/null
                 '''
             }
@@ -160,7 +160,7 @@ pipeline {
                                             script: '''
                                                 printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
                                                     -H "Accept: application/vnd.github+json" \
-                                                    "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels"
+                                                    "https://api.github.com/repos/oceanmodeling/nos-workflow/issues/${GH_CHANGE_ID}/labels"
                                             ''',
                                             returnStdout: true
                                         ).trim()
@@ -363,7 +363,7 @@ pipeline {
                                     printf 'header = "Authorization: Bearer %s"' "${GH_TOKEN}" | curl --config - --silent --show-error --fail \
                                         -X DELETE \
                                         -H "Accept: application/vnd.github+json" \
-                                        "https://api.github.com/repos/mansurjisan/nos-workflow/issues/${GH_CHANGE_ID}/labels/hercules-nos-RT" >/dev/null
+                                        "https://api.github.com/repos/oceanmodeling/nos-workflow/issues/${GH_CHANGE_ID}/labels/hercules-nos-RT" >/dev/null
                                 '''
                             }
                         }

@@ -48,7 +48,7 @@ The point files hold 1687 stations. The `surf_fcst` step first publishes the unc
 Clone anywhere, with any directory name:
 ```bash
 cd /lfs/h1/nos/estofs/noscrub/$LOGNAME/packages          # or any directory you own
-git clone https://github.com/mansurjisan/nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ```
@@ -233,7 +233,7 @@ The clone must be named `nos-workflow` (the cards run `$PACKAGEROOT/nos-workflow
 export PK=/work2/noaa/nos-surge/$LOGNAME/packages_2dglo          # any directory you own
 export NOS_PTMP=/work2/noaa/nos-surge/$LOGNAME/nos-run/ptmp     # your own ptmp (example path)
 mkdir -p $PK && cd $PK
-git clone https://github.com/mansurjisan/nos-workflow nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 mkdir -p exec

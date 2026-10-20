@@ -18,7 +18,7 @@ These are development configurations, not NCO operational jobs. `develop` is the
 ## Quick start
 
 ```bash
-git clone https://github.com/mansurjisan/nos-workflow.git && cd nos-workflow
+git clone https://github.com/oceanmodeling/nos-workflow.git && cd nos-workflow
 git submodule update --init ush/python/nos-utils
 ```
 
