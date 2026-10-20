@@ -65,7 +65,7 @@ export SENDDBN=NO
 export SENDSMS=NO
 
 # nosofs_ver removed: tree is unversioned (was v3.7.0)
-export PACKAGEROOT
+export PACKAGEROOT=${HOMEnos%/*}   # module prod_envir sets the ops PACKAGEROOT; take it back from the clone. MJ (10/19/26)
 
 # Data and COM paths
 export COMPATH=/lfs/h1/ops/prod/com/nos

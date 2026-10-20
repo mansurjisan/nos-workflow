@@ -1,4 +1,4 @@
-"""SECOFS cards and launchers take the clone location from the launcher. Offline."""
+"""SECOFS cards and launchers take the clone location from the launcher. Offline. MJ (10/19/26)"""
 from __future__ import annotations
 
 import os
@@ -34,6 +34,7 @@ def test_card_defaults_not_assigns(card):
     assert re.search(r"^PACKAGEROOT=\$\{PACKAGEROOT:-[^}]+\}$", text, re.M)
     assert re.search(r"^HOMEnos=\$\{HOMEnos:-.+\}$", text, re.M)
     assert re.search(r"^export HOMEnos$", text, re.M)
+    assert re.search(r"^export PACKAGEROOT=\$\{HOMEnos%/\*\}", text, re.M)   # after the module block, which resets it. MJ (10/19/26)
     assert "${PACKAGEROOT}/nos-workflow/versions" not in text
 
 

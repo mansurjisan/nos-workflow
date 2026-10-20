@@ -130,7 +130,7 @@ git clone https://github.com/mansurjisan/nos-workflow
 cd nos-workflow && git checkout develop && git pull --ff-only
 git submodule update --init ush/python/nos-utils
 ```
-No card edits are needed. Clone anywhere: each launcher works out its own clone location and passes `PACKAGEROOT` and `HOMEnos` (the clone path) to every job, including the ParMETIS retries. A card run directly with `qsub` needs `-v PACKAGEROOT=<parent dir>,HOMEnos=<clone path>`, or it uses the default `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow`. If `~/.bashrc` sets either variable, write it as a default (`HOMEnos=${HOMEnos:-/path}`), or it overrides the clone the launcher passes.
+No card edits are needed. Clone anywhere: each launcher works out its own clone location (an exported `PKG` overrides it) and passes `PACKAGEROOT` and `HOMEnos` (the clone path) to every job, including the ParMETIS retries. A card run directly with `qsub` needs `-v PACKAGEROOT=<parent dir>,HOMEnos=<clone path>`, or it uses the default `/lfs/h1/nos/estofs/noscrub/$LOGNAME/packages/nos-workflow`. If `~/.bashrc` sets either variable, write it as a default (`HOMEnos=${HOMEnos:-/path}`), or it overrides the clone the launcher passes.
 
 Cards submit with `#PBS -A ESTOFS-DEV -q dev`. Without that project, change `#PBS -A`.
 
@@ -339,7 +339,7 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 | Launcher says `FAIL ... TIMEOUT` but the job is alive | The timeout is the card walltime plus headroom. Read the job's own log. |
 | Manual retry of a 06, 12 or 18 z cycle ran as 00 z | `CYC` was lowercase or missing in `qsub -v`. Pass `CYC=<cycle>`. |
 | A job exited 0 but the stage failed | Check `STAGE_SUMMARY ... status=PASS`. |
-| Jobs run another package's code | The cards fix `PACKAGEROOT` (section 3.1). Check that `$LOGNAME/packages/nos-workflow` is the clone you mean. |
+| Jobs run another package's code | The launcher passes its own clone (`PKG=` in the launch log), unless `PKG` is exported. Check `~/.bashrc` for a plain `HOMEnos` or `PACKAGEROOT` assignment (section 3.1). |
 | Wave nowcast aborts before launch with a PET layout message | Stale nos-utils pin (3-component `ufs.configure` patcher). Update the submodule. |
 | Wave prep: `ww3_bound` not found or `nest.ww3` missing | Install `exec/ww3_bound`; stage `secofs_ufs.mod_def.ww3` and `secofs_ufs.ww3_bound_points.list`. Prep continues with wind sea only. |
 | Wave nowcast runs cold although warm start is on | No usable `wave_restart` within the search window. Look for the warm-start line in the nowcast log. |
