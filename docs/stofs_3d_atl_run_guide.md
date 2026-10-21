@@ -367,7 +367,7 @@ The difference from operational does not grow materially on the chained day: the
 
 ## 8. Known limitations
 
-- ecFlow cards are not done yet; use the launchers (WCOSS2) or the Slurm cards (Hercules).
+- Use the launchers (WCOSS2) or the Slurm cards (Hercules). An ecFlow suite (`ecf/`) runs both variants; it has not run on WCOSS2 yet: see `docs/ecflow_run_guide.md`.
 - post2 products (GRIB2, SHEF) and the geopackage are not ported; no post product beyond stations and fields has been compared with operational.
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.

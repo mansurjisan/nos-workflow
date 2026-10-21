@@ -324,7 +324,7 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 - Time labels of some nowcast products are one day late (open on 4ac0f15). The nowcast start is built as PDY plus ((cyc - nowcast length) mod 24) h with no day rollback (`stages/post.py`, used for the time units in `schism_combine_outputs.py`). The wave 12z 24 h nowcast is stamped PDY 12z instead of PDY-1 12z, and the `secofs_ufs` 00z nowcast PDY 18z instead of PDY-1 18z. The values are correct.
 - The WCOSS2 SECOFS cards set `COMROOT` and paths directly (no `qsub -v` override for `COMROOT`); use `COMOUT` overrides or edit the cards for a separate tree.
 - The wave config is WCOSS2 only; Hercules has no wave cards or executable.
-- No ecFlow cards (`ecf/` is empty). Cron plus the launchers is the cycling mechanism.
+- Cron plus the launchers is the tested cycling mechanism. An ecFlow suite (`ecf/`) runs the same stages; it has not run on WCOSS2 yet: see `docs/ecflow_run_guide.md`.
 - The wave executable's patches are kept outside the repository.
 
 ## 9. Troubleshooting

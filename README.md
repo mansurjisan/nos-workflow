@@ -35,7 +35,7 @@ git submodule update --init ush/python/nos-utils
 - `fix/`: tracked templates and small tables (large files are fetched)
 - `exec/`: executables (not tracked)
 - `pbs/`, `slurm/`: WCOSS2 and Hercules cards and launchers
-- `ecf/`: empty (no ecFlow cards yet)
+- `ecf/`: ecFlow suite (WCOSS2, not yet run on a server)
 - `.cicd/`: Jenkins pipeline
 - `docs/`: run guides
 - `tools/`: fix fetch, builds, forcing staging, seeds
@@ -45,6 +45,7 @@ git submodule update --init ush/python/nos-utils
 - [docs/secofs_run_guide.md](docs/secofs_run_guide.md)
 - [docs/stofs_3d_atl_run_guide.md](docs/stofs_3d_atl_run_guide.md)
 - [docs/stofs_2d_glo_run_guide.md](docs/stofs_2d_glo_run_guide.md)
+- [docs/ecflow_run_guide.md](docs/ecflow_run_guide.md)
 - [docs/hercules_jenkins_run_guide.md](docs/hercules_jenkins_run_guide.md)
 
 STOFS-3D-AK is documented in its launcher header.

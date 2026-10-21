@@ -526,7 +526,7 @@ The first result is from Hercules, 20261013 06z, started from the public ops `.6
 - GEMPAK is not ported.
 - The SHEF bulletins are made but not sent (`SENDDBN=NO`).
 - No watchdogs.
-- No unattended 4-a-day cycling (cron or ecFlow cards): use the launchers.
+- No unattended 4-a-day cycling with cron: use the launchers. An ecFlow suite (`ecf/`) cycles it 4 times a day; it has not run on WCOSS2 yet: see `docs/ecflow_run_guide.md`.
 - Anomaly, bias and GRIB2/SHEF run on WCOSS2 only (they need the ops package, `cfp` and `tocgrib2`).
 - On Hercules a start from the ops state uses the public `.68` files, which are the ops 120 h forecast state, not the analysis at the cycle time (section 3.4). They exist only for cycles still in the bucket.
 - The first ops-mode cycle without a seeded `database.tar.gz` has an empty anomaly history.
