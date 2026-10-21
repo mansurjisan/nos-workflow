@@ -7,7 +7,7 @@ The image (`containers/Dockerfile`) is Rocky 9 with SLURM, ecFlow, NCEP libs, wg
 git clone --recurse-submodules https://github.com/oceanmodeling/nos-workflow.git && cd nos-workflow
 git checkout feat/container-atl      # becomes develop after merge
 docker build -f containers/Dockerfile -t stofsworkflow .   # fails at once if nos-utils is empty
-docker pull <dockerhub-user>/stofsworkflow:nightly         # or pull the CI image: :nightly is built from develop every day at 05:00 UTC, :develop on each develop push
+docker pull <dockerhub-user>/stofsworkflow:develop-nightly # or pull the CI image: :develop-nightly is built from develop every day at 05:00 UTC, :develop on each develop push
 ```
 
 ## Inputs on the host

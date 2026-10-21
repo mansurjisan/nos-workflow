@@ -2,7 +2,8 @@ name: Docker Build (stofsworkflow)
 
 on:
   workflow_dispatch:
-  # Nightly image for the ParallelWorks run; scheduled runs use develop and push :nightly. MJ (10/21/26)
+  # Nightly image for the ParallelWorks run; scheduled runs use develop and push :develop-nightly (main's old
+  # workflow still pushes the v2.1 image as :nightly). MJ (10/21/26)
   schedule:
     - cron: '0 5 * * *'
   push:
@@ -77,12 +78,12 @@ jobs:
             python3 -c "import nos_workflow, nos_utils, scipy; from nos_utils.nco_bridge import run_prep" &&
             test -x /opt/nosofs/exec/stofs_3d_atl_tide_fac && wgrib2 -version | head -1 && ncks --version 2>&1 | head -1'
 
-      - name: Push (develop only; :nightly from the schedule)
+      - name: Push (develop only; :develop-nightly from the schedule)
         if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
         run: |
           img=${{ secrets.DOCKER_USERNAME }}/stofsworkflow
           tags="develop"
-          [ "${{ github.event_name }}" = schedule ] && tags="develop nightly"
+          [ "${{ github.event_name }}" = schedule ] && tags="develop develop-nightly"
           for t in $tags; do
             docker tag stofsworkflow:ci $img:$t && docker push $img:$t
           done
