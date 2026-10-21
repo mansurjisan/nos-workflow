@@ -19,8 +19,8 @@
 #     -> nos_utils.nco_bridge.run_prep()
 #
 # Build (context = repo root):
-#   docker build -f docker/Dockerfile.secofs_ufs -t nosofs/secofs-ufs:develop .
-#   docker build -f docker/Dockerfile.secofs_ufs --target runtime \
+#   docker build -f containers/secofs_ufs/Dockerfile.secofs_ufs -t nosofs/secofs-ufs:develop .
+#   docker build -f containers/secofs_ufs/Dockerfile.secofs_ufs --target runtime \
 #       -t nosofs/secofs-ufs:prep .
 # ============================================================================
 
@@ -108,9 +108,9 @@ COPY --from=tools /opt/wgrib2/    /opt/wgrib2/
 COPY --from=tools /opt/prod_util/ /opt/prod_util/
 
 # Entrypoint + MPI shim + partition generator.
-COPY docker/run_secofs_ufs.sh     /opt/nosofs/docker/
-COPY docker/mpiexec_wrapper.sh    /opt/nosofs/docker/
-COPY docker/generate_partition.py /opt/nosofs/docker/
+COPY containers/secofs_ufs/run_secofs_ufs.sh     /opt/nosofs/docker/
+COPY containers/secofs_ufs/mpiexec_wrapper.sh    /opt/nosofs/docker/
+COPY containers/secofs_ufs/generate_partition.py /opt/nosofs/docker/
 
 ENV PACKAGEROOT=/lfs/h1/nos/nosofs/packages \
     HOMEnos=/opt/nosofs \

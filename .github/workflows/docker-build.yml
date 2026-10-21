@@ -10,6 +10,7 @@ on:
     branches: [develop]
     paths:
       - 'containers/**'
+      - '!containers/secofs_ufs/**'   # the SECOFS image has its own workflow (ci-tier2-docker.yml). MJ (10/21/26)
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'
@@ -23,6 +24,7 @@ on:
     branches: [develop]
     paths:
       - 'containers/**'
+      - '!containers/secofs_ufs/**'   # the SECOFS image has its own workflow (ci-tier2-docker.yml). MJ (10/21/26)
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'
