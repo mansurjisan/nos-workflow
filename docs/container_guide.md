@@ -10,7 +10,7 @@ sudo systemctl start docker                       # if `docker` cannot reach the
 sudo docker pull mjisan/stofsworkflow:develop
 sudo docker tag mjisan/stofsworkflow:develop stofsworkflow:latest
 ```
-CI (`.github/workflows/docker-build.yml`) publishes `:develop` on each develop push that touches the container or workflow code (containers, jobs, scripts, ush, parm, versions, fix, modulefiles), and `:develop-nightly` every day at 05:00 UTC. `:nightly` is the old v2.1 image. To build instead (30-60 min; fails at once if nos-utils is empty), run `sudo docker build -f containers/Dockerfile -t stofsworkflow:latest .` from a clone.
+CI (`.github/workflows/docker-build.yml`) publishes `:develop` on each develop push that touches the container or workflow code (containers except containers/secofs_ufs, jobs, scripts, ush, parm, versions, fix, modulefiles), and `:develop-nightly` every day at 05:00 UTC. `:nightly` is the old v2.1 image. To build instead (30-60 min; fails at once if nos-utils is empty), run `sudo docker build -f containers/Dockerfile -t stofsworkflow:latest .` from a clone.
 
 ## 2. Clone and paths
 ```bash
