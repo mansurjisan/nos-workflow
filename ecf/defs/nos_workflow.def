@@ -28,7 +28,7 @@ suite nos_workflow
   edit ECF_STATUS_CMD  'qstat -f %ECF_RID% > %ECF_JOB%.stat 2>&1'
 
   # Defaults of the UFS-Coastal systems; the families below override what differs. MJ (10/20/26)
-  # Post gets 2 tries: it uses one node and can be rerun, and a failed task holds the system's next day (see the run guide). MJ (10/21/26)
+  # Post gets 2 tries (1 in stofs_2d_glo): it uses one node and can be rerun, and a failed task holds the system's next day (see the run guide). MJ (10/21/26)
   edit ECF_TRIES   1
   edit KEEPDATA    'YES'
   edit OFS_YAML    '%OFS%'
@@ -266,6 +266,7 @@ suite nos_workflow
   # STOFS-2D-Global, four cycles a day, the four-job shape of launch_stofs_2d_glo.sh (post runs JNOS_POST with the post
   # segments). A cold start is the segment lists and walltimes below: see the run guide. MJ (10/20/26)
   # Prep starts at cycle + 5 h: GFS f180 is not verified complete at +4:15. MJ (10/21/26)
+  # Post has one try: whether a rerun of anomaly and bias on the same cycle keeps the anomaly history intact is unverified. MJ (10/21/26)
   family stofs_2d_glo
     defstatus suspended
     edit OFS 'stofs_2d_glo'
@@ -314,7 +315,6 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
-          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 06
@@ -330,7 +330,6 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
-          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 12
@@ -346,7 +345,6 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
-          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 18
@@ -362,7 +360,6 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
-          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily

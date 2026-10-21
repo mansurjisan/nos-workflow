@@ -261,7 +261,7 @@ def test_every_module_and_env_set_exists():
 
 def test_ecf_tries_policy():
     for system, cyc, t in tasks(SUITE):
-        want = 2 if t.name == "jnos_post" or (system in TRIES2 and t.name in ("jnos_nowcast", "jnos_forecast")) else 1
+        want = 2 if (t.name == "jnos_post" and system != "stofs_2d_glo") or (system in TRIES2 and t.name in ("jnos_nowcast", "jnos_forecast")) else 1
         assert int(t.lookup("ECF_TRIES")) == want, (system, cyc, t.name)
 
 
@@ -320,7 +320,8 @@ def card_exports(system, stage):
 @pytest.mark.parametrize("system", list(CYCLES))
 @pytest.mark.parametrize("stage", STAGES)
 def test_silent_failure_exports_match_cards(system, stage):
-    assert job_exports(JOBS[(system, CYCLES[system][0], stage)][1]) == card_exports(system, stage)
+    for cyc in CYCLES[system]:
+        assert job_exports(JOBS[(system, cyc, stage)][1]) == card_exports(system, stage), cyc
 
 
 def test_pschism_run_ver_follows_the_standalone_card():
