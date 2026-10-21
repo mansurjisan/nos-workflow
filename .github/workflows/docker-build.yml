@@ -1,0 +1,44 @@
+name: Docker Build (stofsworkflow)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [develop, "feat/container-*"]
+    paths:
+      - 'containers/**'
+      - 'sorc/**'
+      - '.github/workflows/docker-build.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ush/python/nos-utils is COPY'd into the image
+
+      # SLURM, ecFlow, ADCIRC, SCHISM and the NCEP libs build in the image; free the runner disk first. MJ (10/20/26)
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build (push only from develop)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./containers/Dockerfile
+          push: ${{ github.ref == 'refs/heads/develop' }}
+          tags: ${{ secrets.DOCKER_USERNAME }}/stofsworkflow:develop
+          platforms: linux/amd64
+          provenance: false
