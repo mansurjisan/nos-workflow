@@ -24,7 +24,9 @@ export FIX=$CLONE/fix/stofs_3d_atl_ufs
 # GFS, HRRR, NWM are not in the bundle (RTOFS is): download from AWS
 python3 ush/stage_comin.py --pdy $PDY --cyc 12 --comroot $COMIN --profile stofs_3d_atl --sources gfs,hrrr,nwm,rtofs --jobs 8
 # first-cycle seeds (run on the host; need nccopy or ncks; tools/ is not in the image)
-tools/hercules_atl_seed_init.sh $PDY $SANDBOX/com_atl_sa/nos/stofs_3d_atl_ufs.$PDY $SANDBOX/com_atl_ufs/nos/stofs_3d_atl_ufs.$PDY
+tools/hercules_atl_seed_init.sh $PDY $SANDBOX/com_atl_sa/nos/stofs_3d_atl_ufs.$PDY
+# coupled variant: a RELATIVE link, so it also resolves inside the container
+mkdir -p $SANDBOX/com_atl_ufs/nos/stofs_3d_atl_ufs.$PDY && ln -sf ../../../com_atl_sa/nos/stofs_3d_atl_ufs.$PDY/stofs_3d_atl_ufs.t12z.$PDY.init.nowcast.nc $SANDBOX/com_atl_ufs/nos/stofs_3d_atl_ufs.$PDY/
 tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $SANDBOX/com_atl_sa $PDY $SANDBOX/com_atl_ufs
 chmod -R a+rwX $SANDBOX         # the container user (wcoss2, uid 1000) must be able to write
 ```

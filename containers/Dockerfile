@@ -387,7 +387,7 @@ RUN groupadd -r --gid=990 slurm \
     && chown -R slurm:slurm /var/*/slurm* \
     && chown -R munge:munge /run/munge \
     && chown -R slurm:slurm /opt/slurm/etc \
-    && chmod go-rwx /opt/slurm/etc/slurmdbd.conf \
+    && chmod 600 /opt/slurm/etc/slurmdbd.conf \
     && chmod go-rw /run/munge \
     && /sbin/create-munge-key \
     && [ -e /usr/bin/python ] || ln -s /usr/bin/python3 /usr/bin/python
@@ -466,7 +466,8 @@ COPY ush/         /opt/nosofs/ush/
 COPY parm/        /opt/nosofs/parm/
 COPY versions/    /opt/nosofs/versions/
 COPY modulefiles/ /opt/nosofs/modulefiles/
-COPY fix/         /opt/nosofs/fix/
+# Fix data is mounted at run time (docs/container_guide.md), so none is baked in: a clone with fetched fix files would add 5+ GB. MJ (10/21/26)
+RUN mkdir -p /opt/nosofs/fix
 # A missing nos-utils submodule would otherwise build and then die in exnos_prep.sh. MJ (10/20/26)
 RUN test -s /opt/nosofs/ush/python/nos-utils/nos_utils/nco_bridge.py
 COPY --from=builder /opt/stofs/exec/ /opt/nosofs/exec/
