@@ -1,0 +1,89 @@
+name: Docker Build (stofsworkflow)
+
+on:
+  workflow_dispatch:
+  # Nightly image for the ParallelWorks run; scheduled runs use develop and push :develop-nightly (main's old
+  # workflow still pushes the v2.1 image as :nightly). MJ (10/21/26)
+  schedule:
+    - cron: '0 5 * * *'
+  push:
+    branches: [develop]
+    paths:
+      - 'containers/**'
+      - 'jobs/**'
+      - 'scripts/**'
+      - 'ush/**'
+      - 'parm/**'
+      - 'versions/**'
+      - 'fix/**'
+      - 'modulefiles/**'
+      - '.github/workflows/docker-build.yml'
+  # PRs build and smoke-test only; login and push never run for them, so forks get no secrets. MJ (10/21/26)
+  pull_request:
+    branches: [develop]
+    paths:
+      - 'containers/**'
+      - 'jobs/**'
+      - 'scripts/**'
+      - 'ush/**'
+      - 'parm/**'
+      - 'versions/**'
+      - 'fix/**'
+      - 'modulefiles/**'
+      - '.github/workflows/docker-build.yml'
+
+concurrency:
+  group: docker-build-${{ github.event_name }}-${{ github.ref }}   # a develop push never cancels the nightly. MJ (10/21/26)
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive   # ush/python/nos-utils is COPY'd into the image
+
+      # SLURM, ecFlow, ADCIRC, SCHISM and the NCEP libs build in the image; free the runner disk first. MJ (10/20/26)
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" || true
+          df -h /
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and load
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./containers/Dockerfile
+          load: true
+          push: false
+          tags: stofsworkflow:ci
+          platforms: linux/amd64
+          provenance: false
+
+      - name: Smoke test
+        run: |
+          docker run --rm --entrypoint bash stofsworkflow:ci -c '
+            export PYTHONPATH=/opt/nosofs/ush/python:/opt/nosofs/ush/python/nos-utils
+            python3 -c "import nos_workflow, nos_utils, scipy; from nos_utils.nco_bridge import run_prep" &&
+            test -x /opt/nosofs/exec/stofs_3d_atl_tide_fac && wgrib2 -version | head -1 && ncks --version 2>&1 | head -1'
+
+      - name: Push (develop only; :develop-nightly from the schedule)
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/develop'
+        run: |
+          img=${{ secrets.DOCKER_USERNAME }}/stofsworkflow
+          tags="develop"
+          [ "${{ github.event_name }}" = schedule ] && tags="develop develop-nightly"
+          for t in $tags; do
+            docker tag stofsworkflow:ci $img:$t && docker push $img:$t
+          done
