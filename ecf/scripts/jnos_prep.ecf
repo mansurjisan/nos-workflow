@@ -1,0 +1,33 @@
+#PBS -N %JOBSTEM%_prep_%CYC%
+#PBS -j oe
+#PBS -S /bin/bash
+#PBS -q %QUEUE%
+#PBS -A %PROJ%-%PROJENVIR%
+#PBS -l select=%PREP_SELECT%
+#PBS -l place=%PREP_PLACE%
+#PBS -l walltime=%PREP_WALLTIME%
+#PBS -l debug=true
+
+export model=nos
+%include <head.h>
+%include <envir-p1.h>
+
+export cyc=%CYC%
+export NOS_STAGE=prep
+%include <nos_env.h>
+# ATL never cold-starts, and the shared run.ver exports COLDSTART=YES. MJ (10/20/26)
+if [ -n "%COLDSTART:%" ]; then export COLDSTART=%COLDSTART:%; fi
+if [ -n "%PREP_SEGMENT:%" ]; then export ADCIRC_SEGMENT="%PREP_SEGMENT:%"; fi
+
+%include <nos_modules_%PREP_MODSET%.h>
+%include <nos_paths.h>
+for _kv in %PREP_ENV:%; do export "${_kv}"; done
+
+%include <nos_run_stage.h>
+
+%include <tail.h>
+%manual
+Task: jnos_prep. Prepares forcing and model control files for the cycle (JNOS_PREP).
+Completes only if JNOS_PREP exits 0 and prints "STAGE_SUMMARY stage=prep ofs=<OFS> status=PASS".
+If it aborts: read the job output for the failing step, fix the cause, requeue the task.
+%end
