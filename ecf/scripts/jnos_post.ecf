@@ -1,0 +1,37 @@
+#PBS -N %JOBSTEM%_post_%CYC%
+#PBS -j oe
+#PBS -S /bin/bash
+#PBS -q %QUEUE%
+#PBS -A %PROJ%-%PROJENVIR%
+#PBS -l select=%POST_SELECT%
+#PBS -l place=%POST_PLACE%
+#PBS -l walltime=%POST_WALLTIME%
+#PBS -l debug=true
+
+export model=nos
+%include <head.h>
+%include <envir-p1.h>
+
+export cyc=%CYC%
+export NOS_STAGE=post
+%include <nos_env.h>
+if [ -n "%POST_SEGMENT:%" ]; then export ADCIRC_SEGMENT="%POST_SEGMENT:%"; fi
+# Optional post knobs, as the launchers forward them (unset by default). MJ (10/20/26)
+if [ -n "%NOS_POST_PRODUCTS:%" ]; then export NOS_POST_PRODUCTS="%NOS_POST_PRODUCTS:%"; fi
+if [ -n "%NOS_POST_MAX_WORKERS:%" ]; then export NOS_POST_MAX_WORKERS=%NOS_POST_MAX_WORKERS:%; fi
+if [ -n "%NOS_PROFILES_OUTSIDE:%" ]; then export NOS_PROFILES_OUTSIDE=%NOS_PROFILES_OUTSIDE:%; fi
+if [ -n "%POST_FIELDS_DEFLATE:%" ]; then export POST_FIELDS_DEFLATE=%POST_FIELDS_DEFLATE:%; fi
+if [ -n "%NOS_ARCHIVE_FIELDS:%" ]; then export NOS_ARCHIVE_FIELDS=%NOS_ARCHIVE_FIELDS:%; fi
+if [ -n "%NOS_COMBINE_OUTPUTS_SCRIPT:%" ]; then export NOS_COMBINE_OUTPUTS_SCRIPT=%NOS_COMBINE_OUTPUTS_SCRIPT:%; fi
+
+%include <nos_modules_%POST_MODSET%.h>
+%include <nos_paths.h>
+
+%include <nos_run_stage.h>
+
+%include <tail.h>
+%manual
+Task: jnos_post. Writes the station and field products of the cycle (JNOS_POST).
+Completes only if JNOS_POST exits 0 and prints "STAGE_SUMMARY stage=post ofs=<OFS> status=PASS".
+If it aborts: read the job output, fix the cause, requeue the task. Post can be rerun on its own.
+%end

@@ -1,0 +1,33 @@
+#PBS -N %JOBSTEM%_fc_%CYC%
+#PBS -j oe
+#PBS -S /bin/bash
+#PBS -q %QUEUE%
+#PBS -A %PROJ%-%PROJENVIR%
+#PBS -l select=%FORECAST_SELECT%
+#PBS -l place=%FORECAST_PLACE%
+#PBS -l walltime=%FORECAST_WALLTIME%
+#PBS -l debug=true
+
+export model=nos
+%include <head.h>
+%include <envir-p1.h>
+
+export cyc=%CYC%
+export NOS_STAGE=forecast
+%include <nos_env.h>
+if [ -n "%FORECAST_SEGMENT:%" ]; then export ADCIRC_SEGMENT="%FORECAST_SEGMENT:%"; fi
+if [ -n "%FORECAST_STREAM:%" ]; then export ADCIRC_STREAM="%FORECAST_STREAM:%"; fi
+
+%include <nos_modules_%RUN_MODSET%.h>
+%include <nos_paths.h>
+for _kv in %RUN_ENV:%; do export "${_kv}"; done
+if [ -n "%ALLOC_PPN:%" ]; then export ADCIRC_ALLOC_RANKS=$(( $(sort -u "${PBS_NODEFILE}" | wc -l) * %ALLOC_PPN:% )); fi
+
+%include <nos_run_stage.h>
+
+%include <tail.h>
+%manual
+Task: jnos_forecast. Runs the forecast from the nowcast restart (JNOS_FORECAST).
+Completes only if JNOS_FORECAST exits 0 and prints "STAGE_SUMMARY stage=forecast ofs=<OFS> status=PASS".
+If it aborts: read the job output, fix the cause, requeue the task. ECF_TRIES on the task sets the automatic retries.
+%end

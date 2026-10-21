@@ -1,0 +1,357 @@
+# nos_workflow.def - development ecFlow suite for nos-workflow on WCOSS2. See docs/ecflow_run_guide.md.
+#
+# One family per system. Each starts suspended, so nothing runs when the suite is loaded (the SECOFS cron is live):
+#   ecflow_client --resume=/nos_workflow/secofs_ufs
+# The daily repeat is the child family "day", because a defstatus is applied again every time its own node is requeued. MJ (10/20/26)
+#
+# Within a cycle: prep, nowcast, forecast, post. Prep of a cycle also waits for the nowcast of the previous cycle of the same day (the
+# restart is read in prep). The next day starts when every task of the day has completed. A prep starts once the UTC clock has passed
+# the cycle's start time of the PDY, so a day that finishes early does not pull the next cycle forward (a "today" time attribute would).
+# The first value of each repeat is the first PDY to run: set it before resuming. MJ (10/20/26)
+
+suite nos_workflow
+  # Edit these for your account before loading. MJ (10/20/26)
+  edit PACKAGEHOME '/lfs/h1/nos/estofs/noscrub/USER/packages/nos-workflow'
+  edit COMROOT     '/lfs/h1/nos/ptmp/${LOGNAME}/com'
+  edit DATAROOT    '/lfs/h1/nos/ptmp/${LOGNAME}/work/%OFS%'
+  edit DCOMROOT    '/lfs/h1/ops/prod/dcom'
+  edit ecflow_ver  '5.6.0'     # PLACEHOLDER: confirm with "module avail ecflow" on WCOSS2. MJ (10/20/26)
+  edit QUEUE       'dev'
+  edit PROJ        'ESTOFS'
+  edit PROJENVIR   'DEV'
+  edit ENVIR       'dev'
+
+  edit ECF_FILES       '%PACKAGEHOME%/ecf/scripts'
+  edit ECF_INCLUDE     '/lfs/h1/nos/estofs/noscrub/USER/packages/nos-workflow/ecf/include'   # ecFlow does not expand variables here: same path as PACKAGEHOME. MJ (10/20/26)
+  edit ECF_JOB_CMD     'qsub -o %ECF_JOBOUT% %ECF_JOB%'
+  edit ECF_KILL_CMD    'qdel %ECF_RID% > %ECF_JOB%.kill 2>&1'
+  edit ECF_STATUS_CMD  'qstat -f %ECF_RID% > %ECF_JOB%.stat 2>&1'
+
+  # Defaults of the UFS-Coastal systems; the families below override what differs. MJ (10/20/26)
+  edit ECF_TRIES   1
+  edit KEEPDATA    'YES'
+  edit OFS_YAML    '%OFS%'
+  edit ENVSET      'schism'
+  edit PREP_MODSET 'prep'
+  edit RUN_MODSET  'fv3'
+  edit POST_MODSET 'post'
+  edit PREP_ENV    'USE_PYTHON_PREP=YES FULL_PYTHON_PREP=YES'
+
+  # SECOFS-UFS, four cycles a day, at the times of the live crontab. MJ (10/20/26)
+  family secofs_ufs
+    defstatus suspended
+    edit OFS 'secofs_ufs'
+    edit JOBSTEM 'secofs_ufs'
+    edit PREP_SELECT '1:ncpus=8:mpiprocs=8'
+    edit PREP_PLACE 'vscatter'
+    edit PREP_WALLTIME '02:00:00'
+    edit NOWCAST_SELECT '25:ncpus=128:mpiprocs=120'
+    edit NOWCAST_PLACE 'vscatter:excl'
+    edit NOWCAST_WALLTIME '01:30:00'
+    edit FORECAST_SELECT '25:ncpus=128:mpiprocs=120'
+    edit FORECAST_PLACE 'vscatter:excl'
+    edit FORECAST_WALLTIME '05:30:00'
+    edit POST_SELECT '1:ncpus=8:mpiprocs=8'
+    edit POST_PLACE 'vscatter'
+    edit POST_WALLTIME '02:00:00'
+    family day
+      repeat date PDY 20261021 20991231
+      family 00
+        edit CYC '00'
+        task jnos_prep
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 0215))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 06
+        edit CYC '06'
+        task jnos_prep
+          trigger ../00/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 0815))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 12
+        edit CYC '12'
+        task jnos_prep
+          trigger ../06/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1415))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 18
+        edit CYC '18'
+        task jnos_prep
+          trigger ../12/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 2015))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+    endfamily
+  endfamily
+
+  # SECOFS-UFS with WW3, 12z daily after the GFS-Wave tarball (~16:30). UFS_EXEC_NAME picks the wave executable. MJ (10/20/26)
+  family secofs_ufs_ww3
+    defstatus suspended
+    edit OFS 'secofs_ufs_ww3'
+    edit JOBSTEM 'secofs_ufs_ww3'
+    edit PREP_ENV 'USE_PYTHON_PREP=YES FULL_PYTHON_PREP=YES COMINgfswave=${COMINgfs}'
+    edit RUN_ENV 'MPICH_OFI_STARTUP_CONNECT=1 MPICH_COLL_SYNC=MPI_Bcast MPICH_REDUCE_NO_SMP=1 FI_OFI_RXM_RX_SIZE=32768 FI_OFI_RXM_TX_SIZE=32768 UFS_EXEC_NAME=fv3_coastalSW.exe'
+    edit PREP_SELECT '1:ncpus=8:mpiprocs=8'
+    edit PREP_PLACE 'vscatter'
+    edit PREP_WALLTIME '02:00:00'
+    edit NOWCAST_SELECT '46:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit NOWCAST_PLACE 'vscatter:excl'
+    edit NOWCAST_WALLTIME '04:00:00'
+    edit FORECAST_SELECT '46:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit FORECAST_PLACE 'vscatter:excl'
+    edit FORECAST_WALLTIME '06:30:00'
+    edit POST_SELECT '1:ncpus=8:mpiprocs=8'
+    edit POST_PLACE 'vscatter'
+    edit POST_WALLTIME '02:00:00'
+    family day
+      repeat date PDY 20261021 20991231
+      family 12
+        edit CYC '12'
+        task jnos_prep
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1815))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+    endfamily
+  endfamily
+
+  # STOFS-3D-ATL coupled (DATM + SCHISM), 12z daily. The start time is a choice: GFS 12z and HRRR must be in. MJ (10/20/26)
+  family stofs_3d_atl_ufs
+    defstatus suspended
+    edit OFS 'stofs_3d_atl_ufs'
+    edit JOBSTEM 'stofs_3d_atl_ufs'
+    edit COLDSTART 'NO'
+    edit NOS_ARCHIVE_MANIFEST 'YES'
+    edit RUN_ENV 'MPICH_OFI_STARTUP_CONNECT=1 MPICH_COLL_SYNC=MPI_Bcast MPICH_REDUCE_NO_SMP=1'
+    edit PREP_SELECT '1:ncpus=8:mpiprocs=8'
+    edit PREP_PLACE 'vscatter'
+    edit PREP_WALLTIME '03:00:00'
+    edit NOWCAST_SELECT '42:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit NOWCAST_PLACE 'vscatter:excl'
+    edit NOWCAST_WALLTIME '01:30:00'
+    edit FORECAST_SELECT '42:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit FORECAST_PLACE 'vscatter:excl'
+    edit FORECAST_WALLTIME '05:30:00'
+    edit POST_SELECT '1:ncpus=8:mpiprocs=8'
+    edit POST_PLACE 'vscatter'
+    edit POST_WALLTIME '04:00:00'
+    family day
+      repeat date PDY 20261021 20991231
+      family 12
+        edit CYC '12'
+        task jnos_prep
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1815))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          edit ECF_TRIES 2
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+    endfamily
+  endfamily
+
+  # STOFS-3D-ATL standalone (pschism). OFS stays the coupled name (it sets the fix paths); only OFS_YAML and COMROOT differ, so
+  # the two variants never share a COMOUT. MJ (10/20/26)
+  family stofs_3d_atl_ufs_standalone
+    defstatus suspended
+    edit OFS 'stofs_3d_atl_ufs'
+    edit JOBSTEM 'stofs_3d_atl_ufs_sa'
+    edit OFS_YAML 'stofs_3d_atl_ufs_standalone'
+    edit COLDSTART 'NO'
+    edit NOS_ARCHIVE_MANIFEST 'YES'
+    edit COMROOT '/lfs/h1/nos/ptmp/${LOGNAME}/com_atl_sa'
+    edit RUN_MODSET 'pschism'
+    edit RUN_ENV 'MPICH_OFI_STARTUP_CONNECT=1 MPICH_COLL_SYNC=MPI_Bcast MPICH_REDUCE_NO_SMP=1'
+    edit STOFS_RUNVER '/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver'
+    edit PREP_SELECT '1:ncpus=8:mpiprocs=8'
+    edit PREP_PLACE 'vscatter'
+    edit PREP_WALLTIME '05:00:00'
+    edit NOWCAST_SELECT '41:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit NOWCAST_PLACE 'vscatter:excl'
+    edit NOWCAST_WALLTIME '05:00:00'
+    edit FORECAST_SELECT '41:ncpus=128:mpiprocs=120:ompthreads=1'
+    edit FORECAST_PLACE 'vscatter:excl'
+    edit FORECAST_WALLTIME '05:00:00'
+    edit POST_SELECT '1:ncpus=8:mpiprocs=8'
+    edit POST_PLACE 'vscatter'
+    edit POST_WALLTIME '02:00:00'
+    family day
+      repeat date PDY 20261021 20991231
+      family 12
+        edit CYC '12'
+        task jnos_prep
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1815))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+    endfamily
+  endfamily
+
+  # STOFS-2D-Global, four cycles a day, the four-job shape of launch_stofs_2d_glo.sh (post runs JNOS_POST with the post
+  # segments). A cold start is the segment lists and walltimes below: see the run guide. MJ (10/20/26)
+  family stofs_2d_glo
+    defstatus suspended
+    edit OFS 'stofs_2d_glo'
+    edit JOBSTEM 'stofs_2d_glo'
+    edit ENVSET 'adcirc'
+    edit PREP_MODSET 'adcirc'
+    edit RUN_MODSET 'adcirc'
+    edit POST_MODSET 'adcirc'
+    edit PREP_ENV ''
+    edit RUN_ENV 'MPICH_OFI_STARTUP_CONNECT=1 MPICH_COLL_SYNC=MPI_Bcast MPICH_REDUCE_NO_SMP=1'
+    edit KEEPDATA 'NO'
+    edit ADCIRC_MODE 'ops'
+    edit DCOMROOT ''
+    edit ALLOC_PPN '128'
+    edit STOFS_RUNVER '/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver'
+    edit PREP_SEGMENT 'ncst fcst'
+    edit NOWCAST_SEGMENT 'ncst'
+    edit NOWCAST_STREAM 'tide surf'
+    edit FORECAST_SEGMENT 'fcst'
+    edit FORECAST_STREAM 'tide surf'
+    edit POST_SEGMENT 'anomaly bias ncdiff grib2 ncrcat'
+    edit PREP_SELECT '1:ncpus=1:prepost=true:mem=400gb'
+    edit PREP_PLACE 'vscatter'
+    edit PREP_WALLTIME '0:50:00'
+    edit NOWCAST_SELECT '32:ncpus=128:mpiprocs=128:ompthreads=1'
+    edit NOWCAST_PLACE 'vscatter:excl'
+    edit NOWCAST_WALLTIME '0:50:00'
+    edit FORECAST_SELECT '32:ncpus=128:mpiprocs=128:ompthreads=1'
+    edit FORECAST_PLACE 'vscatter:excl'
+    edit FORECAST_WALLTIME '2:00:00'
+    edit POST_SELECT '8:ncpus=32:prepost=true:mem=800gb'
+    edit POST_PLACE 'vscatter:exclhost'
+    edit POST_WALLTIME '3:10:00'
+    family day
+      repeat date PDY 20261021 20991231
+      family 00
+        edit CYC '00'
+        task jnos_prep
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 0415))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 06
+        edit CYC '06'
+        task jnos_prep
+          trigger ../00/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1015))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 12
+        edit CYC '12'
+        task jnos_prep
+          trigger ../06/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1615))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+      family 18
+        edit CYC '18'
+        task jnos_prep
+          trigger ../12/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 2215))
+          label summary ''
+        task jnos_nowcast
+          trigger jnos_prep == complete
+          label summary ''
+        task jnos_forecast
+          trigger jnos_nowcast == complete
+          label summary ''
+        task jnos_post
+          trigger jnos_forecast == complete
+          label summary ''
+      endfamily
+    endfamily
+  endfamily
+endsuite
