@@ -18,10 +18,8 @@ export HOMEstofs=${HOMEnos}
 export PACKAGEROOT=/lfs/h1/nos/nosofs/packages
 . ${HOMEnos}/versions/run.ver
 export COLDSTART=NO
-# The ATL v3.1 inputs: NWM v3.0 (override with nwm_ver=... before sourcing). MJ (10/20/26)
-export nwm_ver=${NWM_VER:-v3.0}
 
-# Variant: the standalone variant is the base system plus its own yaml (RUN/FIX/COMOUT use the base name)
+# Variant: the standalone variant is the base system plus its own yaml (RUN/FIX/COMOUT use the base name) MJ (10/20/26)
 OFS_IN=${OFS:-stofs_3d_atl_ufs_standalone}
 case "${OFS_IN}" in
   *_standalone) export OFS=${OFS_IN%_standalone}; export OFS_CONFIG=${HOMEnos}/parm/systems/${OFS_IN}.yaml ;;
@@ -30,10 +28,12 @@ esac
 export NET=nos RUN=${OFS} PREFIXNOS=${OFS} model=nosofs envir=dev platform=ptmp framework=stofs_ufs
 export LOGNAME=${LOGNAME:-wcoss2}
 export USE_PYTHON_PREP=YES FULL_PYTHON_PREP=YES
+# Without it COMOUT lacks the St. Lawrence flux.th/TEM_1.th and the OBC-QC files while prep still logs PASS. MJ (10/20/26)
+export NOS_ARCHIVE_MANIFEST=${NOS_ARCHIVE_MANIFEST:-YES}
 export KEEPDATA=YES SENDCOM=NO SENDDBN=NO SENDSMS=NO SENDECF=NO
 
 # Inputs: mount the staged trees at /lfs/h1/ops/prod/com/{gfs,hrrr,nwm,rtofs} and /lfs/h1/ops/prod/dcom;
-# a <name>/<ver> subdirectory is used when present.
+# a <name>/<ver> subdirectory is used when present. MJ (10/20/26)
 _comin() { [ -d "$1/$2" ] && echo "$1/$2" || echo "$1"; }
 _P=/lfs/h1/ops/prod/com
 export COMINgfs=${COMINgfs:-$(_comin $_P/gfs ${gfs_ver})}
@@ -43,12 +43,16 @@ export COMINrtofs=${COMINrtofs:-$(_comin $_P/rtofs ${rtofs_ver})}
 export COMINrtofs_2d=${COMINrtofs_2d:-$COMINrtofs} COMINrtofs_3d=${COMINrtofs_3d:-$COMINrtofs}
 export DCOMROOT=${DCOMROOT:-/lfs/h1/ops/prod/dcom}
 
-# Outputs and work under the sandbox (COMOUT = $COMROOT/nos/${OFS}.${PDY}; seed the first cycle there).
-export COMROOT=${COMROOT:-$SANDBOX/com}
+# Outputs and work under the sandbox (COMOUT = $COMROOT/nos/${OFS}.${PDY}; seed the first cycle there). MJ (10/20/26)
+# One COMROOT per variant: both write nos/stofs_3d_atl_ufs.<PDY>. MJ (10/20/26)
+case "${OFS_IN}" in
+  *_standalone) export COMROOT=${COMROOT_SA:-$SANDBOX/com_atl_sa} ;;
+  *)            export COMROOT=${COMROOT_UFS:-$SANDBOX/com_atl_ufs} ;;
+esac
 export DATAROOT=${DATAROOT:-$SANDBOX/work/${OFS}}
 mkdir -p "$COMROOT/nos" "$DATAROOT"
 
-# Fix and executables: mount the fix tree over $HOMEnos/fix/${OFS}; tide_fac etc. are in $HOMEnos/exec.
+# Fix and executables: mount the fix tree over $HOMEnos/fix/${OFS}; tide_fac etc. are in $HOMEnos/exec. MJ (10/20/26)
 export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
 export FIXstofs3d=${FIXofs}
 export EXECnos=${HOMEnos}/exec EXECofs=${HOMEnos}/exec
@@ -61,4 +65,5 @@ export NDATE=$(command -v ndate || echo /opt/ncep/bin/ndate)
 export PATH=${HOMEnos}/exec:/opt/ncep/bin:/opt/wgrib2/bin:$PATH
 
 export job=${OFS}_prep_${cyc}_${envir}
-export jobid=${job}.$$
+# $$ is 1 in the container; a fixed id would make JNOS_PREP wipe the previous DATA. MJ (10/20/26)
+export jobid=${job}.$(date +%s)

@@ -467,6 +467,8 @@ COPY parm/        /opt/nosofs/parm/
 COPY versions/    /opt/nosofs/versions/
 COPY modulefiles/ /opt/nosofs/modulefiles/
 COPY fix/         /opt/nosofs/fix/
+# A missing nos-utils submodule would otherwise build and then die in exnos_prep.sh. MJ (10/20/26)
+RUN test -s /opt/nosofs/ush/python/nos-utils/nos_utils/nco_bridge.py
 COPY --from=builder /opt/stofs/exec/ /opt/nosofs/exec/
 RUN chmod -R a+rX /opt/nosofs && chmod -R a+x /opt/nosofs/jobs /opt/nosofs/scripts /opt/nosofs/exec && \
     mkdir -p /lfs/h1/nos/nosofs/packages && ln -sf /opt/nosofs /lfs/h1/nos/nosofs/packages/nos-workflow && \

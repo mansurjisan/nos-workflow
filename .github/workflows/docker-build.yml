@@ -7,6 +7,13 @@ on:
     paths:
       - 'containers/**'
       - 'sorc/**'
+      - 'jobs/**'
+      - 'scripts/**'
+      - 'ush/**'
+      - 'parm/**'
+      - 'versions/**'
+      - 'fix/**'
+      - 'modulefiles/**'
       - '.github/workflows/docker-build.yml'
 
 jobs:
@@ -33,12 +40,26 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      - name: Build (push only from develop)
+      - name: Build and load
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./containers/Dockerfile
-          push: ${{ github.ref == 'refs/heads/develop' }}
-          tags: ${{ secrets.DOCKER_USERNAME }}/stofsworkflow:develop
+          load: true
+          push: false
+          tags: stofsworkflow:ci
           platforms: linux/amd64
           provenance: false
+
+      - name: Smoke test
+        run: |
+          docker run --rm --entrypoint bash stofsworkflow:ci -c '
+            export PYTHONPATH=/opt/nosofs/ush/python:/opt/nosofs/ush/python/nos-utils
+            python3 -c "import nos_workflow, nos_utils, scipy; from nos_utils.nco_bridge import run_prep" &&
+            test -x /opt/nosofs/exec/stofs_3d_atl_tide_fac && wgrib2 -version | head -1 && ncks --version 2>&1 | head -1'
+
+      - name: Push (develop only)
+        if: github.ref == 'refs/heads/develop'
+        run: |
+          docker tag stofsworkflow:ci ${{ secrets.DOCKER_USERNAME }}/stofsworkflow:develop
+          docker push ${{ secrets.DOCKER_USERNAME }}/stofsworkflow:develop
