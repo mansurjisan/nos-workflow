@@ -1,7 +1,8 @@
 # nos_paths.h - after the module block, which purged ecflow and let prod_envir reset the roots. MJ (10/20/26)
+export envir=%ENVIR%
 if [ -d /apps/ops/prod ]; then
   set +x
-  module load ecflow/$ecflow_ver
+  module load ecflow/$ecflow_ver || module load ecflow
   set -x
 fi
 

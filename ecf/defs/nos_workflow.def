@@ -28,6 +28,7 @@ suite nos_workflow
   edit ECF_STATUS_CMD  'qstat -f %ECF_RID% > %ECF_JOB%.stat 2>&1'
 
   # Defaults of the UFS-Coastal systems; the families below override what differs. MJ (10/20/26)
+  # Post gets 2 tries: it uses one node and can be rerun, and a failed task holds the system's next day (see the run guide). MJ (10/21/26)
   edit ECF_TRIES   1
   edit KEEPDATA    'YES'
   edit OFS_YAML    '%OFS%'
@@ -71,6 +72,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 06
@@ -88,6 +90,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 12
@@ -105,6 +108,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 18
@@ -122,6 +126,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily
@@ -163,6 +168,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily
@@ -205,13 +211,15 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily
   endfamily
 
   # STOFS-3D-ATL standalone (pschism). OFS stays the coupled name (it sets the fix paths); only OFS_YAML and COMROOT differ, so
-  # the two variants never share a COMOUT. MJ (10/20/26)
+  # the two variants never share a COMOUT. The module versions come from the card's run.ver (IT-stofs, else ops); set STOFS_RUNVER
+  # here to name another. MJ (10/21/26)
   family stofs_3d_atl_ufs_standalone
     defstatus suspended
     edit OFS 'stofs_3d_atl_ufs'
@@ -222,7 +230,6 @@ suite nos_workflow
     edit COMROOT '/lfs/h1/nos/ptmp/${LOGNAME}/com_atl_sa'
     edit RUN_MODSET 'pschism'
     edit RUN_ENV 'MPICH_OFI_STARTUP_CONNECT=1 MPICH_COLL_SYNC=MPI_Bcast MPICH_REDUCE_NO_SMP=1'
-    edit STOFS_RUNVER '/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver'
     edit PREP_SELECT '1:ncpus=8:mpiprocs=8'
     edit PREP_PLACE 'vscatter'
     edit PREP_WALLTIME '05:00:00'
@@ -250,6 +257,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily
@@ -257,6 +265,7 @@ suite nos_workflow
 
   # STOFS-2D-Global, four cycles a day, the four-job shape of launch_stofs_2d_glo.sh (post runs JNOS_POST with the post
   # segments). A cold start is the segment lists and walltimes below: see the run guide. MJ (10/20/26)
+  # Prep starts at cycle + 5 h: GFS f180 is not verified complete at +4:15. MJ (10/21/26)
   family stofs_2d_glo
     defstatus suspended
     edit OFS 'stofs_2d_glo'
@@ -295,7 +304,7 @@ suite nos_workflow
       family 00
         edit CYC '00'
         task jnos_prep
-          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 0415))
+          trigger (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 0500))
           label summary ''
         task jnos_nowcast
           trigger jnos_prep == complete
@@ -305,12 +314,13 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 06
         edit CYC '06'
         task jnos_prep
-          trigger ../00/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1015))
+          trigger ../00/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1100))
           label summary ''
         task jnos_nowcast
           trigger jnos_prep == complete
@@ -320,12 +330,13 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 12
         edit CYC '12'
         task jnos_prep
-          trigger ../06/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1615))
+          trigger ../06/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 1700))
           label summary ''
         task jnos_nowcast
           trigger jnos_prep == complete
@@ -335,12 +346,13 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
       family 18
         edit CYC '18'
         task jnos_prep
-          trigger ../12/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 2215))
+          trigger ../12/jnos_nowcast == complete and (/nos_workflow:ECF_DATE > :PDY or (/nos_workflow:ECF_DATE == :PDY and /nos_workflow:TIME >= 2300))
           label summary ''
         task jnos_nowcast
           trigger jnos_prep == complete
@@ -350,6 +362,7 @@ suite nos_workflow
           label summary ''
         task jnos_post
           trigger jnos_forecast == complete
+          edit ECF_TRIES 2
           label summary ''
       endfamily
     endfamily

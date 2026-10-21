@@ -10,5 +10,6 @@ module load modules.fv3
 module load cray-pals
 module load python/${python_ver:-3.8.6}
 module load prod_envir/${prod_envir_ver:-2.0.6}
-module load prod_util/${prod_util_ver:-2.0.17}
+# prod_util/2.0.17 from run.ver is unknown on WCOSS2 and the cards run without it; a failed load must not end the task. MJ (10/21/26)
+module load prod_util/${prod_util_ver:-2.0.17} || echo "WARNING: prod_util not loaded"
 module list

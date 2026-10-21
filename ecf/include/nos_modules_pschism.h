@@ -1,8 +1,14 @@
-# nos_modules_pschism.h - STOFS-3D-ATL standalone nowcast and forecast: the ops stofs module versions, as
-# pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs (STOFS_RUNVER is a suite variable here). MJ (10/20/26)
-if [ ! -r "%STOFS_RUNVER%" ]; then echo "ERROR: no readable STOFS run.ver (STOFS_RUNVER=%STOFS_RUNVER%)" >&2; exit 1; fi
+# nos_modules_pschism.h - STOFS-3D-ATL standalone nowcast and forecast: the stofs module versions, as
+# pbs/stofs_3d_atl_ufs_standalone/jnos_nowcast_00.pbs. MJ (10/21/26)
+# The card's version file: the IT-stofs one pschism was built against, else the ops one; a STOFS_RUNVER in the def wins. MJ (10/21/26)
+STOFS_RUNVER=%STOFS_RUNVER:%
+STOFS_RUNVER=${STOFS_RUNVER:-$(dirname "${HOMEnos}")/IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver}
+[ -r "${STOFS_RUNVER}" ] || STOFS_RUNVER=/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver
+[ -r "${STOFS_RUNVER}" ] || { echo "ERROR: no readable STOFS run.ver (set STOFS_RUNVER)" >&2; exit 1; }
+export STOFS_RUNVER
+echo "STOFS_RUNVER=${STOFS_RUNVER}"
 _py_ver=${python_ver:-}
-. "%STOFS_RUNVER%"
+. "${STOFS_RUNVER}"
 python_ver=${_py_ver}
 
 module purge
@@ -28,5 +34,6 @@ module load wgrib2/${wgrib2_ver}
 module load nco/${nco_ver}
 module load python/${python_ver:-3.8.6}
 module load prod_envir/${prod_envir_ver:-2.0.6}
-module load prod_util/${prod_util_ver:-2.0.17}
+# prod_util/2.0.17 from run.ver is unknown on WCOSS2 and the cards run without it; a failed load must not end the task. MJ (10/21/26)
+module load prod_util/${prod_util_ver:-2.0.17} || echo "WARNING: prod_util not loaded"
 module list

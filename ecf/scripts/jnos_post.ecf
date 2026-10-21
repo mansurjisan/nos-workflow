@@ -26,6 +26,7 @@ if [ -n "%NOS_COMBINE_OUTPUTS_SCRIPT:%" ]; then export NOS_COMBINE_OUTPUTS_SCRIP
 
 %include <nos_modules_%POST_MODSET%.h>
 %include <nos_paths.h>
+echo "post: python3 -> $(command -v python3 || echo NOT FOUND)"
 
 %include <nos_run_stage.h>
 

@@ -23,7 +23,7 @@ CYCLES = {
     "stofs_3d_atl_ufs_standalone": ["12"],
     "stofs_2d_glo": ["00", "06", "12", "18"],
 }
-TRIES2 = {"secofs_ufs", "secofs_ufs_ww3", "stofs_3d_atl_ufs"}   # replaces the cards' ParMETIS retry; the others have none
+TRIES2 = {"secofs_ufs", "secofs_ufs_ww3", "stofs_3d_atl_ufs"}   # replaces the cards' ParMETIS retry; the others have none. MJ (10/21/26)
 GENERATED = {"ECF_NAME": "/nos_workflow/x", "ECF_HOST": "h", "ECF_PORT": "1", "ECF_PASS": "p", "ECF_TRYNO": "1",
              "ECF_JOB": "j", "ECF_JOBOUT": "o", "TASK": "t", "FAMILY": "f", "SUITE": "nos_workflow"}
 
@@ -129,7 +129,7 @@ def preprocess(path, node, unresolved, problems):
             out += preprocess(inc, node, unresolved, problems)
             continue
         if not s.startswith("#") and line.count("%") % 2:
-            problems.append("odd number of %% in: %s" % s)       # ecFlow: "Mismatched ecfmicro(%) count"
+            problems.append("odd number of %% in: %s" % s)       # ecFlow: "Mismatched ecfmicro(%) count". MJ (10/21/26)
         out.append(subst(line, node, unresolved))
     return out
 
@@ -180,7 +180,7 @@ def test_suite_layout():
             continue
         assert ("defstatus", "suspended") in fam.attrs, "%s must start suspended: SECOFS cron is live" % fam.name
         day = fam.kids[0]
-        assert day.name == "day" and [a[:2] for a in day.attrs] == [("repeat", "PDY")]   # a defstatus is re-applied on requeue, so not on this node
+        assert day.name == "day" and [a[:2] for a in day.attrs] == [("repeat", "PDY")]   # a defstatus is re-applied on requeue, so not on this node. MJ (10/21/26)
         assert [c.name for c in day.kids] == CYCLES[fam.name]
         for c in day.kids:
             assert [t.name for t in c.kids] == ["jnos_" + s for s in STAGES]
@@ -188,7 +188,7 @@ def test_suite_layout():
 
 
 def test_include_path_matches_package_home():
-    # ecFlow does not expand variables in ECF_INCLUDE, so the def carries the path twice.
+    # ecFlow does not expand variables in ECF_INCLUDE, so the def carries the path twice. MJ (10/21/26)
     assert SUITE.vars["ECF_INCLUDE"] == SUITE.vars["PACKAGEHOME"] + "/ecf/include"
     assert SUITE.vars["ECF_FILES"] == "%PACKAGEHOME%/ecf/scripts"
 
@@ -204,7 +204,7 @@ def test_task_script_preprocesses(key):
 @pytest.mark.parametrize("stage", STAGES)
 def test_pbs_resources_match_cards(system, stage):
     got = pbs_l(JOBS[(system, CYCLES[system][0], stage)][1])
-    if system == "stofs_2d_glo":   # the launcher overrides the card per job; post runs on the prep card
+    if system == "stofs_2d_glo":   # the launcher overrides the card per job; post runs on the prep card. MJ (10/21/26)
         ln = launcher_2d()
         want = {k: v for k, v in pbs_l((REPO / "pbs" / "stofs_2d_glo" / ("jnos_%s_00.pbs" % ("prep" if stage == "post" else stage))).read_text().splitlines()).items()
                 if k in ("select", "place")}
@@ -237,12 +237,12 @@ def test_pbs_header_form():
 def test_atl_variants_never_share_a_comout():
     cpl, sa = SUITE.kids[2], SUITE.kids[3]
     assert (cpl.name, sa.name) == ("stofs_3d_atl_ufs", "stofs_3d_atl_ufs_standalone")
-    assert cpl.lookup("OFS") == sa.lookup("OFS") == "stofs_3d_atl_ufs"          # the OFS sets the fix paths
+    assert cpl.lookup("OFS") == sa.lookup("OFS") == "stofs_3d_atl_ufs"
     assert cpl.lookup("COMROOT") != sa.lookup("COMROOT") and sa.lookup("COMROOT").endswith("/com_atl_sa")
     assert subst(sa.lookup("OFS_YAML"), sa, set()) == "stofs_3d_atl_ufs_standalone"
     assert subst(cpl.lookup("OFS_YAML"), cpl, set()) == "stofs_3d_atl_ufs"
     sec = SUITE.kids[0]
-    assert sec.lookup("COMROOT") == cpl.lookup("COMROOT")                         # shared com, RUN-prefixed directories
+    assert sec.lookup("COMROOT") == cpl.lookup("COMROOT")   # shared com, RUN-prefixed directories. MJ (10/21/26)
 
 
 def test_every_module_and_env_set_exists():
@@ -254,7 +254,7 @@ def test_every_module_and_env_set_exists():
 
 def test_ecf_tries_policy():
     for system, cyc, t in tasks(SUITE):
-        want = 2 if system in TRIES2 and t.name in ("jnos_nowcast", "jnos_forecast") else 1
+        want = 2 if t.name == "jnos_post" or (system in TRIES2 and t.name in ("jnos_nowcast", "jnos_forecast")) else 1
         assert int(t.lookup("ECF_TRIES")) == want, (system, cyc, t.name)
 
 
@@ -266,7 +266,7 @@ def test_prep_start_times_follow_the_live_cron():
     assert len(cron) == 5
     want = dict(cron)
     want.update({("stofs_3d_atl_ufs", "12"): "1815", ("stofs_3d_atl_ufs_standalone", "12"): "1815"})
-    want.update({("stofs_2d_glo", c): h for c, h in zip(CYCLES["stofs_2d_glo"], ("0415", "1015", "1615", "2215"))})
+    want.update({("stofs_2d_glo", c): h for c, h in zip(CYCLES["stofs_2d_glo"], ("0500", "1100", "1700", "2300"))})
     for system, cyc, t in tasks(SUITE):
         if t.name != "jnos_prep":
             continue
@@ -289,3 +289,34 @@ def test_2d_cold_start_and_post_variables():
     assert d.lookup("PREP_SEGMENT") == "ncst fcst" and d.lookup("POST_SEGMENT") == "anomaly bias ncdiff grib2 ncrcat"
     assert d.lookup("DCOMROOT") == "" and d.lookup("KEEPDATA") == "NO" and d.lookup("ADCIRC_MODE") == "ops"
     assert d.lookup("PREP_ENV") == "" and ln["post_wall"] == d.lookup("POST_WALLTIME")
+
+
+def test_pschism_run_ver_follows_the_standalone_card():
+    inc = (ECF / "include" / "nos_modules_pschism.h").read_text()
+    card = (REPO / CARD_DIRS["stofs_3d_atl_ufs_standalone"] / "jnos_nowcast_00.pbs").read_text()
+    for path in ("IT-stofs.v2.1.0/versions/stofs_3d_atl/run.ver", "/lfs/h1/ops/prod/packages/stofs.v3.1.5/versions/run.ver"):
+        assert path in card and path in inc, path
+    assert SUITE.kids[3].vars.get("STOFS_RUNVER", "") == ""   # the card's default stands unless the def names a file. MJ (10/21/26)
+
+
+def test_module_loads_that_can_fail_do_not_end_the_job():
+    # prod_util/2.0.17 (run.ver) and a placeholder ecflow version are unknown on WCOSS2; the jobs run under set -e. MJ (10/21/26)
+    for f in (ECF / "include").glob("*.h"):
+        for l in f.read_text().splitlines():
+            if re.search(r"\bmodule load (prod_util|ecflow)", l) and not l.lstrip().startswith("#"):
+                assert "||" in l, (f.name, l)
+    assert not re.search(r"module load prod_", (ECF / "include" / "head.h").read_text())
+
+
+def test_prod_envir_loads_with_envir_unset_like_the_cards():
+    for key, (t, lines, _) in JOBS.items():
+        s = [l.strip() for l in lines]
+        load = next(i for i, l in enumerate(s) if l.startswith("module load prod_envir"))
+        back = max(i for i, l in enumerate(s) if l == "export envir=dev")   # head.h exports it too, at the top. MJ (10/21/26)
+        assert s.index("unset envir") < load < back, key
+
+
+def test_post_prints_python_after_the_ecflow_reload():
+    s = [l.strip() for l in JOBS[("secofs_ufs", "12", "post")][1]]
+    echo = next(i for i, l in enumerate(s) if l.startswith('echo "post: python3'))
+    assert echo > max(i for i, l in enumerate(s) if l.startswith("module load ecflow"))

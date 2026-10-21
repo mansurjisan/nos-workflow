@@ -1,8 +1,10 @@
 # nos_modules_adcirc.h - STOFS-2D-Global modules for all four jobs, as pbs/stofs_2d_glo/jnos_{prep,nowcast}_00.pbs.
 # The ops run.ver also sets python_ver=3.12.0, which has no yaml/netCDF4; keep this package's python. MJ (10/20/26)
-if [ -r "%STOFS_RUNVER%" ]; then
+# adcirc/post.py reads STOFS_RUNVER to find the ops ex-scripts. MJ (10/21/26)
+export STOFS_RUNVER=%STOFS_RUNVER%
+if [ -r "${STOFS_RUNVER}" ]; then
   _py_ver=${python_ver:-}
-  . "%STOFS_RUNVER%"
+  . "${STOFS_RUNVER}"
   python_ver=${_py_ver}
 fi
 
@@ -22,7 +24,8 @@ if [ -n "%ADCIRC_MODULE_PATH:%" ]; then module use %ADCIRC_MODULE_PATH:%; fi
 module load adcirc/${adcirc_ver}
 module load python/${python_ver:-3.8.6}
 module load prod_envir/${prod_envir_ver:-2.0.6}
-module load prod_util/${prod_util_ver:-2.0.17}
+# prod_util/2.0.17 from run.ver is unknown on WCOSS2 and the cards run without it; a failed load must not end the task. MJ (10/21/26)
+module load prod_util/${prod_util_ver:-2.0.17} || echo "WARNING: prod_util not loaded"
 case "${NOS_STAGE}" in
   prep|post)
     module load wgrib2/${wgrib2_ver:-2.0.8}
