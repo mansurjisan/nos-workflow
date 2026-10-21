@@ -4,4 +4,3 @@
 **/*.pyc
 *.log
 docker/spack_libs.env
-fix/
