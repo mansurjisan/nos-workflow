@@ -1,5 +1,6 @@
 """ecFlow suite, offline: the def parses, every task script preprocesses without unresolved variables, and the PBS
-resources equal the cards (STOFS-2D-Global: the launcher's qsub overrides). Pure python, no ecflow module. MJ (10/20/26)"""
+resources and the silent-failure exports equal the cards (STOFS-2D-Global: the launcher's qsub overrides). The module
+sequences and the other variables are not compared; the container run covers them. Pure python, no ecflow module. MJ (10/21/26)"""
 from __future__ import annotations
 
 import re
@@ -24,6 +25,12 @@ CYCLES = {
     "stofs_2d_glo": ["00", "06", "12", "18"],
 }
 TRIES2 = {"secofs_ufs", "secofs_ufs_ww3", "stofs_3d_atl_ufs"}   # replaces the cards' ParMETIS retry; the others have none. MJ (10/21/26)
+LAUNCHERS = {"secofs_ufs": "pbs/launch_secofs_ufs.sh", "secofs_ufs_ww3": "pbs/secofs_ufs_ww3/launch_secofs_ufs_ww3.sh",
+             "stofs_3d_atl_ufs": "pbs/stofs_3d_atl_ufs/launch_stofs_3d_atl_ufs.sh",
+             "stofs_3d_atl_ufs_standalone": "pbs/stofs_3d_atl_ufs_standalone/launch_stofs_standalone.sh",
+             "stofs_2d_glo": "pbs/stofs_2d_glo/launch_stofs_2d_glo.sh"}
+SILENT = ("UFS_EXEC_NAME", "MPICH_OFI_STARTUP_CONNECT", "MPICH_COLL_SYNC", "MPICH_REDUCE_NO_SMP", "FI_OFI_RXM_RX_SIZE",
+          "FI_OFI_RXM_TX_SIZE", "COLDSTART", "NOS_ARCHIVE_MANIFEST")   # a job without one of these runs and gives wrong results. MJ (10/21/26)
 GENERATED = {"ECF_NAME": "/nos_workflow/x", "ECF_HOST": "h", "ECF_PORT": "1", "ECF_PASS": "p", "ECF_TRYNO": "1",
              "ECF_JOB": "j", "ECF_JOBOUT": "o", "TASK": "t", "FAMILY": "f", "SUITE": "nos_workflow"}
 
@@ -289,6 +296,31 @@ def test_2d_cold_start_and_post_variables():
     assert d.lookup("PREP_SEGMENT") == "ncst fcst" and d.lookup("POST_SEGMENT") == "anomaly bias ncdiff grib2 ncrcat"
     assert d.lookup("DCOMROOT") == "" and d.lookup("KEEPDATA") == "NO" and d.lookup("ADCIRC_MODE") == "ops"
     assert d.lookup("PREP_ENV") == "" and ln["post_wall"] == d.lookup("POST_WALLTIME")
+
+
+def job_exports(lines):
+    out = {}
+    for l in (x.strip() for x in lines):
+        m = re.match(r"for _kv in (.*?); do export", l)
+        pairs = [kv.partition("=")[::2] for kv in m.group(1).split()] if m else []
+        pairs += re.findall(r"\bexport (%s)=([^\s;\"']+)" % "|".join(SILENT), l) if not l.startswith("#") else []
+        out.update({k: v for k, v in pairs if k in SILENT})
+    return out
+
+
+def card_exports(system, stage):
+    card = "prep" if system == "stofs_2d_glo" and stage == "post" else stage
+    text = (REPO / ("pbs/stofs_2d_glo" if system == "stofs_2d_glo" else CARD_DIRS[system]) / ("jnos_%s_00.pbs" % card)).read_text()
+    names = "|".join(SILENT)
+    got = dict(re.findall(r"^\s*export (%s)=(?:\$\{\1:-)?([^}\s\"']+)" % names, text, re.M))
+    got.update(re.findall(r"\b(%s)=\$\{\1:-([^}]+)\}" % names, (REPO / LAUNCHERS[system]).read_text()))   # the launcher's qsub -v defaults. MJ (10/21/26)
+    return got
+
+
+@pytest.mark.parametrize("system", list(CYCLES))
+@pytest.mark.parametrize("stage", STAGES)
+def test_silent_failure_exports_match_cards(system, stage):
+    assert job_exports(JOBS[(system, CYCLES[system][0], stage)][1]) == card_exports(system, stage)
 
 
 def test_pschism_run_ver_follows_the_standalone_card():
