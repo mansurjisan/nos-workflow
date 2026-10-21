@@ -234,6 +234,7 @@ case "${OFS_FRAMEWORK}" in
         else
             $SCRIstofs3d/exnos_ofs_prep.sh
         fi
+        export err=$?
         ;;
     adcirc)
         # ADCIRC-specific paths (alias stofs3d paths for 2D variable names)
