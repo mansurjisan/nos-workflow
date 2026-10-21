@@ -6,7 +6,6 @@ on:
     branches: [develop, "feat/container-*"]
     paths:
       - 'containers/**'
-      - 'sorc/**'
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'

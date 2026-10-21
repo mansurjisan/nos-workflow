@@ -1,6 +1,6 @@
 # Running STOFS-3D-ATL prep in the WCOSS2-like container
 
-The image (`containers/Dockerfile`) is Rocky 9 with SLURM, ecFlow, NCEP libs, wgrib2, ADCIRC, SCHISM and the STOFS-3D-ATL utilities (`stofs_3d_atl_tide_fac`, `netcdf2shef`, `gen_3Dth_from_hycom`, `gen_nudge_from_hycom`) built from `sorc/`. The current nos-workflow tree is at `/opt/nosofs` (also `/lfs/h1/nos/nosofs/packages/nos-workflow`), executables in `/opt/nosofs/exec`. Only prep is run in it.
+The image (`containers/Dockerfile`) is Rocky 9 with SLURM, ecFlow, NCEP libs, wgrib2, ADCIRC, SCHISM and `stofs_3d_atl_tide_fac`, built from the public ops v3.1.5 source at image build time (prep's OBC and nudging use the Python ops ports). The current nos-workflow tree is at `/opt/nosofs` (also `/lfs/h1/nos/nosofs/packages/nos-workflow`), executables in `/opt/nosofs/exec`. Only prep is run in it.
 
 ## Build or pull
 ```bash

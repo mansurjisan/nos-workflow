@@ -258,40 +258,13 @@ RUN cd / && \
 
 RUN mkdir -p /opt/stofs/exec
 
-# Build STOFS 3D Atlantic utilities
-COPY sorc /tmp/stofs_sorc
-
-# Build stofs_3d_atl_tide_fac
-RUN cd /tmp/stofs_sorc/stofs_3d_atl_tide_fac.fd && \
-    make clean && \
-    make && \
-    cp -p stofs_3d_atl_tide_fac /opt/stofs/exec/ && \
-    make clean
-
-# Build stofs_3d_atl_netcdf2shef
-RUN cd /tmp/stofs_sorc/stofs_3d_atl_netcdf2shef.fd && \
-    make clean && \
-    make && \
-    cp -p stofs_3d_atl_netcdf2shef /opt/stofs/exec/ && \
-    make clean
-
-# Build stofs_3d_atl_gen_3Dth_from_hycom
-RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_3Dth_from_hycom.fd && \
-    export PATH=$PATH:/usr/lib64/openmpi/bin && \
-    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
-    make clean && \
-    make && \
-    cp -p stofs_3d_atl_gen_3Dth_from_hycom /opt/stofs/exec/ && \
-    make clean
-
-# Build stofs_3d_atl_gen_nudge_from_hycom
-RUN cd /tmp/stofs_sorc/stofs_3d_atl_gen_nudge_from_hycom.fd && \
-    export PATH=$PATH:/usr/lib64/openmpi/bin && \
-    export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/lib64 && \
-    make clean && \
-    make && \
-    cp -p stofs_3d_atl_gen_nudge_from_hycom /opt/stofs/exec/ && \
-    make clean
+# STOFS-3D-ATL prep calls only tide_fac (OBC and nudging use the Python ops ports), built from the
+# public ops v3.1.5 source at build time so no Fortran source is kept in the repo. MJ (10/21/26)
+ARG TIDE_FAC_SRC=https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_3d_atl/stofs_3d_atl_tide_fac.fd
+RUN mkdir -p /tmp/tide_fac && cd /tmp/tide_fac && \
+    wget -q ${TIDE_FAC_SRC}/stofs_3d_atl_tide_fac.f90 ${TIDE_FAC_SRC}/tf_selfe.f90 && \
+    gfortran -o /opt/stofs/exec/stofs_3d_atl_tide_fac stofs_3d_atl_tide_fac.f90 tf_selfe.f90 && \
+    cd / && rm -rf /tmp/tide_fac
 
 # --------------------------
 FROM rockylinux/rockylinux:9 AS wcoss2
