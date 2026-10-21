@@ -372,7 +372,6 @@ The difference from operational does not grow materially on the chained day: the
 - The annual temperature/salinity restart reset (operational does it on 5 April) is not implemented. It is required before 2027-04-05.
 - The coupled variant shows a slow temperature/salinity drift relative to operational.
 - Coupled (OLDIO) runs leave an empty trailing field stack at the end of each run (e.g. `out2d_3` in the nowcast). Post skips it, so it is never published.
-- Coupled runs do not write `verticalVelocity` and `diffusivity`, so the coupled variant publishes no `fields.verticalVelocity.*` or `fields.diffusivity.*` products. Standalone and operational do.
 - Bad-day handling follows operational for ATL: prep checks restart age and size and fails on missing HOTSTART, OBC_QC, NUDGING or OPS_OBC_INPUTS; the previous-cycle fallback reads `$COMOUT_PREV/rerun`. Cases operational handles differently may remain.
 - The launcher does not wait for the previous day; submit the next day only after the forecast has passed.
 
