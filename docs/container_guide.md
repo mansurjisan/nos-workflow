@@ -13,8 +13,8 @@ docker pull <dockerhub-user>/stofsworkflow:develop         # or pull the CI imag
 ## Inputs on the host
 ```bash
 export PDY=20261001 CLONE=$PWD
-export B=/mnt/e/STOFS_3D_ATL_FILES/extracted/case_bundle_20261001   # bundle root (host paths to be confirmed after extraction)
-export COMIN=$B/comin           # holds gfs/ hrrr/ nwm/ rtofs/
+export B=<bundle root>          # the extracted case bundle, top folder stofs_3d_atl_20261001/
+export COMIN=<comin dir>        # stage_comin.py writes gfs/ hrrr/ nwm/ rtofs/ here
 export SANDBOX=$HOME/atl_sandbox
 mkdir -p $SANDBOX
 # fix: fetch into the clone (keeps the two tracked param.nml templates), or merge the E: tarball into it
@@ -22,10 +22,10 @@ mkdir -p $SANDBOX
 # tar -xzf /mnt/e/STOFS_3D_ATL_FILES/atl_fix_stofs_3d_atl_ufs.tgz -C $CLONE   # alternative
 export FIX=$CLONE/fix/stofs_3d_atl_ufs
 # GFS, HRRR, NWM are not in the bundle (RTOFS is): download from AWS
-python3 ush/stage_comin.py --pdy $PDY --cyc 12 --comroot $COMIN --profile stofs_3d_atl --sources gfs,hrrr,nwm --jobs 8
+python3 ush/stage_comin.py --pdy $PDY --cyc 12 --comroot $COMIN --profile stofs_3d_atl --sources gfs,hrrr,nwm,rtofs --jobs 8
 # first-cycle seeds (run on the host; need nccopy or ncks; tools/ is not in the image)
-tools/hercules_atl_seed_init.sh $PDY $SANDBOX/com_atl_sa/nos/stofs_3d_atl_ufs.$PDY
-tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $SANDBOX/com_atl_sa $PDY
+tools/hercules_atl_seed_init.sh $PDY $SANDBOX/com_atl_sa/nos/stofs_3d_atl_ufs.$PDY $SANDBOX/com_atl_ufs/nos/stofs_3d_atl_ufs.$PDY
+tools/hercules_atl_seed_prev.sh $B/seeds/dyn_seed_<PDY-1> $SANDBOX/com_atl_sa $PDY $SANDBOX/com_atl_ufs
 chmod -R a+rwX $SANDBOX         # the container user (wcoss2, uid 1000) must be able to write
 ```
 
