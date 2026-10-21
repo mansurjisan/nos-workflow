@@ -270,6 +270,7 @@ case "${OFS_FRAMEWORK}" in
 
         # Execute unified prep script (ADCIRC path)
         $SCRIPTSnos/exnos_adcirc.sh prep
+        export err=$?
         ;;
     comf|*)
         # Python-based prep (nos-utils) — the only supported path on this branch
@@ -281,8 +282,17 @@ case "${OFS_FRAMEWORK}" in
         export COMINwl=${COMINwl:-${DCOMROOT:-}}
         export COMINlaw=${COMINlaw:-${DCOMROOT:-}}
         $SCRIPTSnos/exnos_prep.sh
+        export err=$?
         ;;
 esac
+
+if [ "${err:-0}" -ne 0 ]; then
+    if type err_chk >/dev/null 2>&1; then
+        err_chk
+    fi
+    echo "FATAL: exnos_prep.sh failed with status $err; DATA kept at $DATA"  # MJ (10/21/26)
+    exit $err
+fi
 
 ########################################################
 # Post-processing
