@@ -36,7 +36,7 @@ sudo docker run --rm -v $S:$S -v $PWD/tools:/tools:ro stofsworkflow:latest \
   bash -c "bash /tools/hercules_atl_seed_init.sh 20261001 $S/com_atl_sa/nos/stofs_3d_atl_ufs.20261001"
 sudo chmod -R a+rwX $S
 ```
-- The case tarball holds the WCOSS2 dcom snapshot (CO-OPS water levels, St. Lawrence, CMEMS ADT) and the previous-cycle seed for 20261001. These are not public in this form. On ParallelWorks it is `/lustre/mjisan/pw_upload_20261001.tgz`.
+- The case tarball holds the WCOSS2 dcom snapshot (CO-OPS water levels, St. Lawrence, CMEMS ADT) and the previous-cycle seed for 20261001. These are not public in this form. Copy it to your own area first: on Hercules it is `/work2/noaa/nos-surge/mjisan/Docker_data/pw_upload_20261001.tgz`, readable by other users.
 - `hercules_atl_seed_init.sh` downloads the 26 GB ops restart from S3 and converts it to netCDF-4 classic with `nccopy`. It runs in the container because the host may not have `nccopy`. It ends with `init seed ready: ...init.nowcast.nc`.
 - Coupled variant: also pass `$S/com_atl_ufs` as a fourth argument to `hercules_atl_seed_prev.sh`, and link the start state with a relative link, because seed_init's own link argument writes a host path that breaks in the container:
   `mkdir -p $S/com_atl_ufs/nos/stofs_3d_atl_ufs.20261001 && ln -sf ../../../com_atl_sa/nos/stofs_3d_atl_ufs.20261001/stofs_3d_atl_ufs.t12z.20261001.init.nowcast.nc $S/com_atl_ufs/nos/stofs_3d_atl_ufs.20261001/`, then `sudo chmod -R a+rwX $S` again.
