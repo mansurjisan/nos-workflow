@@ -1,0 +1,42 @@
+name: Sync main (NCO layout)
+
+# main is generated: develop's tree without the development-only paths, so main follows the NCO
+# Implementation Standards package layout. Develop stays the primary branch. MJ (10/21/26)
+on:
+  push:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-main
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    # Only develop is published to main, also for manual runs started from another branch. MJ (10/21/26)
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Replace main's tree with develop minus development-only paths
+        env:
+          DEV_ONLY: containers pbs slurm tests tools .cicd .dockerignore ush/python/nos_workflow/tests .github/workflows
+        run: |
+          set -euo pipefail
+          src=$(git rev-parse HEAD)
+          git config user.name "github-actions[bot]"
+          git config user.email "41898231+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B main origin/main
+          git rm -r -q --cached .
+          find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          git checkout "$src" -- .
+          git rm -r -q -f --ignore-unmatch -- $DEV_ONLY
+          if git diff --cached --quiet; then echo "main already matches develop ${src::7}"; exit 0; fi
+          git commit -q -m "sync: develop ${src::7} in the NCO package layout"
+          git push origin main

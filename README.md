@@ -39,6 +39,9 @@ git submodule update --init ush/python/nos-utils
 - `.cicd/`: Jenkins pipeline
 - `docs/`: run guides
 - `tools/`: fix fetch, builds, forcing staging, seeds
+- `containers/`: WCOSS2-like STOFS container and the SECOFS UFS image
+
+Branches: `develop` is the primary branch, with the full development tree and CI. `main` is generated from develop on every develop push (`.github/workflows/sync-main.yml`). It keeps only the NCO Implementation Standards package layout (`docs ecf fix jobs modulefiles parm scripts sorc ush versions`) and drops `containers pbs slurm tests tools .cicd`, the workflow files and `ush/python/nos_workflow/tests`. Do not commit to `main` directly. To run the systems (cards, launchers, tools), clone `develop`.
 
 ## Documentation
 
