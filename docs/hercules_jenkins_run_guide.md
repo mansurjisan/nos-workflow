@@ -234,7 +234,7 @@ The job runs the branch named under Configure, and Deploy copies that branch's c
 
 1. Push the branch to `github.com/oceanmodeling/nos-workflow` (the job's repository; forks are not built).
 2. Tell the team on Slack: the job is shared, and it runs one build at a time.
-3. Open the job, click **Configure**, set *Branches to build* to `*/<your-branch>`, and click **Save**.
+3. Open the job, click **Configure**, set *Branches to build* to `*/<your-branch>`, and click **Save**. While it points there, a scheduled build also runs your branch.
 4. If the branch adds or changes a Jenkins parameter, start one build and abort it, so the form shows the new parameter.
 5. Run **Build with Parameters** as in section 3.
 6. When you are done, set *Branches to build* back to `*/develop` and click **Save**.
@@ -249,9 +249,9 @@ A branch cannot change `fix/` or `exec/` in the CI (section 8.1).
 - **Nightly (scheduled from the dashboard, not in the Jenkinsfile):** in the ATL job open Configure > Triggers, tick **Build periodically with parameters** and enter this Schedule, then Save:
   ```
   TZ=UTC
-  H 20 * * * % OFS=stofs_2d_glo;LEVEL=full;DATA_MODE=live;CYC=12;PDY=
+  H 20 * * * % OFS=stofs_2d_glo;LEVEL=full;DATA_MODE=live;CYC=12;PDY=latest
   ```
-  Check the "Would next run at ..." line under the box. If Jenkins rejects the `TZ` line, remove it and give the hour in the controller's time zone. To stop the nightly, untick the box; manual builds are unaffected. The same form can schedule any system or level. A blank `PDY` means the latest day whose `CYC` cycle is published (UTC now minus `CYC` + 8 h), so the 20:00 UTC build runs today's 12z. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night is a cold start, and a cold start always rebuilds the decomposition (adcprep, about 1.9 h). The build takes the same CI lock as SECOFS, so a SECOFS build running at 20:00 UTC makes that night's build fail at Gate. In reverse, the nightly holds the lock from about 20:00 UTC until it ends (about 03:00 UTC): a SECOFS build started then fails at Gate with `another CI cycle holds the lock`, and a labelled PR gets a red `hercules-ci/cycle` status; wait and rebuild. Rebuild of a scheduled build reuses its parameters. Disk stays at about one cycle because Stage Data removes the older days, as above.
+  Check the "Would next run at ..." line under the box. If Jenkins rejects the `TZ` line, remove it and give the hour in the controller's time zone. To stop the nightly, untick the box; manual builds are unaffected. The same form can schedule any system or level. `PDY=latest` (or a blank `PDY`) means the latest day whose `CYC` cycle is published (UTC now minus `CYC` + 8 h), so the 20:00 UTC build runs today's 12z. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night is a cold start, and a cold start always rebuilds the decomposition (adcprep, about 1.9 h). The build takes the same CI lock as SECOFS, so a SECOFS build running at 20:00 UTC makes that night's build fail at Gate. In reverse, the nightly holds the lock from about 20:00 UTC until it ends (about 03:00 UTC): a SECOFS build started then fails at Gate with `another CI cycle holds the lock`, and a labelled PR gets a red `hercules-ci/cycle` status; wait and rebuild. Rebuild of a scheduled build reuses its parameters and resolves `latest` again, so set `PDY` to a date to rerun a given day. Disk stays at about one cycle because Stage Data removes the older days, as above.
 - **ATL:** also needs `DCOM_BUNDLE`, a case bundle directory with `dcom/` and `seeds/dyn_seed_<PDY-1>/` (ATL run guide section 4.2) that `role-nosofs` can read. It downloads about 125 GB per build.
 
 Live mode has no reference run. At smoke, Verify checks nothing beyond the stage PASS for either system, and ATL cycle Verify likewise. 2D-Global compares with the ops products at cycle and full; ATL downloads and compares them only at full.

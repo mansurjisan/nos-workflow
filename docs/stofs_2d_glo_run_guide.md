@@ -418,7 +418,7 @@ A decomposition tar from the removed single mode has no fort.24 and is refused (
 
 For a step-by-step build, how to read the result and fixes for common failures, see [hercules_jenkins_run_guide.md](hercules_jenkins_run_guide.md).
 
-STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status). The ATL job can also run it on a schedule set in the Jenkins dashboard (a nightly `full` live 12z cold start with a blank `PDY`: the latest published day; live Stage Data removes the other days' 2D dirs and `ops_s3` dirs, keeping COMGES; a cold start always rebuilds the decomposition), see the Jenkins run guide section 10.
+STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status). The ATL job can also run it on a schedule set in the Jenkins dashboard (a nightly `full` live 12z cold start with a `PDY=latest`: the latest published day; live Stage Data removes the other days' 2D dirs and `ops_s3` dirs, keeping COMGES; a cold start always rebuilds the decomposition), see the Jenkins run guide section 10.
 
 | Parameter | Values | Meaning |
 |---|---|---|

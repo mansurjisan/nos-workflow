@@ -125,6 +125,17 @@ def test_jenkinsfile_parameters_default_to_the_secofs_pipeline():
     assert "isNightly" not in text and "cron(" not in text   # the schedule lives in the dashboard. MJ (10/22/26)
 
 
+def test_jenkinsfile_latest_pdy_is_the_latest_published_day():
+    # resolvePdy's shell line, as the GString expands it for CYC 12, gives the UTC date 20 h ago. MJ (10/22/26)
+    text = JENKINSFILE.read_text()
+    assert "pdy.trim() != 'latest'" in text
+    cmd = re.search(r'sh\(script: "(date -u -d .*?\+%Y%m%d)"', text).group(1)
+    cmd = cmd.replace('\\"', '"').replace('\\$', '$').replace('${cyc}', '12')
+    got = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, check=True).stdout.strip()
+    want = subprocess.run(["date", "-u", "-d", "-20 hours", "+%Y%m%d"], capture_output=True, text=True, check=True).stdout.strip()
+    assert got == want
+
+
 def _stage_conditions():
     text = JENKINSFILE.read_text()
     return dict(re.findall(r"stage\('([^']+)'\) \{\n\s+when \{ (.+?) \}\n\s+steps", text))

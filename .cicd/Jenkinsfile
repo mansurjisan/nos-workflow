@@ -43,9 +43,9 @@ def isManualOfs(String ofs) {
     return ofs in ['stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
 }
 
-// A blank PDY is the latest day whose CYC cycle is published (about CYC + 8 h after 00Z of that day), for builds scheduled from the dashboard. MJ (10/22/26)
+// A blank PDY, or PDY=latest, is the latest day whose CYC cycle is published (about CYC + 8 h after 00Z of that day), for builds scheduled from the dashboard. MJ (10/22/26)
 def resolvePdy(String pdy, String cyc) {
-    if (pdy?.trim()) {
+    if (pdy?.trim() && pdy.trim() != 'latest') {
         return pdy.trim()
     }
     return sh(script: "date -u -d \"-\$((10#${cyc} + 8)) hours\" +%Y%m%d", returnStdout: true).trim()
@@ -113,7 +113,7 @@ pipeline {
         choice(name: 'DATA_MODE', choices: ['live', 'frozen'], description: 'live: stage inputs from NODD for PDY/CYC. frozen: use a pre-staged dataset')
         string(name: 'SLURM_ACCOUNT', defaultValue: 'nosofs', description: 'Slurm account CI charges (CLI override of the cards\' nos-surge; must be valid for the agent account)')
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
-        string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD. Blank: the latest day whose CYC cycle is published (UTC now minus CYC+8 h), for scheduled builds')
+        string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD. Blank or latest: the latest day whose CYC cycle is published (UTC now minus CYC+8 h), for scheduled builds')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
         choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'], description: 'System to run. Only Build with Parameters or a scheduled build with parameters can select stofs_2d_glo, stofs_3d_atl_ufs_standalone (pschism) or stofs_3d_atl_ufs (UFS coupled), never the PR label; Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
         string(name: 'DCOM_BUNDLE', defaultValue: '', description: 'stofs_3d_atl_* with DATA_MODE=live only: case bundle dir holding dcom/ and seeds/dyn_seed_<PDY-1>/ (run guide section 4.2); must be readable by the CI account. Not needed for frozen')
