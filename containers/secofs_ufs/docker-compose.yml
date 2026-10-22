@@ -4,7 +4,7 @@
 # Usage:
 #   DATA_ROOT=/mnt/e/secofs_docker_rawdata/secofs_docker_data \
 #   OFS=secofs_ufs PDY=20260324 CYC=18 \
-#     docker compose -f docker/docker-compose.yml run --rm secofs-prep
+#     docker compose -f containers/secofs_ufs/docker-compose.yml run --rm secofs-prep
 #
 # Data layout (CI dataset -> container bind targets):
 #   DATA_ROOT/com/{gfs,hrrr,nwm,rtofs} -> /lfs/h1/ops/prod/com/*  (WCOSS2 mirror)
@@ -16,8 +16,8 @@
 
 x-common: &common
   build:
-    context: ..
-    dockerfile: docker/Dockerfile.secofs_ufs
+    context: ../..
+    dockerfile: containers/secofs_ufs/Dockerfile.secofs_ufs
   image: nosofs/secofs-ufs:develop
   volumes:
     # GRIB2/NetCDF inputs (rw so wgrib2 can write missing .idx alongside files)

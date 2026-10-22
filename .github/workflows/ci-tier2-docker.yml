@@ -1,6 +1,6 @@
 # Tier 2 CI: SECOFS_UFS Docker container (prep image) build + verify.
 #
-# Builds the prep-capable container (docker/Dockerfile.secofs_ufs --target
+# Builds the prep-capable container (containers/secofs_ufs/Dockerfile.secofs_ufs --target
 # runtime): EPIC spack-stack base + the develop nos_workflow/nos-utils Python
 # pipeline + wgrib2/prod_util shims. This is the part that changes on every
 # push; the model executable (fv3_coastalS.exe) is added locally for the
@@ -20,7 +20,7 @@ on:
   push:
     branches: [main, develop, "feature/*"]
     paths:
-      - 'docker/**'
+      - 'containers/secofs_ufs/**'
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'
@@ -31,7 +31,7 @@ on:
   pull_request:
     branches: [main, develop]
     paths:
-      - 'docker/**'
+      - 'containers/secofs_ufs/**'
       - 'jobs/**'
       - 'scripts/**'
       - 'ush/**'
@@ -71,7 +71,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: docker/Dockerfile.secofs_ufs
+          file: containers/secofs_ufs/Dockerfile.secofs_ufs
           target: runtime
           load: true
           push: false

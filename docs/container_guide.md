@@ -1,6 +1,6 @@
 # Running STOFS-3D-ATL prep in the WCOSS2-like container
 
-The image (`containers/Dockerfile`) is Rocky 9 with SLURM, ecFlow, NCEP libs, wgrib2, ADCIRC, SCHISM and `stofs_3d_atl_tide_fac`, built from the public ops v3.1.5 source at image build time (prep's OBC and nudging use the Python ops ports). The current nos-workflow tree is at `/opt/nosofs` (also `/lfs/h1/nos/nosofs/packages/nos-workflow`), executables in `/opt/nosofs/exec`. Only prep is run in it.
+The image (`containers/Dockerfile`) is Rocky 9 with SLURM, ecFlow, NCEP libs, wgrib2, ADCIRC, SCHISM and `stofs_3d_atl_tide_fac`, built from the public ops v3.1.5 source at image build time (prep's OBC and nudging use the Python ops ports). The current nos-workflow tree is at `/opt/nosofs` (also `/lfs/h1/nos/nosofs/packages/nos-workflow`), executables in `/opt/nosofs/exec`. Only prep is run in it. The separate SECOFS UFS image is in `containers/secofs_ufs/`, built by `.github/workflows/ci-tier2-docker.yml`.
 
 The steps below build the frozen test case 20261001 12z and run STOFS-3D-ATL v3.1 standalone prep on it. They were tested on AWS ParallelWorks (4 vCPUs) on 2026-10-21: prep passed in about 19 minutes, and on a second machine its forcing matched the WCOSS2 nos-workflow run of the same cycle.
 
@@ -10,7 +10,7 @@ sudo systemctl start docker                       # if `docker` cannot reach the
 sudo docker pull mjisan/stofsworkflow:develop
 sudo docker tag mjisan/stofsworkflow:develop stofsworkflow:latest
 ```
-CI (`.github/workflows/docker-build.yml`) publishes `:develop` on each develop push that touches the container or workflow code (containers, jobs, scripts, ush, parm, versions, fix, modulefiles), and `:develop-nightly` every day at 05:00 UTC. `:nightly` is the old v2.1 image. To build instead (30-60 min; fails at once if nos-utils is empty), run `sudo docker build -f containers/Dockerfile -t stofsworkflow:latest .` from a clone.
+CI (`.github/workflows/docker-build.yml`) publishes `:develop` on each develop push that touches the container or workflow code (containers except containers/secofs_ufs, jobs, scripts, ush, parm, versions, fix, modulefiles), and `:develop-nightly` every day at 05:00 UTC. `:nightly` is the old v2.1 image. To build instead (30-60 min; fails at once if nos-utils is empty), run `sudo docker build -f containers/Dockerfile -t stofsworkflow:latest .` from a clone.
 
 ## 2. Clone and paths
 ```bash

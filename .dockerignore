@@ -3,4 +3,4 @@
 **/__pycache__
 **/*.pyc
 *.log
-docker/spack_libs.env
+containers/secofs_ufs/spack_libs.env
