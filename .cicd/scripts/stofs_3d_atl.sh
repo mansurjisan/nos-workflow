@@ -5,7 +5,7 @@
 #                            (compute nodes have no internet), with the dcom case bundle DCOM_BUNDLE the user supplies
 #   stofs_3d_atl.sh card-env <stage>   eval-able shell for run_stage.sh: the variant's extra sbatch exports (ATL_EXPORTS), log prefix, unset list
 #   stofs_3d_atl.sh clean-job <jobid>  delete that job's run directory (run_stage.sh calls it after a passing stage)
-#   stofs_3d_atl.sh verify   Verify ATL: compare_atl.py regress against the dataset's reference; ops comparison at full (pass/fail for standalone, report only for coupled)
+#   stofs_3d_atl.sh verify   Verify ATL: compare_atl.py regress against the dataset's reference; ops comparison at full (pass/fail for standalone, report only for coupled) MJ (10/22/26)
 #   stofs_3d_atl.sh seed <PDY> <standalone|coupled> [SRC_COMROOT [SRC_COMIN [SRC_DCOM]]]   one-time, by hand (see below)
 # The variant comes from OFS: stofs_3d_atl_ufs_standalone = pschism (cards slurm/stofs_3d_atl_ufs_standalone, COMROOT_SA),
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
@@ -18,7 +18,7 @@
 # LEVEL   Jenkins stages run                       Verify
 #   smoke  Prep Nowcast                             compare_atl.py regress --level smoke
 #   cycle  Prep Nowcast Forecast Post               regress --level cycle
-#   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (report only)
+#   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (pass/fail for standalone, report only for coupled) MJ (10/22/26)
 # MJ (10/15/26)
 #
 # Layout, the SECOFS one (no per-variant roots): com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work} and the cards' own defaults;

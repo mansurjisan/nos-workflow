@@ -250,8 +250,8 @@ def test_ops_station_count_mismatch_warns(tmp_path):
     assert r.returncode == 0 and "stations compared" in r.stdout
 
 
-def _gate(out, opsd, med="5", over="10", **kw):
-    return _ops(out, opsd, "--fail-median-mm", med, "--fail-over-10cm", over, *kw.get("extra", ()))
+def _gate(out, opsd, med="5", over="10"):
+    return _ops(out, opsd, "--fail-median-mm", med, "--fail-over-10cm", over)
 
 
 def test_ops_gate_unset_stays_report_only(tmp_path):
@@ -278,6 +278,25 @@ def test_ops_gate_too_many_stations_over_10cm_fails(tmp_path):
     assert r.returncode == 1 and "2 stations over 10 cm > 1" in r.stdout and "> 5 mm" not in r.stdout
     r = _gate(out, opsd, over="2")
     assert r.returncode == 0 and "over 10 cm 2" in r.stdout
+
+
+def test_ops_gate_nothing_compared_fails(tmp_path):
+    out, opsd = _ops_tree(tmp_path)  # MJ (10/22/26)
+    _points(_day(out) / f"stofs_3d_atl_ufs.t12z.{PDY}.points.cwl.forecast.nc", base="2026-10-20 12:00:00")
+    r = _gate(out, opsd)
+    assert r.returncode == 1 and "nothing compared" in r.stdout
+    assert _ops(out, opsd).returncode == 0
+
+
+def test_ops_gate_boundary_is_strict(tmp_path):
+    out, opsd = _ops_tree(tmp_path)  # MJ (10/22/26)
+    r = _gate(out, opsd, med="0", over="0")
+    assert r.returncode == 0 and r.stdout.count("PASS  ") == 4
+
+
+def test_ops_gate_flags_go_together(tmp_path):
+    out, opsd = _ops_tree(tmp_path)  # MJ (10/22/26)
+    assert _ops(out, opsd, "--fail-median-mm", "5").returncode == 2
 
 
 def test_ops_gate_within_thresholds_passes(tmp_path):
