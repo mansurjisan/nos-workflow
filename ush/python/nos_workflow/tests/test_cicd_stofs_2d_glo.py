@@ -119,8 +119,9 @@ def test_jenkinsfile_parameters_default_to_the_secofs_pipeline():
     text = JENKINSFILE.read_text()
     assert re.search(r"choice\(name: 'OFS', choices: \['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'\]", text)
     assert re.search(r"choice\(name: 'LEVEL', choices: \['smoke', 'cycle', 'full'\]", text)
-    assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
-    assert "LEVEL        = \"${params.LEVEL ?: 'smoke'}\"" in text
+    assert "CI_OFS       = \"${isNightly() ? 'stofs_2d_glo' : (params.OFS ?: 'secofs_ufs')}\"" in text
+    assert "LEVEL        = \"${isNightly() ? 'full' : (params.LEVEL ?: 'smoke')}\"" in text
+    assert "cron(env.JOB_NAME == 'NOS/nos-workflow-atl-hercules' ? 'TZ=UTC\\nH 20 * * *' : '')" in text
 
 
 def _stage_conditions():
@@ -366,6 +367,44 @@ def test_live_stage_checks_the_chain_state_before_downloading(ci):
     assert "LEVEL=full DATA_MODE=live" in r.stdout and not (ci.stubs / "tool.args").exists()
     _finished_run(ci.com)
     assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 0 and (ci.stubs / "tool.args").is_file()
+
+
+def test_live_stage_prunes_other_days_and_ops_s3_cycles_but_keeps_comges_and_the_pdy_and_previous_days(ci):
+    _live_tool(ci, 0)
+    nos, ops = ci.com / "nos", ci.ptmp / "tester" / "ops_s3"
+    keep = [_touch(nos / n / "f", "keep") for n in ("stofs_2d_glo", "stofs_2d_glo.20261012", "stofs_2d_glo.20261011", "secofs_ufs.20260101", "stofs_2d_glo.latest", "stofs_2d_glo.2026101")]
+    keep += [_touch(ops / n / "f", "keep") for n in ("2026101200", "notes", "202610120")]
+    gone = [_touch(nos / "stofs_2d_glo.20261009" / "f"), _touch(nos / "stofs_2d_glo.20260101" / "f"), _touch(ops / "2026100912" / "f"), _touch(ops / "2026101206" / "f")]
+    r = ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00")
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert all(k.exists() for k in keep), [k for k in keep if not k.exists()]
+    assert not any(g.parent.exists() for g in gone), [g for g in gone if g.parent.exists()]
+    assert f"removed {nos}/stofs_2d_glo.20261009" in r.stdout and f"removed {ops}/2026100912" in r.stdout
+    # an OPS_WORK of the caller's own leaves ops_s3 alone
+    other = _touch(ops / "2026100912" / "f")
+    assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00", OPS_WORK=str(ci.tmp / "w")).returncode == 0 and other.is_file()
+
+
+def test_live_stage_prune_refuses_a_symlinked_target_and_deletes_nothing_first(ci):
+    _live_tool(ci, 0)
+    nos = ci.com / "nos"
+    victim = _touch(ci.tmp / "victim" / "f", "keep")
+    early = _touch(nos / "stofs_2d_glo.20260101" / "f", "must survive a refusal")
+    (nos / "stofs_2d_glo.20261009").symlink_to(victim.parent)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00")
+    assert r.returncode == 1 and "is a symlink or not a plain directory" in r.stderr and victim.is_file() and early.is_file()
+    assert not (ci.stubs / "tool.args").exists()
+    (nos / "stofs_2d_glo.20261009").unlink()
+    ops = ci.ptmp / "tester" / "ops_s3"
+    (ops / "2026100912").parent.mkdir(parents=True)
+    (ops / "2026100912").symlink_to(victim.parent)
+    assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00").returncode == 0 and victim.is_file() and (ops / "2026100912").is_symlink()
+
+
+def test_live_cycle_prune_runs_after_the_chain_state_check(ci):
+    _live_tool(ci, 0)
+    old = _touch(ci.com / "nos" / "stofs_2d_glo.20260101" / "f")
+    assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 1 and old.is_file()
 
 
 def test_live_stage_tolerates_only_the_reference_download_failure(ci):

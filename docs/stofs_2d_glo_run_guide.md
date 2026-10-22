@@ -414,11 +414,11 @@ A decomposition tar from the removed single mode has no fort.24 and is refused (
 - **Disk:** plan for about 300 GB of COM per ops-mode cycle (ops writes about 155 GB of products plus 98 GB of rerun files; our forcing is hourly past 120 h) and about 150 GB of work space while a cycle runs.
 - **Purge:** ptmp is purged by file age. `nod_equi`, the decomposition tar and the chain files live there; if they age out the next cycle needs a cold start (section 9). Keep a copy of `nod_equi` and the tar on noscrub, and copy without `cp -p`.
 
-## 5. Jenkins (Hercules, manual only)
+## 5. Jenkins (Hercules, manual and nightly)
 
 For a step-by-step build, how to read the result and fixes for common failures, see [hercules_jenkins_run_guide.md](hercules_jenkins_run_guide.md).
 
-STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status).
+STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status). One exception: the ATL job has a nightly timer that runs `full` live 12z for today (a cold start each day; live Stage Data removes the other days' 2D dirs and `ops_s3` dirs, keeping COMGES), see the Jenkins run guide section 10.
 
 | Parameter | Values | Meaning |
 |---|---|---|

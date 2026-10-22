@@ -54,7 +54,7 @@ To stop a running build, click the red **X** next to it in Build History (or **A
 | `OFS` | `secofs_ufs` | The system to run | Always (table above) |
 | `LEVEL` | `smoke` | How far the build goes (section 4) | As needed |
 | `DATA_MODE` | `live` | `frozen` runs a stored dataset; `live` downloads today's inputs (section 10) | Set `frozen` |
-| `PDY`, `CYC` | `20260827`, `06` | The cycle; it must match a dataset (section 5) | Always |
+| `PDY`, `CYC` | `20260827`, `06` | The cycle; it must match a dataset (section 5). A nightly timer build ignores them (section 10) | Always |
 | `SEED_RT` | `/work2/noaa/nos-surge/mjisan/nos-workflow-rt` | Where Bootstrap copies a dataset from, the first time a build needs it | Only for your own dataset (section 8) |
 | `SEED_SRC` | `/work2/noaa/nos-surge/mjisan/nos-workflow` | Where Bootstrap copies `fix/` and `exec/` from, the first time a system runs in this CI root | No; all three systems are already copied (section 8.1). Only a first 2D-Global build in a new CI root needs the 2D package |
 | `NOS_CI_ROOT` | `/work2/noaa/nosofs/role-nosofs/nos-ci` | The CI's own tree: package, venv, datasets, ptmp, lock | No |
@@ -245,7 +245,8 @@ A branch cannot change `fix/` or `exec/` in the CI (section 8.1).
 
 `DATA_MODE=live` downloads the inputs for `PDY`/`CYC` instead of using a dataset. Use frozen for regression checks; live is for checking a new date end to end.
 
-- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. It does not clear the CI `com`, and it continues from the 2D-Global state already there: run `LEVEL=full` first (a cold start), then `LEVEL=cycle` for the cycle 6 h later, with no frozen 2D-Global build in between (a frozen build clears that state).
+- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. Before the download it removes the other days' 2D-Global directories from the CI `com` and the other cycles' download directories under `ops_s3`. It keeps the shared `nos/stofs_2d_glo` (the cached 4064-rank decomposition and the chain state) and the days of `PDY` and of the cycle 6 h earlier, so a rerun of the same day does not download again. It continues from the 2D-Global state already there: run `LEVEL=full` first (a cold start), then `LEVEL=cycle` for the cycle 6 h later, with no frozen 2D-Global build in between (a frozen build clears that state).
+- **Nightly:** the ATL job `NOS/nos-workflow-atl-hercules` (not the SECOFS job) has a timer between 20:00 and 21:00 UTC. It runs `stofs_2d_glo`, `LEVEL=full`, `DATA_MODE=live`, `CYC=12` for today's UTC date, whatever the parameter defaults are. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night is a cold start. Jenkins registers the timer only after the job has run the merged Jenkinsfile once (one manual build). The build takes the same CI lock as SECOFS, so a SECOFS build running at that time makes that night's build fail at Gate. Disk stays at about one cycle because Stage Data removes the older days, as above.
 - **ATL:** also needs `DCOM_BUNDLE`, a case bundle directory with `dcom/` and `seeds/dyn_seed_<PDY-1>/` (ATL run guide section 4.2) that `role-nosofs` can read. It downloads about 125 GB per build.
 
 Live mode has no reference run. At smoke, Verify checks nothing beyond the stage PASS for either system, and ATL cycle Verify likewise. 2D-Global compares with the ops products at cycle and full; ATL downloads and compares them only at full.

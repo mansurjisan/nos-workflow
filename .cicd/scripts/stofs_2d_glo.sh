@@ -24,7 +24,8 @@
 # Prep finds the staged ops forcing and skips its GFS steps, so SUBMIT_GFS is not used. smoke and cycle continue from the previous cycle's hotstart/restart, so
 # they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
 # stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and does not clear it; the smoke/cycle stage
-# checks that state before it downloads. frozen clears it and starts from the dataset. MJ (10/15/26)
+# checks that state before it downloads. frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
+# other days' 2D dirs and the other ops_s3 cycle dirs, so the nightly cold start (Jenkinsfile timer, 12z) never fills the CI storage. MJ (10/22/26)
 #
 # Layout, the SECOFS one: com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work}, the cards' own defaults; COMROOT_2DGLO is that com (an inherited
 # value is ignored). RUN stofs_2d_glo is unique, so the 2D-Global state sits beside SECOFS's and ATL's without touching it: COMGES is com/nos/stofs_2d_glo and a
@@ -100,9 +101,10 @@ level_setup() {
 
 # Clears the 2D-Global state of earlier cycles from the shared com: nos/stofs_2d_glo (COMGES) and every nos/stofs_2d_glo.<8 digits>, names matched exactly, so
 # SECOFS's and ATL's directories and anything else stay. The com root must be the CI's $NOS_PTMP/$LOGNAME/com; no root, parent or target may be a symlink.
-# All targets are validated before the first rm, so a refusal never follows a delete. Then removes the old com_2dglo_ci root once. MJ (10/15/26)
+# All targets are validated before the first rm, so a refusal never follows a delete. Then removes the old com_2dglo_ci root once.
+# With day arguments (YYYYMMDD, live mode) COMGES and those days' directories are kept and the other days removed. MJ (10/22/26)
 clear_com() {
-  local p c t rm=()
+  local p c t d n rm=()
   case "${LOGNAME}" in ""|*/*|.|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
   p=$(realpath -m -- "${NOS_PTMP}")
   c="${p}/${LOGNAME}/com"
@@ -111,17 +113,34 @@ clear_com() {
     [ ! -L "${t}" ] || { echo "FATAL: refusing to clear under ${t}: it is a symlink" >&2; exit 1; }
   done
   for t in "${c}/nos/${RUN}" "${c}/nos/${RUN}."*; do
-    [[ "${t##*/}" =~ ^${RUN}(\.[0-9]{8})?$ ]] && { [ -e "${t}" ] || [ -L "${t}" ]; } && rm+=("${t}")
+    n=${t##*/}
+    [[ "${n}" =~ ^${RUN}(\.[0-9]{8})?$ ]] && { [ -e "${t}" ] || [ -L "${t}" ]; } || continue
+    [ "$#" = 0 ] || [ "${n}" = "${RUN}" ] || [[ " $* " == *" ${n##*.} "* ]] || rm+=("${t}")
+    [ "$#" != 0 ] || rm+=("${t}")
   done
   for t in ${rm[@]+"${rm[@]}"}; do
     { [ ! -L "${t}" ] && [ -d "${t}" ] && [ "$(realpath -m -- "${t}")" = "${t}" ]; } || { echo "FATAL: refusing to remove ${t}: it is a symlink or not a plain directory" >&2; exit 1; }
   done
-  for t in ${rm[@]+"${rm[@]}"}; do rm -rf -- "${t}"; done
+  for t in ${rm[@]+"${rm[@]}"}; do
+    rm -rf -- "${t}"
+    [ "$#" = 0 ] || echo "removed ${t}"
+  done
   mkdir -p -- "${c}/nos"
   t="${p}/${LOGNAME}/com_2dglo_ci"
   if [ -L "${t}" ]; then echo "WARN: leaving ${t}: it is a symlink" >&2
   elif [ -d "${t}" ]; then rm -rf -- "${t}"; echo "removed the old CI com ${t}"
   fi
+}
+
+# Removes the other cycles' ops download dirs (names of exactly 10 digits) under ops_s3, never a symlink; an OPS_WORK in the environment is the caller's own. MJ (10/22/26)
+prune_ops_s3() {
+  local o="${NOS_PTMP}/${LOGNAME}/ops_s3" t
+  [ -z "${OPS_WORK:-}" ] && [ -d "${o}" ] && [ ! -L "${o}" ] || return 0
+  for t in "${o}"/*; do
+    [[ "${t##*/}" =~ ^[0-9]{10}$ ]] && [ "${t##*/}" != "${PDY}${CYC}" ] && [ -d "${t}" ] && [ ! -L "${t}" ] || continue
+    rm -rf -- "${t}"
+    echo "removed ${t}"
+  done
 }
 
 cmd_stage() {
@@ -162,7 +181,11 @@ cmd_stage() {
         [ "${miss}" = 0 ] || { echo "FATAL: LEVEL=${LEVEL} continues from the chain state in ${CI_COM}, which lacks the files above; run LEVEL=full DATA_MODE=live for the previous 6-hourly cycle first, or use DATA_MODE=frozen"; exit 1; }
       fi
       mkdir -p "${CI_COM}"
-      echo "staging the ops forcing for ${PDY}${CYC} into ${CI_COM} (login node, no clearing: the chain state stays)"
+      # After the chain-state check, which reads PREV's day (kept). COMGES stays: the cached decomposition and the chain state. PDY stays so a rerun skips the download. MJ (10/22/26)
+      clear_com "${PDY}" "${PREV:0:8}"
+      prune_ops_s3
+      du -sh "${CI_COM}/nos/${RUN}"* 2>/dev/null | sed 's/^/  /' || true
+      echo "staging the ops forcing for ${PDY}${CYC} into ${CI_COM} (login node; COMGES and the ${PDY}/${PREV:0:8} days stay)"
       bash "${HOMEnos}/tools/hercules_2d_glo_stage_forcing.sh" --rm-raw "${PDY}" "${CYC}" || rc=$?
       case "${rc}" in
         0) ;;

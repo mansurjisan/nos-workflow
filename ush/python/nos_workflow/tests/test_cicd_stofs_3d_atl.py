@@ -122,7 +122,7 @@ def _stage_conditions():
 def test_jenkinsfile_adds_the_atl_choices_and_keeps_the_secofs_default():
     text = JENKINSFILE.read_text()
     assert "choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']" in text
-    assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
+    assert "(params.OFS ?: 'secofs_ufs')}\"" in text
     assert "return ofs in ['stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']" in text
 
 
@@ -658,7 +658,7 @@ def test_a_failed_stage_leaves_its_directories_for_the_next_stage_data_to_clear(
 
 def test_jenkinsfile_forces_cyc_12_for_atl():
     text = JENKINSFILE.read_text()
-    assert "CYC          = \"${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}\"" in text
+    assert "(params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC)" in text
     assert 'echo "STOFS-3D-ATL runs 12z only: CYC ${params.CYC} -> 12"' in text
     assert "${params.CYC}z" not in text and "${params.PDY}/${params.CYC}" not in text
 

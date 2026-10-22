@@ -43,6 +43,11 @@ def isManualOfs(String ofs) {
     return ofs in ['stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
 }
 
+// True when the Jenkins timer started the build (the nightly STOFS-2D-Global cycle). MJ (10/22/26)
+def isNightly() {
+    return currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') as boolean
+}
+
 def isAtlOfs(String ofs) {
     return ofs in ['stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
 }
@@ -50,10 +55,10 @@ def isAtlOfs(String ofs) {
 // Manual STOFS builds report in the Jenkins build only; the hercules-ci/cycle status belongs to the SECOFS cycle. MJ (10/14/26)
 def cycleLabel() {
     if (env.CI_OFS == 'stofs_2d_glo') {
-        return "STOFS-2D-Global ${params.LEVEL} ${params.DATA_MODE} cycle"
+        return "STOFS-2D-Global ${env.LEVEL} ${env.DATA_MODE} cycle"
     }
     if (isAtlOfs(env.CI_OFS)) {
-        return "STOFS-3D-ATL (${env.CI_OFS}) ${params.LEVEL} ${params.DATA_MODE} cycle"
+        return "STOFS-3D-ATL (${env.CI_OFS}) ${env.LEVEL} ${env.DATA_MODE} cycle"
     }
     return 'cycle'
 }
@@ -98,6 +103,12 @@ pipeline {
         timeout(time: 16, unit: 'HOURS')
     }
 
+    // Nightly 12z STOFS-2D-Global cold start, ATL job only (the SECOFS job and PR builds get an empty spec, so no trigger). Jenkins registers a Jenkinsfile
+    // trigger only after the job has run this Jenkinsfile once. MJ (10/22/26)
+    triggers {
+        cron(env.JOB_NAME == 'NOS/nos-workflow-atl-hercules' ? 'TZ=UTC\nH 20 * * *' : '')
+    }
+
     parameters {
         string(name: 'NOS_CI_ROOT', defaultValue: '/work2/noaa/nosofs/role-nosofs/nos-ci', description: 'CI-owned root; PACKAGEROOT/VENV_PATH/RT_DATA_ROOT/NOS_PTMP all derive from it, so the agent never needs write access outside its own workspace')
         string(name: 'SEED_SRC', defaultValue: '/work2/noaa/nos-surge/mjisan/nos-workflow', description: 'Source tree the Bootstrap stage copies fix/ and exec/ from the first time a build uses a new NOS_CI_ROOT (must be world-readable)')
@@ -121,12 +132,13 @@ pipeline {
         SEED_RT      = "${params.SEED_RT}"
         SLURM_CI_ACCOUNT = "${params.SLURM_ACCOUNT}"
         SLURM_CI_QOS     = "${params.SLURM_QOS}"
-        DATA_MODE    = "${params.DATA_MODE}"
-        PDY          = "${params.PDY}"
+        // A timer build has only the parameter defaults, so it sets the nightly cycle itself: today's 12z STOFS-2D-Global cold start, live. MJ (10/22/26)
+        DATA_MODE    = "${isNightly() ? 'live' : params.DATA_MODE}"
+        PDY          = "${isNightly() ? sh(script: 'date -u +%Y%m%d', returnStdout: true).trim() : params.PDY}"
         // STOFS-3D-ATL has only the 12z cycle, whatever the form says. MJ (10/14/26)
-        CYC          = "${params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC}"
-        CI_OFS       = "${params.OFS ?: 'secofs_ufs'}"
-        LEVEL        = "${params.LEVEL ?: 'smoke'}"
+        CYC          = "${isNightly() ? '12' : (params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC)}"
+        CI_OFS       = "${isNightly() ? 'stofs_2d_glo' : (params.OFS ?: 'secofs_ufs')}"
+        LEVEL        = "${isNightly() ? 'full' : (params.LEVEL ?: 'smoke')}"
         DCOM_BUNDLE  = "${params.DCOM_BUNDLE ?: ''}"
     }
 
@@ -263,7 +275,7 @@ pipeline {
                         } else {
                             error("another CI cycle holds the lock: ${lockResult.replaceFirst('^HELD:', '')}")
                         }
-                        postStatus('pending', "SECOFS cycle running: ${params.PDY}/${env.CYC} ${params.DATA_MODE}")
+                        postStatus('pending', "SECOFS cycle running: ${env.PDY}/${env.CYC} ${env.DATA_MODE}")
                     } else if (gateLookupFailed) {
                         postStatus('error', 'hercules-ci gate could not read PR labels')
                     }
@@ -392,22 +404,22 @@ pipeline {
             '''
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('failure', "cycle ${params.PDY}/${env.CYC} FAILED — see build log")
+                    postStatus('failure', "cycle ${env.PDY}/${env.CYC} FAILED — see build log")
                 }
             }
         }
         success {
             script {
                 if (env.RUN_CYCLE == 'true') {
-                    postStatus('success', "cycle ${params.PDY}/${env.CYC} PASS")
+                    postStatus('success', "cycle ${env.PDY}/${env.CYC} PASS")
                 }
             }
             slackSend(channel: '#nos-notifications', color: 'good',
-                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*SUCCESS: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${env.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         failure {
             slackSend(channel: '#nos-notifications', color: 'danger',
-                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${params.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
+                message: "*FAILURE: ${env.JOB_NAME} #${env.BUILD_NUMBER}* ${cycleLabel()} ${env.PDY}/${env.CYC}z <${env.BUILD_URL}|Open Build>")
         }
         aborted {
             slackSend(channel: '#nos-notifications', color: 'warning',
