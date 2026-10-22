@@ -1,0 +1,64 @@
+# STOFS-2D-Global (ADCIRC), adapted from Zach Cobell's examples/config_adcirc.yaml
+# (oceanmodeling/nos-workflow, branch zcobell/stofs_2d_global). MJ (10/05/26)
+
+_base: adcirc
+
+system:
+  name: stofs_2d_glo
+  description: "Storm Surge and Tide Operational Forecast System - 2D Global (ADCIRC)"
+  framework: adcirc
+  prefix: stofs_2d_glo
+
+# Staged by tools/fetch_stofs_2d_glo_fix.sh; the runner links them as fort.14 / fort.13,
+# the only names adcprep accepts. MJ (10/05/26)
+grid:
+  files:
+    horizontal: stofs_2d_glo_grid
+    attributes: stofs_2d_glo_attr
+
+model:
+  run:
+    hindcast_days: 0.25     # nowcast interval 6 h
+    forecast_days: 7.5      # forecast duration 180 h
+
+# Total ranks = ncpu_compute + ncpu_writer. One knob sets both the adcprep partition count and
+# the padcirc compute ranks; the 12.8M-node mesh crashes in the first GWCE solve at 256 ranks
+# (June fix 2), so never size this down. MJ (10/05/26)
+adcirc:
+  name: stofs2dglobal
+  # The jobs run the stofs.v3.1.5 structure (ADCIRC_MODE=ops is optional now). MJ (10/18/26)
+  # Surf ncst and fcst add this many -W writers (4064 + 5 = 4069 ranks). Five: the surf run (NWS=14014) writes five files every output hour
+  # (fort.63, 64, 73, 74 and the ice file fort.93). ADCIRC hands each output event to the next writer in turn, so with five
+  # writers each file always goes to the same writer and its records stay in order; with 32 one hourly record was sometimes
+  # lost. MJ (10/17/26)
+  ops_surf_writers: 5
+  # Seconds the ops GFS prep jobs (ADCIRC_SEGMENT=ncst|fcst) wait in total for a late sfcf file, inside the walltimes
+  # 0:10 (ecf) and 0:40 (ecf fcst1 + fcst2); ops waits until the walltime kills it. MJ (10/11/26)
+  # fcst leaves 600 s of the 0:40 for the 181 records (40 interpolated: hours 121-179 minus the 19 that are 3-hourly GFS records). MJ (10/14/26)
+  # GFS file family the ops GFS prep jobs read: sfcf (netCDF, WCOSS2 COMINgfs) or sflux (public GRIB2 flux files, Hercules);
+  # ADCIRC_GFS_SOURCE in the job env overrides. Read from settings.raw, not through yaml_to_env. MJ (10/14/26)
+  ops_gfs_source: sfcf
+  ops_gfs_wait_s: {ncst: 420, fcst: 1800}
+  executables:
+    padcirc: padcirc
+    adcprep: adcprep
+    directory: null       # ADCIRC_EXEC_DIR overrides; else $EXECnos, then PATH
+  ncpu_compute: 4064
+  ncpu_writer: 0          # -W writers start only when this is > 0
+  atmospheric_forcing: true   # fallback only: ops takes NWS from the rendered fort.15 and uses this for a fort.15 without an "! NWS" line. MJ (10/18/26)
+
+resources:
+  nprocs: 4064
+  nscribes: 0
+  # 4064 ranks fill 32 x 128 on WCOSS2 (ops layout); Hercules keeps the profile's 80 per node
+  # (51 nodes). MJ (10/05/26)
+  ranks_per_node:
+    wcoss2: 128
+
+shell_mappings:
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    NCPU: adcirc.ncpu_compute
+    NUM_WRITERS: adcirc.ncpu_writer
+    GRIDFILE_ATTR: grid.files.attributes

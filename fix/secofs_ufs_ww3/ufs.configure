@@ -1,0 +1,145 @@
+#############################################
+####  NEMS Run-Time Configuration File  #####
+####  DATM + SCHISM + WW3 (4-component)  #####
+#############################################
+
+# ESMF #
+logKindFlag:            ESMF_LOGKIND_MULTI
+globalResourceControl:  true
+
+# EARTH #
+EARTH_component_list: ATM OCN WAV MED
+EARTH_attributes::
+  Verbosity = 0
+::
+
+# MED #
+# MED spans the full ATM+OCN+WAV union (wider than the 3-component file,
+# where MED is co-located with ATM only). Matches the Alaska reference.
+MED_model:                      cmeps
+MED_petlist_bounds:             0 5519
+MED_omp_num_threads:            1
+MED_attributes::
+  ATM_model = datm
+  OCN_model = schism
+  WAV_model = ww3
+  history_n = 9999
+  history_option = nhours
+  history_ymd = -999
+  coupling_mode = coastal
+  pio_typename = PNETCDF
+  pio_stride = 8
+  # Precomputed regrid weights for both directions. Without them ESMF builds
+  # the map at runtime by constructing an internal dual mesh, which aborts at
+  # this mesh size. wav2ocn additionally requires the CMEPS wav2ocn_smapname
+  # patch; unpatched, CMEPS never reads the attribute. Both filenames must
+  # match ufs_coastal.{ocn2wav,wav2ocn}_weights in the system yaml.
+  ocn2wav_smapname = secofs_ufs.ocn2wav_weights.nc
+  wav2ocn_smapname = secofs_ufs.wav2ocn_weights.nc
+::
+
+# ATM #
+ATM_model:                      datm
+ATM_petlist_bounds:             0 119
+ATM_omp_num_threads:            1
+ATM_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+::
+
+# OCN #
+OCN_model:                      schism
+OCN_petlist_bounds:             120 2913
+OCN_omp_num_threads:            1
+OCN_attributes::
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  OverwriteSlice = true
+  # element, NOT node: the node path publishes SCHISM's augmented element set,
+  # duplicating ghost elements across PETs until the OCN-MED connector's
+  # RedistStore fails. The element path publishes resident-only elements.
+  meshloc = element
+  CouplingConfig = none
+::
+
+# WAV #
+# PET bounds and mesh_wav must match ufs_coastal.* in the system yaml;
+# nos-utils cross-checks datm+schism+wav == total at prep time.
+WAV_model:                      ww3
+WAV_petlist_bounds:             2914 5519
+WAV_omp_num_threads:            1
+WAV_attributes::
+  # 0 for routine cycling. Set 6 for a targeted diagnostic rerun: it prints
+  # per-window imported-field min/max (So_h, So_u, So_v) to every WAV PET log.
+  dbug_flag = 0
+  Verbosity = 0
+  DumpFields = false
+  ProfileMemory = false
+  mesh_wav = secofs_ufs.mesh_wav.nc
+  multigrid = false
+  user_histname = 'false'
+  use_historync = 'true'
+  use_restartnc = 'true'
+  restart_from_binary = 'false'
+  pio_typename = 'pnetcdf'
+  pio_numiotasks = 4
+  pio_stride = -99
+  pio_rearranger = 'box'
+  pio_root = -99
+::
+
+# Run Sequence #
+# @360 = 3x SCHISM's 120 s dt; nos_utils enforces the integer-multiple rule.
+# WW3 substeps internally (DTXY=120 s) between exchanges.
+runSeq::
+@360
+  MED med_phases_prep_atm
+  MED med_phases_prep_ocn_accum
+  MED med_phases_prep_ocn_avg
+  MED med_phases_prep_wav_accum
+  MED med_phases_prep_wav_avg
+  MED -> ATM :remapMethod=redist
+  MED -> OCN :remapMethod=redist
+  MED -> WAV :remapMethod=redist
+  ATM
+  OCN
+  WAV
+  ATM -> MED :remapMethod=redist
+  OCN -> MED :remapMethod=redist
+  WAV -> MED :remapMethod=redist
+  MED med_phases_post_atm
+  MED med_phases_post_ocn
+  MED med_phases_post_wav
+  MED med_phases_restart_write
+@
+::
+
+# start_type and restart_n are patched per phase at run time
+# (configure.py:patch_ufs_configure): startup/continue, and restart_n set to
+# the leg's own length so exactly one restart is written, at the leg end. The
+# values below are template defaults and are overwritten every run.
+ALLCOMP_attributes::
+  ScalarFieldCount = 3
+  ScalarFieldIdxGridNX = 1
+  ScalarFieldIdxGridNY = 2
+  ScalarFieldIdxNextSwCday = 3
+  ScalarFieldName = cpl_scalars
+  start_type = startup
+  restart_dir = RESTART/
+  case_name = ufs.cpld
+  restart_n = 24
+  restart_option = nhours
+  restart_ymd = -999
+  orb_eccen = 1.e36
+  orb_iyear = 2026
+  orb_iyear_align = 2026
+  orb_mode = fixed_year
+  orb_mvelp = 1.e36
+  orb_obliq = 1.e36
+  stop_n = 48
+  stop_option = nhours
+  stop_ymd = -999
+::

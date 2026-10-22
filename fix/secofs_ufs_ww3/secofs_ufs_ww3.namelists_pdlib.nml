@@ -1,0 +1,55 @@
+! ---------------------------------------------------------------------- !
+! secofs_ufs_ww3 -- auxiliary namelist referenced by ww3_grid.nml's       !
+! GRID%NML pointer: implicit-PDLIB solver flags.                          !
+!                                                                         !
+! The &UNST group here is NOT ww3_grid.nml's UNST_NML mesh block despite  !
+! the shared name -- this is WW3's legacy single-line namelist for        !
+! solver/physics flags. UGOBCAUTO=F means boundary nodes come from        !
+! ww3_grid.nml's INBND_POINT_NML rather than mesh auto-detection.         !
+!                                                                         !
+! The three IMP* settings below were each established by experiment and   !
+! are not interchangeable defaults:                                       !
+!                                                                         !
+!   IMPREFRACTION=T, IMPFREQSHIFT=T -- refraction and frequency shift     !
+!   must stay IN the implicit matrix. Integrated explicitly they are      !
+!   unstable in shallow narrow channels under tidal depth cycling, and    !
+!   pump energy down-spectrum until the breaking limiter caps it (20-60 m !
+!   Hs in island passages, 6-8 m in the Georgia Bight).                   !
+!                                                                         !
+!   IMPSOURCE=F -- source terms integrate explicitly. The implicit-source  !
+!   path (IMPSOURCE=T) produces better wind-sea physics but terminates    !
+!   with SIGSEGV in ST4 dissipation at forecast scale on this mesh.       !
+!   REQUIRES the WW3 implicit-reset patch: without it an upstream defect  !
+!   leaves the solver work arrays un-reset in this exact cell and wave    !
+!   generation is silently erased (spectra pin at the SEED floor).        !
+!                                                                         !
+! Changing any of them requires rebuilding mod_def.ww3 and verifying the  !
+! result binary-wise (check_moddef_unst.py) -- ww3_grid's own echo prints !
+! small reals as 0.000 and cannot be trusted for these flags.             !
+! ---------------------------------------------------------------------- !
+
+&UNST UGOBCAUTO = F,
+UGOBCDEPTH= -10.,
+EXPFSN = F,
+EXPFSPSI = F,
+EXPFSFCT = F,
+IMPFSN = F,
+EXPTOTAL = F,
+IMPTOTAL = T,
+IMPREFRACTION = T,
+IMPFREQSHIFT = T,
+IMPSOURCE = F,
+SETUP_APPLY_WLV = F,
+SOLVERTHR_SETUP=1E-14,
+CRIT_DEP_SETUP=0.1,
+JGS_USE_JACOBI = T,
+JGS_BLOCK_GAUSS_SEIDEL = T,
+JGS_TERMINATE_MAXITER = T,
+JGS_MAXITER = 1000,
+JGS_TERMINATE_NORM = F,
+JGS_TERMINATE_DIFFERENCE = T,
+JGS_DIFF_THR = 1.E-6,
+JGS_PMIN = 3.0,
+JGS_LIMITER = T,
+JGS_NORM_THR = 1.E-20 /
+END OF NAMELISTS

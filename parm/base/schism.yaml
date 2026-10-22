@@ -1,0 +1,95 @@
+# Base configuration for all SCHISM-based OFS systems
+
+model:
+  type: schism
+  version: "5.10"
+
+  ocean_model: SCHISM
+
+  physics:
+    dt: 150.0
+    ibc: 0
+    ibtp: 1
+    itur: 3
+    ics: 2
+    nchi: -1
+    hmin_man: 1.0
+    ncor: 1
+    nramp: 1
+    dramp: 1.0
+
+  vertical:
+    ivcor: 1
+    nvrt: 51
+
+  run:
+    hindcast_days: 0.25
+    forecast_days: 5.0
+    # Explicit nowcast/forecast hours (computed from days if not set)
+    nowcast_hours: 6
+    forecast_hours: 120
+
+forcing:
+  atmospheric:
+    primary: gfs
+    fallback: nam
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+
+  river:
+    enabled: true
+    primary: nwm
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    interval: 360.0
+  fields_2d:
+    enabled: true
+    variables:
+      - elevation
+      - dahv
+  fields_3d:
+    enabled: true
+    variables:
+      - salinity
+      - temperature
+      - horizontalVelX
+      - horizontalVelY
+  intervals:
+    hotstart_days: 1.0
+    history_hours: 1.0
+
+resources:
+  nprocs: 480
+  nscribes: 4
+  memory_gb: 500
+  walltime_hours: 3

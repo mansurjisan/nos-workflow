@@ -1,0 +1,391 @@
+# Southeast Coastal Ocean Forecast System - UFS-Coastal (DATM+SCHISM coupled)
+
+_base: schism
+
+system:
+  name: secofs_ufs
+  description: "Southeast Coastal Ocean Forecast System (UFS-Coastal)"
+  region: southeast_coast
+  framework: comf
+  version: "3.7.0"
+  prefix: secofs_ufs
+
+# Authoritative when present: supersedes the is_stofs_like heuristic.
+prep:
+  extras:
+    st_lawrence: false
+    obc_dynamic_adjust: false
+
+grid:
+  type: unstructured
+  n_nodes: 1686665
+  n_elements: 3325055
+  n_sides: 5007180            # placeholder; SCHISM prints actual at startup
+  n_levels: 63
+  files:
+    horizontal: secofs_ufs.hgrid.gr3
+    vertical: secofs_ufs.vgrid.in
+    vertical_nu: secofs_ufs.vgrid.nu.in
+    vertical_fake: secofs_ufs.vgrid.fake.in
+    horizontal_ll: secofs_ufs.hgrid.ll
+    shapiro: secofs_ufs.shapiro.gr3
+    diffmin: secofs_ufs.diffmin.gr3
+    diffmax: secofs_ufs.diffmax.gr3
+    albedo: secofs_ufs.albedo.gr3
+    rough: secofs_ufs.rough.gr3
+    station: secofs_ufs.station.in
+  domain:
+    lon_min: -88.0
+    lon_max: -63.0
+    lat_min: 17.0
+    lat_max: 40.0
+  igrd_met: 0
+  igrd_obc: 1
+
+forcing:
+  atmospheric:
+    met_num: 2
+    primary: GFS
+    secondary: HRRR
+    forecast_source: GFS
+    forecast_source2: HRRR
+    scale_hflux: 1.0
+    # 0.25 gives hourly cadence; 0.50 gives 3-hourly and truncates the DATM grid.
+    gfs:
+      resolution: "0.25"
+    variables:
+      - PRMSL
+      - TMP
+      - SPFH
+      - UGRD
+      - VGRD
+      - PRATE
+      - DSWRF
+      - DLWRF
+
+  river:
+    enabled: true
+    primary: nwm
+    # Without these, vsource/vsink/msource.th truncate at 54h and SCHISM aborts.
+    hourly_extra_hours: 18
+    th_extra_hours: 1
+    files:
+      # ctl_file lists only 6 USGS-fallback rivers; the NWM mapping is in sources.json.
+      sources_json: secofs_ufs.sources.json
+      sinks_json: secofs_ufs.sinks.json
+      ctl_file: secofs_ufs.river.ctl
+      clim_file: nosofs.river.clim.usgs.nc
+      nwm_reach: secofs_ufs.nwm.reach.dat
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+      files:
+        obc_ctl: secofs_ufs.obc.ctl
+        obc_clim: nosofs.clim.WOA05.nc
+    nudging:
+      enabled: true
+      timescale_seconds: 10800.0
+      files:
+        nudge_weight: secofs_ufs.nudge.gr3
+        nudge_index: secofs_ufs.nobc_nudge_index.dat
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    create_forcing: 1
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+    files:
+      harmonic_constants_obc: secofs_ufs.bctides.in
+      harmonic_constants_ofs: secofs_ufs.bctides.in_template
+      harmonic_nwlon: nosofs.HC_NWLON.nc
+
+model:
+  executable: fv3_coastalS.exe
+  ocean_model: SCHISM
+  physics:
+    dt: 120.0
+    extstep_seconds: 120.0
+    cpp_lon: -124
+    cpp_lat: 45
+    # nws=4: NUOPC atmospheric coupling (vs nws=2 for sflux files)
+    nws: 4
+    nrampwind: 1
+    drampwind: 1.0
+    iwindoff: 0
+    ndtfast: 20
+    ihorcon: 0
+    ihdif: 0
+    idrag: 2
+    bfric: 0
+    ihhat: 1
+    inunfl: 0
+    min_depth: 0.01
+    rdrg: 3.0e-03
+    rdrg2: 0.005
+    zob: 0.0005
+    visc2: 0.0
+    visc4: 0.0
+    akt_bak: 5.0e-6
+    akv_bak: 5.0e-5
+    akk_bak: 5.0e-6
+    akp_bak: 5.0e-6
+    dcrit: 0.10
+    dstart: 151.0
+    tide_start: 0.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 2.0
+    nowcast_hours: 6
+    forecast_hours: 48
+    base_date: "2011010100"
+    time_start: "2011090100"
+  runtime:
+    ctl_file: secofs_ufs.param.nml
+    met_ctl_file: secofs_ufs.sflux_inputs.txt
+
+ufs_coastal:
+  enabled: true
+  datm_domain: ATLANTIC
+  # Coupling interval in seconds (must match runSeq @120 in ufs.configure and dt in param.nml)
+  coupling_interval: 120
+  datm_tasks: 120
+  schism_tasks: 2794
+  total_tasks: 2914
+  nscribes: 0
+  datm_forcing_source: grib2
+  blend_hrrr_gfs: true
+  blend_resolution: 0.025
+  blend_buffer_deg: 0.5
+  nhours_fcst: 48
+  dt_atmos: 720
+  # Fallback only: the orchestrator reads actual dims from the blended forcing file.
+  nx_global: 1721
+  ny_global: 1721
+  templates:
+    model_configure: model_configure.template
+    datm_in: datm_in.template
+    datm_streams: datm.streams.template
+    ufs_configure: ufs.configure
+
+output:
+  format: netcdf
+  prefix: secofs_ufs
+  nstation: 97
+  stations:
+    enabled: true
+    interval: 360
+    file: secofs_ufs.station.in
+  fields:
+    interval: 3600
+    def_interval: 86400
+  quicksave:
+    interval: 3600
+    def_interval: 86400
+  average:
+    interval: 3600
+  float:
+    interval: 3600
+  restart:
+    interval: 21600
+
+resources:
+  nprocs: 2914
+  nscribes: 0
+  memory_gb: 1500
+  walltime_hours: 2
+
+post:
+  archive_fields: true
+  products:
+    - stations_nc
+    # Separate from stations_nc so that file stays schema-identical to the ops product.
+    - stations_mllw
+    # Split-only: slab2d reads the per-variable stacks fields_nc splits from schout. MJ (09/05/26)
+    - name: fields_nc
+      options:
+        publish: false
+    - slab2d
+
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    GRIDFILE: grid.files.horizontal
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    VGRID_NU_CTL: grid.files.vertical_nu
+    VGRID_FAKE_CTL: grid.files.vertical_fake
+    STA_OUT_CTL: grid.files.station
+    Nudging_weight: forcing.ocean.nudging.files.nudge_weight
+
+    np_global: grid.n_nodes
+    ne_global: grid.n_elements
+    ns_global: grid.n_sides
+    nvrt: grid.n_levels
+    KBm: grid.n_levels
+
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+    IGRD_MET: grid.igrd_met
+    IGRD_OBC: grid.igrd_obc
+
+    MET_NUM: forcing.atmospheric.met_num
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.forecast_source
+    DBASE_MET_NOW2: forcing.atmospheric.secondary
+    DBASE_MET_FOR2: forcing.atmospheric.forecast_source2
+
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    DBASE_WL_FOR: forcing.ocean.obc.wl_source
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+
+    RIVER_CTL_FILE: forcing.river.files.ctl_file
+    NWM_REACHID_FILE: forcing.river.files.nwm_reach
+    OBC_CTL_FILE: forcing.ocean.obc.files.obc_ctl
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+    HC_FILE_OFS: forcing.tidal.files.harmonic_constants_ofs
+    HC_FILE_NWLON: forcing.tidal.files.harmonic_nwlon
+
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+
+    RUNTIME_CTL: model.runtime.ctl_file
+    RUNTIME_MET_CTL: model.runtime.met_ctl_file
+    DELT_MODEL: model.physics.dt
+    NDTFAST: model.physics.ndtfast
+    BASE_DATE: model.run.base_date
+    TIDE_START: model.physics.tide_start
+
+    LEN_NOWCAST: _computed.len_nowcast_hours
+    LEN_FORECAST: _computed.len_forecast_hours
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+
+    NSTA: output.stations.interval
+    NHIS: output.fields.interval
+    NDEFHIS: output.fields.def_interval
+    NQCK: output.quicksave.interval
+    NDEFQCK: output.quicksave.def_interval
+    NAVG: output.average.interval
+    NFLT: output.float.interval
+    NRST: output.restart.interval
+
+    TOTAL_TASKS: resources.nprocs
+
+    USE_DATM: ufs_coastal.enabled
+    NSCRIBES: ufs_coastal.nscribes
+    DT_ATMOS: ufs_coastal.dt_atmos
+    NX_GLOBAL: ufs_coastal.nx_global
+    NY_GLOBAL: ufs_coastal.ny_global
+
+ensemble:
+  enabled: true
+  n_members: 7
+  method: gefs
+  seed: 42
+  gefs:
+    enabled: true
+    n_gefs_members: 5
+    resolution: "0p25"
+    product: "pgrb2sp25"
+    control_member: "gec00"
+    perturbation_prefix: "gep"
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GEFS p01"
+        met_source_1: GEFS_01
+        met_source_2: null
+      "002":
+        label: "GEFS p02"
+        met_source_1: GEFS_02
+        met_source_2: null
+      "003":
+        label: "GEFS p03"
+        met_source_1: GEFS_03
+        met_source_2: null
+      "004":
+        label: "GEFS p04"
+        met_source_1: GEFS_04
+        met_source_2: null
+      "005":
+        label: "GEFS p05"
+        met_source_1: GEFS_05
+        met_source_2: null
+      "006":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
+    extra_sources:
+      - GEFS_01
+      - GEFS_02
+      - GEFS_03
+      - GEFS_04
+      - GEFS_05
+      - RRFS
+  # RRFS has no PRMSL; the forcing script substitutes MSLET.
+  rrfs:
+    enabled: true
+    resolution: "3km"
+    domain: "na"
+    max_forecast_hours: 84
+    fallback_source: null           # 48h forecast fits within RRFS 84h coverage
+    version: "v1.0"
+    status: "para"
+  perturb_physics: false
+  parameters:
+    rdrg2:
+      min: 0.001
+      max: 0.01
+      default: 0.005
+      distribution: uniform
+      description: "Bottom drag coefficient"
+    zob:
+      min: 0.0001
+      max: 0.001
+      default: 0.0005
+      distribution: log_uniform
+      description: "Bottom roughness length (m)"
+    akt_bak:
+      min: 1.0e-6
+      max: 1.0e-5
+      default: 5.0e-6
+      distribution: log_uniform
+      description: "Background tracer diffusivity (m2/s)"
+  resources:
+    walltime: "05:30:00"
+  post_resources:
+    walltime: "01:00:00"
+
+legacy:
+  enabled: false
+  ush_dir: ""
+  fix_dir: ""
+  exec_dir: ""

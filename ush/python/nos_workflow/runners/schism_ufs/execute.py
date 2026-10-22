@@ -1,0 +1,684 @@
+"""Orchestrate the UFS-Coastal execute stage (validation, mesh, mpi, archive)."""
+from __future__ import annotations
+
+import logging
+import os
+import re
+import shutil
+from pathlib import Path
+
+from ...bash_compat import run_shell_function
+from . import _dateutils, combine_hotstart, mesh, mirror_status, normalize_fields
+from .context import SchismRunContext
+from .stage_files import _is_stofs_atl, _is_ufs, _is_wave_enabled
+
+logger = logging.getLogger(__name__)
+
+
+_REQUIRED_CONFIGS: tuple = ("model_configure", "datm_in", "datm.streams", "ufs.configure")
+# Wave systems only (see _is_wave_enabled) -- appended onto _REQUIRED_CONFIGS.
+# The WAV ESMF mesh and ocn<->wav regrid weight names are dynamic
+# (ufs_coastal.wav_mesh / ufs_coastal.ocn2wav_weights / ufs_coastal.wav2ocn_weights),
+# so they're added from $WAV_MESH / $WAV_OCN2WAV_WEIGHTS / $WAV_WAV2OCN_WEIGHTS
+# rather than hardcoded here.
+_REQUIRED_WAVE_CONFIGS: tuple = ("ww3_shel.nml", "mod_def.ww3")
+_HOTSTART_IT_RE = re.compile(r"hotstart_it=(\d+)\.nc$")
+_PETLIST_BOUNDS_RE = re.compile(
+    # Leading whitespace allowed -- matches the nos-utils patcher, which
+    # replaces "^(\s*<COMP>_petlist_bounds:\s*).*$" and so preserves any
+    # indentation already in the fix file.
+    r"^[ \t]*(MED|ATM|OCN|WAV)_petlist_bounds:\s*(\d+)\s+(\d+)\s*$", re.MULTILINE,
+)
+_RUNSEQ_INTERVAL_RE = re.compile(r"(?m)^@(\d+)\s*$")
+# Any MED_attributes::*_smapname line (ocn2wav_smapname today; generalized
+# so a future *_smapname doesn't silently bypass this check). CMEPS opens
+# each one directly with a plain nf90_open at mediator init -- see
+# _validate_wave_ufs_configure.
+_SMAPNAME_RE = re.compile(r"^[ \t]*(\w+_smapname)\s*=\s*(\S+)\s*$", re.MULTILINE)
+
+
+def _hotstart_step(path: Path) -> int:
+    """Parse the step number out of a hotstart_it=<N>.nc name; -1 if it doesn't match."""
+    match = _HOTSTART_IT_RE.search(path.name)
+    return int(match.group(1)) if match else -1
+
+
+def run_python(ctx: SchismRunContext, phase: str) -> int:
+    """Execute the UFS-Coastal stage end-to-end.
+
+    Returns 0 on success, non-zero only if mpiexec or config validation fails.
+    """
+    rc = _validate_configs(ctx, phase)
+    if rc != 0:
+        return rc
+
+    rc = _validate_wave_ufs_configure(ctx, phase)
+    if rc != 0:
+        return rc
+
+    rc = _validate_atl_inputs(ctx, phase)
+    if rc != 0:
+        return rc
+
+    rc = _maybe_regenerate_mesh(ctx, phase)
+    if rc != 0:
+        logger.warning(
+            "execute: ESMF mesh regen returned rc=%d; using existing mesh", rc,
+        )
+
+    # mpiexec stays in shell; module load doesn't survive a Python subprocess.
+    rc = _run_mpi_shell(ctx, phase)
+    if rc != 0:
+        logger.error("execute: mpiexec failed (rc=%d)", rc)
+        return rc
+
+    if _is_stofs_atl(ctx):
+        # Production only logs a missing completion line here and stops in post
+        # (nco_v315 exstofs_3d_atl_now_forecast.sh:584-615). MJ (10/05/26)
+        for d in ("outputs", "outputs_nowcast"):
+            if (ctx.data / d / "mirror.out").is_file():
+                ok, why = mirror_status.check_mirror_out(
+                    ctx.data / d / "mirror.out", ctx.data / "param.nml", coupled=_is_ufs())
+                (logger.info if ok else logger.warning)("execute: mirror.out check: %s", why)
+                break
+
+    # combine_hotstart7 also stays in shell for the hpc-stack module load.
+    combine_rc = combine_hotstart.combine_hotstart_files(ctx, phase)
+    if combine_rc != 0:
+        logger.warning(
+            "execute: combine_hotstart returned rc=%d (non-fatal)", combine_rc,
+        )
+
+    # OLDIO field normalization (no-op unless post.archive_fields is on).
+    fields_rc = normalize_fields.normalize_field_outputs(ctx, phase)
+    if fields_rc != 0:
+        logger.warning(
+            "execute: fields normalize returned rc=%d (non-fatal)", fields_rc,
+        )
+
+    archive_rc = _archive_restart(ctx, phase)
+    if archive_rc != 0:
+        logger.warning(
+            "execute: rst archive returned rc=%d (non-fatal)", archive_rc,
+        )
+
+    wave_archive_rc = _archive_wave_restarts(ctx, phase)
+    if wave_archive_rc != 0:
+        logger.warning(
+            "execute: wave restart archive returned rc=%d (non-fatal)",
+            wave_archive_rc,
+        )
+
+    return 0
+
+
+def _validate_configs(ctx: SchismRunContext, phase: str) -> int:
+    """Validate that required UFS configs exist and are non-empty in $DATA.
+
+    Standalone SCHISM (pschism) needs none of the UFS configs -> rc=0.
+    """
+    del phase
+    if not _is_ufs():
+        return 0
+    required = _REQUIRED_CONFIGS
+    if _is_wave_enabled():
+        required = required + _REQUIRED_WAVE_CONFIGS
+        wav_mesh = os.environ.get("WAV_MESH")
+        if wav_mesh:
+            required = required + (wav_mesh,)
+        # Required while the ESMF dual-construction workaround is in place:
+        # fix/secofs_ufs_ww3/ufs.configure unconditionally sets
+        # ocn2wav_smapname, so CMEPS always takes the ESMF_FieldSMMStore
+        # path and does a plain nf90_open on this file at mediator init --
+        # there is no fallback to computing the map on the fly. A missing
+        # file aborts ~300s into a multi-thousand-PET job. Failing here,
+        # before the MPI launch, is cheap; the alternative is losing a
+        # full allocation to rediscover the same missing file. This is a
+        # fast pre-check keyed off the env var; _validate_wave_ufs_configure
+        # is the authoritative check, keyed off the staged ufs.configure
+        # itself, so it still catches a stale/broken env chain.
+        ocn2wav_weights = os.environ.get("WAV_OCN2WAV_WEIGHTS")
+        if ocn2wav_weights:
+            required = required + (ocn2wav_weights,)
+        # Same rationale, transpose direction: fix/secofs_ufs_ww3/ufs.configure
+        # also sets wav2ocn_smapname unconditionally (requires the
+        # wav2ocn_smapname CMEPS-interface patch -- see cmeps_patch/ and the
+        # repo runbook's "V16 -- wav2ocn weights + CMEPS patch" section).
+        wav2ocn_weights = os.environ.get("WAV_WAV2OCN_WEIGHTS")
+        if wav2ocn_weights:
+            required = required + (wav2ocn_weights,)
+    missing = []
+    for name in required:
+        f = ctx.data / name
+        if not f.is_file() or f.stat().st_size == 0:
+            missing.append(name)
+    if missing:
+        logger.error(
+            "execute: required UFS configs missing in %s: %s",
+            ctx.data, missing,
+        )
+        return 1
+    logger.info(
+        "execute: validated %d UFS configs in %s",
+        len(required), ctx.data,
+    )
+    return 0
+
+
+def _atl_schism_ranks(ctx: SchismRunContext) -> "int | None":
+    """SCHISM compute ranks the launch will give pschism/the OCN component.
+
+    Standalone: TOTAL_TASKS (what nos_run.sh launches, NPROCS as fallback)
+    minus NSCRIBES. Coupled: the OCN span of the staged ufs.configure (the
+    3-component layout sets OCN = total - DATM and ignores schism_tasks),
+    falling back to SCHISM_TASKS. None when nothing says. MJ (10/03/26)
+    """
+    try:
+        if not _is_ufs():
+            nprocs = os.environ.get("TOTAL_TASKS") or os.environ.get("NPROCS")
+            return int(nprocs) - int(os.environ.get("NSCRIBES") or 8)
+        cfg = ctx.data / "ufs.configure"
+        if cfg.is_file():
+            for comp, lo, hi in _PETLIST_BOUNDS_RE.findall(cfg.read_text()):
+                if comp == "OCN":
+                    return int(hi) - int(lo) + 1
+        return int(os.environ["SCHISM_TASKS"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+_ATL_REQUIRED_INPUTS: tuple = ("bctides.in", "elev2D.th.nc", "TEM_3D.th.nc", "SAL_3D.th.nc",
+                               "uv3D.th.nc", "TEM_nu.nc", "SAL_nu.nc")
+
+
+def _validate_atl_inputs(ctx: SchismRunContext, phase: str) -> int:
+    """STOFS-3D-ATL pre-launch hard-fails (standalone and coupled).
+
+    - flux.th must be staged (the ATL bctides has an ifltype=1 boundary;
+      SCHISM aborts with 'file not found, unit 51' otherwise).
+    - partition.prop must have one line per hgrid element and its highest
+      rank + 1 must equal the SCHISM compute-rank count; lowest rank must be 0.
+    MJ (10/03/26)
+    """
+    if not _is_stofs_atl(ctx):
+        return 0
+
+    flux = ctx.data / "flux.th"
+    if not flux.is_file() or flux.stat().st_size == 0:
+        logger.error(
+            "execute: flux.th missing or empty in %s. STOFS-3D-ATL has an "
+            "ifltype=1 boundary and SCHISM aborts without it. Re-run prep so "
+            "$COMOUT holds %s.%s.riv.obs.flux.th.",
+            ctx.data, ctx.run, ctx.cycle,
+        )
+        return 1
+
+    # OBC, nudging and tide files production's prep gate requires
+    # (nco_v315 scripts/stofs_3d_atl/exstofs_3d_atl_prep_processing.sh:425-700). MJ (10/05/26)
+    missing = [n for n in _ATL_REQUIRED_INPUTS
+               if not (ctx.data / n).is_file() or (ctx.data / n).stat().st_size == 0]
+    if missing:
+        logger.error(
+            "execute: %s missing or empty in %s. Re-run prep so $COMOUT holds the %s tars "
+            "(SCHISM would abort after the node allocation).",
+            missing, ctx.data, phase,
+        )
+        return 1
+
+    prop = ctx.data / "partition.prop"
+    hgrid = ctx.data / "hgrid.gr3"
+    if not prop.is_file() or not hgrid.is_file():
+        logger.error(
+            "execute: partition.prop or hgrid.gr3 missing in %s", ctx.data,
+        )
+        return 1
+    with hgrid.open() as fh:
+        fh.readline()
+        ne_global = int(fh.readline().split()[0])
+    n_lines = 0
+    max_rank = -1
+    min_rank = None
+    with prop.open() as fh:
+        for line in fh:
+            tok = line.split()
+            if not tok:
+                continue
+            n_lines += 1
+            r = int(tok[-1])
+            max_rank = max(max_rank, r)
+            min_rank = r if min_rank is None else min(min_rank, r)
+    if n_lines != ne_global:
+        logger.error(
+            "execute: partition.prop has %d lines but hgrid ne_global=%d "
+            "(wrong mesh generation?)", n_lines, ne_global,
+        )
+        return 1
+    if min_rank != 0:
+        logger.error(
+            "execute: partition.prop lowest rank is %s, not 0; SCHISM aborts "
+            "(grid_subs.F90:305-308).", min_rank,
+        )
+        return 1
+    ranks = _atl_schism_ranks(ctx)
+    if ranks is None:
+        logger.warning(
+            "execute: SCHISM rank count not derivable from the env; "
+            "partition.prop rank check skipped",
+        )
+    elif max_rank + 1 != ranks:
+        logger.error(
+            "execute: partition.prop uses %d ranks (max rank %d) but the "
+            "launch gives SCHISM %d compute ranks. Regenerate it "
+            "(tools/gen_stofs_partition_prop.sh) or fix the task counts.",
+            max_rank + 1, max_rank, ranks,
+        )
+        return 1
+    return 0
+
+
+def _validate_wave_ufs_configure(ctx: SchismRunContext, phase: str) -> int:
+    """Sanity-check the staged 4-component ufs.configure before MPI launch.
+
+    Wave systems only -- rc=0 immediately otherwise.
+
+    The 4-component (DATM+SCHISM+WW3) PET-bounds/runSeq-interval patch
+    requires a nos-utils pin that actually implements it
+    (``ufs_wav_tasks``/``ufs_coupling_interval``, nos-utils
+    feature/ufs-config-4component). A STALE pin silently falls back to
+    the old 3-component patcher: it widens OCN across the WAV PETs it
+    doesn't know about (an OCN/WAV overlap) and reverts the runSeq
+    interval to ``@<model_dt>``, dropping the coarser wave coupling
+    window -- exit code 0, at most one INFO line, and the model then runs
+    5520 ranks on a corrupted PET layout. This check catches that class
+    of bug here, before the MPI launch, rather than at a WW3/CDEPS abort
+    deep into the coupled init.
+
+    Checks, against the file nos-utils actually staged to $DATA (NOT the
+    fix-file template -- a stale pin can still leave 4 lines present, just
+    wrongly bounded):
+      - all four ``*_petlist_bounds`` lines are present;
+      - ATM/OCN/WAV are contiguous, non-overlapping, and together cover
+        ``0..total_tasks-1`` (MED is NOT part of this partition by
+        design -- it spans the FULL PET range as the mediator, see
+        ``fix/secofs_ufs_ww3/ufs.configure`` -- so MED's span is checked
+        separately below rather than folded into the non-overlap check);
+      - MED's span is exactly ``0..total_tasks-1``;
+      - the runSeq ``@<interval>`` line matches ``$COUPLING_INTERVAL``
+        (``ufs_coastal.coupling_interval`` from the YAML).
+
+    Also checks every ``MED_attributes::*_smapname`` line (``ocn2wav_smapname``
+    and, since the wav2ocn_smapname CMEPS patch, ``wav2ocn_smapname`` too --
+    the regex is generic, so any future ``*_smapname`` attribute is covered
+    automatically with no code change here) against ``$DATA`` directly,
+    independent of any env var. This is the authoritative check for those
+    weight files: staging derives the expected filename from
+    ``$WAV_OCN2WAV_WEIGHTS``/``$WAV_WAV2OCN_WEIGHTS``, so if either variable
+    is unset (a stale yaml or a broken yaml-to-env eval) staging silently
+    skips the file and _validate_configs's env-driven check silently skips
+    requiring it too, while ufs.configure -- a static template -- still
+    carries the attribute unconditionally. CMEPS then opens the named file
+    with a plain nf90_open at mediator init regardless of how it got (or
+    didn't get) staged; reading the requirement from the same file CMEPS
+    reads closes that gap.
+    """
+    del phase
+    if not _is_wave_enabled():
+        return 0
+
+    target = ctx.data / "ufs.configure"
+    if not target.is_file() or target.stat().st_size == 0:
+        logger.error(
+            "execute: %s missing or empty; cannot validate the wave PET "
+            "layout", target,
+        )
+        return 1
+    content = target.read_text()
+
+    for attr, filename in _SMAPNAME_RE.findall(content):
+        if filename == "unset":
+            continue
+        f = ctx.data / filename
+        if not f.is_file() or f.stat().st_size == 0:
+            logger.error(
+                "execute: staged ufs.configure declares %s = %s, but that "
+                "file is not staged in %s. CMEPS opens this attribute with "
+                "a plain nf90_open at mediator init -- a missing file "
+                "aborts well into the MPI launch.",
+                attr, filename, ctx.data,
+            )
+            return 1
+
+    bounds = {
+        comp: (int(lo), int(hi))
+        for comp, lo, hi in _PETLIST_BOUNDS_RE.findall(content)
+    }
+    missing = [c for c in ("MED", "ATM", "OCN", "WAV") if c not in bounds]
+    if missing:
+        logger.error(
+            "execute: staged ufs.configure is missing *_petlist_bounds "
+            "for %s (found: %s). A wave system requires all four "
+            "components. Likely cause: the ush/python/nos-utils pin "
+            "predates ufs_wav_tasks support and silently applied the "
+            "3-component patcher -- check the submodule pin.",
+            missing, sorted(bounds),
+        )
+        return 1
+
+    total_env = os.environ.get("TOTAL_TASKS") or os.environ.get("NPROCS")
+    try:
+        total_tasks = int(total_env)
+    except (TypeError, ValueError):
+        logger.error(
+            "execute: TOTAL_TASKS/NPROCS not set or non-numeric (%r); "
+            "cannot validate the wave PET layout", total_env,
+        )
+        return 1
+
+    expected_lo = 0
+    for comp in ("ATM", "OCN", "WAV"):
+        lo, hi = bounds[comp]
+        if lo != expected_lo or hi < lo:
+            logger.error(
+                "execute: wave PET layout is not contiguous/non-overlapping "
+                "-- %s_petlist_bounds is %d %d, expected to start at %d. "
+                "Likely cause: a stale ush/python/nos-utils pin (the "
+                "3-component PET patcher widened OCN across WAV's "
+                "untouched PETs). Full bounds: %s",
+                comp, lo, hi, expected_lo, bounds,
+            )
+            return 1
+        expected_lo = hi + 1
+
+    if expected_lo != total_tasks:
+        logger.error(
+            "execute: wave PET layout covers 0..%d but total_tasks=%d "
+            "(ATM+OCN+WAV must cover 0..total_tasks-1 exactly). Likely "
+            "cause: a stale ush/python/nos-utils pin, or a "
+            "datm/schism/wav/total_tasks mismatch in the YAML. Full "
+            "bounds: %s",
+            expected_lo - 1, total_tasks, bounds,
+        )
+        return 1
+
+    med_lo, med_hi = bounds["MED"]
+    if (med_lo, med_hi) != (0, total_tasks - 1):
+        logger.error(
+            "execute: MED_petlist_bounds is %d %d, expected 0 %d (the "
+            "mediator spans the full PET range in a wave-coupled "
+            "layout). Likely cause: a stale ush/python/nos-utils pin "
+            "applied the 3-component patch (MED confined to the DATM "
+            "PETs) -- check the submodule pin.",
+            med_lo, med_hi, total_tasks - 1,
+        )
+        return 1
+
+    interval_matches = _RUNSEQ_INTERVAL_RE.findall(content)
+    configured_interval_env = os.environ.get("COUPLING_INTERVAL")
+    if configured_interval_env:
+        try:
+            expected_interval = int(configured_interval_env)
+        except ValueError:
+            expected_interval = None
+        if expected_interval and (
+            len(interval_matches) != 1
+            or int(interval_matches[0]) != expected_interval
+        ):
+            logger.error(
+                "execute: runSeq coupling interval in ufs.configure is "
+                "%s, expected @%d ($COUPLING_INTERVAL / "
+                "ufs_coastal.coupling_interval). Likely cause: a stale "
+                "ush/python/nos-utils pin reverted the interval to "
+                "@<model_dt> (the 3-component patcher doesn't know about "
+                "ufs_coupling_interval) -- check the submodule pin.",
+                interval_matches, expected_interval,
+            )
+            return 1
+
+    logger.info(
+        "execute: validated 4-component wave PET layout (ATM=%s OCN=%s "
+        "WAV=%s MED=%s), runSeq interval=@%s",
+        bounds["ATM"], bounds["OCN"], bounds["WAV"], bounds["MED"],
+        interval_matches[0] if interval_matches else "?",
+    )
+    return 0
+
+
+def _maybe_regenerate_mesh(ctx: SchismRunContext, phase: str) -> int:
+    """Regenerate the ESMF mesh from datm_forcing.nc if the forcing file exists.
+
+    Standalone SCHISM has no DATM/ESMF mesh -> rc=0 (nothing to regen).
+    """
+    del phase
+    if not _is_ufs():
+        return 0
+    datm_dir_name = os.environ.get("DATM_INPUT_DIR") or "INPUT"
+    forcing = ctx.data / datm_dir_name / "datm_forcing.nc"
+    if not forcing.is_file() or forcing.stat().st_size == 0:
+        logger.info(
+            "execute: no DATM forcing file at %s; skipping mesh regen",
+            forcing,
+        )
+        return 0
+    out = ctx.data / datm_dir_name / "datm_esmf_mesh.nc"
+    logger.info("execute: regenerating ESMF mesh from %s", forcing)
+    return mesh.generate_esmf_mesh(forcing, out)
+
+
+def _run_mpi_shell(ctx: SchismRunContext, phase: str) -> int:
+    """Invoke ``_schism_run_mpi`` from a shell context with module load active."""
+    ushnos_env = os.environ.get("USHnos")
+    if not ushnos_env:
+        if ctx.ushnos is None:
+            logger.error("execute: USHnos not set; cannot invoke shell helper")
+            return 1
+        ushnos = ctx.ushnos
+    else:
+        ushnos = Path(ushnos_env)
+    nos_run = ushnos / "nos_run.sh"
+    if not nos_run.is_file():
+        logger.error("execute: nos_run.sh not found at %s", nos_run)
+        return 1
+    return run_shell_function(
+        script=nos_run,
+        function="_schism_run_mpi",
+        args=(phase,),
+        env=os.environ.copy(),
+        cwd=ctx.data,
+    )
+
+
+def _archive_restart(ctx: SchismRunContext, phase: str) -> int:
+    """Copy the combined hotstart to $COMOUT as the rst.{phase}.nc artifact."""
+    if phase == "nowcast":
+        rst_dst_name = ctx.rst_out_nowcast
+    elif phase == "forecast":
+        rst_dst_name = ctx.rst_out_forecast
+    else:
+        logger.warning("execute: unknown phase=%r, skipping rst archive", phase)
+        return 0
+
+    if rst_dst_name is None:
+        logger.info(
+            "execute: rst_out_%s is None in ctx; combine_hotstart "
+            "already archived the canonical filename",
+            phase,
+        )
+        return 0
+
+    outputs_dir = ctx.data / "outputs"
+    if not outputs_dir.is_dir():
+        logger.info(
+            "execute: $DATA/outputs missing; rst archive skipped"
+        )
+        return 0
+    candidates = list(outputs_dir.glob("hotstart_it=*.nc"))
+    if not candidates:
+        logger.info(
+            "execute: no hotstart_it=*.nc in %s; rst archive skipped",
+            outputs_dir,
+        )
+        return 0
+    # Step numbers sort lexicographically, not numerically ("1920" < "960"),
+    # so pick the file with the largest parsed step rather than the last name.
+    rst_src = max(candidates, key=_hotstart_step)
+    rst_dst = ctx.comout / rst_dst_name
+    rst_dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(rst_src, rst_dst)
+    logger.info("execute: archived %s -> %s", rst_src, rst_dst)
+    return 0
+
+
+def _wave_restart_comout_dir(ctx: SchismRunContext) -> Path:
+    """$COMOUT subdirectory the wave restart handoff is archived under.
+
+    Shared naming between the archive side (here) and the restore side
+    (stage_files.stage_wave_restarts) -- both must agree on this path.
+    """
+    return ctx.comout / f"{ctx.run}.{ctx.cycle}.wave_restart"
+
+
+def _archive_wave_restarts(ctx: SchismRunContext, phase: str) -> int:
+    """Copy the WW3 + CMEPS mediator restart artifacts to $COMOUT.
+
+    Wave systems only (rc=0 immediately otherwise). Mirrors
+    ``_archive_restart``'s role for SCHISM's own hotstart, but for the
+    three CMEPS-named artifacts the model writes into $DATA once this
+    leg's MPI run completes:
+      - $DATA/RESTART/ufs.cpld.cpl.r.<stamp>.nc  (mediator restart;
+        ufs.configure's restart_dir = RESTART/)
+      - $DATA/rpointer.cpl.<stamp>                (pointer file, run-dir
+        root)
+      - $DATA/ufs.cpld.ww3.r.<stamp>.nc            (WW3 restart, run-dir
+        root -- w3initmd's read path has no directory prefix)
+
+    Archived verbatim (same basenames) so
+    ``stage_files.stage_wave_restarts`` can restore them unchanged into
+    the NEXT leg's (different) $DATA. Nowcast-leg only: the forecast leg
+    is the last leg of a cycle today, so its own restart pair has no
+    consumer, and writing it out every cycle is a multi-GB $COMOUT cost
+    nothing prunes. Re-enable the forecast-leg archive if a next-cycle
+    consumer ever exists (chaining forecast-leg wave state forward).
+
+    Atomic swap, not an in-place write: the three artifacts are first
+    copied into a temporary sibling directory (``<target>.tmp.<pid>``, in
+    the same $COMOUT filesystem as ``target`` so the final step is a
+    cheap rename rather than a cross-filesystem copy), then swapped into
+    place with a single ``os.replace`` only once all three copied
+    successfully. This closes a reruns-of-the-same-cycle hazard: writing
+    the three files directly into ``target`` and reusing it across
+    reruns meant a crash mid-archive followed by a retry that *also*
+    failed partway could leave a MIXED set at ``target`` -- same
+    filenames, but from two different attempts -- which
+    ``stage_wave_restarts``' all-three-present check would then accept
+    as a legitimate, internally-consistent archive. The contract now is:
+    on entry, any existing ``target`` is removed outright (a fresh
+    nowcast supersedes any prior attempt -- this leg's own archive is
+    the only thing that should ever populate it); the new set is
+    assembled entirely in the tmp dir; ``target`` reappears atomically
+    only on full success. On any failure (a copy raises, or fewer than
+    three artifacts are found) the tmp dir is removed and the failure is
+    logged loudly, leaving ``target`` absent. After this change a
+    partial archive at ``target`` should be impossible --
+    ``stage_files.stage_wave_restarts``' forecast branch still raises
+    ``FileNotFoundError`` if it ever finds a partial set there, but that
+    is now purely defense-in-depth (see that function's docstring).
+
+    Non-fatal: the model already ran successfully by this point, so a
+    missing/failed artifact here only costs a future leg's warm restart,
+    not this one.
+    """
+    if not _is_wave_enabled():
+        return 0
+
+    if phase == "nowcast":
+        wav_name = ctx.wav_rst_out_nowcast
+        med_name = ctx.med_rst_out_nowcast
+        stamp_date = ctx.time_nowcastend
+    elif phase == "forecast":
+        logger.info(
+            "execute: forecast-leg wave restart has no consumer today; "
+            "skipping archive (see _archive_wave_restarts docstring)",
+        )
+        return 0
+    else:
+        logger.warning(
+            "execute: unknown phase=%r, skipping wave restart archive", phase,
+        )
+        return 0
+
+    if not wav_name or not med_name or not stamp_date:
+        logger.info(
+            "execute: wave restart filenames not resolved in ctx for "
+            "phase=%s; skipping wave restart archive", phase,
+        )
+        return 0
+
+    pointer_name = f"rpointer.cpl.{_dateutils.cmeps_restart_stamp(stamp_date)}"
+    target = _wave_restart_comout_dir(ctx)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_target = target.with_name(f"{target.name}.tmp.{os.getpid()}")
+
+    # A fresh nowcast supersedes any prior attempt's archive outright --
+    # never reuse/merge into an existing target, that's the MIXED-set
+    # hazard this fix closes. Clear any leftover tmp dir from a prior
+    # crashed attempt too, so it doesn't collide with this one.
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+    if tmp_target.exists():
+        shutil.rmtree(tmp_target, ignore_errors=True)
+
+    copied = 0
+    try:
+        tmp_target.mkdir(parents=True)
+        for label, src, dst_name in (
+            ("mediator restart", ctx.data / "RESTART" / med_name, med_name),
+            ("WW3 restart", ctx.data / wav_name, wav_name),
+            ("pointer file", ctx.data / pointer_name, pointer_name),
+        ):
+            if not (src.is_file() and src.stat().st_size > 0):
+                logger.warning(
+                    "execute: wave restart archive: %s not found at %s "
+                    "(phase=%s); a future leg's wave restart handoff may "
+                    "have to cold-start.",
+                    label, src, phase,
+                )
+                continue
+            try:
+                shutil.copy2(src, tmp_target / dst_name)
+            except OSError:
+                # Non-fatal (see docstring): the model already ran; log
+                # loudly and fall through to the incomplete-archive path
+                # below rather than letting this crash the execute stage.
+                logger.exception(
+                    "execute: wave restart archive: copying %s (%s) to "
+                    "%s failed (phase=%s); a future leg's wave restart "
+                    "handoff may have to cold-start.",
+                    label, src, tmp_target, phase,
+                )
+                continue
+            copied += 1
+
+        if copied == 3:
+            os.replace(tmp_target, target)
+            logger.info(
+                "execute: archived %d/3 wave restart artifact(s) to %s",
+                copied, target,
+            )
+        else:
+            logger.warning(
+                "execute: wave restart archive incomplete (%d/3 "
+                "artifacts); discarding this attempt so %s stays ABSENT "
+                "rather than partially populated -- stage_wave_restarts "
+                "treats an absent archive as a clean cold start and a "
+                "partial one as a hard error, so a future leg will "
+                "cold-start its wave restart instead of raising",
+                copied, target,
+            )
+    finally:
+        if tmp_target.exists():
+            shutil.rmtree(tmp_target, ignore_errors=True)
+
+    return 0
+
+
+__all__ = ["run_python"]

@@ -1,0 +1,235 @@
+#!/bin/bash
+set -x
+
+########################################
+# JNOS_NOWCAST - Nowcast Job
+#
+# Runs the nowcast phase for all frameworks (COMF, STOFS, ADCIRC).
+# Archives hotstart file to $COMOUT so the forecast job can retrieve it.
+# Forecast runs in a separate JNOS_FORECAST job.
+########################################
+export PS4=' $SECONDS + '
+date
+
+########################################
+# Load shared library if available
+# Note: LD_PRELOAD of libnetcdff.so is only for COMF Fortran executables.
+# STOFS uses Python scripts (numpy/netCDF4) that segfault when the
+# Fortran library is force-loaded into the process.
+########################################
+export LD_PRELOAD=${LD_PRELOAD:-}
+
+########################################
+# Set HOME directories
+########################################
+export HOMEnos=${HOMEnos:-${PACKAGEROOT}/nos-workflow}
+export HOMEstofs=${HOMEstofs:-${HOMEnos}}
+
+###################################
+# Specify NET and RUN Name and model
+####################################
+# STOFS uses NET=stofs, nosofs uses NET=nosofs
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl|stofs_2d_glo)
+        export NET=${NET:-stofs}
+        ;;
+    *)
+        export NET=${NET:-nos}
+        ;;
+esac
+export RUN=${RUN:-$OFS}
+export PREFIXNOS=${PREFIXNOS:-$OFS}
+export SENDDBN=${SENDDBN:-NO}
+
+export cycle=t${cyc}z
+
+########################################################
+# Working directory
+########################################################
+export DATA=${DATA:-${DATAROOT:?}/${jobid:?}}
+
+if [ ! -d $DATA ]; then
+    mkdir -p $DATA
+    cd $DATA
+else
+    cd $DATA
+fi
+
+############################################
+# Job Output
+############################################
+export pgmout="OUTPUT.$$"
+export jlogfile=${logfile:-${DATA}/jlogfile}
+
+####################################
+# Execution Areas
+####################################
+export EXECnos=${EXECnos:-${HOMEnos}/exec}
+export FIXnos=${FIXnos:-${HOMEnos}/fix/shared}
+export FIXofs=${FIXofs:-${HOMEnos}/fix/${OFS}}
+export PARMnos=${PARMnos:-${HOMEnos}/parm}
+export USHnos=${USHnos:-${HOMEnos}/ush}
+export SCRIPTSnos=${SCRIPTSnos:-${HOMEnos}/scripts}
+
+# STOFS specific paths (match IT-stofs directory layout)
+# Use unconditional assignment to override any stale module values
+export EXECstofs3d=${HOMEstofs}/exec/${RUN}
+export FIXstofs3d=${HOMEstofs}/fix/${RUN}
+export USHstofs3d=${HOMEstofs}/ush/${RUN}
+export SCRIstofs3d=${HOMEstofs}/scripts/${RUN}
+export PYstofs3d=${USHstofs3d}/pysh
+
+####################################
+# YAML Configuration Loading
+####################################
+# Determine OFS framework type
+case "${OFS,,}" in
+    stofs_3d_atl|stofs_3d_pac|stofs_2d_atl)
+        export OFS_FRAMEWORK="stofs"
+        ;;
+    stofs_2d_glo)
+        export OFS_FRAMEWORK="adcirc"
+        ;;
+    *)
+        export OFS_FRAMEWORK="comf"
+        ;;
+esac
+
+export OFS_CONFIG="${OFS_CONFIG:-${PARMnos}/systems/${OFS}.yaml}"
+
+# Source unified config loader and load YAML config
+if [ -f "${USHnos}/nos_config.sh" ]; then
+    source "${USHnos}/nos_config.sh"
+    load_ofs_config "${OFS_CONFIG}" "${OFS_FRAMEWORK}"
+fi
+
+echo "OFS Framework: ${OFS_FRAMEWORK}"
+
+###########################################
+# PDY variables
+###########################################
+if [ -z "${PDY:-}" ]; then
+    if command -v setpdy.sh &> /dev/null; then
+        setpdy.sh
+        . PDY
+    fi
+fi
+export PDY=${PDY:-$(date +%Y%m%d)}
+
+##############################################
+# Define COM directories
+##############################################
+export COMROOT=${COMROOT:-/lfs/h1/ops/${envir}/com}
+
+# COM layout: ${COMROOT}/${NET}/${RUN}.${PDY}
+# = e.g. /lfs/h1/nos/ptmp/$LOGNAME/com/nos/secofs_ufs.20260507
+# (unversioned — drops the legacy nosofs/v3.7.0 segment)
+export COMOUTroot=${COMOUTroot:-${COMROOT}/${NET}}
+export COMIN=${COMIN:-${COMOUTroot}/${RUN}.${PDY}}
+export COMOUT=${COMOUT:-${COMOUTroot}/${RUN}.${PDY}}
+
+mkdir -m 775 -p $COMOUT
+
+# STOFS COMOUTrerun (where prep job places forcing files)
+export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+##################################################################
+# Log Files
+##################################################################
+export nosjlogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.jlogfile.log
+export cormslogfile=${COMOUT}/${PREFIXNOS}.${cycle}.${PDY}.corms.log
+
+env
+
+########################################################
+# Execute the nowcast script based on framework
+########################################################
+case "${OFS_FRAMEWORK}" in
+    stofs)
+        # STOFS additional directory paths
+        export PARMstofs3d=${PARMstofs3d:-${HOMEstofs}/parm/${RUN}}
+
+        # STOFS time variables
+        export PDYHH=${PDY}${cyc}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        if command -v ${NDATE} &> /dev/null; then
+            export PDYHH_FCAST_END=$(${NDATE} 72 $PDYHH)
+            export PDYHH_NCAST_BEGIN=$(${NDATE} -24 $PDYHH)
+        fi
+        export N_DAYS_MODEL_RUN_PERIOD=${N_DAYS_MODEL_RUN_PERIOD:-5.0}
+
+        # STOFS COM paths — use COMOUTroot to stay consistent with compath.py
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COMINstofs=${COMINstofs:-${COMOUTroot}}
+        export COMOUT_PREV=${COMOUT_PREV:-${COMINstofs}/${RUN}.${PDYm1:-}}
+
+        # Prevent user site-packages from interfering with STOFS Python scripts
+        export PYTHONNOUSERSITE=1
+
+        # Execute nowcast-only ex-script
+        $SCRIstofs3d/exnos_nowcast.sh
+        ;;
+    adcirc)
+        # ADCIRC-specific paths (alias stofs3d paths for 2D variable names)
+        export FIXstofs2d=${FIXstofs3d}
+        export USHstofs2d=${USHstofs3d}
+        export EXECstofs2d=${EXECstofs3d}
+
+        # ADCIRC persistent GES directory (tidal factors, decomposed grids)
+        export COMGES=${COMGES:-${COMOUTroot}/${RUN}}
+
+        # ADCIRC time variables
+        export PDYHH=${PDY}${cyc}
+        export YMDH=${PDYHH}
+        export PDYHH_FCAST_BEGIN=$PDYHH
+        export NDATE=${NDATE:-ndate}
+        export NHOUR=${NHOUR:-nhour}
+        export NCDUMP=${NCDUMP:-ncdump}
+
+        # ADCIRC COM paths
+        export stofs_ver=${stofs_ver:-v2.1.0}
+        export COM=${COM:-${COMOUTroot}}
+        export COMOUTrerun=${COMOUTrerun:-${COMOUT}/rerun}
+
+        # ADCIRC execution resources (from YAML or defaults)
+        export NCPU=${NCPU:-960}
+        export TOT_NCPU=${TOT_NCPU:-966}
+        export PPN=${PPN:-120}
+        export NUM_WRITERS=${NUM_WRITERS:-6}
+        export COLDSTART=${COLDSTART:-NO}
+        export nback=${nback:-20}
+
+        # Execute nowcast-only ex-script (ADCIRC path)
+        $SCRIPTSnos/exnos_adcirc.sh nowcast
+        ;;
+    comf|*)
+        # NB: legacy J-jobs set LD_PRELOAD=libnetcdff.so here for the old
+        # COMF Fortran scripts (nos_ofs_create_forcing_met etc.). On the
+        # SECOFS-UFS Python-prep path those scripts are not invoked, and the
+        # global preload poisons every subsequent command (libifport.so.5
+        # ENOENT chain through libnetcdff). nos_run.sh handles its own
+        # LD_LIBRARY_PATH for schism_combine_hotstart7.exe scoped to the
+        # exec call. Do not export LD_PRELOAD here.
+        unset LD_PRELOAD
+        $SCRIPTSnos/exnos_nowcast.sh $OFS
+        ;;
+esac
+
+########################################################
+# Post-processing
+########################################################
+cat $pgmout
+
+if command -v postmsg &> /dev/null; then
+    postmsg "$jlogfile" "$0 completed normally"
+fi
+
+##############################
+# Cleanup
+##############################
+if [ "${KEEPDATA^^}" != YES ]; then
+    rm -rf $DATA
+fi
+
+date

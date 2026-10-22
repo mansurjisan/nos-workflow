@@ -1,0 +1,90 @@
+# SECOFS with wave coupling -- DATM+SCHISM+WW3 (UFS-Coastal, 4-component).
+#
+# $FIXofs is fix/secofs_ufs_ww3/ but system.prefix stays secofs_ufs, so that directory
+# must carry the secofs_ufs.* statics as well as the wave-only files below. MJ (09/05/26)
+# Cycling: SCHISM via its own hotstart (ihot=1); WW3 and the mediator via CMEPS
+# restarts written each nowcast and read by that cycle's forecast. MJ (09/05/26)
+
+_base: secofs_ufs
+
+system:
+  name: secofs_ufs_ww3
+  description: "Southeast Coastal Ocean Forecast System (UFS-Coastal, DATM+SCHISM+WW3)"
+
+ufs_coastal:
+  # Extrapolated from Alaska (274 nodes/PET); re-tune after a WCOSS2 profiling pass. MJ (09/05/26)
+  wav_tasks: 2606
+  total_tasks: 5520
+  # Must be an integer multiple of model.physics.dt (120 s); enforced by
+  # nos-utils _patch_runseq_interval.
+  coupling_interval: 360
+  wav_model: ww3
+  # These four filenames must match their counterparts in
+  # fix/secofs_ufs_ww3/ufs.configure.
+  wav_mesh: secofs_ufs.mesh_wav.nc
+  wav_pdlib_namelist: secofs_ufs_ww3.namelists_pdlib.nml
+  # Precomputed so ESMF does not build a dual mesh at runtime (aborts at this mesh size);
+  # wav2ocn also needs the CMEPS wav2ocn_smapname patch or the value is inert. MJ (09/05/26)
+  ocn2wav_weights: secofs_ufs.ocn2wav_weights.nc
+  wav2ocn_weights: secofs_ufs.wav2ocn_weights.nc
+
+# GFS-Wave boundary spectra: nest.ww3 is built each cycle from the gfswave IBP tarball. MJ (09/05/26)
+forcing:
+  waves:
+    enabled: true
+    # Brackets both open-boundary segments (lon -87.09..-64.00,
+    # lat 17.54..37.92) with a few degrees of margin.
+    window:
+      lon_min: -91.0
+      lon_max: -61.0
+      lat_min: 16.0
+      lat_max: 40.0
+    # Must be staged in $FIXofs before the first wave-enabled prep. MJ (09/05/26)
+    points_file: secofs_ufs.ww3_bound_points.list
+    # Explicit: RUN differs from the fix-file prefix, so the derived default does not exist. MJ (09/05/26)
+    mod_def: secofs_ufs.mod_def.ww3
+    # Additional 6 h GFS-Wave cycles to walk back when the newest cycle's
+    # tarball is not yet posted. Governs boundary spectra only, not restarts.
+    max_cycle_fallback: 2
+    # Cold start costs ~37% buoy Hs RMSE (8-16 h spin-up from zero). MJ (09/05/26)
+    nowcast_warm_start: true
+    # Ceiling for rejecting a poisoned restart (falls back to cold start). Meters. MJ (09/05/26)
+    warm_start_max_hs: 25.0
+
+# Deliberately absent from prep.critical_sources: a failed nest.ww3 degrades prep to
+# wind-sea only rather than failing it. Make it critical once the pipeline is proven. MJ (09/05/26)
+
+model:
+  executable: fv3_coastalSW.exe
+  run:
+    # Keep nowcast_hours/24 == hindcast_days: run reads one, prep reads the other. MJ (09/05/26)
+    hindcast_days: 1.0
+    nowcast_hours: 24
+  runtime:
+    # Adds RADFLAG='LON' and fwvor_breaking=0 relative to secofs_ufs.param.nml.
+    ctl_file: secofs_ufs_ww3.param.nml
+
+resources:
+  nprocs: 5520
+  nscribes: 0
+  # Documentation only -- no consumer in ush/, and PBS cards request no mem=.
+  # Never sized against a real wave-coupled run.
+  memory_gb: 4000
+  walltime_hours: 2
+
+# The inherited GEFS ensemble resources are sized for the 3-component layout
+# and would under-allocate this one.
+ensemble:
+  enabled: false
+
+# Additive only; every secofs_ufs mapping is inherited unchanged.
+shell_mappings:
+  variables:
+    WAV_TASKS: ufs_coastal.wav_tasks
+    WAV_MESH: ufs_coastal.wav_mesh
+    WAV_PDLIB_NML: ufs_coastal.wav_pdlib_namelist
+    WAV_OCN2WAV_WEIGHTS: ufs_coastal.ocn2wav_weights
+    WAV_WAV2OCN_WEIGHTS: ufs_coastal.wav2ocn_weights
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+    WAV_NOWCAST_WARM_START: forcing.waves.nowcast_warm_start
+    WAV_WARM_START_MAX_HS: forcing.waves.warm_start_max_hs

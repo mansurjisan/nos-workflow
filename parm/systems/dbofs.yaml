@@ -1,0 +1,132 @@
+# DBOFS Configuration
+
+_base: roms
+
+system:
+  name: dbofs
+  description: "Delaware Bay Operational Forecast System"
+  region: mid_atlantic
+  framework: comf
+  version: "3.7.0"
+  prefix: dbofs
+
+execution:
+  mode: standalone
+
+grid:
+  type: curvilinear
+  n_xi: 160
+  n_eta: 220
+  n_levels: 20
+  files:
+    grid: dbofs_grid.nc
+    forcing: dbofs_forcing.nc
+  domain:
+    lon_min: -76.5
+    lon_max: -73.5
+    lat_min: 38.0
+    lat_max: 40.5
+
+forcing:
+  atmospheric:
+    primary: nam
+    fallback: gfs
+    variables:
+      - Uwind
+      - Vwind
+      - Pair
+      - Tair
+      - Qair
+      - rain
+      - swrad
+      - lwrad
+
+  river:
+    enabled: true
+    primary: nwm
+    sources:
+      - name: delaware_river
+        usgs_id: "01463500"
+      - name: schuylkill_river
+        usgs_id: "01474500"
+      - name: christina_river
+        usgs_id: "01478000"
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    obc:
+      wl_source: RTOFS
+      ts_source: RTOFS
+
+  tidal:
+    enabled: true
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+model:
+  executable: romsM_dbofs
+  ocean_model: ROMS
+  physics:
+    dt: 4.0
+    ndtfast: 20
+    vtransform: 2
+    vstretching: 4
+    theta_s: 5.0
+    theta_b: 2.0
+    tcline: 10.0
+  run:
+    hindcast_days: 0.25
+    forecast_days: 2.0
+
+output:
+  format: netcdf
+  prefix: dbofs
+  stations:
+    enabled: true
+    interval: 360
+  fields:
+    interval: 3600
+  restart:
+    interval: 21600
+
+resources:
+  nprocs: 120
+  memory_gb: 200
+  walltime_hours: 1
+
+stages:
+  - prep
+  - nowcast
+  - forecast
+  - post
+
+shell_mappings:
+  framework: comf
+  env_prefix: nos
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+    OCEAN_MODEL: model.ocean_model
+
+    MINLON: grid.domain.lon_min
+    MAXLON: grid.domain.lon_max
+    MINLAT: grid.domain.lat_min
+    MAXLAT: grid.domain.lat_max
+
+    DBASE_MET_NOW: forcing.atmospheric.primary
+    DBASE_MET_FOR: forcing.atmospheric.primary
+
+    DBASE_TS_NOW: forcing.ocean.obc.ts_source
+    DBASE_TS_FOR: forcing.ocean.obc.ts_source
+
+    DELT_MODEL: model.physics.dt
+
+    TOTAL_TASKS: resources.nprocs

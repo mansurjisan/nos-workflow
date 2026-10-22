@@ -1,0 +1,10 @@
+# Base configuration for ADCIRC-based OFS systems. MJ (10/05/26)
+
+model:
+  type: adcirc
+  ocean_model: ADCIRC
+  physics:
+    dt: 6.0   # yaml_to_env exports it as DELT_MODEL, so the job environment stays as it was. MJ (10/18/26)
+
+adcirc:
+  ncpu_writer: 0

@@ -1,0 +1,95 @@
+# Base configuration for all ROMS-based OFS systems
+
+model:
+  type: roms
+  version: "3.9"
+
+  physics:
+    dt: 6.0
+    ndtfast: 30
+    ntimes: 86400
+    nrst: 1440
+    ninfo: 100
+    ldefout: true
+    nhis: 360
+    ndefhis: 0
+    ntsavg: 1
+    navg: 360
+
+  vertical:
+    n: 20
+    vtransform: 2
+    vstretching: 4
+    theta_s: 5.0
+    theta_b: 0.4
+    tcline: 10.0
+    hc: 10.0
+
+  run:
+    hindcast_days: 0.25
+    forecast_days: 2.0
+
+forcing:
+  atmospheric:
+    primary: nam              # Most ROMS use NAM (12km)
+    fallback: gfs
+    variables:
+      - Uwind
+      - Vwind
+      - Pair
+      - Tair
+      - Qair
+      - rain
+      - swrad
+      - lwrad
+
+  ocean:
+    enabled: true
+    primary: rtofs
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+
+  river:
+    enabled: true
+    primary: nwm
+
+  tidal:
+    enabled: true
+    database: tpxo9
+    constituents:
+      - M2
+      - S2
+      - N2
+      - K2
+      - K1
+      - O1
+      - P1
+      - Q1
+
+output:
+  format: netcdf
+  stations:
+    enabled: true
+    interval: 360.0
+  fields_2d:
+    enabled: true
+    variables:
+      - zeta
+      - ubar
+      - vbar
+  fields_3d:
+    enabled: true
+    variables:
+      - temp
+      - salt
+      - u
+      - v
+  intervals:
+    hotstart_days: 1.0
+    history_hours: 1.0
+
+resources:
+  nprocs: 120
+  memory_gb: 200
+  walltime_hours: 1

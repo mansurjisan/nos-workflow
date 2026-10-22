@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nos-workflow"
+version = "0.1.0"
+description = "Operational workflow driver for NOS-OFS systems"
+requires-python = ">=3.8"
+dependencies = [
+    # nos-utils is the sibling vendored submodule under
+    # ush/python/nos-utils/. We declare the dep but don't pin a version
+    # since it ships in-tree.
+    "nos-utils",
+    "netCDF4",
+    "numpy",
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+
+[project.scripts]
+nos_uw = "nos_workflow.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["nos_workflow*"]
+exclude = ["tests*", "nos_workflow.tests*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

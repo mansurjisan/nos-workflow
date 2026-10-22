@@ -1,0 +1,338 @@
+#!/bin/bash
+###############################################################################
+#  nos_run.sh - SCHISM-UFS-Coastal run library.
+#
+#  This file is sourced by ex-scripts to expose `_schism_run_mpi` and
+#  `_schism_run_combine_hotstart` to the Python orchestrator via
+#  bash_compat.run_shell_function. The Python runner
+#  (nos_workflow.runners.schism_ufs) drives the full nowcast/forecast
+#  pipeline; these two helpers remain in shell because they depend on
+#  `module load` (cray-pals, intel-*, hpc-stack netcdf/hdf5) which does
+#  not survive a Python subprocess.
+#
+#  Scope: any OFS coupling SCHISM via UFS-Coastal NUOPC (currently
+#  secofs_ufs and stofs_3d_atl_ufs; both register framework=comf or
+#  framework=stofs_ufs and route through the same Python runner).
+#
+#  Required env (set by the J-job and YAML loader):
+#    OFS, RUN, PREFIXNOS, PDY, cyc, cycle, DATA, COMOUT, COMOUTroot,
+#    HOMEnos, USHnos, EXECnos, FIXofs, FIXnos,
+#    OCEAN_MODEL=SCHISM, USE_DATM=true,
+#    GRIDFILE, GRIDFILE_LL, VGRID_CTL, VGRID_NU_CTL, VGRID_FAKE_CTL,
+#    STA_OUT_CTL, RUNTIME_CTL, RUNTIME_CTL_FOR (optional),
+#    HC_FILE_OBC, NWM_REACHID_FILE, CREATE_TIDEFORCING,
+#    LEN_FORECAST, LEN_NOWCAST, time_nowcastend (or PDY/cyc),
+#    TOTAL_TASKS, PPN, NDATE, NHOUR
+###############################################################################
+
+# _mpi_launch_prefix <ntasks> <ppn> [<ranks_per_node>] - the launcher command line for
+#   $NOS_MACHINE ("mpiexec -n N -ppn P --cpu-bind core" on WCOSS2, "srun -n N
+#   --label" on Hercules), via the machine CLI so this never drifts from
+#   parm/machines/$NOS_MACHINE.yaml. On WCOSS2, falls back to the historical
+#   WCOSS2 mpiexec string (with a warning) if the CLI is unavailable, so a
+#   degraded PYTHONPATH degrades gracefully under set -e rather than
+#   aborting the run. On any other machine there is no safe fallback string
+#   (the WCOSS2 mpiexec form is wrong under Slurm) -- print FATAL and return
+#   1 so the caller aborts instead of launching the model with a bogus or
+#   empty launch prefix. The optional third argument overrides the per-node
+#   packing for this launch only (model launches leave it unset). MJ (10/01/26)
+_mpi_launch_prefix() {
+    local ntasks=$1
+    local ppn=${2:-120}
+    local rpn=${3:-}
+    local line
+    line=$(python3 -m nos_workflow.machine mpi --ranks "${ntasks}" \
+        ${rpn:+--ranks-per-node "${rpn}"} 2>/dev/null) || line=""
+    if [ -z "${line}" ]; then
+        if [ "${NOS_MACHINE:-wcoss2}" = "wcoss2" ]; then
+            echo "WARNING: nos_workflow.machine mpi CLI unavailable; falling back to the WCOSS2 mpiexec default" >&2
+            line="mpiexec -n ${ntasks} -ppn ${rpn:-${ppn}} --cpu-bind core"
+        else
+            echo "FATAL: nos_workflow.machine mpi CLI unavailable and no safe fallback for machine '${NOS_MACHINE}'" >&2
+            return 1
+        fi
+    fi
+    echo "${line}"
+}
+
+# _schism_run_mpi <phase> - mpiexec wrapper for UFS-Coastal. Stays in shell
+#   because `module load` (cray-pals, intel-*, hpc-stack) does not survive a
+#   Python subprocess; callers from Python invoke this helper directly via
+#   bash_compat.run_shell_function.
+#   Required env: UFS_EXEC, UFS_EXEC_NAME (default fv3_coastalS.exe),
+#   NTASKS, PPN, DATA.
+_schism_run_mpi() {
+    local phase=${1:-nowcast}
+    cd ${DATA}
+
+    # Resolve NTASKS / PPN / UFS_EXEC defensively in case the function is
+    # called from a context where the caller's locals aren't in scope.
+    local NTASKS=${NTASKS:-${TOTAL_TASKS:-1200}}
+    local PPN=${PPN:-120}
+
+    # Standalone SCHISM: Phase-1's resolver emits USE_DATM=false and stages
+    # the scribed pschism binary under $UFS_EXEC_NAME (standalone.executable
+    # in the system yaml). It takes nscribes as argv[1]; there is no
+    # DATM/NUOPC layer to bind. MJ (10/03/26)
+    if [ "${USE_DATM:-true}" = "false" ]; then
+        local SCHISM_EXEC=${SCHISM_EXEC:-}
+        local _exe_name=${UFS_EXEC_NAME:-pschism_WCOSS2}
+        if [ -z "${SCHISM_EXEC}" ] || [ ! -x "${SCHISM_EXEC}" ]; then
+            local _cand
+            for _cand in \
+                "${DATA}/${_exe_name}" \
+                "${EXECnos:-}/${_exe_name}" \
+                "${HOMEnos:-}/exec/${_exe_name}"; do
+                if [ -x "$_cand" ]; then SCHISM_EXEC="$_cand"; break; fi
+            done
+        fi
+        if [ -z "${SCHISM_EXEC}" ] || [ ! -x "${SCHISM_EXEC}" ]; then
+            echo "FATAL: standalone SCHISM executable ${_exe_name} not found (or not executable) in:"
+            echo "  ${DATA}/${_exe_name}"
+            echo "  ${EXECnos:-<unset>}/${_exe_name}"
+            echo "  ${HOMEnos:-<unset>}/exec/${_exe_name}"
+            return 127
+        fi
+        local NSCRIBES=${NSCRIBES:-8}
+        local _mpi_launch
+        _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}") || return 1
+        echo "_schism_run_mpi: launching standalone SCHISM for phase=${phase}"
+        echo "  ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}"
+        ${_mpi_launch} ${SCHISM_EXEC} ${NSCRIBES}
+        local rc=$?
+        echo "_schism_run_mpi: mpiexec returned rc=${rc}"
+        return ${rc}
+    fi
+
+    local UFS_EXEC=${UFS_EXEC:-}
+    local _ufs_default_exec="fv3_coastalS.exe"
+    local _ufs_exec_name=${UFS_EXEC_NAME:-${_ufs_default_exec}}
+    if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
+        local _cand
+        for _cand in \
+            "${DATA}/${_ufs_exec_name}" \
+            "${EXECnos:-}/${_ufs_exec_name}" \
+            "${HOMEnos:-}/exec/${_ufs_exec_name}"; do
+            if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
+        done
+        # Mirror the outer search condition: a preset but non-executable
+        # UFS_EXEC must not suppress the legacy-name fallback.
+        if [ -z "${UFS_EXEC}" ] || [ ! -x "${UFS_EXEC}" ]; then
+            if [ "${_ufs_exec_name}" = "${_ufs_default_exec}" ]; then
+                # ufs_coastal is a legacy alternate name for the SAME
+                # default (non-wave) binary -- only tried when the caller
+                # did not ask for a specific executable.
+                for _cand in \
+                    "${EXECnos:-}/ufs_coastal" \
+                    "${HOMEnos:-}/exec/ufs_coastal"; do
+                    if [ -x "$_cand" ]; then UFS_EXEC="$_cand"; break; fi
+                done
+            else
+                # UFS_EXEC_NAME was explicitly requested (e.g. the
+                # wave-enabled fv3_coastalSW.exe). Launching a different,
+                # present binary instead is exactly how a wave-coupled run
+                # once aborted inside ESMF_Init instead of failing at
+                # staging -- fail loudly here rather than silently
+                # substitute the wrong executable.
+                echo "FATAL: UFS_EXEC_NAME=${_ufs_exec_name} requested but not found (or not executable) in:"
+                echo "  ${DATA}/${_ufs_exec_name}"
+                echo "  ${EXECnos:-<unset>}/${_ufs_exec_name}"
+                echo "  ${HOMEnos:-<unset>}/exec/${_ufs_exec_name}"
+                return 127
+            fi
+        fi
+    fi
+
+    local _mpi_launch
+    _mpi_launch=$(_mpi_launch_prefix "${NTASKS}" "${PPN}") || return 1
+    echo "_schism_run_mpi: launching mpiexec for phase=${phase}"
+    echo "  ${_mpi_launch} ${UFS_EXEC}"
+    ${_mpi_launch} ${UFS_EXEC}
+    local rc=$?
+    echo "_schism_run_mpi: mpiexec returned rc=${rc}"
+    return ${rc}
+}
+
+# _schism_run_combine_hotstart <step> <phase> - combine_hotstart7 wrapper.
+#   Stays in shell because combine_hotstart7 links against hpc-stack
+#   netcdf/4.7.4 + hdf5 loaded by `module load`, which does not survive a
+#   Python subprocess. We extend LD_LIBRARY_PATH here so the dynamic linker
+#   finds libnetcdff.so / libhdf5*.so.
+#   Required env: DATA, COMOUT, RUN, cycle, PDY, EXECnos / HOMEnos.
+_schism_run_combine_hotstart() {
+    local step=${1:-0}
+    local phase=${2:-nowcast}
+
+    if [ -z "$step" ] || [ "$step" = "0" ]; then
+        echo "_schism_run_combine_hotstart: invalid step=${step}, skipping"
+        return 1
+    fi
+
+    cd ${DATA}/outputs || {
+        echo "_schism_run_combine_hotstart: missing ${DATA}/outputs"
+        return 2
+    }
+
+    local COMBINE_EXE=""
+    for _cand in \
+        "${EXECnos:-}/schism_combine_hotstart7.exe" \
+        "${HOMEnos:-}/exec/schism_combine_hotstart7.exe" \
+        "${EXECnos:-}/nos_ofs_combine_hotstart" \
+        "${EXECstofs3d:-}/stofs_3d_atl_combine_hotstart"; do
+        if [ -x "$_cand" ]; then COMBINE_EXE="$_cand"; break; fi
+    done
+
+    if [ -z "$COMBINE_EXE" ]; then
+        echo "WARNING: schism_combine_hotstart7.exe not found"
+        local _combined=$(ls hotstart_it=*.nc 2>/dev/null | tail -1)
+        if [ -n "$_combined" ] && [ -s "$_combined" ]; then
+            local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+            cp -p "$_combined" "${COMOUT}/${_rst_name}"
+            echo "  Found pre-combined hotstart: $_combined, archived as ${_rst_name}"
+            return 0
+        fi
+        return 3
+    fi
+
+    echo "_schism_run_combine_hotstart: step=${step} phase=${phase}"
+    echo "  Using combine executable: $COMBINE_EXE"
+
+    # Patch LD_LIBRARY_PATH for hpc-stack netcdf/4.7.4 + hdf5;
+    # combine_hotstart7 is compiled against these libs and the OS default
+    # netcdf is not ABI-compatible.
+    for _lib in \
+        /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+        /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+        /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+        /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
+        [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
+    done
+
+    $COMBINE_EXE -i $step
+    local rc=$?
+    echo "_schism_run_combine_hotstart: combine_hotstart7 returned rc=${rc}"
+
+    if [ $rc -eq 0 ] && [ -s "hotstart_it=${step}.nc" ]; then
+        local _rst_name="${RUN}.${cycle}.${PDY}.rst.${phase}.nc"
+        local _combined="hotstart_it=${step}.nc"
+        # Archive in combine_hotstart7's native HDF5 format - do NOT convert
+        # here. rst.nowcast.nc must stay HDF5; the CLASSIC conversion happens
+        # downstream when staging to init.nowcast.nc.
+        cp -p "$_combined" "${COMOUT}/${_rst_name}"
+        echo "  Archived to ${COMOUT}/${_rst_name} (NETCDF4/HDF5, native combine output)"
+    else
+        echo "WARNING: combine_hotstart7 failed (rc=${rc}) or output missing"
+    fi
+
+    return ${rc}
+}
+
+# _schism_run_combine_fields <phase> - combine_output11(_MPI) wrapper for
+#   OLDIO per-rank field output (schout_<rank>_<stack>.nc). Combines every
+#   stack into global schout_<stack>.nc inside ${DATA}/outputs. No-op when
+#   the run is scribed (global out2d_* already present) or no per-rank
+#   files exist. Stays in shell for the same hpc-stack module-env reason
+#   as _schism_run_combine_hotstart.
+#   Required env: DATA; EXECnos / HOMEnos for exe resolution.
+_schism_run_combine_fields() {
+    local phase=${1:-nowcast}
+
+    cd ${DATA}/outputs || {
+        echo "_schism_run_combine_fields: missing ${DATA}/outputs"
+        return 2
+    }
+
+    if ls out2d_[0-9]*.nc >/dev/null 2>&1; then
+        echo "_schism_run_combine_fields: scribed outputs present; nothing to combine"
+        return 0
+    fi
+
+    # Stack range from rank 0's per-rank files: schout_000000_<stack>.nc
+    local _stacks=$(ls schout_000000_*.nc 2>/dev/null \
+        | sed 's/.*_\([0-9][0-9]*\)\.nc$/\1/' | sort -n)
+    if [ -z "${_stacks}" ]; then
+        echo "_schism_run_combine_fields: no per-rank schout files; nothing to combine"
+        return 0
+    fi
+    local _b=$(echo "${_stacks}" | head -1)
+    local _e=$(echo "${_stacks}" | tail -1)
+    local _n=$(echo "${_stacks}" | wc -l)
+
+    local MPI_EXE="" SERIAL_EXE=""
+    for _cand in \
+        "${EXECnos:-}/combine_output11_MPI" \
+        "${HOMEnos:-}/exec/combine_output11_MPI"; do
+        if [ -x "$_cand" ]; then MPI_EXE="$_cand"; break; fi
+    done
+    for _cand in \
+        "${EXECnos:-}/combine_output11" \
+        "${HOMEnos:-}/exec/combine_output11"; do
+        if [ -x "$_cand" ]; then SERIAL_EXE="$_cand"; break; fi
+    done
+    if [ -z "$MPI_EXE" ] && [ -z "$SERIAL_EXE" ]; then
+        echo "WARNING: combine_output11(_MPI) not found under EXECnos/HOMEnos; fields combine skipped"
+        return 3
+    fi
+
+    # Same hpc-stack LD_LIBRARY_PATH patch as the hotstart combine.
+    for _lib in \
+        /apps/prod/hpc-stack/intel-19.1.3.304/netcdf/4.7.4/lib \
+        /apps/prod/hpc-stack/intel-19.1.3.304/hdf5/*/lib \
+        /apps/prod/hpc-stack/intel-*/netcdf/*/lib \
+        /apps/prod/hpc-stack/intel-*/hdf5/*/lib; do
+        [ -d "$_lib" ] && export LD_LIBRARY_PATH="${_lib}:${LD_LIBRARY_PATH:-}"
+    done
+
+    echo "_schism_run_combine_fields: phase=${phase} stacks=${_b}..${_e} (${_n})"
+    local rc=1
+    if [ -n "$MPI_EXE" ]; then
+        # The MPI combiner links the cray-mpich (parallel) netcdf, which needs
+        # the parallel hdf5; the serial libs above make every rank die with
+        # "undefined symbol: H5Pset_all_coll_metadata_ops". Put the hdf5 that
+        # sits next to the netcdf the exe links first, for this launch only. MJ (10/01/26)
+        local _mpi_ld="${LD_LIBRARY_PATH:-}" _nc_lib _nc_root
+        _nc_lib=$(ldd "$MPI_EXE" 2>/dev/null | awk '/libnetcdf\.so/ {print $3; exit}')
+        if [ -n "$_nc_lib" ]; then
+            _nc_root=${_nc_lib%/netcdf/*}
+            for _lib in "${_nc_root}"/hdf5/*/lib "${_nc_lib%/*}"; do
+                [ -d "$_lib" ] && _mpi_ld="${_lib}:${_mpi_ld}"
+            done
+        fi
+        # One combine rank per node where the job has enough nodes: packing
+        # them onto the first node made each stack ~1.8x slower (memory and
+        # I/O contention). ceil(stacks / nodes), so a 1-node job still works. MJ (10/01/26)
+        local _rpn="" _nnodes
+        if [ -r "${PBS_NODEFILE:-}" ]; then
+            _nnodes=$(awk 'NF && !seen[$1]++' "${PBS_NODEFILE}" | wc -l)
+            [ "${_nnodes}" -gt 0 ] && _rpn=$(( (_n + _nnodes - 1) / _nnodes ))
+        fi
+        local _mpi_launch _mpi_attempted=0
+        if _mpi_launch=$(_mpi_launch_prefix "${_n}" "" "${_rpn}"); then
+            echo "  ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}"
+            LD_LIBRARY_PATH="${_mpi_ld}" ${_mpi_launch} ${MPI_EXE} -b ${_b} -e ${_e}
+            rc=$?
+            _mpi_attempted=1
+        else
+            echo "WARNING: MPI launch prefix unavailable; skipping MPI fields combine"
+        fi
+        # rc is pre-initialised to 1; only report it as a failure when an
+        # MPI attempt actually ran -- the skip case above already explains
+        # itself.
+        [ $_mpi_attempted -eq 1 ] && [ $rc -ne 0 ] && echo "WARNING: MPI fields combine failed (rc=${rc})"
+    fi
+    if [ $rc -ne 0 ] && [ -n "$SERIAL_EXE" ]; then
+        echo "  ${SERIAL_EXE} -b ${_b} -e ${_e} (serial)"
+        ${SERIAL_EXE} -b ${_b} -e ${_e}
+        rc=$?
+    fi
+
+    if [ $rc -eq 0 ] && [ -s "schout_${_e}.nc" ]; then
+        echo "_schism_run_combine_fields: combined schout_${_b}..${_e}.nc OK"
+    else
+        echo "WARNING: fields combine failed (rc=${rc}) or schout_${_e}.nc missing"
+        [ $rc -eq 0 ] && rc=4
+    fi
+    return ${rc}
+}
+
+# End of nos_run.sh

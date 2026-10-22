@@ -1,0 +1,258 @@
+# STOFS-3D-ATL UFS-Coastal Configuration
+
+_base: schism
+
+system:
+  name: stofs_3d_atl_ufs
+  description: "Storm Surge and Tide Operational Forecast System - 3D Atlantic (UFS-Coastal)"
+  framework: stofs_ufs  # coupled path; keeps STOFS legacy river/OBC/tidal prep. MJ (09/05/26)
+  prefix: stofs_3d_atl_ufs
+
+execution:
+  mode: ufs   # ufs (default, UFS-Coastal DATM) | standalone (classic SCHISM sflux)
+
+# Applied only when execution.mode == standalone: 4912 compute ranks (ops partition.prop)
+# + 8 scribes = 4920, as ops v3.1.5 (stofs_3d_atl_pschism, SCHISM 5.14.0, copied from ops
+# to $EXECnos under a new name; the existing stofs_3d_atl_pschism there is an old build).
+# Grid/forcing blocks below are shared. MJ (10/02/26)
+# executable is the single setting for the binary name (resolver -> UFS_EXEC_NAME ->
+# stage_executable + nos_run.sh); to run a copy of the ops module binary (pschism_WCOSS2_VL)
+# instead, change this value and stage that file in $EXECnos. MJ (10/03/26)
+standalone:
+  nws: 2
+  executable: stofs_3d_atl_pschism_v3.1.5
+  nscribes: 8
+  nprocs: 4920
+
+# Explicit so the is_stofs_like heuristic is not relied on. MJ (09/05/26)
+prep:
+  extras:
+    st_lawrence: true
+    obc_dynamic_adjust: true
+
+# v3.1 operational mesh. Ops' v3.1 partition.prop (4912 ranks) is staged as-is
+# by tools/fetch_stofs_3d_atl_fix.sh; regenerate it (tools/gen_stofs_partition_prop.sh)
+# only if ufs_coastal.schism_tasks changes.
+grid:
+  n_nodes: 3052121
+  n_elements: 5872610
+  n_levels: 49
+  files:
+    horizontal: stofs_3d_atl_ufs.hgrid.gr3
+    vertical: stofs_3d_atl_ufs.vgrid.in
+    horizontal_ll: stofs_3d_atl_ufs.hgrid.ll
+    station: stofs_3d_atl_ufs.station.in
+  domain:
+    lon_min: -98.5035
+    lon_max: -52.4867
+    lat_min: 7.347
+    lat_max: 52.5904
+
+# Standalone: sflux prep. Coupled: the same GFS/HRRR processors feed the DATM blend. MJ (10/03/26)
+forcing:
+  atmospheric:
+    met_num: 2
+    gfs:
+      resolution: "0.25"
+      ops_timeline: true  # ops GFS file chain + last PRATE record, standalone sflux and DATM inputs alike. MJ (10/03/26)
+    # Ops keeps HRRR winds grid-relative (about 17 deg off over the Atlantic); no rotation in
+    # extraction or in the DATM blender reproduces it. Parity only: SECOFS keeps its rotation. MJ (10/03/26)
+    hrrr:
+      rotate_winds: false
+      blend_rotate_winds: false
+      blend_weight: 0.99  # ops sflux inside HRRR coverage: 0.99*HRRR + 0.01*GFS (default sflux weights 99 / 1). MJ (10/03/26)
+      small_grib: true
+    hrrr_blend:
+      enabled: true
+      lon_min: -98.5
+      lon_max: -49.5
+      lat_min: 5.5
+      lat_max: 50.0
+
+  river:
+    primary: nwm
+    version: "v3.0"
+    n_list_target: 121
+    n_list_min: 97
+    # Ops v3.1.5 river inputs (1.99M sinks, source_sink.in / msource.th / vsink.th from the FIX
+    # files) for coupled too: fv3_stofs_3d_atl.exe is built with PREC_EVAP. MJ (10/03/26)
+    ops_static_files: true
+    files:
+      sources_json: stofs_3d_atl_river_sources_conus.json
+    st_lawrence:
+      enabled: true
+      # v3.1 ops layout: $COMINlaw/<pdy>/can_streamgauge/, climatology fallback
+      # from the fix dir. MJ (09/28/26)
+      clim_name: stofs_3d_atl_StLawrence_clim.txt
+      csv_name: 02OA016_hydrometric.csv
+      subdir: can_streamgauge
+
+  ocean:
+    rtofs_3d_region: US_east  # 3dz tile; without it any region file can fill a slot. MJ (10/02/26)
+    obc:
+      # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
+      # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
+      # mesh: 756 + 22 elevation, 3 flow). MJ (09/30/26)
+      elev_segments: [0, 1]
+      wl_source: RTOFS
+      ssh_offset: 0.04
+      obc_mode: dynamic_adjust
+      # Ops gen_3Dth chain (non_adjust.sh): same-day RTOFS, 6-hourly records from the
+      # nowcast start, triangle interp (mode 1), elev2D held at record 0. MJ (10/02/26)
+      ops_timeline: true
+      interp_mode: 1
+      ssh_hold_first_record: true
+      roi_2ds:
+        x1: 2805
+        x2: 2923
+        y1: 1598
+        y2: 2325
+      roi_3dz:
+        x1: 482
+        x2: 600
+        y1: 94
+        y2: 821
+    nudging:
+      enabled: true
+      timescale_days: 1.0
+      roi_3dz:
+        x1: 422
+        x2: 600
+        y1: 94
+        y2: 835
+    adt:
+      enabled: true
+      weight_file: stofs_3d_atl_adt_weight.nc  # ops ESMF (nearest) map, staged by the fetch tool. MJ (10/02/26)
+
+  tidal:
+    create_forcing: 1
+    nodal_reference: cycle  # nodal factors over the whole nowcast+forecast, as ops tide_fac. MJ (10/02/26)
+    files:
+      harmonic_constants_obc: stofs_3d_atl.tidal_hc.nc
+      harmonic_constants_ofs: stofs_3d_atl_ufs.bctides.in_template  # FIX name; a bare name resolves to the forecast work copy. MJ (10/01/26)
+
+model:
+  physics:
+    dt: 150.0
+    nws: 4  # NUOPC atmospheric coupling (nws=2 is sflux files)
+  run:
+    hindcast_days: 1.0
+    forecast_days: 4.0  # ops v3.1: rnday 5.0 = 24 h nowcast + 96 h forecast. MJ (10/02/26)
+    nowcast_hours: 24
+    forecast_hours: 96
+    base_date: "2011010100"
+  runtime:
+    ctl_file: stofs_3d_atl_ufs.param.nml
+
+ufs_coastal:
+  enabled: true
+  # Coupled ATL binary (-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DPREC_EVAP=ON, TVD_LIM=VL),
+  # kept apart from SECOFS's fv3_coastalS.exe; the resolver exports it as UFS_EXEC_NAME and
+  # stage_executable fails before the launch when it is not in $EXECnos. MJ (10/03/26)
+  executable: fv3_stofs_3d_atl.exe
+  datm_domain: STOFS3D_ATL  # preset in nos_utils ForcingConfig.from_yaml
+  coupling_interval: 150  # must match runSeq @150 in ufs.configure and dt in param.nml
+  datm_tasks: 120
+  schism_tasks: 4912  # same rank count as standalone, so the same partition.prop is reused
+  total_tasks: 5032
+  blend_resolution: 0.025
+  nhours_fcst: 96
+  dt_atmos: 900
+
+resources:
+  nprocs: 5032
+  nscribes: 0
+
+post:
+  archive_fields: true   # run stages normalize + stage global field stacks
+  products:
+    # points_cwl (surface station series, the ops points.cwl.nc) needs
+    # stofs_3d_atl_staout_nc.json/.csv in $FIXofs or it skips; the 3D station
+    # profiles come from the profiles product below. MJ (10/05/26)
+    - points_cwl
+    - fields_nc
+    - bias_correct
+    # profiles: verified against the S3 ncast profile on PDY 20261001 (161 of
+    # 166 stations exact). The other 5 lie outside the mesh, where production
+    # writes extrapolated junk; "fill" keeps all 166 in station.in order and
+    # writes -99999 for those 5, so indices still line up with ops.
+    # geopkg stays off: geopandas + shapely>=1.8 are not in the WCOSS2 python
+    # 3.8 module set, and nos-utils geopkg does not yet apply the production
+    # isolatedPondNode mask or xGEOID20b datum string. MJ (10/05/26)
+    - maxele
+    - slab2d
+    - adcirc
+    - name: profiles
+      options:
+        outside: fill
+
+shell_mappings:
+  variables:
+    RUN: system.name
+    PREFIXNOS: system.prefix
+
+    GRIDFILE_LL: grid.files.horizontal_ll
+    VGRID_CTL: grid.files.vertical
+    STA_OUT_CTL: grid.files.station
+
+    DBASE_WL_NOW: forcing.ocean.obc.wl_source
+    CREATE_TIDEFORCING: forcing.tidal.create_forcing
+    HC_FILE_OBC: forcing.tidal.files.harmonic_constants_obc
+
+    RUNTIME_CTL: model.runtime.ctl_file
+    BASE_DATE: model.run.base_date
+
+    RNDAY_NOWCAST: _computed.rnday_nowcast
+    RNDAY_FORECAST: _computed.rnday_forecast
+    N_DAYS_MODEL_RUN_PERIOD: _computed.total_run_days
+
+    USE_DATM: ufs_coastal.enabled
+    UFS_EXEC_NAME: ufs_coastal.executable
+    SCHISM_TASKS: ufs_coastal.schism_tasks
+    COUPLING_INTERVAL: ufs_coastal.coupling_interval
+
+ensemble:
+  enabled: true
+  n_members: 6
+  method: gefs
+  seed: 42
+  gefs:
+    enabled: true
+    n_gefs_members: 5
+    resolution: "0p25"
+    product: "pgrb2sp25"
+    control_member: "gec00"
+    perturbation_prefix: "gep"
+    members:
+      "000":
+        label: "control (GFS+HRRR)"
+        met_source_1: GFS
+        met_source_2: HRRR
+      "001":
+        label: "GEFS p01"
+        met_source_1: GEFS_01
+        met_source_2: null
+      "002":
+        label: "GEFS p02"
+        met_source_1: GEFS_02
+        met_source_2: null
+      "003":
+        label: "GEFS p03"
+        met_source_1: GEFS_03
+        met_source_2: null
+      "004":
+        label: "GEFS p04"
+        met_source_1: GEFS_04
+        met_source_2: null
+      "005":
+        label: "RRFS"
+        met_source_1: RRFS
+        met_source_2: null
+    extra_sources:
+      - GEFS_01
+      - GEFS_02
+      - GEFS_03
+      - GEFS_04
+      - RRFS
+  # Atmospheric forcing differences only; parameters are ignored while false.
+  perturb_physics: false
