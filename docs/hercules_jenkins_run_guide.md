@@ -2,7 +2,7 @@
 
 Status as of 2026-10-16.
 
-STOFS-3D-Atlantic and STOFS-2D-Global both run from one manual Jenkins job on Hercules, `NOS/nos-workflow-atl-hercules`. Open **Build with Parameters**, pick the system with `OFS` and the depth with `LEVEL`, and run against a frozen dataset. The stages (Prep, Nowcast, Forecast, Post, Verify) are the same ones SECOFS uses. The first smoke build of each system passed bitwise against its reference on 2026-10-15.
+STOFS-3D-Atlantic and STOFS-2D-Global both run from one Jenkins job on Hercules, `NOS/nos-workflow-atl-hercules`, started by hand or on a schedule set in the dashboard (section 10). Open **Build with Parameters**, pick the system with `OFS` and the depth with `LEVEL`, and run against a frozen dataset. The stages (Prep, Nowcast, Forecast, Post, Verify) are the same ones SECOFS uses. The first smoke build of each system passed bitwise against its reference on 2026-10-15.
 
 Every build runs on Hercules as the CI account `role-nosofs`, whoever starts it. You need only a Jenkins login to run a build against an existing dataset. You need your own Hercules account only to make a new test case (section 8).
 
@@ -12,7 +12,7 @@ Every build runs on Hercules as the CI account `role-nosofs`, whoever starts it.
 | Add my own test case (a new PDY/CYC) | The above, plus a Hercules account and a finished hand run | section 8 |
 | Test a branch or PR | The above, plus Configure permission on the job and push access to `github.com/oceanmodeling/nos-workflow` | section 9 |
 
-The system details are in the Jenkins sections of the run guides: [STOFS-3D-ATL section 10](stofs_3d_atl_run_guide.md#10-jenkins-hercules-manual-only) and [STOFS-2D-Global section 5](stofs_2d_glo_run_guide.md#5-jenkins-hercules-manual-only).
+The system details are in the Jenkins sections of the run guides: [STOFS-3D-ATL section 10](stofs_3d_atl_run_guide.md#10-jenkins-hercules-manual-only) and [STOFS-2D-Global section 5](stofs_2d_glo_run_guide.md#5-jenkins-hercules-manual-and-nightly).
 
 ## 1. Get access (once)
 
@@ -24,7 +24,7 @@ Nothing on Hercules is needed for sections 2-7.
 
 ## 2. Before each build
 
-- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
+- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate, and the nightly 2D-Global build (about 20:00 to 03:00 UTC) holds the lock the same way against SECOFS builds. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
 - **The job builds the `develop` branch** (*Branches to build* = `*/develop`). Section 9 covers other branches.
 - **Never use Build Now** for these systems: it always runs the SECOFS defaults.
 - **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait does not count against a stage's time limit, only against the 16 h build limit (section 7).
@@ -54,7 +54,7 @@ To stop a running build, click the red **X** next to it in Build History (or **A
 | `OFS` | `secofs_ufs` | The system to run | Always (table above) |
 | `LEVEL` | `smoke` | How far the build goes (section 4) | As needed |
 | `DATA_MODE` | `live` | `frozen` runs a stored dataset; `live` downloads today's inputs (section 10) | Set `frozen` |
-| `PDY`, `CYC` | `20260827`, `06` | The cycle; it must match a dataset (section 5) | Always |
+| `PDY`, `CYC` | `20260827`, `06` | The cycle; it must match a dataset (section 5). Blank `PDY` is the latest published day for `CYC` (section 10) | Always |
 | `SEED_RT` | `/work2/noaa/nos-surge/mjisan/nos-workflow-rt` | Where Bootstrap copies a dataset from, the first time a build needs it | Only for your own dataset (section 8) |
 | `SEED_SRC` | `/work2/noaa/nos-surge/mjisan/nos-workflow` | Where Bootstrap copies `fix/` and `exec/` from, the first time a system runs in this CI root | No; all three systems are already copied (section 8.1). Only a first 2D-Global build in a new CI root needs the 2D package |
 | `NOS_CI_ROOT` | `/work2/noaa/nosofs/role-nosofs/nos-ci` | The CI's own tree: package, venv, datasets, ptmp, lock | No |
@@ -234,7 +234,7 @@ The job runs the branch named under Configure, and Deploy copies that branch's c
 
 1. Push the branch to `github.com/oceanmodeling/nos-workflow` (the job's repository; forks are not built).
 2. Tell the team on Slack: the job is shared, and it runs one build at a time.
-3. Open the job, click **Configure**, set *Branches to build* to `*/<your-branch>`, and click **Save**.
+3. Open the job, click **Configure**, set *Branches to build* to `*/<your-branch>`, and click **Save**. While it points there, a scheduled build also runs your branch.
 4. If the branch adds or changes a Jenkins parameter, start one build and abort it, so the form shows the new parameter.
 5. Run **Build with Parameters** as in section 3.
 6. When you are done, set *Branches to build* back to `*/develop` and click **Save**.
@@ -245,7 +245,13 @@ A branch cannot change `fix/` or `exec/` in the CI (section 8.1).
 
 `DATA_MODE=live` downloads the inputs for `PDY`/`CYC` instead of using a dataset. Use frozen for regression checks; live is for checking a new date end to end.
 
-- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. It does not clear the CI `com`, and it continues from the 2D-Global state already there: run `LEVEL=full` first (a cold start), then `LEVEL=cycle` for the cycle 6 h later, with no frozen 2D-Global build in between (a frozen build clears that state).
+- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. Before the download it removes the other days' 2D-Global directories from the CI `com` and the other cycles' download directories under `ops_s3`. It keeps the shared `nos/stofs_2d_glo` (the chain state, `nod_equi` and the decomposition, that a later live `LEVEL=cycle` build continues from) and the days of `PDY` and of the cycle 6 h earlier, so a rerun of the same day does not download again. It continues from the 2D-Global state already there: run `LEVEL=full` first (a cold start), then `LEVEL=cycle` for the cycle 6 h later, with no frozen 2D-Global build in between (a frozen build clears that state).
+- **Nightly (scheduled from the dashboard, not in the Jenkinsfile):** in the ATL job open Configure > Triggers, tick **Build periodically with parameters** and enter this Schedule, then Save:
+  ```
+  TZ=UTC
+  H 20 * * * % OFS=stofs_2d_glo;LEVEL=full;DATA_MODE=live;CYC=12;PDY=latest
+  ```
+  Check the "Would next run at ..." line under the box. If Jenkins rejects the `TZ` line, remove it and give the hour in the controller's time zone. To stop the nightly, untick the box; manual builds are unaffected. The same form can schedule any system or level. `PDY=latest` (or a blank `PDY`) means the latest day whose `CYC` cycle is published (UTC now minus `CYC` + 8 h), so the 20:00 UTC build runs today's 12z. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night is a cold start, and a cold start always rebuilds the decomposition (adcprep, about 1.9 h). The build takes the same CI lock as SECOFS, so a SECOFS build running at 20:00 UTC makes that night's build fail at Gate. In reverse, the nightly holds the lock from about 20:00 UTC until it ends (about 03:00 UTC): a SECOFS build started then fails at Gate with `another CI cycle holds the lock`, and a labelled PR gets a red `hercules-ci/cycle` status; wait and rebuild. Rebuild of a scheduled build reuses its parameters and resolves `latest` again, so set `PDY` to a date to rerun a given day. Disk stays at about one cycle because Stage Data removes the older days, as above.
 - **ATL:** also needs `DCOM_BUNDLE`, a case bundle directory with `dcom/` and `seeds/dyn_seed_<PDY-1>/` (ATL run guide section 4.2) that `role-nosofs` can read. It downloads about 125 GB per build.
 
 Live mode has no reference run. At smoke, Verify checks nothing beyond the stage PASS for either system, and ATL cycle Verify likewise. 2D-Global compares with the ops products at cycle and full; ATL downloads and compares them only at full.
@@ -301,11 +307,11 @@ Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing
 | Stage | Runs on | What it does | LEVEL | Time (smoke build #10) |
 | --- | --- | --- | --- | --- |
 | Checkout | Jenkins agent | Checks out the job's branch (`*/develop`) | all | seconds |
-| Gate | Jenkins agent | Lets a manual 2D build run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full) | all | seconds |
+| Gate | Jenkins agent | Lets a manual or scheduled 2D build run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full, 12 for the nightly) | all | seconds |
 | Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies `fix/stofs_2d_glo` and `stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build (`padcirc`, `adcprep`) from `adcirc_v56.1.0_exec` beside it. Once per dataset, copies `stofs_2d_glo/<PDY><CYC>` from `SEED_RT`; its forcing, decomposition tar and `nod_equi` become read-only | all | first copy 60 GB in 2.5 min, then seconds |
 | Deploy | Jenkins agent | Copies the checked-out nos-workflow into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | all | seconds |
 | Environment Check | Jenkins agent | Modules, Python imports, `tide_fac`, `padcirc`, `adcprep`, the NCO tools (`ncdiff`, `ncrcat`, `ncks`) and `sbatch`/`sacct` | all | seconds |
-| Stage Data | Jenkins agent | Removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<day>` from the CI com, then links the dataset in: the cycle's forcing into `rerun/`, read-only; for smoke and cycle also `nod_equi` and the 4064-rank decomposition tar, read-only, and the previous cycle's chain files (`hotstart` for tide, `restart` for surf) as writable copies | all | seconds |
+| Stage Data | Jenkins agent | live: removes the other days' `com/nos/stofs_2d_glo.<day>` and other cycles' `ops_s3` dirs (keeps `com/nos/stofs_2d_glo`, `PDY` and the previous cycle's day), then downloads the ops forcing. frozen: removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<day>` from the CI com, then links the dataset in: the cycle's forcing into `rerun/`, read-only; for smoke and cycle also `nod_equi` and the 4064-rank decomposition tar, read-only, and the previous cycle's chain files (`hotstart` for tide, `restart` for surf) as writable copies | all | seconds |
 | Prep | Slurm, 1 node, 64 GB | `gfs_ncst` and `gfs_fcst` (the forcing build) skip, because the dataset already holds the forcing. At `full`, `adcprep` runs first and builds `nod_equi` and the decomposition | all | 30 s (`full`: about 1.9 h more) |
 | Nowcast | Slurm, 52 nodes | The 6 h nowcast from the previous cycle's chain files: tide (NWS=0, 4064 ranks on 51 nodes), then surf (NWS=14014, 4064 + 5 writer ranks). Writes this cycle's chain files and checks every output for dropped records. At `full`, the 162 h spin-up runs first | all | 1352 s (`full`: spin-up about 26 min more) |
 | Forecast | Slurm, 52 nodes | The 180 h forecast: tide, then surf, each followed by the record-gap check | cycle, full | not yet run in CI; about 77 min in hand runs |

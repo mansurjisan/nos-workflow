@@ -414,11 +414,11 @@ A decomposition tar from the removed single mode has no fort.24 and is refused (
 - **Disk:** plan for about 300 GB of COM per ops-mode cycle (ops writes about 155 GB of products plus 98 GB of rerun files; our forcing is hourly past 120 h) and about 150 GB of work space while a cycle runs.
 - **Purge:** ptmp is purged by file age. `nod_equi`, the decomposition tar and the chain files live there; if they age out the next cycle needs a cold start (section 9). Keep a copy of `nod_equi` and the tar on noscrub, and copy without `cp -p`.
 
-## 5. Jenkins (Hercules, manual only)
+## 5. Jenkins (Hercules, manual and nightly)
 
 For a step-by-step build, how to read the result and fixes for common failures, see [hercules_jenkins_run_guide.md](hercules_jenkins_run_guide.md).
 
-STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status).
+STOFS-2D-Global runs in the Hercules Jenkins pipeline only from **Build with Parameters**. The PR-label trigger (`hercules-nos-RT`) is not used for it: a build started by a user with `OFS=stofs_2d_glo` bypasses the label check, and automatic or **Build Now** builds keep `OFS=secofs_ufs`. It reports in the Jenkins build only (no GitHub status). The ATL job can also run it on a schedule set in the Jenkins dashboard (a nightly `full` live 12z cold start with a `PDY=latest`: the latest published day; live Stage Data removes the other days' 2D dirs and `ops_s3` dirs, keeping COMGES; a cold start always rebuilds the decomposition), see the Jenkins run guide section 10.
 
 | Parameter | Values | Meaning |
 |---|---|---|
@@ -448,7 +448,7 @@ At every level Prep finds the staged ops forcing and skips its GFS steps, so it 
 **Layout.** Like SECOFS and ATL, the jobs use the shared `$NOS_PTMP/$LOGNAME/{com,rpt,work}` (the old `com_2dglo_ci` is removed once; an inherited `COMROOT_2DGLO` is ignored). `RUN=stofs_2d_glo` is unique, so the state sits beside SECOFS's and ATL's without touching it: COMGES is `com/nos/stofs_2d_glo` and a cycle is `com/nos/stofs_2d_glo.<PDY>`.
 
 - **frozen:** Stage Data removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<8 digits>` (exact names, no symlinks, every target checked before the first delete), then links the dataset in: hard links, or copies across file systems. The forcing sits in `rerun/`, a real writable directory in com, because the jobs also publish their products there. The jobs only read the forcing, `nod_equi` and the decomposition tar (they replace the tar by rename), so those are read-only, shared with the dataset. The chain files (`hotstart`, `restart`) are copied into the ADCIRC run directory with their mode and rewritten there, so they stay writable, and Stage copies them (like the `.json` beside the tar, which is rewritten in place when the decomposition is rebuilt) instead of linking. Stage also applies the read-only mode to datasets copied earlier. Use the 06z-type dataset for smoke and cycle (they continue from the previous cycle) and the 00z-type dataset for full.
-- **live:** stages the ops forcing with `tools/hercules_2d_glo_stage_forcing.sh --rm-raw` on the front-end node and does not clear com. It continues from the state already there: run `LEVEL=full` first, then `LEVEL=cycle` at +6 h.
+- **live:** stages the ops forcing with `tools/hercules_2d_glo_stage_forcing.sh --rm-raw` on the front-end node. Before the download it keeps `com/nos/stofs_2d_glo` (the chain state a later `LEVEL=cycle` continues from) and the days of `PDY` and the previous cycle, and removes the other days' 2D dirs and the other `ops_s3` cycle dirs. It continues from the state already there: run `LEVEL=full` first, then `LEVEL=cycle` at +6 h.
 - **Prerequisites:** Bootstrap copies `fix/stofs_2d_glo` and `exec/stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build from `SEED_ADCIRC` (default `<parent of SEED_SRC>/adcirc_v56.1.0_exec`). These must be world-readable for the CI account.
 
 **One-time seeding of the frozen datasets.** Run by hand from the clone, as the user who owns the finished runs (a cold start at 00z and the following 06z cycle):
