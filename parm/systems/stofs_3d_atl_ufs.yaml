@@ -89,6 +89,9 @@ forcing:
 
   ocean:
     rtofs_3d_region: US_east  # 3dz tile; without it any region file can fill a slot. MJ (10/02/26)
+    rtofs_daily_3z: false
+    surface_restore:
+      enabled: false
     obc:
       # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
       # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
@@ -97,6 +100,9 @@ forcing:
       wl_source: RTOFS
       ssh_offset: 0.04
       obc_mode: dynamic_adjust
+      dt: 21600.0
+      min_timesteps: 21
+      time_smoothing: false
       # Ops gen_3Dth chain (non_adjust.sh): same-day RTOFS, 6-hourly records from the
       # nowcast start, triangle interp (mode 1), elev2D held at record 0. MJ (10/02/26)
       ops_timeline: true
@@ -115,6 +121,8 @@ forcing:
     nudging:
       enabled: true
       timescale_days: 1.0
+      dt: 21600.0
+      time_smoothing: false
       roi_3dz:
         x1: 422
         x2: 600

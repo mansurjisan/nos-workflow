@@ -79,14 +79,20 @@ forcing:
 #      subdir: can_streamgauge
 
   ocean:
-    rtofs_3d_region: ""
-    rtofs_freq: daily
+    rtofs_daily_3z: true
+    surface_restore:
+      enabled: true
+      weight_file: stofs_3d_pac_tem_nudge.gr3
+      time_smoothing: true
     obc:
       # iettype-4/5 elevation segments only: excludes the iettype-0 St-Lawrence
       # flow segment, so *.th.nc has 778 of the 781 open-boundary nodes (v3.1
       # mesh: 756 + 22 elevation, 3 flow). MJ (09/30/26)
       elev_segments: [0, 1]
       wl_source: RTOFS
+      dt: 86400.0
+      min_timesteps: 4
+      time_smoothing: true
       # TODO: Relevant in pacific?
 #      ssh_offset: 0.04
 #      obc_mode: dynamic_adjust
@@ -112,6 +118,8 @@ forcing:
     nudging:
       enabled: true
       timescale_days: 1.0
+      dt: 86400.0
+      time_smoothing: true
       roi_3dz:
         x1: 222
         x2: 2703
