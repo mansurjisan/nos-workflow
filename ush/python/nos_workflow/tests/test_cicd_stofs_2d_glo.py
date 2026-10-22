@@ -379,8 +379,8 @@ def test_live_stage_prunes_other_days_and_ops_s3_cycles_but_keeps_comges_and_the
     assert r.returncode == 0, r.stderr + r.stdout
     assert all(k.exists() for k in keep), [k for k in keep if not k.exists()]
     assert not any(g.parent.exists() for g in gone), [g for g in gone if g.parent.exists()]
-    assert f"removed {nos}/stofs_2d_glo.20261009" in r.stdout and f"removed {ops}/2026100912" in r.stdout
-    # an OPS_WORK of the caller's own leaves ops_s3 alone
+    assert f"removed {os.path.realpath(nos)}/stofs_2d_glo.20261009" in r.stdout and f"removed {ops}/2026100912" in r.stdout
+    # an OPS_WORK of the caller's own leaves ops_s3 alone. MJ (10/22/26)
     other = _touch(ops / "2026100912" / "f")
     assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00", OPS_WORK=str(ci.tmp / "w")).returncode == 0 and other.is_file()
 

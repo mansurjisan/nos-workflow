@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds only). MJ (10/15/26)
+# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds and the ATL job's nightly timer). MJ (10/15/26)
 #   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = clear the 2D-Global state of earlier cycles from the shared CI com, then link (hard
 #                            links, copy across file systems) the dataset for PDY/CYC from the RT root into it; live = tools/hercules_2d_glo_stage_forcing.sh
 #                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too, since compute nodes have
@@ -23,7 +23,7 @@
 #   full   Prep Nowcast Forecast Post                1      the same as cycle (a cold start is deterministic); ops comparison reported
 # Prep finds the staged ops forcing and skips its GFS steps, so SUBMIT_GFS is not used. smoke and cycle continue from the previous cycle's hotstart/restart, so
 # they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
-# stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and does not clear it; the smoke/cycle stage
+# stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and keeps it (live only prunes other days, see below); the smoke/cycle stage
 # checks that state before it downloads. frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
 # other days' 2D dirs and the other ops_s3 cycle dirs, so the nightly cold start (Jenkinsfile timer, 12z) never fills the CI storage. MJ (10/22/26)
 #
@@ -104,7 +104,7 @@ level_setup() {
 # All targets are validated before the first rm, so a refusal never follows a delete. Then removes the old com_2dglo_ci root once.
 # With day arguments (YYYYMMDD, live mode) COMGES and those days' directories are kept and the other days removed. MJ (10/22/26)
 clear_com() {
-  local p c t d n rm=()
+  local p c t n rm=()
   case "${LOGNAME}" in ""|*/*|.|..) echo "FATAL: refusing to clear com: odd LOGNAME '${LOGNAME}'" >&2; exit 1 ;; esac
   p=$(realpath -m -- "${NOS_PTMP}")
   c="${p}/${LOGNAME}/com"
@@ -181,7 +181,7 @@ cmd_stage() {
         [ "${miss}" = 0 ] || { echo "FATAL: LEVEL=${LEVEL} continues from the chain state in ${CI_COM}, which lacks the files above; run LEVEL=full DATA_MODE=live for the previous 6-hourly cycle first, or use DATA_MODE=frozen"; exit 1; }
       fi
       mkdir -p "${CI_COM}"
-      # After the chain-state check, which reads PREV's day (kept). COMGES stays: the cached decomposition and the chain state. PDY stays so a rerun skips the download. MJ (10/22/26)
+      # After the chain-state check, which reads PREV's day (kept). COMGES stays: the chain state (nod_equi, decomposition) a later live LEVEL=cycle continues from; a cold start rebuilds the decomposition itself. PDY stays so a rerun skips the download. MJ (10/22/26)
       clear_com "${PDY}" "${PREV:0:8}"
       prune_ops_s3
       du -sh "${CI_COM}/nos/${RUN}"* 2>/dev/null | sed 's/^/  /' || true

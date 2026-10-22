@@ -38,14 +38,14 @@ def resolveTargetSha() {
     }
 }
 
-// Systems that run only from a user-started Build with Parameters, never from the PR label. MJ (10/14/26)
+// Systems that run only from a user-started Build with Parameters (plus the ATL job's nightly timer for stofs_2d_glo), never from the PR label. MJ (10/14/26)
 def isManualOfs(String ofs) {
     return ofs in ['stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs']
 }
 
 // True when the Jenkins timer started the build (the nightly STOFS-2D-Global cycle). MJ (10/22/26)
 def isNightly() {
-    return currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') as boolean
+    return currentBuild.getBuildCauses('hudson.triggers.TimerTrigger$TimerTriggerCause') ? true : false
 }
 
 def isAtlOfs(String ofs) {
@@ -118,7 +118,7 @@ pipeline {
         string(name: 'SLURM_QOS', defaultValue: 'batch', description: 'Slurm qos for CI submissions')
         string(name: 'PDY', defaultValue: '20260827', description: 'Cycle date YYYYMMDD')
         string(name: 'CYC', defaultValue: '06', description: 'Cycle hour: 00, 06, 12, or 18')
-        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo, stofs_3d_atl_ufs_standalone (pschism) or stofs_3d_atl_ufs (UFS coupled), never the PR label; Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
+        choice(name: 'OFS', choices: ['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'], description: 'System to run. Only Build with Parameters can select stofs_2d_glo (the ATL job's nightly timer also runs it), stofs_3d_atl_ufs_standalone (pschism) or stofs_3d_atl_ufs (UFS coupled), never the PR label; Build Now runs the SECOFS defaults. A new parameter appears in the form only after the first build of this Jenkinsfile.')
         string(name: 'DCOM_BUNDLE', defaultValue: '', description: 'stofs_3d_atl_* with DATA_MODE=live only: case bundle dir holding dcom/ and seeds/dyn_seed_<PDY-1>/ (run guide section 4.2); must be readable by the CI account. Not needed for frozen')
         choice(name: 'LEVEL', choices: ['smoke', 'cycle', 'full'], description: 'stofs_2d_glo and stofs_3d_atl_*, which run the Prep, Nowcast, Forecast and Post stages. smoke: Prep, Nowcast, Verify. cycle and full: Prep, Nowcast, Forecast, Post, Verify. 2D-GLO smoke and cycle continue from the previous cycle (COLD=0); 2D-GLO full is the COLD=1 cold start, which adds adcprep to Prep and the spin-up to Nowcast. The report-only ops comparison runs at cycle and full for 2D-GLO and at full for ATL. 2D-GLO frozen datasets: 20261012 06 for smoke/cycle, 20261012 00 for full. ATL needs a seeded frozen dataset (stofs_3d_atl.sh seed); CYC is forced to 12. Use DATA_MODE=frozen')
     }
@@ -132,9 +132,9 @@ pipeline {
         SEED_RT      = "${params.SEED_RT}"
         SLURM_CI_ACCOUNT = "${params.SLURM_ACCOUNT}"
         SLURM_CI_QOS     = "${params.SLURM_QOS}"
-        // A timer build has only the parameter defaults, so it sets the nightly cycle itself: today's 12z STOFS-2D-Global cold start, live. MJ (10/22/26)
+        // A timer build has only the parameter defaults, so it sets the nightly cycle itself: the live 12z STOFS-2D-Global cold start of the UTC day the timer fired (20 hours ago: a build queued past midnight still runs that day). MJ (10/22/26)
         DATA_MODE    = "${isNightly() ? 'live' : params.DATA_MODE}"
-        PDY          = "${isNightly() ? sh(script: 'date -u +%Y%m%d', returnStdout: true).trim() : params.PDY}"
+        PDY          = "${isNightly() ? sh(script: 'date -u -d "20 hours ago" +%Y%m%d', returnStdout: true).trim() : params.PDY}"
         // STOFS-3D-ATL has only the 12z cycle, whatever the form says. MJ (10/14/26)
         CYC          = "${isNightly() ? '12' : (params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC)}"
         CI_OFS       = "${isNightly() ? 'stofs_2d_glo' : (params.OFS ?: 'secofs_ufs')}"
@@ -194,7 +194,7 @@ pipeline {
                     if (isAtlOfs(params.OFS) && params.CYC != '12') {
                         echo "STOFS-3D-ATL runs 12z only: CYC ${params.CYC} -> 12"
                     }
-                    // STOFS-2D-Global and STOFS-3D-ATL are manual only: a user who starts a build with one of them as OFS bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/14/26)
+                    // STOFS-2D-Global and STOFS-3D-ATL are manual only (the nightly timer build is let through above): a user who starts a build with one of them as OFS bypasses the PR-label check (left as is above); automatic builds keep OFS=secofs_ufs. MJ (10/14/26)
                     if (env.RUN_CYCLE != 'true' && isManualOfs(params.OFS) && currentBuild.getBuildCauses('hudson.model.Cause$UserIdCause')) {
                         env.RUN_CYCLE = 'true'
                         echo "Gate: manual ${params.OFS} build (LEVEL=${params.LEVEL}) - cycle will run, PR label not required"
