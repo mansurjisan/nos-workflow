@@ -16,7 +16,7 @@ SCRIPT = SCRIPTS / "stofs_3d_atl.sh"
 PDY, PDYM1, CYC, RUN = "20261001", "20260930", "12", "stofs_3d_atl_ufs"
 # the staged comin trees are nested below the day directory (what stage_comin.py lays out). MJ (10/14/26)
 NEST = {"gfs": "12/atmos", "hrrr": "conus", "rtofs": "", "nwm": "medium_range_mem1"}
-AMBIENT = ("WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
+AMBIENT = ("WAIT_S", "POLL_S", "CMP_TOL", "OPS_DIR", "OPS_WARN_MM", "OPS_FAIL_MEDIAN_MM", "OPS_FAIL_OVER_10CM", "SEED_RT", "FORCE", "NOS_VENV", "VENV_PATH", "WORKSPACE",
            "RT_DATA_ROOT", "DATA_MODE", "LEVEL", "CI_OFS", "SLURM_CI_ACCOUNT", "SLURM_CI_QOS", "PACKAGEROOT", "NOS_PTMP", "DCOMROOT",
            "DCOM_BUNDLE", "COMPARE_ATL", "STUB_DIR", "COMROOT_SA", "COMROOT_UFS")
 needs_rsync = pytest.mark.skipif(shutil.which("rsync") is None, reason="rsync not installed")
@@ -547,7 +547,11 @@ def test_verify_calls_regress_and_at_full_ops(ci):
     assert ci.run("verify", LEVEL="full").returncode == 0
     reg, ops = _calls(ci)
     assert reg[reg.index("--level") + 1] == "cycle"
-    assert ops == ["ops", "--ops-dir", str(ci.ds / "ref" / "ops"), "--out", str(ci.com), "--variant", "standalone", "--pdy", PDY, "--warn-mm", "500"]
+    assert ops == ["ops", "--ops-dir", str(ci.ds / "ref" / "ops"), "--out", str(ci.com), "--variant", "standalone", "--pdy", PDY, "--warn-mm", "500",
+                   "--fail-median-mm", "5", "--fail-over-10cm", "10"]
+    (ci.stubs / "cmp.calls").unlink()
+    assert ci.run("verify", LEVEL="full", OPS_FAIL_MEDIAN_MM="2", OPS_FAIL_OVER_10CM="3").returncode == 0
+    assert _calls(ci)[1][-4:] == ["--fail-median-mm", "2", "--fail-over-10cm", "3"]
     assert (ci.ws / "ci_logs" / "compare_atl.txt").is_file()
 
 
@@ -569,6 +573,9 @@ def test_coupled_verify_passes_its_variant(tmp_path):
     ci.dataset()
     assert ci.run("verify", LEVEL="smoke").returncode == 0
     assert _calls(ci)[0][_calls(ci)[0].index("--variant") + 1] == "coupled"
+    (ci.stubs / "cmp.calls").unlink()
+    assert ci.run("verify", LEVEL="full").returncode == 0
+    assert "--fail-median-mm" not in _calls(ci)[1] and _calls(ci)[1][-2:] == ["--warn-mm", "500"]
 
 
 # ---- seed ---- MJ (10/14/26)
