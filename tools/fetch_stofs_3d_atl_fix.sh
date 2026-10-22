@@ -26,7 +26,7 @@ set -euo pipefail
 
 DEST="$(mkdir -p "${1:-fix/stofs_3d_atl_ufs}" && cd "${1:-fix/stofs_3d_atl_ufs}" && pwd)"
 OPS_DIR="/lfs/h1/ops/prod/packages/stofs.v3.1.5/fix/stofs_3d_atl"
-OPS_URL="https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/fix/stofs_3d_atl"
+OPS_URL="https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/fix/stofs_3d_atl"
 SCHISM_TASKS=4912
 
 # "ops name  staged name". Grid/property files need the exact prefixed

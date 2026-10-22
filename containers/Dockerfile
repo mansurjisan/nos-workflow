@@ -260,7 +260,7 @@ RUN mkdir -p /opt/stofs/exec
 
 # STOFS-3D-ATL prep calls only tide_fac (OBC and nudging use the Python ops ports), built from the
 # public ops v3.1.5 source at build time so no Fortran source is kept in the repo. MJ (10/21/26)
-ARG TIDE_FAC_SRC=https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_3d_atl/stofs_3d_atl_tide_fac.fd
+ARG TIDE_FAC_SRC=https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_3d_atl/stofs_3d_atl_tide_fac.fd
 RUN mkdir -p /tmp/tide_fac && cd /tmp/tide_fac && \
     wget -q ${TIDE_FAC_SRC}/stofs_3d_atl_tide_fac.f90 ${TIDE_FAC_SRC}/tf_selfe.f90 && \
     gfortran -o /opt/stofs/exec/stofs_3d_atl_tide_fac stofs_3d_atl_tide_fac.f90 tf_selfe.f90 && \

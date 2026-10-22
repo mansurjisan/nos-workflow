@@ -12,7 +12,7 @@ needs neither geopandas nor mpi4py. Run on a machine with geopandas:
 
 Inputs for the committed file: stofs.v3.1.5 fix/stofs_3d_atl/
 stofs_3d_atl_hgrid.gr3, stofs_3d_atl_coastal.shp, stofs_3d_atl_lakes.shp
-(https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/fix/stofs_3d_atl/).
+(https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/fix/stofs_3d_atl/).
 The source version and sha256 of each input are stored inside the npz
 (prov_* arrays); regenerate it whenever the mesh or polygons change.
 

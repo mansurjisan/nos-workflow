@@ -59,8 +59,8 @@ OPS_FLAGS=${OPS_FLAGS:-${PARENT}/ops_padcirc_flags.make}
 MAKE_JOBS=${MAKE_JOBS:-$([ -n "${SLURM_JOB_ID:-}" ] && echo 8 || echo 4)}
 ADC_VERSION=v56.1.0
 ADC_HASH=6e667fc9dcc759116f0620f4d9ac76cfd1361fbd
-# --cut-dirs=7 strips pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/adcirc so the files land directly in SRC. MJ (10/13/26)
-UP=/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/adcirc
+# --cut-dirs=7 strips pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_2d_glo/adcirc so the files land directly in SRC. MJ (10/13/26)
+UP=/pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_2d_glo/adcirc
 URL=https://www.nco.ncep.noaa.gov${UP}
 
 src_missing() {

@@ -51,7 +51,7 @@ if [ -n "${EXECnos:-}" ] && [ "$(realpath -m "${EXECnos}")" != "$(realpath -m "$
   echo "WARNING: inherited EXECnos=${EXECnos} ignored; installing into ${TIDE_FAC_EXEC_DIR}" >&2
 fi
 EXECnos=${TIDE_FAC_EXEC_DIR}
-URL=${URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd}
+URL=${URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd}
 F=stofs_2d_glo_tide_fac.f
 
 if [ "${MODE}" != build ]; then
