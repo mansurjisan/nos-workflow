@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds and the ATL job's nightly timer). MJ (10/22/26)
+# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual and scheduled builds). MJ (10/22/26)
 #   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = clear the 2D-Global state of earlier cycles from the shared CI com, then link (hard
 #                            links, copy across file systems) the dataset for PDY/CYC from the RT root into it; live = tools/hercules_2d_glo_stage_forcing.sh
 #                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too, since compute nodes have
@@ -25,7 +25,7 @@
 # they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
 # stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and keeps it (live only prunes other days, see below); the smoke/cycle stage
 # checks that state before it downloads. frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
-# other days' 2D dirs and the other ops_s3 cycle dirs, so the nightly cold start (Jenkinsfile timer, 12z) never fills the CI storage. MJ (10/22/26)
+# other days' 2D dirs and the other ops_s3 cycle dirs, so a daily scheduled cold start never fills the CI storage. MJ (10/22/26)
 #
 # Layout, the SECOFS one: com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work}, the cards' own defaults; COMROOT_2DGLO is that com (an inherited
 # value is ignored). RUN stofs_2d_glo is unique, so the 2D-Global state sits beside SECOFS's and ATL's without touching it: COMGES is com/nos/stofs_2d_glo and a

@@ -119,9 +119,10 @@ def test_jenkinsfile_parameters_default_to_the_secofs_pipeline():
     text = JENKINSFILE.read_text()
     assert re.search(r"choice\(name: 'OFS', choices: \['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'\]", text)
     assert re.search(r"choice\(name: 'LEVEL', choices: \['smoke', 'cycle', 'full'\]", text)
-    assert "CI_OFS       = \"${isNightly() ? 'stofs_2d_glo' : (params.OFS ?: 'secofs_ufs')}\"" in text
-    assert "LEVEL        = \"${isNightly() ? 'full' : (params.LEVEL ?: 'smoke')}\"" in text
-    assert "cron(env.JOB_NAME == 'NOS/nos-workflow-atl-hercules' ? 'TZ=UTC\\nH 20 * * *' : '')" in text
+    assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
+    assert "LEVEL        = \"${params.LEVEL ?: 'smoke'}\"" in text
+    assert "PDY          = \"${resolvePdy(params.PDY, params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC)}\"" in text
+    assert "isNightly" not in text and "cron(" not in text   # the schedule lives in the dashboard. MJ (10/22/26)
 
 
 def _stage_conditions():
