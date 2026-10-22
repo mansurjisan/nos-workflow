@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds and the ATL job's nightly timer). MJ (10/15/26)
+# STOFS-2D-Global stages of the Hercules Jenkins pipeline (OFS=stofs_2d_glo; manual builds and the ATL job's nightly timer). MJ (10/22/26)
 #   stofs_2d_glo.sh stage    Stage Data (called by stage_data.sh): frozen = clear the 2D-Global state of earlier cycles from the shared CI com, then link (hard
 #                            links, copy across file systems) the dataset for PDY/CYC from the RT root into it; live = tools/hercules_2d_glo_stage_forcing.sh
 #                            --rm-raw on this login/front-end node, which is where the SECOFS live staging (stage_comin.py) runs too, since compute nodes have

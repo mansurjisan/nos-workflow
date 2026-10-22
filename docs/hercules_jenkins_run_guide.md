@@ -302,7 +302,7 @@ Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing
 | Stage | Runs on | What it does | LEVEL | Time (smoke build #10) |
 | --- | --- | --- | --- | --- |
 | Checkout | Jenkins agent | Checks out the job's branch (`*/develop`) | all | seconds |
-| Gate | Jenkins agent | Lets a manual 2D build, or the nightly timer build, run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full) | all | seconds |
+| Gate | Jenkins agent | Lets a manual 2D build, or the nightly timer build, run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full); the nightly sets 12 | all | seconds |
 | Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies `fix/stofs_2d_glo` and `stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build (`padcirc`, `adcprep`) from `adcirc_v56.1.0_exec` beside it. Once per dataset, copies `stofs_2d_glo/<PDY><CYC>` from `SEED_RT`; its forcing, decomposition tar and `nod_equi` become read-only | all | first copy 60 GB in 2.5 min, then seconds |
 | Deploy | Jenkins agent | Copies the checked-out nos-workflow into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | all | seconds |
 | Environment Check | Jenkins agent | Modules, Python imports, `tide_fac`, `padcirc`, `adcprep`, the NCO tools (`ncdiff`, `ncrcat`, `ncks`) and `sbatch`/`sacct` | all | seconds |

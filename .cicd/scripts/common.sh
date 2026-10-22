@@ -15,7 +15,7 @@ case "${PACKAGEROOT}" in
 esac
 export PACKAGEROOT
 export HOMEnos="${PACKAGEROOT}/nos-workflow"
-# secofs_ufs by default; stofs_2d_glo and the two STOFS-3D-ATL variants only when the Jenkinsfile sets CI_OFS from the OFS parameter (manual builds, and the ATL job's nightly timer for stofs_2d_glo). MJ (10/14/26)
+# secofs_ufs by default; stofs_2d_glo and the two STOFS-3D-ATL variants only when the Jenkinsfile sets CI_OFS from the OFS parameter (manual builds, and the ATL job's nightly timer for stofs_2d_glo). MJ (10/22/26)
 case "${CI_OFS:-secofs_ufs}" in secofs_ufs|stofs_2d_glo|stofs_3d_atl_ufs_standalone|stofs_3d_atl_ufs) ;; *) echo "FATAL: CI_OFS must be secofs_ufs, stofs_2d_glo, stofs_3d_atl_ufs_standalone or stofs_3d_atl_ufs (got '${CI_OFS}')" >&2; exit 2 ;; esac
 export OFS="${CI_OFS:-secofs_ufs}"
 
