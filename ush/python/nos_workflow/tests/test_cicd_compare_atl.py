@@ -270,7 +270,7 @@ def test_ops_gate_median_over_threshold_fails(tmp_path):
 
 def test_ops_gate_too_many_stations_over_10cm_fails(tmp_path):
     out, opsd = _ops_tree(tmp_path)  # MJ (10/22/26)
-    for ph in ("nowcast", "forecast"):  # 2 of 5 compared stations 20 cm off, median stays 0
+    for ph in ("nowcast", "forecast"):  # 2 of 5 compared stations 20 cm off, median stays 0. MJ (10/22/26)
         f = _day(out) / f"stofs_3d_atl_ufs.t12z.{PDY}.points.cwl.{ph}.nc"
         with nc.Dataset(f, "a") as d:
             d.variables["zeta"][:, 0:2] = d.variables["zeta"][:, 0:2] + 0.2
