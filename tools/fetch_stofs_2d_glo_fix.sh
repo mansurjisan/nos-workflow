@@ -41,7 +41,7 @@ set -euo pipefail
 
 DEST="${1:-fix/stofs_2d_glo}"
 OPS_DIR="${OPS_DIR:-/lfs/h1/ops/prod/packages/stofs.v3.1.5/fix/stofs_2d_glo}"
-OPS_URL="${OPS_URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/fix/stofs_2d_glo}"
+OPS_URL="${OPS_URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/fix/stofs_2d_glo}"
 
 # "ops name  staged name"; identical, so a rename never hides a missing file. MJ (10/05/26)
 FILES="

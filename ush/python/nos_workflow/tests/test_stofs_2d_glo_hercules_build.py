@@ -220,7 +220,7 @@ def test_adcirc_all_downloads_with_the_ops_wget_then_builds(env, tmp_path):
     wget = (tmp_path / "wget.args").read_text()
     for needle in ("-r -np -nH --cut-dirs=7 -l inf -e robots=off -nv", "-R index.html*", "-P " + e["SRC"],
                    "/adcirc/build,", "/adcirc/build.orig,", "/adcirc/thirdparty/nuopc",
-                   "https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/adcirc/"):
+                   "https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_2d_glo/adcirc/"):
         assert needle in wget
     assert (tmp_path / "curl.url").read_text().strip().endswith("/adcirc/build/CMakeFiles/padcirc.dir/flags.make")
     assert os.access(tmp_path / "adc_src" / "scripts" / "adcirc_version.py", os.X_OK) and "flags verified" in r.stdout
