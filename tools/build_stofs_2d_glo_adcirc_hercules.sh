@@ -6,7 +6,7 @@
 # Hercules and install both into $ADCIRC_EXEC_DIR, the directory the Slurm cards
 # (slurm/stofs_2d_glo) read. Hercules has no adcirc module.
 #
-# Source: the public NCO mirror of stofs.v3.1.5 (sorc/stofs_2d_glo/adcirc, version.F
+# Source: the public NCO mirror of stofs.v3.1.6 (sorc/stofs_2d_glo/adcirc, version.F
 # v56.1.0, hash 6e667fc9dcc759116f0620f4d9ac76cfd1361fbd). Ops' build-all has a missing
 # backslash and never sets a build type, so the Release flags it lists were not applied;
 # the mirror's own build/CMakeCache.txt shows RelWithDebInfo and flags.make shows the real

@@ -8,7 +8,7 @@
 # Python fallback (a float32/float64 difference would freeze different FFT/FACET
 # values into every segment for 365 days). MJ (10/13/26)
 #
-# Source: stofs_2d_glo_tide_fac.f from the public NCO mirror of stofs.v3.1.5
+# Source: stofs_2d_glo_tide_fac.f from the public NCO mirror of stofs.v3.1.6
 # (sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd). The ops sorc makefile builds it
 # with FFLAGS = -O2 -fp-model strict and no libraries; same source and flags here
 # with ifort.
