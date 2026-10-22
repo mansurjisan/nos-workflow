@@ -3,7 +3,7 @@ name: Docker Build (stofsworkflow)
 on:
   workflow_dispatch:
   # Nightly image for the ParallelWorks run; scheduled runs use develop and push :develop-nightly (main's old
-  # workflow still pushes the v2.1 image as :nightly). MJ (10/21/26)
+  # workflow pushed the old v2.1 image as :nightly; that tag is no longer rebuilt). MJ (10/21/26)
   schedule:
     - cron: '0 5 * * *'
   push:

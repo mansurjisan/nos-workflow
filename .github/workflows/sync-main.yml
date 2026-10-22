@@ -16,6 +16,8 @@ concurrency:
 
 jobs:
   sync:
+    # Only develop is published to main, also for manual runs started from another branch. MJ (10/21/26)
+    if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
