@@ -8,7 +8,7 @@
 # Python fallback (a float32/float64 difference would freeze different FFT/FACET
 # values into every segment for 365 days). MJ (10/13/26)
 #
-# Source: stofs_2d_glo_tide_fac.f from the public NCO mirror of stofs.v3.1.5
+# Source: stofs_2d_glo_tide_fac.f from the public NCO mirror of stofs.v3.1.6
 # (sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd). The ops sorc makefile builds it
 # with FFLAGS = -O2 -fp-model strict and no libraries; same source and flags here
 # with ifort.
@@ -51,7 +51,7 @@ if [ -n "${EXECnos:-}" ] && [ "$(realpath -m "${EXECnos}")" != "$(realpath -m "$
   echo "WARNING: inherited EXECnos=${EXECnos} ignored; installing into ${TIDE_FAC_EXEC_DIR}" >&2
 fi
 EXECnos=${TIDE_FAC_EXEC_DIR}
-URL=${URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.5/sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd}
+URL=${URL:-https://www.nco.ncep.noaa.gov/pmb/codes/nwprod/stofs.v3.1.6/sorc/stofs_2d_glo/stofs_2d_glo_tide_fac.fd}
 F=stofs_2d_glo_tide_fac.f
 
 if [ "${MODE}" != build ]; then
