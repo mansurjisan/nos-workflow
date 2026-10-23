@@ -119,6 +119,7 @@ def test_jenkinsfile_parameters_default_to_the_secofs_pipeline():
     text = JENKINSFILE.read_text()
     assert re.search(r"choice\(name: 'OFS', choices: \['secofs_ufs', 'stofs_2d_glo', 'stofs_3d_atl_ufs_standalone', 'stofs_3d_atl_ufs'\]", text)
     assert re.search(r"choice\(name: 'LEVEL', choices: \['smoke', 'cycle', 'full'\]", text)
+    assert "COLD_START" not in text   # the CI has no 2D-Global cold start. MJ (10/22/26)
     assert "CI_OFS       = \"${params.OFS ?: 'secofs_ufs'}\"" in text
     assert "LEVEL        = \"${params.LEVEL ?: 'smoke'}\"" in text
     assert "PDY          = \"${resolvePdy(params.PDY, params.OFS?.startsWith('stofs_3d_atl') ? '12' : params.CYC)}\"" in text
@@ -248,7 +249,7 @@ def test_frozen_stage_needs_the_sentinel(ci):
     ci.dataset(sentinel=False)
     r = ci.script("stage")
     assert r.returncode == 1 and ".seeded_ok" in r.stdout and "stofs_2d_glo.sh seed 20261012 06" in r.stdout
-    assert ci.script("stage", LEVEL="full").stdout.count("seed 20261012 06 cold") == 1
+    assert "cold" not in ci.script("stage", LEVEL="full").stdout
 
 
 COM_RUN = "stofs_2d_glo"
@@ -358,6 +359,21 @@ def test_stage_data_sh_hands_over_to_the_2dglo_stage(ci):
     assert "staging" in r.stdout and (ci.com / "nos").is_dir()
 
 
+def _chain_state(root: Path, day: str = PREV[0], hh: str = PREV[1]):
+    """The COMGES files and the previous cycle's chain files a live build continues from. MJ (10/22/26)"""
+    for f in ("stofs_2d_glo_nod_equi", "stofs_2d_glo_4064.tar", "stofs_2d_glo_4064.tar.json"):
+        _touch(root / "nos" / "stofs_2d_glo" / f, f"ges {f}")
+    for kind in ("hotstart", "restart"):
+        _touch(root / "nos" / f"stofs_2d_glo.{day}" / f"stofs_2d_glo.t{hh}z.{kind}", f"chain {kind}")
+
+
+def _live(ci: Ci, **kw):
+    """A live Stage Data run with the chain state of its cycle already in the com. MJ (10/22/26)"""
+    prev = (PREV[0], PREV[1]) if kw.get("CYC", CYC) == "06" else ("20261011", "18")
+    _chain_state(ci.com, *prev)
+    return ci.script("stage", DATA_MODE="live", **kw)
+
+
 def _live_tool(ci: Ci, rc: int):
     return _stub(ci.home / "tools" / "hercules_2d_glo_stage_forcing.sh",
                  f'#!/bin/bash\necho "$@ | $COMROOT_2DGLO | $NOS_PTMP" > "$STUB_DIR/tool.args"\nexit {rc}\n')
@@ -366,7 +382,7 @@ def _live_tool(ci: Ci, rc: int):
 def test_live_stage_runs_the_login_node_tool_and_keeps_the_chain_state(ci):
     _live_tool(ci, 0)
     _touch(ci.com / "nos" / "chain_state", "keep")
-    r = ci.script("stage", DATA_MODE="live", LEVEL="full")
+    r = _live(ci, LEVEL="full")
     assert r.returncode == 0, r.stderr + r.stdout
     assert (ci.stubs / "tool.args").read_text().strip() == f"--rm-raw {PDY} {CYC} | {ci.com} | {ci.ptmp}"
     assert (ci.com / "nos" / "chain_state").is_file() and "stage_data PASS" in r.stdout
@@ -388,14 +404,14 @@ def test_live_stage_prunes_other_days_and_ops_s3_cycles_but_keeps_comges_and_the
     keep = [_touch(nos / n / "f", "keep") for n in ("stofs_2d_glo", "stofs_2d_glo.20261012", "stofs_2d_glo.20261011", "secofs_ufs.20260101", "stofs_2d_glo.latest", "stofs_2d_glo.2026101")]
     keep += [_touch(ops / n / "f", "keep") for n in ("2026101200", "notes", "202610120")]
     gone = [_touch(nos / "stofs_2d_glo.20261009" / "f"), _touch(nos / "stofs_2d_glo.20260101" / "f"), _touch(ops / "2026100912" / "f"), _touch(ops / "2026101206" / "f")]
-    r = ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00")
+    r = _live(ci, LEVEL="full", CYC="00")
     assert r.returncode == 0, r.stderr + r.stdout
     assert all(k.exists() for k in keep), [k for k in keep if not k.exists()]
     assert not any(g.parent.exists() for g in gone), [g for g in gone if g.parent.exists()]
     assert f"removed {os.path.realpath(nos)}/stofs_2d_glo.20261009" in r.stdout and f"removed {ops}/2026100912" in r.stdout
     # an OPS_WORK of the caller's own leaves ops_s3 alone. MJ (10/22/26)
     other = _touch(ops / "2026100912" / "f")
-    assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00", OPS_WORK=str(ci.tmp / "w")).returncode == 0 and other.is_file()
+    assert _live(ci, LEVEL="full", CYC="00", OPS_WORK=str(ci.tmp / "w")).returncode == 0 and other.is_file()
 
 
 def test_live_stage_prune_refuses_a_symlinked_target_and_deletes_nothing_first(ci):
@@ -404,14 +420,14 @@ def test_live_stage_prune_refuses_a_symlinked_target_and_deletes_nothing_first(c
     victim = _touch(ci.tmp / "victim" / "f", "keep")
     early = _touch(nos / "stofs_2d_glo.20260101" / "f", "must survive a refusal")
     (nos / "stofs_2d_glo.20261009").symlink_to(victim.parent)
-    r = ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00")
+    r = _live(ci, LEVEL="full", CYC="00")
     assert r.returncode == 1 and "is a symlink or not a plain directory" in r.stderr and victim.is_file() and early.is_file()
     assert not (ci.stubs / "tool.args").exists()
     (nos / "stofs_2d_glo.20261009").unlink()
     ops = ci.ptmp / "tester" / "ops_s3"
     (ops / "2026100912").parent.mkdir(parents=True)
     (ops / "2026100912").symlink_to(victim.parent)
-    assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00").returncode == 0 and victim.is_file() and (ops / "2026100912").is_symlink()
+    assert _live(ci, LEVEL="full", CYC="00").returncode == 0 and victim.is_file() and (ops / "2026100912").is_symlink()
 
 
 def test_live_cycle_without_chain_state_and_decomposition_fails_before_the_download(ci):
@@ -420,7 +436,7 @@ def test_live_cycle_without_chain_state_and_decomposition_fails_before_the_downl
     r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
     assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo.t00z.restart" in r.stderr
     assert "starting from the ops state 2026100700 (cycle - 126 h)" in r.stdout and "4064-rank decomposition" in r.stderr
-    assert "LEVEL=full build (cold start) or a frozen" in r.stderr
+    assert "frozen 2D-Global build first (it stages the decomposition)" in r.stderr
     assert not (ci.stubs / "tool.args").exists() and not (ci.stubs / "curl.urls").exists()
 
 
@@ -546,10 +562,10 @@ def test_ops_state_refuses_a_symlinked_target(ci):
     assert r.returncode == 1 and "is a symlink" in r.stderr and not list(victim.iterdir()) and not (ci.stubs / "curl.urls").exists()
 
 
-def test_live_full_and_frozen_do_not_touch_the_ops_state(ci):
+def test_live_and_frozen_with_chain_state_do_not_use_the_ops_state(ci):
     _live_tool(ci, 0)
     _ops_stubs(ci)
-    assert ci.script("stage", DATA_MODE="live", LEVEL="full").returncode == 0
+    assert _live(ci, LEVEL="full").returncode == 0
     ci.dataset()
     assert ci.script("stage", DATA_MODE="frozen", LEVEL="smoke").returncode == 0
     assert not (ci.stubs / "curl.urls").exists() and not (ci.stubs / "tide_fac.args").exists()
@@ -557,10 +573,10 @@ def test_live_full_and_frozen_do_not_touch_the_ops_state(ci):
 
 def test_live_stage_tolerates_only_the_reference_download_failure(ci):
     _live_tool(ci, 3)
-    r = ci.script("stage", DATA_MODE="live", LEVEL="full")
+    r = _live(ci, LEVEL="full")
     assert r.returncode == 0 and "WARN" in r.stdout and "stage_data PASS" in r.stdout
     _live_tool(ci, 1)
-    r = ci.script("stage", DATA_MODE="live", LEVEL="full")
+    r = _live(ci, LEVEL="full")
     assert r.returncode == 1 and "rc=1" in r.stdout
     assert ci.script("stage", DATA_MODE="sometimes").returncode == 1
 
@@ -600,7 +616,7 @@ def _stage(ci: Ci, stage: str, **extra):
 @pytest.mark.parametrize("level", ["smoke", "cycle", "full"])
 @pytest.mark.parametrize("stage", ["prep", "nowcast", "forecast", "post"])
 def test_run_stage_submits_the_2dglo_job_with_the_launchers_flags_lists_and_exports(ci, stage, level):
-    cold = level == "full"
+    cold = False   # the CI never cold-starts 2D-Global, whatever the level. MJ (10/22/26)
     card, seg_warm, seg_cold, stream, flags = JOB[stage]
     pfx = _job(ci, stage)
     r = _stage(ci, stage, LEVEL=level, SLURM_CI_ACCOUNT="nosofs", SLURM_CI_QOS="batch", ADCIRC_SEGMENT="leak", ADCIRC_MODE="single", PYTHONPATH="/leak",
@@ -679,7 +695,7 @@ def test_run_stage_keeps_the_work_directory_alone_and_never_calls_clean_job(ci):
     assert "KEEPDATA=NO" in (ci.stubs / "sbatch.calls").read_text()
 
 
-@pytest.mark.parametrize("stage,level,secs", [(s, lv, int(re.sub(r"(\d+):(\d+):(\d+)", lambda m: str(int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])), WALL[(s, lv == "full")])) + 3600)
+@pytest.mark.parametrize("stage,level,secs", [(s, lv, int(re.sub(r"(\d+):(\d+):(\d+)", lambda m: str(int(m[1]) * 3600 + int(m[2]) * 60 + int(m[3])), WALL[(s, False)])) + 3600)
                                               for s in ("prep", "nowcast", "forecast", "post") for lv in ("cycle", "full")])
 def test_run_stage_timeout_is_the_card_walltime_plus_margin_and_cancels(ci, stage, level, secs):
     # a stub date that jumps past the limit on its second +%s call; the first is t0. MJ (10/15/26)
@@ -707,7 +723,7 @@ def test_the_walltimes_and_flags_are_the_launchers_and_fit_the_pipeline_timeout(
     assert "STREAMS:-tide surf" in launcher and JOB["nowcast"][3] == JOB["forecast"][3] == "tide surf"
     assert JOB["prep"][2] == "adcprep " + JOB["prep"][1] and JOB["nowcast"][2] == "spinup " + JOB["nowcast"][1]
     assert 'sub post "${PREP}"' in launcher
-    totals = {lv: sum(int(h) * 3600 + int(m) * 60 + int(x) + 3600 for h, m, x in (w.split(":") for w in (WALL[(s, lv == "full")] for s in JOB))) for lv in ("cycle", "full")}
+    totals = {lv: sum(int(h) * 3600 + int(m) * 60 + int(x) + 3600 for h, m, x in (w.split(":") for w in (WALL[(s, cold)] for s in JOB))) for lv, cold in (("cycle", False), ("full", True))}
     pipeline = int(re.search(r"timeout\(time: (\d+), unit: 'HOURS'\)", JENKINSFILE.read_text()).group(1)) * 3600
     assert totals["full"] + 7200 <= pipeline, "the full level must leave the pipeline timeout room for bootstrap and staging"   # +1 h queue margin per job. MJ (10/15/26)
     cards = REPO / "slurm" / "stofs_2d_glo"
@@ -954,17 +970,17 @@ def test_verify_fails_when_the_run_drifts_from_the_reference(ci):
     assert ci.script("verify", LEVEL="smoke", CMP_TOL="0.1").returncode == 0
 
 
-def test_verify_cycle_adds_points_files_and_reports_the_ops_comparison(ci):
+def test_verify_cycle_adds_points_files_and_skips_the_ops_comparison(ci):
     _verify_tree(ci, Z)
     r = ci.script("verify", LEVEL="cycle")
     assert r.returncode == 0, r.stdout
-    assert "5 files, 5 bitwise" in r.stdout and "ops: 2026101206: report only" in r.stdout
-    _verify_tree(ci, Z, ops=Z + 2.0)               # far from ops: reported, not a failure. MJ (10/13/26)
-    r = ci.script("verify", LEVEL="cycle")
+    assert "5 files, 5 bitwise" in r.stdout and "ops:" not in r.stdout     # the ops comparison is LEVEL=full only. MJ (10/22/26)
+    _verify_tree(ci, Z, ops=Z + 2.0)               # far from ops: reported at full, not a failure. MJ (10/13/26)
+    r = ci.script("verify", LEVEL="full")
     assert r.returncode == 0 and "WARN median" in r.stdout
 
 
-def test_verify_full_regresses_against_the_cold_seed_reference_and_reports_the_ops_comparison(ci):
+def test_verify_full_regresses_against_the_reference_and_reports_the_ops_comparison(ci):
     _verify_tree(ci, Z)
     r = ci.script("verify", LEVEL="full")
     assert r.returncode == 0, r.stdout
@@ -988,7 +1004,7 @@ def test_verify_needs_a_reference_in_frozen_mode_but_not_in_live_mode(ci):
     ops = ci.ptmp / "tester" / "ops_s3" / f"{PDY}{CYC}" / "products"
     for p in ("htp", "cwl.noanomaly", "swl"):
         _station_file(ops / f"stofs_2d_glo.t{CYC}z.points.{p}.nc", Z)
-    r = ci.script("verify", LEVEL="cycle", DATA_MODE="live")
+    r = ci.script("verify", LEVEL="full", DATA_MODE="live")
     assert r.returncode == 0 and "SKIP" not in r.stdout and "4 stations compared" in r.stdout
 
 
@@ -1034,7 +1050,7 @@ def test_seed_builds_the_dataset_the_stage_reads(ci):
     assert sorted(Path(f).name for f in _tree(dest / "ops")) == [f"stofs_2d_glo.t{CYC}z.points.{p}.nc" for p in ("cwl.noanomaly", "htp", "swl")]
     # the seeded directory is what Bootstrap copies into the RT root and Stage Data then reads. MJ (10/13/26)
     shutil.copytree(dest, ci.ds)
-    for level, n in (("smoke", 5 + 6), ("cycle", 5 + 6), ("full", 6)):
+    for level, n in (("smoke", 5 + 6), ("cycle", 5 + 6), ("full", 5 + 6)):
         r = ci.script("stage", LEVEL=level)
         assert r.returncode == 0, (level, r.stdout, r.stderr)
         assert len(_tree(ci.com)) == n, level
@@ -1056,9 +1072,8 @@ def test_seed_cold_dataset_leaves_out_the_cold_start_products(ci):
     dest = ci.tmp / "seed_rt" / "stofs_2d_glo" / f"{PDY}{CYC}"
     assert len(_tree(dest / "input")) == 6 and "ges" not in " ".join(_tree(dest / "input"))
     shutil.copytree(dest, ci.ds)
-    assert ci.script("stage", LEVEL="full").returncode == 0
-    r = ci.script("stage", LEVEL="smoke")
-    assert r.returncode == 1 and "cold dataset" in r.stdout
+    r = ci.script("stage", LEVEL="full")
+    assert r.returncode == 1 and "cold dataset" in r.stdout      # the CI always needs the chain state. MJ (10/22/26)
 
 
 def test_seed_refuses_an_unfinished_run_and_an_existing_dataset(ci):
@@ -1331,3 +1346,10 @@ def test_ops_state_check_that_cannot_run_keeps_the_part_files(ci):
     assert r.returncode == 1 and "time check could not run (rc=1)" in r.stderr
     assert (d / "stofs_2d_glo.t00z.hotstart.part").is_file() and (d / "stofs_2d_glo.t00z.restart.part").is_file()
     assert not (d / "stofs_2d_glo.t00z.hotstart").exists() and not (ci.stubs / "tool.args").exists()
+
+
+def test_full_is_cold_0_with_the_ops_comparison_and_no_level_selects_a_cold_start(ci):
+    for stage in ("prep", "nowcast"):
+        for level in ("smoke", "cycle", "full"):
+            env = ci.script("card-env", stage, LEVEL=level).stdout
+            assert "adcprep" not in env and "spinup" not in env and "3:50" not in env and "2:20" not in env, (stage, level)

@@ -13,17 +13,17 @@
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits one job of the
 # ops chain, waits (timeout = the job's walltime + 1 h), gates on its STAGE_SUMMARY and moves on. Then Verify calls `verify`. The jobs are the ones
 # slurm/stofs_2d_glo/launch_stofs_2d_glo.sh queues, with the same sbatch flags and walltimes (card-env repeats them; a test compares the two):
-#   Prep      adcprep (COLD=1 only), gfs ncst, gfs fcst   prep card      -N 1 -n 1 --mem=64G   0:50 (3:50 cold)
-#   Nowcast   spinup (COLD=1 only), tide ncst, surf ncst  nowcast card   -N 52                 1:20 (2:20 cold)
+#   Prep      gfs ncst, gfs fcst                          prep card      -N 1 -n 1 --mem=64G   0:50
+#   Nowcast   tide ncst, surf ncst                         nowcast card   -N 52                 1:20
 #   Forecast  tide fcst, surf fcst                        forecast card  -N 52                 2:00
 #   Post      ncdiff, ncrcat                              prep card      -N 1 -n 1 --mem=100G  1:15       (the post job logs under the prep card's name)
-# LEVEL   Jenkins stages run                       COLD   Verify
-#   smoke  Prep Nowcast                              0      regress --level smoke: rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference
-#   cycle  Prep Nowcast Forecast Post                0      regress --level cycle: the same plus points.*.nc; ops comparison reported
-#   full   Prep Nowcast Forecast Post                1      the same as cycle (a cold start is deterministic); ops comparison reported
-# Prep finds the staged ops forcing and skips its GFS steps, so SUBMIT_GFS is not used. smoke and cycle continue from the previous cycle's hotstart/restart, so
-# they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
-# stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and keeps it (live only prunes other days, see below); the smoke/cycle stage
+# LEVEL (the same meaning as for ATL)  Jenkins stages run     Verify
+#   smoke  Prep Nowcast                              regress --level smoke: rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference
+#   cycle  Prep Nowcast Forecast Post                regress --level cycle: the same plus points.*.nc
+#   full   Prep Nowcast Forecast Post                the same as cycle, plus the ops comparison (reported, never failing)
+# Every level runs COLD=0: the CI has no cold start (adcprep, spin-up); those are done by hand with the launcher (run guide section 3). Prep finds the staged ops forcing and
+# skips its GFS steps, so SUBMIT_GFS is not used. The jobs continue from the previous cycle's hotstart/restart, so frozen uses the 06z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
+# stage. DATA_MODE=live continues from the state already in the shared com (the cycle at +6 h of an earlier build) and keeps it (live only prunes other days, see below); the stage
 # checks that state before it downloads, and when it has none starts from the public ops state: the .68 hotstart files of the cycle - 126 h from S3, nod_equi regenerated for their base
 # date, the decomposition reused from COMGES (stage_ops_state; run guide section 3.4). frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
 # other days' 2D dirs and the other ops_s3 cycle dirs, so a daily scheduled build never fills the CI storage. MJ (10/22/26)
@@ -87,8 +87,7 @@ level_setup() {
   check_cycle_args
   LEVEL=${LEVEL:-smoke}
   case "${LEVEL}" in
-    smoke|cycle) COLD=0 ;;
-    full)        COLD=1 ;;
+    smoke|cycle|full) ;;
     *) echo "FATAL: LEVEL must be smoke, cycle or full (got '${LEVEL}')" >&2; exit 2 ;;
   esac
   DATA_MODE=${DATA_MODE:-frozen}
@@ -144,7 +143,7 @@ prune_ops_s3() {
   done
 }
 
-# Live LEVEL=smoke/cycle with no chain state in the CI com: the public ops state (run guide section 3.4). The .68 files of the cycle - 126 h are ops' state at
+# Live with no chain state in the CI com: the public ops state (run guide section 3.4). The .68 files of the cycle - 126 h are ops' state at
 # cycle + 120 h, so at the chain time PREV (cycle - 6 h). Writes only the two PREV chain files and nod_equi; the decomposition in COMGES must exist (an earlier cold start
 # or frozen build). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a chain file. MJ (10/22/26)
 stage_ops_state() {
@@ -156,7 +155,7 @@ stage_ops_state() {
     [ ! -L "${t}" ] || { echo "FATAL: refusing to write under ${t}: it is a symlink" >&2; exit 1; }
   done
   for kind in stofs_2d_glo_4064.tar stofs_2d_glo_4064.tar.json; do
-    [ -s "${ges}/${kind}" ] || { echo "FATAL: no ${ges}/${kind}: the ops-state start reuses the 4064-rank decomposition; run one DATA_MODE=live LEVEL=full build (cold start) or a frozen 2D-Global build first" >&2; exit 1; }
+    [ -s "${ges}/${kind}" ] || { echo "FATAL: no ${ges}/${kind}: the ops-state start reuses the 4064-rank decomposition; run a frozen 2D-Global build first (it stages the decomposition)" >&2; exit 1; }
   done
   mkdir -p "${ges}" "${prevd}"
   for f in "${ges}/${RUN}_nod_equi" "${ges}/${RUN}_nod_equi.new"; do
@@ -217,16 +216,15 @@ cmd_stage() {
     frozen)
       [ -f "${DS}/.seeded_ok" ] || {
         echo "FATAL: no ${DS}/.seeded_ok -- dataset missing or an interrupted copy (Bootstrap copies it from SEED_RT)."
-        echo "Seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC}$([ "${LEVEL}" = full ] && echo ' cold') (see the script header), or set DATA_MODE=live."
+        echo "Seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see the script header), or set DATA_MODE=live."
         exit 1
       }
       local with_state=1 f miss=0 files
-      [ "${LEVEL}" != full ] || with_state=0
       # prep runs both GFS steps at every level and skips each when its forcing is staged, so ncst and fcst are staged even for smoke. MJ (10/15/26)
       for f in $(input_files "${with_state}" ncst fcst); do
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
       done
-      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks what LEVEL=${LEVEL} needs: the ncst and fcst forcing, and for smoke/cycle COMGES and the previous cycle's chain files (a cold dataset has none; use the dataset of a COLD=0 cycle, or re-seed it)"; exit 1; }
+      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks the ncst and fcst forcing, COMGES or the previous cycle's chain files (a cold dataset has none; use the dataset of a COLD=0 cycle, or re-seed it)"; exit 1; }
       clear_com
       echo "staging ${DS}/input -> ${CI_COM} (LEVEL=${LEVEL})"
       # The run never writes into these files in place (see the header), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied.
@@ -241,15 +239,13 @@ cmd_stage() {
       ;;
     live)
       local rc=0 f miss=0 ops_state=0
-      # Before the 39 GB download: the COLD=0 levels continue from the chain state already in COMROOT_2DGLO, or else start from the public ops state. MJ (10/22/26)
-      if [ "${LEVEL}" != full ]; then
-        for f in $(input_files 1); do
-          [ -s "${CI_COM}/${f}" ] || { echo "MISSING: ${CI_COM}/${f}" >&2; miss=1; }
-        done
-        [ "${miss}" = 0 ] || { ops_state=1; echo "no chain state in ${CI_COM}: starting from the ops state $(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H) (cycle - 126 h)"; }
-      fi
+      # Before the 39 GB download: the build continues from the chain state already in COMROOT_2DGLO, or else start from the public ops state. MJ (10/22/26)
+      for f in $(input_files 1); do
+        [ -s "${CI_COM}/${f}" ] || { echo "MISSING: ${CI_COM}/${f}" >&2; miss=1; }
+      done
+      [ "${miss}" = 0 ] || { ops_state=1; echo "no chain state in ${CI_COM}: starting from the ops state $(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H) (cycle - 126 h)"; }
       mkdir -p "${CI_COM}"
-      # After the chain-state check, which reads PREV's day (kept). COMGES stays: the chain state (nod_equi, decomposition) a later live LEVEL=cycle continues from; a cold start rebuilds the decomposition itself. PDY stays so a rerun skips the download. MJ (10/22/26)
+      # After the chain-state check, which reads PREV's day (kept). COMGES stays: the chain state (nod_equi, decomposition) a later live build continues from. PDY stays so a rerun skips the download. MJ (10/22/26)
       clear_com "${PDY}" "${PREV:0:8}"
       prune_ops_s3
       [ "${ops_state}" = 0 ] || stage_ops_state
@@ -275,10 +271,8 @@ cmd_card_env() {
   local st=${1:?usage: stofs_2d_glo.sh card-env <stage>} card seg stream="" flags wall pfx rpt v h m s
   level_setup
   case "${st}" in
-    prep)     card=prep;     seg="ncst fcst"; flags="-N 1 -n 1 --mem=64G"; wall=0:50:00
-              [ "${COLD}" != 1 ] || { seg="adcprep ${seg}"; wall=3:50:00; } ;;
-    nowcast)  card=nowcast;  seg=ncst; stream="tide surf"; flags="-N 52"; wall=1:20:00
-              [ "${COLD}" != 1 ] || { seg="spinup ${seg}"; wall=2:20:00; } ;;
+    prep)     card=prep;     seg="ncst fcst"; flags="-N 1 -n 1 --mem=64G"; wall=0:50:00 ;;
+    nowcast)  card=nowcast;  seg=ncst; stream="tide surf"; flags="-N 52"; wall=1:20:00 ;;
     forecast) card=forecast; seg=fcst; stream="tide surf"; flags="-N 52"; wall=2:00:00 ;;
     post)     card=prep;     seg="ncdiff ncrcat"; flags="-N 1 -n 1 --mem=100G"; wall=1:15:00 ;;
     *) echo "FATAL: unknown stage '${st}' (expected prep|nowcast|forecast|post)" >&2; exit 2 ;;
@@ -312,7 +306,7 @@ cmd_verify() {
   # The group runs in the pipeline's subshell, so it hands its verdict back through its exit status. MJ (10/13/26)
   {
     grc=0
-    # full compares the same files as cycle, against the ref/ the cold seed stored: tide_fac, adcprep and ADCIRC on the same inputs reproduce. MJ (10/13/26)
+    # full regresses the same files as cycle and adds the ops comparison. MJ (10/22/26)
     if [ -d "${DS}/ref" ]; then
       python3 "${cmp}" regress --ref "${DS}/ref" --out "${CI_COM}" --pdy "${PDY}" --cyc "${CYC}" --level "${LEVEL/full/cycle}" --tol "${CMP_TOL:-1e-3}" || grc=1
     elif [ "${DATA_MODE}" = frozen ]; then
@@ -321,7 +315,7 @@ cmd_verify() {
     else
       echo "no frozen reference for ${PDY}${CYC} (live mode): regression comparison skipped"
     fi
-    if [ "${LEVEL}" != smoke ]; then
+    if [ "${LEVEL}" = full ]; then
       python3 "${cmp}" ops --out "${CI_COM}" --ops-dir "${ops_dir}" --pdy "${PDY}" --cyc "${CYC}" --warn-mm "${OPS_WARN_MM:-500}" || grc=1
     fi
     exit "${grc}"
