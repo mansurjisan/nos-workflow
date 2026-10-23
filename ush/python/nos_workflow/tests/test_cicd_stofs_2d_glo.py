@@ -237,11 +237,11 @@ def test_frozen_cycle_at_midnight_uses_the_chain_files_of_the_previous_day(ci):
 
 
 def test_frozen_stage_lists_every_missing_piece_and_keeps_the_old_comroot(ci):
-    ci.dataset(state=False)           # a cold-start dataset cannot feed a COLD=0 level. MJ (10/13/26)
+    ci.dataset(state=False)           # a dataset without the chain state cannot feed a COLD=0 build. MJ (10/13/26)
     _touch(ci.com / "keep_me", "old")
     r = ci.script("stage")
     assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo_nod_equi" in r.stderr
-    assert "t00z.hotstart" in r.stderr and "cold dataset" in r.stdout
+    assert "t00z.hotstart" in r.stderr and "PDY=20261012 CYC=06" in r.stdout
     assert (ci.com / "keep_me").is_file()
 
 
@@ -1065,28 +1065,18 @@ def test_seed_marks_the_dataset_complete_readably_under_a_restrictive_umask(ci):
     assert (dest / ".seeded_ok").stat().st_mode & 0o004 and (dest / "input").stat().st_mode & 0o005 == 0o005
 
 
-def test_seed_cold_dataset_leaves_out_the_cold_start_products(ci):
-    run = _finished_run(ci.tmp / "run")
-    r = ci.run(SCRIPT, "seed", PDY, CYC, "cold", **_seed_env(ci, run))
-    assert r.returncode == 0, r.stderr
-    dest = ci.tmp / "seed_rt" / "stofs_2d_glo" / f"{PDY}{CYC}"
-    assert len(_tree(dest / "input")) == 6 and "ges" not in " ".join(_tree(dest / "input"))
-    shutil.copytree(dest, ci.ds)
-    r = ci.script("stage", LEVEL="full")
-    assert r.returncode == 1 and "cold dataset" in r.stdout      # the CI always needs the chain state. MJ (10/22/26)
-
-
 def test_seed_refuses_an_unfinished_run_and_an_existing_dataset(ci):
     run = _finished_run(ci.tmp / "run", state=False)
     env = _seed_env(ci, run)
     r = ci.run(SCRIPT, "seed", PDY, CYC, **env)
     assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and not (ci.tmp / "seed_rt").exists()
-    assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", **env).returncode == 0
-    r = ci.run(SCRIPT, "seed", PDY, CYC, "cold", **env)
+    _finished_run(run)
+    assert ci.run(SCRIPT, "seed", PDY, CYC, **env).returncode == 0
+    r = ci.run(SCRIPT, "seed", PDY, CYC, **env)
     assert r.returncode == 1 and "FORCE=1" in r.stderr
-    assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", FORCE="1", **env).returncode == 0
+    assert ci.run(SCRIPT, "seed", PDY, CYC, FORCE="1", **env).returncode == 0
     (run / "nos" / f"stofs_2d_glo.{PDY}" / f"stofs_2d_glo.t{CYC}z.points.swl.nc").unlink()
-    assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", FORCE="1", **env).returncode == 1
+    assert ci.run(SCRIPT, "seed", PDY, CYC, FORCE="1", **env).returncode == 1
 
 
 def test_seed_makes_forcing_tar_and_nod_equi_read_only_and_leaves_the_chain_files_and_json_writable(ci):
@@ -1110,9 +1100,9 @@ def test_seed_without_comroot_reads_the_shared_com(ci):
 
 def test_seed_warns_about_missing_ops_products_and_validates_arguments(ci):
     run = _finished_run(ci.tmp / "run")
-    r = ci.run(SCRIPT, "seed", PDY, CYC, "cold", **_seed_env(ci, run, ops=False))
+    r = ci.run(SCRIPT, "seed", PDY, CYC, **_seed_env(ci, run, ops=False))
     assert r.returncode == 0 and r.stderr.count("WARN: no ops product") == 3
-    assert ci.run(SCRIPT, "seed", PDY, CYC, "warm", **_seed_env(ci, run)).returncode == 2
+    assert ci.run(SCRIPT, "seed", PDY, CYC, "cold", **_seed_env(ci, run)).returncode == 2
     assert ci.run(SCRIPT, "seed", PDY).returncode != 0
     assert ci.run(SCRIPT, "seed", "2026", CYC).returncode == 2
 

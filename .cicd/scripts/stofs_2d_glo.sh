@@ -6,7 +6,7 @@
 #                            no internet
 #   stofs_2d_glo.sh card-env <stage>   eval-able shell for run_stage.sh: the card, sbatch flags, timeout, exports and log prefix of the stage's job
 #   stofs_2d_glo.sh verify   Verify: compare_2dglo.py against the dataset's reference / ops products
-#   stofs_2d_glo.sh seed <PDY> <CYC> [cold]   one-time, by hand: build the frozen dataset from a finished run (see below)
+#   stofs_2d_glo.sh seed <PDY> <CYC>   one-time, by hand: build the frozen dataset from a finished run (see below)
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh;
 # optional CMP_TOL (default 1e-3), OPS_WARN_MM (default 500). MJ (10/15/26)
 #
@@ -20,7 +20,7 @@
 # LEVEL (the same meaning as for ATL)  Jenkins stages run     Verify
 #   smoke  Prep Nowcast                              regress --level smoke: rerun/stofs_2d_glo_{tide,surf}.61.nc against the reference
 #   cycle  Prep Nowcast Forecast Post                regress --level cycle: the same plus points.*.nc
-#   full   Prep Nowcast Forecast Post                the same as cycle, plus the ops comparison (reported, never failing)
+#   full   Prep Nowcast Forecast Post                the same as cycle, plus the ops comparison (report only)
 # Every level runs COLD=0: the CI has no cold start (adcprep, spin-up); those are done by hand with the launcher (run guide section 3). Prep finds the staged ops forcing and
 # skips its GFS steps, so SUBMIT_GFS is not used. The jobs continue from the previous cycle's hotstart/restart, so frozen uses the 06z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
 # stage. DATA_MODE=live continues from the state already in the shared com (the cycle at +6 h of an earlier build) and keeps it (live only prunes other days, see below); the stage
@@ -40,16 +40,15 @@
 #
 # Dataset ${RT_DATA_ROOT}/stofs_2d_glo/<PDY><CYC>/ (bootstrap.sh copies it from ${SEED_RT}/stofs_2d_glo/<PDY><CYC>/ in frozen mode):
 #   .seeded_ok
-#   input/nos/stofs_2d_glo/{stofs_2d_glo_nod_equi,stofs_2d_glo_4064.tar,stofs_2d_glo_4064.tar.json}          COMGES (not in a cold dataset)
-#   input/nos/stofs_2d_glo.<PDY-6h>/stofs_2d_glo.t<HH-6h>z.{hotstart,restart}                              previous cycle (not in a cold dataset)
+#   input/nos/stofs_2d_glo/{stofs_2d_glo_nod_equi,stofs_2d_glo_4064.tar,stofs_2d_glo_4064.tar.json}          COMGES
+#   input/nos/stofs_2d_glo.<PDY-6h>/stofs_2d_glo.t<HH-6h>z.{hotstart,restart}                              previous cycle
 #   input/nos/stofs_2d_glo.<PDY>/<CYC>/rerun/stofs_2d_glo_{ncst,fcst}.{221,222,225}.nc                      staged ops forcing
 #   ref/nos/stofs_2d_glo.<PDY>/<CYC>/rerun/stofs_2d_glo_{tide,surf}.61.nc and ref/nos/stofs_2d_glo.<PDY>/stofs_2d_glo.t<CYC>z.points.*.nc
 #   ops/stofs_2d_glo.t<CYC>z.points.{htp,cwl.noanomaly,swl}.nc                                              ops products (optional)
 # MJ (10/13/26)
 #
-# One-time seeding on Hercules, from the finished runs of 2026-10-12 (00z cold start, 06z COLD=0), as the user who owns them:
+# One-time seeding on Hercules, from the finished runs of 2026-10-12 (the 06z COLD=0 cycle), as the user who owns them:
 #   export COMROOT_2DGLO=/work2/noaa/nos-surge/mjisan/nos-run/ptmp/mjisan/com_2dglo_ops
-#   bash .cicd/scripts/stofs_2d_glo.sh seed 20261012 00 cold
 #   bash .cicd/scripts/stofs_2d_glo.sh seed 20261012 06
 # Optional env: SEED_RT (destination root, default /work2/noaa/nos-surge/mjisan/nos-workflow-rt, the Jenkins SEED_RT default), OPS_DIR
 # (the ops reference files hercules_2d_glo_stage_forcing.sh downloaded, default $NOS_PTMP/$LOGNAME/ops_s3/<PDY><CYC>/products),
@@ -62,15 +61,12 @@ RUN=stofs_2d_glo
 
 usage() { sed -n '2,/^set -euo/{/^set -euo/d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; }
 
-# Paths under a COMROOT_2DGLO-shaped tree, one per line. $1 = 1 to include the cold-start products and previous chain files, then the
+# Paths under a COMROOT_2DGLO-shaped tree, one per line: COMGES, the previous chain files, then the
 # forcing segments wanted. MJ (10/13/26)
 input_files() {
-  local with_state=$1 seg n kind
-  shift
-  if [ "${with_state}" = 1 ]; then
-    for kind in stofs_2d_glo_nod_equi stofs_2d_glo_4064.tar stofs_2d_glo_4064.tar.json; do echo "nos/stofs_2d_glo/${kind}"; done
-    for kind in hotstart restart; do echo "nos/stofs_2d_glo.${PREV:0:8}/stofs_2d_glo.t${PREV:8:2}z.${kind}"; done
-  fi
+  local seg n kind
+  for kind in stofs_2d_glo_nod_equi stofs_2d_glo_4064.tar stofs_2d_glo_4064.tar.json; do echo "nos/stofs_2d_glo/${kind}"; done
+  for kind in hotstart restart; do echo "nos/stofs_2d_glo.${PREV:0:8}/stofs_2d_glo.t${PREV:8:2}z.${kind}"; done
   for seg in "$@"; do
     for n in 221 222 225; do echo "nos/stofs_2d_glo.${PDY}/${CYC}/rerun/stofs_2d_glo_${seg}.${n}.nc"; done
   done
@@ -144,8 +140,8 @@ prune_ops_s3() {
 }
 
 # Live with no chain state in the CI com: the public ops state (run guide section 3.4). The .68 files of the cycle - 126 h are ops' state at
-# cycle + 120 h, so at the chain time PREV (cycle - 6 h). Writes only the two PREV chain files and nod_equi; the decomposition in COMGES must exist (an earlier cold start
-# or frozen build). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a chain file. MJ (10/22/26)
+# cycle + 120 h, so at the chain time PREV (cycle - 6 h). Writes only the two PREV chain files and nod_equi; the decomposition in COMGES must exist (a frozen build
+#). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a chain file. MJ (10/22/26)
 stage_ops_state() {
   local ges="${CI_COM}/nos/${RUN}" prevd="${CI_COM}/nos/${RUN}.${PREV:0:8}" b=https://noaa-gestofs-pds.s3.amazonaws.com bytes=1472354116
   local s t f kind base y m d h line mt rc=0 x src
@@ -219,17 +215,17 @@ cmd_stage() {
         echo "Seed it once: bash .cicd/scripts/stofs_2d_glo.sh seed ${PDY} ${CYC} (see the script header), or set DATA_MODE=live."
         exit 1
       }
-      local with_state=1 f miss=0 files
+      local f miss=0 files
       # prep runs both GFS steps at every level and skips each when its forcing is staged, so ncst and fcst are staged even for smoke. MJ (10/15/26)
-      for f in $(input_files "${with_state}" ncst fcst); do
+      for f in $(input_files ncst fcst); do
         [ -s "${DS}/input/${f}" ] || { echo "MISSING: ${DS}/input/${f}" >&2; miss=1; }
       done
-      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks the ncst and fcst forcing, COMGES or the previous cycle's chain files (a cold dataset has none; use the dataset of a COLD=0 cycle, or re-seed it)"; exit 1; }
+      [ "${miss}" = 0 ] || { echo "FATAL: the dataset lacks the ncst and fcst forcing, COMGES or the previous cycle's chain files (use the dataset PDY=20261012 CYC=06, or re-seed it)"; exit 1; }
       clear_com
       echo "staging ${DS}/input -> ${CI_COM} (LEVEL=${LEVEL})"
       # The run never writes into these files in place (see the header), so they are hard-linked; the .json is rewritten in place when the decomposition is rebuilt, so it is copied.
       # The directories are made writable (Du+w) whatever the dataset's modes: rerun/ receives the jobs' own products. MJ (10/15/26)
-      files=$(input_files "${with_state}" ncst fcst)
+      files=$(input_files ncst fcst)
       # --no-implied-dirs: the shared com/nos (SECOFS and ATL too) must keep its own mode, mtime and group; missing parents are still created. The json and the chain files
       # (rewritten through their copies) are copied, the rest linked. MJ (10/15/26)
       find "${DS}/input" -type f \( -name '*.2[0-9][0-9].nc' -o -name '*_4064.tar' -o -name '*_nod_equi' \) -exec chmod a-w {} +   # existing datasets too; idempotent. MJ (10/15/26)
@@ -240,7 +236,7 @@ cmd_stage() {
     live)
       local rc=0 f miss=0 ops_state=0
       # Before the 39 GB download: the build continues from the chain state already in COMROOT_2DGLO, or else start from the public ops state. MJ (10/22/26)
-      for f in $(input_files 1); do
+      for f in $(input_files); do
         [ -s "${CI_COM}/${f}" ] || { echo "MISSING: ${CI_COM}/${f}" >&2; miss=1; }
       done
       [ "${miss}" = 0 ] || { ops_state=1; echo "no chain state in ${CI_COM}: starting from the ops state $(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H) (cycle - 126 h)"; }
@@ -325,10 +321,9 @@ cmd_verify() {
 }
 
 cmd_seed() {
-  PDY=${1:?usage: stofs_2d_glo.sh seed <PDY> <CYC> [cold]}
-  CYC=${2:?usage: stofs_2d_glo.sh seed <PDY> <CYC> [cold]}
-  local mode=${3:-chain} with_state=1
-  case "${mode}" in chain) ;; cold) with_state=0 ;; *) echo "FATAL: third argument must be 'cold' or empty (got '${mode}')" >&2; exit 2 ;; esac
+  [ "$#" = 2 ] || { echo "usage: stofs_2d_glo.sh seed <PDY> <CYC>" >&2; exit 2; }
+  PDY=$1
+  CYC=$2
   check_cycle_args
   local ptmp=${NOS_PTMP:-${DEFAULT_PTMP}} user=${LOGNAME:-$(id -un)}
   local src=${COMROOT_2DGLO:-${ptmp}/${user}/com}
@@ -336,7 +331,7 @@ cmd_seed() {
   local dest="${seed_rt}/stofs_2d_glo/${PDY}${CYC}"
   local ops_dir=${OPS_DIR:-${ptmp}/${user}/ops_s3/${PDY}${CYC}/products}
   local day="nos/stofs_2d_glo.${PDY}" f miss=0 inputs refs=()
-  inputs=$(input_files "${with_state}" ncst fcst)
+  inputs=$(input_files ncst fcst)
   for f in ${inputs}; do
     [ -s "${src}/${f}" ] || { echo "MISSING: ${src}/${f}" >&2; miss=1; }
   done
@@ -351,7 +346,7 @@ cmd_seed() {
     rm -rf "${dest}"
   fi
   mkdir -p "${dest}/input" "${dest}/ref" "${dest}/ops"
-  echo "seeding ${dest} from ${src} (${mode})"
+  echo "seeding ${dest} from ${src}"
   echo "${inputs}" | rsync -a --files-from=- "${src}/" "${dest}/input/"
   {
     printf '%s\n' "${refs[@]}"
