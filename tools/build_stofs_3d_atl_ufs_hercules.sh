@@ -100,6 +100,11 @@ for u in ${found_utils}; do
   echo "installed ${dest}"
 done
 
+# coupled post merges the per-rank field files with it (fields, station.profile); not built here. MJ (10/22/26)
+if [ ! -x "${EXECnos}/combine_output11_MPI" ] && [ ! -x "${EXECnos}/combine_output11" ]; then
+  echo "WARN: no combine_output11(_MPI) in ${EXECnos}; coupled post needs it for fields and station.profile (provide one: docs/stofs_3d_atl_run_guide.md section 4.1)" >&2
+fi
+
 # Runtime-stack check: the exe must resolve every library under the cards' module set. MJ (10/04/26)
 if type module >/dev/null 2>&1; then
   ldd_out=$( ( module purge; module use "${HOMEWF}/modulefiles"; module load nos_hercules.intel || exit 3; ldd "${EXECnos}/fv3_stofs_3d_atl.exe" ) 2>&1 ) \

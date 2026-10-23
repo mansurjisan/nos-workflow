@@ -94,6 +94,8 @@ export PACKAGEROOT
 export COMROOT=${COMROOT_UFS:-${NOS_PTMP}/$LOGNAME/com_atl_ufs}
 export DATAROOT=${NOS_PTMP}/$LOGNAME/work/stofs_3d_atl_ufs
 export EXECnos=${EXECnos:-${PACKAGEROOT}/nos-workflow/exec}
+# coupled (OLDIO) writes per-rank field files; post needs combine_output11 for fields and station.profile (ATL run guide section 4.1). MJ (10/22/26)
+[ -x "${EXECnos}/combine_output11_MPI" ] || [ -x "${EXECnos}/combine_output11" ] || { echo "FATAL: neither ${EXECnos}/combine_output11_MPI nor combine_output11 is executable; coupled post needs it for fields and station.profile (docs/stofs_3d_atl_run_guide.md section 4.1)"; exit 1; }
 export COMROOT_STAGED=${COMROOT_STAGED:-${NOS_PTMP}/$LOGNAME/comin_atl}
 export COMINgfs=${COMINgfs:-$COMROOT_STAGED/gfs}
 export COMINhrrr=${COMINhrrr:-$COMROOT_STAGED/hrrr}

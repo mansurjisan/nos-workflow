@@ -36,6 +36,8 @@ if [ "${ATL}" = 1 ]; then
   EXEC_SENTINEL="${EXEC_DEST}/.seeded_ok.${OFS}"
   EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe fv3_stofs_3d_atl.exe)
   [ "${OFS}" != stofs_3d_atl_ufs_standalone ] || EXEC_NEED=(stofs_3d_atl_tide_fac schism_combine_hotstart7.exe stofs_3d_atl_pschism_v3.1.5)
+  # coupled (OLDIO) writes per-rank field files that post merges with combine_output11_MPI. MJ (10/22/26)
+  [ "${OFS}" != stofs_3d_atl_ufs ] || EXEC_NEED+=(combine_output11_MPI)
   FIX_SRC="${SEED_SRC}/fix/stofs_3d_atl_ufs"
   FIX_TO="${FIX_DEST}"
   EXEC_FILTER=()
@@ -49,6 +51,14 @@ need_fix=0
 [ -f "${FIX_DEST}/.seeded_ok" ] || need_fix=1
 need_exec=0
 [ -f "${EXEC_SENTINEL}" ] || need_exec=1
+# ATL, already seeded: add only an executable this variant needs and exec/ lacks, never replacing one. MJ (10/22/26)
+EXEC_ADD=()
+if [ "${ATL}" = 1 ] && [ "${need_exec}" -eq 0 ]; then
+  for _x in "${EXEC_NEED[@]}"; do
+    [ "${_x}" = schism_combine_hotstart7.exe ] || [ -x "${EXEC_DEST}/${_x}" ] || EXEC_ADD+=("${_x}")
+  done
+  [ "${#EXEC_ADD[@]}" -eq 0 ] || need_exec=1
+fi
 need_adcirc=0
 if [ "${OFS}" = stofs_2d_glo ]; then
   [ -f "${ADCIRC_DEST}/.seeded_ok" ] || need_adcirc=1
@@ -112,7 +122,10 @@ if [ "${need_exec}" -eq 1 ]; then
   if [ "${#EXEC_FILTER[@]}" -eq 0 ]; then
     unreadable_or_exit "${EXEC_SRC}" "${SEED_SRC}"
   else
-    for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
+    for _x in ${EXEC_ADD[@]+"${EXEC_ADD[@]}"}; do unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
+    if [ "${#EXEC_ADD[@]}" -eq 0 ]; then
+      for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
+    fi
   fi
 fi
 if [ "${need_adcirc}" -eq 1 ]; then
@@ -150,9 +163,14 @@ fi
 
 # Same anchored-exclude protection as fix/ above.
 if [ "${need_exec}" -eq 1 ]; then
-  echo "bootstrap: seeding exec/ from ${EXEC_SRC}/ ${EXEC_FILTER[*]:-}"
-  mkdir -p "${EXEC_DEST}"
-  rsync -a ${EXEC_FILTER[@]+"${EXEC_FILTER[@]}"} "${EXEC_SRC}/" "${EXEC_DEST}/"
+  if [ "${#EXEC_ADD[@]}" -gt 0 ]; then
+    echo "bootstrap: adding missing executables to exec/: ${EXEC_ADD[*]}"
+    rsync -a --ignore-existing ${EXEC_FILTER[@]+"${EXEC_FILTER[@]}"} "${EXEC_SRC}/" "${EXEC_DEST}/"
+  else
+    echo "bootstrap: seeding exec/ from ${EXEC_SRC}/ ${EXEC_FILTER[*]:-}"
+    mkdir -p "${EXEC_DEST}"
+    rsync -a ${EXEC_FILTER[@]+"${EXEC_FILTER[@]}"} "${EXEC_SRC}/" "${EXEC_DEST}/"
+  fi
   touch "${EXEC_SENTINEL}"
 else
   echo "bootstrap: ${EXEC_SENTINEL} already present, skipping exec/ seed"

@@ -179,3 +179,11 @@ def test_seed_prev_layout(tmp_path):
     bad = subprocess.run(["bash", str(REPO / "tools/hercules_atl_seed_prev.sh"), str(tmp_path / "nope"), str(sa), "20261001"],
                          capture_output=True)
     assert bad.returncode != 0
+
+
+@pytest.mark.parametrize("stage", ["nowcast", "forecast"])
+def test_only_the_coupled_cards_check_for_the_field_combiner(stage):  # MJ (10/22/26)
+    cpl = (REPO / "slurm/stofs_3d_atl_ufs" / f"jnos_{stage}_00.sh").read_text()
+    sa = (REPO / "slurm/stofs_3d_atl_ufs_standalone" / f"jnos_{stage}_00.sh").read_text()
+    assert 'combine_output11_MPI" ] || [ -x "${EXECnos}/combine_output11" ]' in cpl and "section 4.1" in cpl
+    assert "combine_output11" not in sa

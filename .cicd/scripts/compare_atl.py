@@ -9,8 +9,11 @@ regress: those files of this run against the frozen reference. Per file: bitwise
   tol x ratio: water level / zCoordinates / u / v / wind 1x (m, m/s), temperature and salinity 10x (degC, psu), staout_2 pressure 100x (Pa).
 ops:     station water level (zeta) of this run against the ops public-bucket products, the cmp_points comparison: per-station max |dWL|
   over the common times, stations with |WL| > 20 m on either side skipped (the 5 out-of-mesh stations). Stations are matched by
-  row order (station.in, 166 in v3.1) when the counts agree, else by exact name. Reported only: a median above --warn-mm prints
-  WARN and still exits 0; only a missing output of this run fails.
+  row order (station.in, 166 in v3.1) when the counts agree, else by exact name. Report only by default: a median above --warn-mm
+  prints WARN and still exits 0; only a missing output of this run fails. With --fail-median-mm and --fail-over-10cm (stofs_3d_atl.sh passes
+  5 mm for standalone and 15 mm for coupled) a file also FAILs when its median exceeds the first or more than the second number of
+  stations are over 100 mm, and PASSes otherwise; a file that cannot be compared (no common times, no matching
+  stations, no station left, unreadable) also FAILs when the gate is on, and only WARNs without it. Exit 1 if any file fails. MJ (10/22/26)
 ops-files: the ops product names to keep under ref/ops/.
 """
 from __future__ import annotations
@@ -168,18 +171,19 @@ def match_stations(na, nb, ca: int, cb: int):
     return None
 
 
-def cmp_points(ours: Path, ops: Path, warn_mm: float) -> None:
-    """Station water level over the common times, printed; WARN beyond warn_mm. MJ (10/14/26)"""
+def cmp_points(ours: Path, ops: Path, warn_mm: float):
+    """Station water level over the common times, printed; WARN beyond warn_mm. Returns (median mm, stations over 10 cm), or None
+    when nothing could be compared. MJ (10/22/26)"""
     ta, za, names = _wl(ours)
     tb, zb, nb = _wl(ops)
     common, ia, ib = np.intersect1d(ta, tb, return_indices=True)
     if not len(common):
         print("  WARN no common times with the ops file")
-        return
+        return None
     m = match_stations(names, nb, za.shape[1], zb.shape[1])
     if m is None:
         print(f"  WARN station counts differ ({za.shape[1]} vs {zb.shape[1]} ops) and no names match")
-        return
+        return None
     sa, sb = m
     za, zb = za[ia][:, sa], zb[ib][:, sb]
     d = np.ma.abs(za - zb).max(axis=0) * 1000.0
@@ -191,15 +195,17 @@ def cmp_points(ours: Path, ops: Path, warn_mm: float) -> None:
           % (len(common), len(ta), len(tb), d.count(), odd.sum()))
     if not d.count():
         print("  WARN no station left to compare")
-        return
+        return None
     med = float(np.ma.median(d))
+    over = int((d > 100).sum())
     print("  per-station max |dWL|: median %.2f mm; within 1 mm %d, within 1 cm %d, over 10 cm %d"
-          % (med, (d <= 1).sum(), (d <= 10).sum(), (d > 100).sum()))
+          % (med, (d <= 1).sum(), (d <= 10).sum(), over))
     for i in [j for j in np.argsort(d.filled(-1))[::-1] if not np.ma.getmaskarray(d)[j]][:5]:
         k = sa[i]
         print("    worst: %8.1f mm  %s" % (d[i], names[k] if names else k))
     if med > warn_mm:
         print(f"  WARN median {med:.1f} mm is above the {warn_mm:g} mm report threshold (not a failure)")
+    return med, over
 
 
 def ops(args) -> int:
@@ -209,7 +215,10 @@ def ops(args) -> int:
     pairs = [(f"{stem}.points.cwl.{ph}.nc", on["points"]) for ph in ("nowcast", "forecast")]
     pairs += [(f"{stem}.station.profile.{ph}.nc", on[ph]) for ph in ("nowcast", "forecast")]
     fails = 0
-    print(f"ops: {args.variant} {args.pdy}t{args.cyc}z: report only, a median per-station max |dWL| above {args.warn_mm:g} mm is flagged")
+    gate = args.fail_median_mm is not None and args.fail_over_10cm is not None
+    print(f"ops: {args.variant} {args.pdy}t{args.cyc}z: "
+          + (f"pass/fail, a file fails when the median per-station max |dWL| exceeds {args.fail_median_mm:g} mm or more than {args.fail_over_10cm} stations are over 10 cm"
+             if gate else f"report only, a median per-station max |dWL| above {args.warn_mm:g} mm is flagged"))
     for mine_name, ops_name in pairs:
         mine, theirs = day / mine_name, ops_dir / ops_name
         if not mine.is_file() or mine.stat().st_size == 0:
@@ -221,9 +230,22 @@ def ops(args) -> int:
             continue
         print(f"{mine_name} vs {ops_name}")
         try:
-            cmp_points(mine, theirs, args.warn_mm)
+            res = cmp_points(mine, theirs, args.warn_mm)
         except (OSError, RuntimeError, KeyError, ValueError) as exc:
             print(f"  WARN comparison failed: {exc}")
+            res = None
+        if gate and res is None:
+            print(f"FAIL  {mine_name}: nothing compared with {ops_name}")
+            fails += 1
+        elif gate:
+            med, over = res
+            bad = [f"median {med:.2f} mm > {args.fail_median_mm:g} mm"] if med > args.fail_median_mm else []
+            bad += [f"{over} stations over 10 cm > {args.fail_over_10cm}"] if over > args.fail_over_10cm else []
+            for b in bad:
+                print(f"FAIL  {mine_name}: {b}")
+            if not bad:
+                print(f"PASS  {mine_name}")
+            fails += bool(bad)
     return 1 if fails else 0
 
 
@@ -246,7 +268,11 @@ def main(argv=None) -> int:
     s.add_argument("--out", required=True, help="COMROOT of this run")
     s.add_argument("--ops-dir", required=True)
     s.add_argument("--warn-mm", type=float, default=500.0)
+    s.add_argument("--fail-median-mm", type=float, default=None, help="fail a file whose median per-station max |dWL| exceeds this (needs --fail-over-10cm)")
+    s.add_argument("--fail-over-10cm", type=int, default=None, help="fail a file with more stations than this over 100 mm (needs --fail-median-mm)")
     args = p.parse_args(argv)
+    if args.cmd == "ops" and (args.fail_median_mm is None) != (args.fail_over_10cm is None):
+        p.error("--fail-median-mm and --fail-over-10cm go together")
     if args.cmd == "files":
         print("\n".join(regress_files(args.variant, args.level, args.pdy, args.cyc)))
         return 0

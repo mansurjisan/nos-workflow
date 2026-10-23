@@ -5,20 +5,20 @@
 #                            (compute nodes have no internet), with the dcom case bundle DCOM_BUNDLE the user supplies
 #   stofs_3d_atl.sh card-env <stage>   eval-able shell for run_stage.sh: the variant's extra sbatch exports (ATL_EXPORTS), log prefix, unset list
 #   stofs_3d_atl.sh clean-job <jobid>  delete that job's run directory (run_stage.sh calls it after a passing stage)
-#   stofs_3d_atl.sh verify   Verify ATL: compare_atl.py regress against the dataset's reference; ops comparison (report only) at full
+#   stofs_3d_atl.sh verify   Verify ATL: compare_atl.py regress against the dataset's reference; ops comparison at full (pass/fail) MJ (10/22/26)
 #   stofs_3d_atl.sh seed <PDY> <standalone|coupled> [SRC_COMROOT [SRC_COMIN [SRC_DCOM]]]   one-time, by hand (see below)
 # The variant comes from OFS: stofs_3d_atl_ufs_standalone = pschism (cards slurm/stofs_3d_atl_ufs_standalone, COMROOT_SA),
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh; optional
-# CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), DCOM_BUNDLE (live only),
-# COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26)
+# CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), OPS_FAIL_MEDIAN_MM (default 5 standalone, 15 coupled) and OPS_FAIL_OVER_10CM (default 10), DCOM_BUNDLE (live only),
+# COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/22/26)
 #
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits the variant's
 # card, waits (timeouts in run_stage.sh), gates on its STAGE_SUMMARY and deletes the job's run directory on a pass. Then Verify calls `verify`.
 # LEVEL   Jenkins stages run                       Verify
 #   smoke  Prep Nowcast                             compare_atl.py regress --level smoke
 #   cycle  Prep Nowcast Forecast Post               regress --level cycle
-#   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (report only)
+#   full   Prep Nowcast Forecast Post               regress --level cycle, then ops (pass/fail) MJ (10/22/26)
 # MJ (10/15/26)
 #
 # Layout, the SECOFS one (no per-variant roots): com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work} and the cards' own defaults;
@@ -313,7 +313,10 @@ cmd_verify() {
     fi
     if [ "${LEVEL}" = full ]; then
       [ "${DATA_MODE}" != live ] || fetch_ops "${ops_dir}" || true
-      python3 "${cmp}" ops --ops-dir "${ops_dir}" --out "${CI_COM}" --variant "${VARIANT}" --pdy "${PDY}" --warn-mm "${OPS_WARN_MM:-500}" || grc=1
+      # pass/fail against ops: standalone is the same model and forcing (median 5 mm); coupled differs in the DATM forcing (median 15 mm). MJ (10/22/26)
+      local med=5
+      [ "${VARIANT}" != coupled ] || med=15
+      python3 "${cmp}" ops --ops-dir "${ops_dir}" --out "${CI_COM}" --variant "${VARIANT}" --pdy "${PDY}" --warn-mm "${OPS_WARN_MM:-500}" --fail-median-mm "${OPS_FAIL_MEDIAN_MM:-${med}}" --fail-over-10cm "${OPS_FAIL_OVER_10CM:-10}" || grc=1
     fi
     exit "${grc}"
   } 2>&1 | tee "${LOGDIR}/compare_atl.txt" || rc=$?
