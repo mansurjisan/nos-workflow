@@ -11,7 +11,7 @@
 # stofs_3d_atl_ufs = DATM+CMEPS+SCHISM (cards slurm/stofs_3d_atl_ufs, COMROOT_UFS). Both run RUN=stofs_3d_atl_ufs, CYC=12 only.
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh; optional
 # CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), OPS_FAIL_MEDIAN_MM (default 5 standalone, 15 coupled) and OPS_FAIL_OVER_10CM (default 10), DCOM_BUNDLE (live only),
-# COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26)
+# COMPARE_ATL (path of compare_atl.py, default next to this script). MJ (10/15/26) MJ (10/22/26)
 #
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits the variant's
 # card, waits (timeouts in run_stage.sh), gates on its STAGE_SUMMARY and deletes the job's run directory on a pass. Then Verify calls `verify`.

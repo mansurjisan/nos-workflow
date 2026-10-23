@@ -923,6 +923,14 @@ def test_bootstrap_coupled_adds_a_missing_executable_without_replacing_others(tm
     assert "already present, skipping exec/ seed" in r.stdout
 
 
+def test_bootstrap_coupled_fails_when_the_source_has_no_combiner(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path, "stofs_3d_atl_ufs")  # MJ (10/22/26)
+    _preseed(ci, "stofs_3d_atl_ufs")
+    (src / "exec" / "combine_output11_MPI").unlink()
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 1 and "combine_output11_MPI still missing" in r.stdout
+
+
 def test_bootstrap_standalone_with_a_sentinel_adds_nothing(tmp_path):
     ci, src, seed_rt, log = _boot(tmp_path)
     _stub(ci.home / "exec" / "stofs_3d_atl_tide_fac")

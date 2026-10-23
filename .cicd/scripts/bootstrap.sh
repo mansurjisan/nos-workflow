@@ -122,7 +122,7 @@ if [ "${need_exec}" -eq 1 ]; then
   if [ "${#EXEC_FILTER[@]}" -eq 0 ]; then
     unreadable_or_exit "${EXEC_SRC}" "${SEED_SRC}"
   else
-    for _x in "${EXEC_ADD[@]+"${EXEC_ADD[@]}"}"; do unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
+    for _x in ${EXEC_ADD[@]+"${EXEC_ADD[@]}"}; do unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
     if [ "${#EXEC_ADD[@]}" -eq 0 ]; then
       for _x in "${EXEC_NEED[@]}"; do [ "${_x}" = schism_combine_hotstart7.exe ] || unreadable_or_exit "${EXEC_SRC}/${_x}" "${SEED_SRC}"; done
     fi
