@@ -24,7 +24,7 @@ Nothing on Hercules is needed for sections 2-7.
 
 ## 2. Before each build
 
-- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate, and the nightly 2D-Global build (about 20:00 to 03:00 UTC) holds the lock the same way against SECOFS builds. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
+- **Only one CI build runs at a time.** The job never runs two builds at once, and it shares a lock (`$NOS_CI_ROOT/.ci-lock`) with the SECOFS job `NOS/nos-workflow-secofs-hercules`. A second build of this job waits in the queue until the first ends, and takes over a lock the first one left behind; a build while a SECOFS build runs fails at Gate, and the nightly 2D-Global build (from about 20:00 UTC for several hours) holds the lock the same way against SECOFS builds. The next build of this job that takes the lock cancels the last Slurm job an earlier build submitted (when its id is still in `ci_logs/`), whether or not that build also left the lock. Gate then prints `cancelling job <id> left by build <N>`; for a build that ended normally the job has already finished and this does nothing. Check `squeue -A nosofs` if in doubt. Check both jobs' Build History first.
 - **The job builds the `develop` branch** (*Branches to build* = `*/develop`). Section 9 covers other branches.
 - **Never use Build Now** for these systems: it always runs the SECOFS defaults.
 - **Large jobs queue.** The nowcast and forecast jobs take 52-63 nodes, so a build can wait in the Slurm queue before it runs. That wait does not count against a stage's time limit, only against the 16 h build limit (section 7).
@@ -43,7 +43,7 @@ Nothing on Hercules is needed for sections 2-7.
 | `LEVEL` | `smoke` | `smoke` | `smoke`, `cycle` or `full` |
 | `DATA_MODE` | `frozen` | `frozen` | `frozen` |
 | `PDY` | `20261001` | `20261001` | `20261012` |
-| `CYC` | `12` (forced to 12 anyway) | `12` (forced to 12 anyway) | `06` for smoke and cycle, `00` for full |
+| `CYC` | `12` (forced to 12 anyway) | `12` (forced to 12 anyway) | `06` |
 
 To stop a running build, click the red **X** next to it in Build History (or **Abort** on the build page). The cleanup then cancels the Slurm job the build was waiting on. You can confirm with `squeue -A nosofs` on Hercules. Click Abort once and wait for the cleanup to finish: a second click can interrupt the cleanup and leave the CI lock behind. The next build of this job clears such a lock, but it blocks the SECOFS job (it shares the lock) for up to 18 h.
 
@@ -79,10 +79,10 @@ Section 12 has what each stage does, system by system, including SECOFS.
 | LEVEL | Stages after Stage Data | ATL Verify | 2D-Global Verify |
 | --- | --- | --- | --- |
 | `smoke` | Prep, Nowcast, Verify | the 8 nowcast `staout` files | `rerun/stofs_2d_glo_{tide,surf}.61.nc` |
-| `cycle` | Prep, Nowcast, Forecast, Post, Verify | the 8 nowcast and 8 forecast `staout` files, plus `points.cwl` and `station.profile` (nowcast and forecast) | the `.61.nc` files and `points.*.nc`, plus the ops comparison |
-| `full` | Prep, Nowcast, Forecast, Post, Verify | as cycle, plus the ops comparison | as cycle, from a cold start (`adcprep` in Prep, spin-up in Nowcast) |
+| `cycle` | Prep, Nowcast, Forecast, Post, Verify | the 8 nowcast and 8 forecast `staout` files, plus `points.cwl` and `station.profile` (nowcast and forecast) | the `.61.nc` files and `points.*.nc` |
+| `full` | Prep, Nowcast, Forecast, Post, Verify | as cycle, plus the ops comparison | as cycle, plus the ops comparison (report only) |
 
-2D-Global smoke and cycle continue from the previous cycle stored in the dataset. Verify passes on bitwise equality, or when the largest difference in the time-dependent variables is within `CMP_TOL` (default 1e-3 m for water level, m/s for velocity and wind). ATL scales it by 10 for temperature and salinity (degC, psu) and by 100 for the `staout_2` pressure (Pa). The ops comparison is a report against the operational products: its warnings (above `OPS_WARN_MM`, default 500 mm) never fail a build, and only a missing output of this run does. A missing ops product is a SKIP, not a failure. The exception is ATL at `LEVEL=full`, where the ops comparison also fails a build: a file fails when its median per-station max water level difference exceeds `OPS_FAIL_MEDIAN_MM` or more than `OPS_FAIL_OVER_10CM` stations (default 10) differ by more than 10 cm. The median limit is 5 mm for the standalone variant (same model and forcing as ops; measured under 1 mm on 20261001 12z) and 15 mm for the coupled variant (DATM forcing; measured 1.8 to 5.8 mm). Both variants had 2 to 6 estuary stations over 10 cm at low tide. A file that cannot be compared at all also fails. `CMP_TOL`, `OPS_WARN_MM`, `OPS_FAIL_MEDIAN_MM` and `OPS_FAIL_OVER_10CM` are environment variables of the scripts, not build parameters.
+2D-Global always continues from the previous cycle (`COLD=0`): the chain state stored in the dataset, or, live, in the CI com or the public ops state. The CI runs no 2D-Global cold start; those are done by hand with the launcher ([2D-Global run guide section 3](stofs_2d_glo_run_guide.md#3-hercules-rdhpcs-slurm)). Verify passes on bitwise equality, or when the largest difference in the time-dependent variables is within `CMP_TOL` (default 1e-3 m for water level, m/s for velocity and wind). ATL scales it by 10 for temperature and salinity (degC, psu) and by 100 for the `staout_2` pressure (Pa). The ops comparison is a report against the operational products: its warnings (above `OPS_WARN_MM`, default 500 mm) never fail a build, and only a missing output of this run does. A missing ops product is a SKIP, not a failure. The exception is ATL at `LEVEL=full`, where the ops comparison also fails a build: a file fails when its median per-station max water level difference exceeds `OPS_FAIL_MEDIAN_MM` or more than `OPS_FAIL_OVER_10CM` stations (default 10) differ by more than 10 cm. The median limit is 5 mm for the standalone variant (same model and forcing as ops; measured under 1 mm on 20261001 12z) and 15 mm for the coupled variant (DATM forcing; measured 1.8 to 5.8 mm). Both variants had 2 to 6 estuary stations over 10 cm at low tide. A file that cannot be compared at all also fails. `CMP_TOL`, `OPS_WARN_MM`, `OPS_FAIL_MEDIAN_MM` and `OPS_FAIL_OVER_10CM` are environment variables of the scripts, not build parameters.
 
 **Measured CI runtimes and cost** (queue wait comes on top):
 
@@ -92,7 +92,7 @@ Section 12 has what each stage does, system by system, including SECOFS.
 | #7 | ATL coupled, smoke | 1592 s | 3094 s | 63 | about 55 | 8/8 bitwise |
 | #6 | ATL standalone, smoke | 511 s | 1562 s | 62 | about 27 | 8/8 bitwise |
 
-2D-Global Prep takes seconds because the dataset already holds the forcing. The cycle and full levels have not run in CI yet. From hand runs on Hercules, a 2D-Global forecast adds about 77 min on 52 nodes (about 66 node-hours) and post about 15 min on one node. A 2D-Global `full` build adds about 1.9 h of `adcprep` (one node) and a 26 min spin-up on 52 nodes. ATL forecast and post have not been timed on Hercules.
+2D-Global Prep takes seconds because the dataset already holds the forcing. The cycle and full levels have not run in CI yet. From hand runs on Hercules, a 2D-Global forecast adds about 77 min on 52 nodes (about 66 node-hours) and post about 15 min on one node. ATL forecast and post have not been timed on Hercules.
 
 ## 5. Datasets available now
 
@@ -103,7 +103,6 @@ A frozen dataset is a stored copy of one finished hand run: its inputs, plus its
 | `stofs_3d_atl/standalone/2026100112` | ATL standalone | 20261001 12z | smoke | build #6, 8/8 bitwise |
 | `stofs_3d_atl/coupled/2026100112` | ATL coupled | 20261001 12z | smoke | build #7, 8/8 bitwise |
 | `stofs_2d_glo/2026101206` | 2D-Global | 20261012 06z | smoke, cycle | smoke: build #10, bitwise |
-| `stofs_2d_glo/2026101200` | 2D-Global | 20261012 00z (cold start) | full | not yet |
 
 The ATL datasets were seeded from runs that had finished only prep and nowcast, so Stage Data refuses `cycle` and `full` on them. They become cycle datasets after a re-seed (section 8.3). Both ATL variants write to the same CI `com` directory, so a coupled build overwrites the outputs of an earlier standalone build of the same cycle.
 
@@ -143,8 +142,8 @@ Find the red column, open Console Output, then match the message below.
 
 | Stage | ATL limit | 2D-Global limit |
 | --- | --- | --- |
-| Prep | 3:30 | 1:50 (4:50 for `full`) |
-| Nowcast | 3:00 | 2:20 (3:20 for `full`) |
+| Prep | 3:30 | 1:50 |
+| Nowcast | 3:00 | 2:20 |
 | Forecast | 6:30 | 3:00 |
 | Post | 2:30 (coupled 4:30) | 2:15 |
 
@@ -179,7 +178,7 @@ What this means for you:
 Set up your own nos-workflow clone on Hercules and run a cycle by hand, following the run guide:
 
 - **STOFS-3D-ATL:** [run guide section 4](stofs_3d_atl_run_guide.md#4-hercules-rdhpcs-slurm). Run all four stages (prep, nowcast, forecast, post) for a dataset that supports `cycle` and `full`. Prep and nowcast alone give a smoke-only dataset. Seed the previous cycle with `tools/hercules_atl_seed_prev.sh` (not the flat `COMINrerun` option): the dataset seed reads `staout_1` and `avg_bias` from the PDY-1 directory of the run's COMROOT.
-- **STOFS-2D-Global:** [run guide section 3](stofs_2d_glo_run_guide.md#3-hercules-rdhpcs-slurm). Run a 00z cold start through post, then the following 06z cycle with `COLD=0`. The 06z cycle becomes the smoke and cycle dataset, and the 00z cold start the full dataset. Stage the forcing with `tools/hercules_2d_glo_stage_forcing.sh` so the ops station files are downloaded too; the ops comparison uses them.
+- **STOFS-2D-Global:** [run guide section 3](stofs_2d_glo_run_guide.md#3-hercules-rdhpcs-slurm). Run a 00z cold start through post, then the following 06z cycle with `COLD=0`. The 06z cycle becomes the dataset for every level. Stage the forcing with `tools/hercules_2d_glo_stage_forcing.sh` so the ops station files are downloaded too; the ops comparison uses them.
 
 All stages must end with `status=PASS`.
 
@@ -204,7 +203,6 @@ Put `SEED_LEVEL=smoke` in front of a command to seed from a run that has finishe
 ```bash
 export SEED_RT=/work2/noaa/nos-surge/$LOGNAME/nos-workflow-rt
 export COMROOT_2DGLO=$NOS_PTMP/$LOGNAME/com
-bash .cicd/scripts/stofs_2d_glo.sh seed <PDY> 00 cold
 bash .cicd/scripts/stofs_2d_glo.sh seed <PDY> 06
 ```
 
@@ -247,16 +245,16 @@ A branch cannot change `fix/` or `exec/` in the CI (section 8.1).
 
 `DATA_MODE=live` downloads the inputs for `PDY`/`CYC` instead of using a dataset. Use frozen for regression checks; live is for checking a new date end to end.
 
-- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. Before the download it removes the other days' 2D-Global directories from the CI `com` and the other cycles' download directories under `ops_s3`. It keeps the shared `nos/stofs_2d_glo` (the chain state, `nod_equi` and the decomposition, that a later live `LEVEL=cycle` build continues from) and the days of `PDY` and of the cycle 6 h earlier, so a rerun of the same day does not download again. It continues from the 2D-Global state already there: run `LEVEL=full` first (a cold start), then `LEVEL=cycle` for the cycle 6 h later, with no frozen 2D-Global build in between (a frozen build clears that state).
+- **2D-Global:** Stage Data downloads the ops forcing for the cycle (about 39 GB) on the front-end node. Before the download it removes the other days' 2D-Global directories from the CI `com` and the other cycles' download directories under `ops_s3`. It keeps the shared `nos/stofs_2d_glo` (the chain state, `nod_equi` and the decomposition, that a later live build continues from) and the days of `PDY` and of the cycle 6 h earlier, so a rerun of the same day does not download again. It continues from the 2D-Global state already there (the cycle 6 h later than an earlier build, with no frozen 2D-Global build in between, since a frozen build clears that state). When a live build finds no chain state in the CI `com`, it starts from the public ops state instead of failing: Stage Data downloads the cycle - 126 h `stofs_2d_glo_{tide,surf}.68.nc` files from S3 (1.4 GB each) as the previous cycle's `hotstart` and `restart`, checks their model time, regenerates `nod_equi` for the base date of the ops files, and reuses the decomposition in `com/nos/stofs_2d_glo`, so it skips `adcprep` and the spin-up ([2D-Global run guide section 3.4](stofs_2d_glo_run_guide.md#34-starting-from-the-ops-state)). The decomposition must exist: run one frozen 2D-Global build once in the CI root (it stages the decomposition), or the stage fails with `no .../stofs_2d_glo_4064.tar`. Measured against ops (median per-station max water level difference): htp 0.06 mm, cwl 66.5 mm, swl 70.2 mm, against 59, 173 and 164 mm for a cold start. Surf keeps a start-state offset because the S3 state is ops' 120 h forecast state.
 - **Nightly (scheduled from the dashboard, not in the Jenkinsfile):** in the ATL job open Configure > Triggers, tick **Build periodically with parameters** and enter this Schedule, then Save:
   ```
   TZ=UTC
   H 20 * * * % OFS=stofs_2d_glo;LEVEL=full;DATA_MODE=live;CYC=12;PDY=latest
   ```
-  Check the "Would next run at ..." line under the box. If Jenkins rejects the `TZ` line, remove it and give the hour in the controller's time zone. To stop the nightly, untick the box; manual builds are unaffected. The same form can schedule any system or level. `PDY=latest` (or a blank `PDY`) means the latest day whose `CYC` cycle is published (UTC now minus `CYC` + 8 h), so the 20:00 UTC build runs today's 12z. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night is a cold start, and a cold start always rebuilds the decomposition (adcprep, about 1.9 h). The build takes the same CI lock as SECOFS, so a SECOFS build running at 20:00 UTC makes that night's build fail at Gate. In reverse, the nightly holds the lock from about 20:00 UTC until it ends (about 03:00 UTC): a SECOFS build started then fails at Gate with `another CI cycle holds the lock`, and a labelled PR gets a red `hercules-ci/cycle` status; wait and rebuild. Rebuild of a scheduled build reuses its parameters and resolves `latest` again, so set `PDY` to a date to rerun a given day. Disk stays at about one cycle because Stage Data removes the older days, as above.
+  Check the "Would next run at ..." line under the box. If Jenkins rejects the `TZ` line, remove it and give the hour in the controller's time zone. To stop the nightly, untick the box; manual builds are unaffected. The same form can schedule any system or level. `PDY=latest` (or a blank `PDY`) means the latest day whose `CYC` cycle is published (UTC now minus `CYC` + 8 h), so the 20:00 UTC build runs today's 12z. The 12z ops forcing is on S3 at about 19:05Z and the ops station files at about 19:20Z. A once-a-day 12z run cannot chain, so every night starts from the public ops state (the `cycle - 126 h` files), which needs no `adcprep` or spin-up but needs the decomposition in the CI com: run one frozen 2D-Global build once in the CI root first. It runs at `LEVEL=full`, so the ops comparison is reported each night. The build takes the same CI lock as SECOFS, so a SECOFS build running at 20:00 UTC makes that night's build fail at Gate. In reverse, the nightly holds the lock from about 20:00 UTC until it ends (several hours, since the build skips `adcprep` and the spin-up): a SECOFS build started then fails at Gate with `another CI cycle holds the lock`, and a labelled PR gets a red `hercules-ci/cycle` status; wait and rebuild. Rebuild of a scheduled build reuses its parameters and resolves `latest` again, so set `PDY` to a date to rerun a given day. Disk stays at about one cycle because Stage Data removes the older days, as above.
 - **ATL:** also needs `DCOM_BUNDLE`, a case bundle directory with `dcom/` and `seeds/dyn_seed_<PDY-1>/` (ATL run guide section 4.2) that `role-nosofs` can read. It downloads about 125 GB per build.
 
-Live mode has no reference run. At smoke, Verify checks nothing beyond the stage PASS for either system, and ATL cycle Verify likewise. 2D-Global compares with the ops products at cycle and full; ATL downloads and compares them only at full, and a live ATL build at full gets a real pass/fail check against ops (thresholds in section 4).
+Live mode has no reference run. At smoke, Verify checks nothing beyond the stage PASS for either system, and ATL cycle Verify likewise. 2D-Global compares with the ops products at full; ATL downloads and compares them only at full, and a live ATL build at full gets a real pass/fail check against ops (thresholds in section 4).
 
 ## 11. Reference
 
@@ -304,21 +302,21 @@ Time limit per Slurm stage: the card walltime plus 30 min (section 7). A passing
 
 ### 12.2 STOFS-2D-Global
 
-`smoke` and `cycle` continue from the previous cycle (`COLD=0`); `full` is a cold start (`COLD=1`).
+All levels continue from the previous cycle (`COLD=0`), live ones from the public ops state when the CI com has no chain state (section 10).
 
 | Stage | Runs on | What it does | LEVEL | Time (smoke build #10) |
 | --- | --- | --- | --- | --- |
 | Checkout | Jenkins agent | Checks out the job's branch (`*/develop`) | all | seconds |
-| Gate | Jenkins agent | Lets a manual or scheduled 2D build run without the PR label and takes the CI lock. `CYC` is used as given (06 for smoke and cycle, 00 for full, 12 for the nightly) | all | seconds |
+| Gate | Jenkins agent | Lets a manual or scheduled 2D build run without the PR label and takes the CI lock. `CYC` is used as given (06 for the frozen dataset, 12 for the nightly) | all | seconds |
 | Bootstrap | Jenkins agent | Builds the CI venv. Once per CI root, copies `fix/stofs_2d_glo` and `stofs_2d_glo_tide_fac` from `SEED_SRC`, and the ADCIRC build (`padcirc`, `adcprep`) from `adcirc_v56.1.0_exec` beside it. Once per dataset, copies `stofs_2d_glo/<PDY><CYC>` from `SEED_RT`; its forcing, decomposition tar and `nod_equi` become read-only | all | first copy 60 GB in 2.5 min, then seconds |
 | Deploy | Jenkins agent | Copies the checked-out nos-workflow into the CI package root, leaving `fix/` and `exec/` alone; clears `ci_logs/` | all | seconds |
 | Environment Check | Jenkins agent | Modules, Python imports, `tide_fac`, `padcirc`, `adcprep`, the NCO tools (`ncdiff`, `ncrcat`, `ncks`) and `sbatch`/`sacct` | all | seconds |
-| Stage Data | Jenkins agent | live: removes the other days' `com/nos/stofs_2d_glo.<day>` and other cycles' `ops_s3` dirs (keeps `com/nos/stofs_2d_glo`, `PDY` and the previous cycle's day), then downloads the ops forcing. frozen: removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<day>` from the CI com, then links the dataset in: the cycle's forcing into `rerun/`, read-only; for smoke and cycle also `nod_equi` and the 4064-rank decomposition tar, read-only, and the previous cycle's chain files (`hotstart` for tide, `restart` for surf) as writable copies | all | seconds |
-| Prep | Slurm, 1 node, 64 GB | `gfs_ncst` and `gfs_fcst` (the forcing build) skip, because the dataset already holds the forcing. At `full`, `adcprep` runs first and builds `nod_equi` and the decomposition | all | 30 s (`full`: about 1.9 h more) |
-| Nowcast | Slurm, 52 nodes | The 6 h nowcast from the previous cycle's chain files: tide (NWS=0, 4064 ranks on 51 nodes), then surf (NWS=14014, 4064 + 5 writer ranks). Writes this cycle's chain files and checks every output for dropped records. At `full`, the 162 h spin-up runs first | all | 1352 s (`full`: spin-up about 26 min more) |
+| Stage Data | Jenkins agent | live: removes the other days' `com/nos/stofs_2d_glo.<day>` and other cycles' `ops_s3` dirs (keeps `com/nos/stofs_2d_glo`, `PDY` and the previous cycle's day), then, with no chain state in the CI com, stages the public ops state (section 10) and downloads the ops forcing. frozen: removes only `com/nos/stofs_2d_glo` and `com/nos/stofs_2d_glo.<day>` from the CI com, then links the dataset in: the cycle's forcing into `rerun/`, read-only; at every level also `nod_equi` and the 4064-rank decomposition tar, read-only, and the previous cycle's chain files (`hotstart` for tide, `restart` for surf) as writable copies | all | seconds |
+| Prep | Slurm, 1 node, 64 GB | `gfs_ncst` and `gfs_fcst` (the forcing build) skip, because the dataset already holds the forcing | all | 30 s |
+| Nowcast | Slurm, 52 nodes | The 6 h nowcast from the previous cycle's chain files: tide (NWS=0, 4064 ranks on 51 nodes), then surf (NWS=14014, 4064 + 5 writer ranks). Writes this cycle's chain files and checks every output for dropped records. | all | 1352 s |
 | Forecast | Slurm, 52 nodes | The 180 h forecast: tide, then surf, each followed by the record-gap check | cycle, full | not yet run in CI; about 77 min in hand runs |
 | Post | Slurm, 1 node, 100 GB (on the prep card) | `ncdiff` makes the surge-only products, swl = cwl - htp, for the station and field files. `ncrcat` joins the met forcing into the ops met files (`pressfc`, `uvgrd10m`, `icec`): hourly to 120 h, then 3-hourly to 180 h, 7 + 121 + 21 = 149 records. anomaly, bias and GRIB2 are not run on Hercules | cycle, full | not yet run in CI; about 15 min in hand runs |
-| Verify | Jenkins agent | `compare_2dglo.py` against the dataset's reference. smoke: `rerun/stofs_2d_glo_{tide,surf}.61.nc`. cycle and full: also the `points.*.nc` station files, plus the station comparison with ops (report only; warns above 500 mm). Report: `compare_2dglo.txt` | all | seconds |
+| Verify | Jenkins agent | `compare_2dglo.py` against the dataset's reference. smoke: `rerun/stofs_2d_glo_{tide,surf}.61.nc`. cycle and full: also the `points.*.nc` station files. full: also the station comparison with ops (report only; warns above 500 mm). Report: `compare_2dglo.txt` | all | seconds |
 | post-build | Jenkins agent | Releases the lock and archives `ci_logs/`; on failure or abort, cancels the Slurm job the build was waiting on; posts to Slack | all | seconds |
 
 Time limit per Slurm stage: the launcher walltime plus 1 h (section 7). The jobs run with `KEEPDATA=NO` and remove their own work directories. Verify tolerance: bitwise, or the largest difference in zeta, u-vel and v-vel within `CMP_TOL` (default 1e-3 m or m/s).
