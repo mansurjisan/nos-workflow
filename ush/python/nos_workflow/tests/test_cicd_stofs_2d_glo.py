@@ -372,13 +372,14 @@ def test_live_stage_runs_the_login_node_tool_and_keeps_the_chain_state(ci):
     assert (ci.com / "nos" / "chain_state").is_file() and "stage_data PASS" in r.stdout
 
 
-def test_live_stage_checks_the_chain_state_before_downloading(ci):
+def test_live_stage_with_existing_chain_state_does_not_use_the_ops_state(ci):
     _live_tool(ci, 0)
-    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
-    assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo.t00z.restart" in r.stderr
-    assert "LEVEL=full DATA_MODE=live" in r.stdout and not (ci.stubs / "tool.args").exists()
+    _ops_stubs(ci)
     _finished_run(ci.com)
-    assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 0 and (ci.stubs / "tool.args").is_file()
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert (ci.stubs / "tool.args").is_file() and not (ci.stubs / "curl.urls").exists() and "ops state" not in r.stdout
+    assert (ci.com / "nos" / "stofs_2d_glo" / "stofs_2d_glo_nod_equi").read_text() == "stofs_2d_glo_nod_equi"
 
 
 def test_live_stage_prunes_other_days_and_ops_s3_cycles_but_keeps_comges_and_the_pdy_and_previous_days(ci):
@@ -413,10 +414,145 @@ def test_live_stage_prune_refuses_a_symlinked_target_and_deletes_nothing_first(c
     assert ci.script("stage", DATA_MODE="live", LEVEL="full", CYC="00").returncode == 0 and victim.is_file() and (ops / "2026100912").is_symlink()
 
 
-def test_live_cycle_prune_runs_after_the_chain_state_check(ci):
+def test_live_cycle_without_chain_state_and_decomposition_fails_before_the_download(ci):
     _live_tool(ci, 0)
-    old = _touch(ci.com / "nos" / "stofs_2d_glo.20260101" / "f")
-    assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 1 and old.is_file()
+    _ops_stubs(ci)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 1 and r.stderr.count("MISSING") == 5 and "stofs_2d_glo.t00z.restart" in r.stderr
+    assert "starting from the ops state 2026100700 (cycle - 126 h)" in r.stdout and "4064-rank decomposition" in r.stderr
+    assert "LEVEL=full build (cold start) or a frozen" in r.stderr
+    assert not (ci.stubs / "tool.args").exists() and not (ci.stubs / "curl.urls").exists()
+
+
+def _model_time(base: str, pdy: str, cyc: str) -> int:
+    from datetime import datetime
+    return int((datetime.strptime(f"{pdy}{cyc}", "%Y%m%d%H") - datetime.strptime(base, "%Y-%m-%d %H:%M:%S")).total_seconds())
+
+
+BASE = "2026-05-26 12:00:00"
+
+
+def _ops_file(ci: Ci, src: str, kind: str, time: float, base: str = BASE):
+    """A tiny netCDF hotstart stand-in with the ops units text, padded (sparse) to the real size. MJ (10/22/26)"""
+    f = ci.stubs / "ops" / f"stofs_2d_glo.{src[:8]}_{src[8:]}_rerun_stofs_2d_glo_{kind}.68.nc"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    with nc.Dataset(f, "w", format="NETCDF3_CLASSIC") as ds:
+        ds.createDimension("one", 1)
+        v = ds.createVariable("time", "f8", ("one",))
+        v.units = f"seconds since {base}        ! NCDASE - BASE_DAT"
+        v[0] = time
+    with open(f, "ab") as fh:
+        fh.truncate(1472354116)
+    return f
+
+
+def _ops_stubs(ci: Ci, nod_line: str | None = None):
+    _stub(ci.bin / "curl", '#!/bin/bash\nout=; url=\nwhile [ $# -gt 0 ]; do case "$1" in -o) out=$2; shift 2;; -*) shift;; *) url=$1; shift;; esac; done\n'
+          'echo "$url" >> "$STUB_DIR/curl.urls"\nk=$(echo "${url#*amazonaws.com/}" | tr / _)\ncp --sparse=always "$STUB_DIR/ops/$k" "$out" || exit 22\n')
+    _stub(ci.home / "exec" / "stofs_2d_glo_tide_fac",
+          '#!/bin/bash\necho "$@" > "$STUB_DIR/tide_fac.args"\nwhile [ $# -gt 0 ]; do case "$1" in --year) y=$2;; --month) m=$2;; --day) d=$2;; --hour) h=$2;; --outputdir) od=$2;; --outputname) on=$2;; esac; shift; done\n'
+          'mkdir -p "$od"\n' + (f'echo "{nod_line}" > "$od/$on"\n' if nod_line else 'printf "%2d %2d %2d %4d\\n" $((10#$h)) $((10#$d)) $((10#$m)) $((10#$y)) > "$od/$on"\n'))
+
+
+def _decomp(ci: Ci):
+    for f in ("stofs_2d_glo_4064.tar", "stofs_2d_glo_4064.tar.json"):
+        _touch(ci.com / "nos" / "stofs_2d_glo" / f, f"ges {f}")
+
+
+@pytest.mark.parametrize("cyc,prev,src", [("06", ("20261012", "00"), "2026100700"), ("00", ("20261011", "18"), "2026100618")])
+def test_live_cycle_without_chain_state_starts_from_the_ops_state(ci, cyc, prev, src):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    t = _model_time(BASE, *prev)
+    for kind in ("tide", "surf"):
+        _ops_file(ci, src, kind, t)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle", CYC=cyc)
+    assert r.returncode == 0, r.stderr + r.stdout
+    nos = ci.com / "nos"
+    assert f"starting from the ops state {src} (cycle - 126 h)" in r.stdout
+    urls = (ci.stubs / "curl.urls").read_text().split()
+    b = "https://noaa-gestofs-pds.s3.amazonaws.com"
+    assert urls == [f"{b}/stofs_2d_glo.{src[:8]}/{src[8:]}/rerun/stofs_2d_glo_{k}.68.nc" for k in ("tide", "surf")]
+    d = nos / f"stofs_2d_glo.{prev[0]}"
+    for kind, want in (("hotstart", "tide"), ("restart", "surf")):
+        f = d / f"stofs_2d_glo.t{prev[1]}z.{kind}"
+        assert f.stat().st_size == 1472354116 and not f.with_name(f.name + ".part").exists()
+        with nc.Dataset(f) as ds:
+            assert ds["time"][0] == t
+    ges = nos / "stofs_2d_glo"
+    assert ges.joinpath("stofs_2d_glo_nod_equi").read_text().split() == ["12", "26", "5", "2026"] and not (ges / "stofs_2d_glo_nod_equi.new").exists()
+    assert "--length 365 --year 2026 --month 05 --day 26 --hour 12 --outputformat simple" in (ci.stubs / "tide_fac.args").read_text()
+    assert (ges / "stofs_2d_glo_4064.tar").read_text() == "ges stofs_2d_glo_4064.tar" and (ges / "stofs_2d_glo_4064.tar.json").is_file()
+    assert (ci.stubs / "tool.args").read_text().startswith(f"--rm-raw 2026101") and "ops state 2026" in r.stdout
+    assert r.stdout.index("ops state 2026") < r.stdout.index("staging the ops forcing")
+
+
+def test_ops_state_time_mismatch_stops_before_anything_is_staged(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    t = _model_time(BASE, *PREV)
+    _ops_file(ci, "2026100700", "tide", t)
+    _ops_file(ci, "2026100700", "surf", t + 21600)
+    nod = _touch(ci.com / "nos" / "stofs_2d_glo" / "stofs_2d_glo_nod_equi", "old")
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 1 and "do not hold the model time" in r.stderr and f"time {t + 21600} s, expected {t} s" in r.stderr
+    d = ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}"
+    assert not (d / "stofs_2d_glo.t00z.hotstart").exists() and not (d / "stofs_2d_glo.t00z.restart").exists()
+    assert nod.read_text() == "old" and not (ci.stubs / "tool.args").exists() and not (ci.stubs / "tide_fac.args").exists()
+    # a different base date in the two files is a mismatch too, as is a wrong nod_equi line 1. MJ (10/22/26)
+    _ops_file(ci, "2026100700", "surf", t, base="2026-05-26 06:00:00")
+    assert ci.script("stage", DATA_MODE="live", LEVEL="cycle").returncode == 1
+    _ops_file(ci, "2026100700", "surf", t)
+    shutil.rmtree(d)
+    _ops_stubs(ci, nod_line="12 25  5 2026")
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 1 and "nod_equi line 1 is '12 25  5 2026', expected '12 26 05 2026'" in r.stderr
+    assert not (d / "stofs_2d_glo.t00z.hotstart").exists() and nod.read_text() == "old" and not (ci.stubs / "tool.args").exists()
+
+
+def test_ops_state_replaces_a_read_only_nod_equi_and_chain_file_and_a_rerun_skips_the_download(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    t = _model_time(BASE, *PREV)
+    for kind in ("tide", "surf"):
+        _ops_file(ci, "2026100700", kind, t)
+    nod = _touch(ci.com / "nos" / "stofs_2d_glo" / "stofs_2d_glo_nod_equi", "frozen")
+    nod.chmod(0o444)
+    link = ci.tmp / "frozen_nod"
+    os.link(nod, link)
+    hot = _touch(ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}" / "stofs_2d_glo.t00z.hotstart", "small")
+    hot.chmod(0o444)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="smoke")
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert link.read_text() == "frozen" and nod.read_text().split() == ["12", "26", "5", "2026"]
+    assert hot.stat().st_size == 1472354116
+    n = len((ci.stubs / "curl.urls").read_text().split())
+    assert n == 2
+    # the chain state now exists, so a rerun is the ordinary continuation. MJ (10/22/26)
+    assert ci.script("stage", DATA_MODE="live", LEVEL="smoke").returncode == 0 and len((ci.stubs / "curl.urls").read_text().split()) == 2
+
+
+def test_ops_state_refuses_a_symlinked_target(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    victim = ci.tmp / "victim"
+    victim.mkdir()
+    (ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}").symlink_to(victim)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 1 and "is a symlink" in r.stderr and not list(victim.iterdir()) and not (ci.stubs / "curl.urls").exists()
+
+
+def test_live_full_and_frozen_do_not_touch_the_ops_state(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    assert ci.script("stage", DATA_MODE="live", LEVEL="full").returncode == 0
+    ci.dataset()
+    assert ci.script("stage", DATA_MODE="frozen", LEVEL="smoke").returncode == 0
+    assert not (ci.stubs / "curl.urls").exists() and not (ci.stubs / "tide_fac.args").exists()
 
 
 def test_live_stage_tolerates_only_the_reference_download_failure(ci):
