@@ -1292,3 +1292,42 @@ def test_env_check_for_secofs_still_checks_the_schism_executables(ci):
     _stub(ci.home / "exec" / "schism_combine_hotstart7.exe")
     r = ci.run(SCRIPTS / "env_check.sh", CI_OFS=None)
     assert r.returncode == 0 and "padcirc" not in r.stdout
+
+
+def test_ops_state_check_does_not_use_isolated_python():
+    # python3 -I would drop the spack PYTHONPATH that carries netCDF4 on Hercules. MJ (10/22/26)
+    assert "python3 -I" not in SCRIPT.read_text()
+
+
+def test_ops_state_replaces_a_full_size_chain_file_of_another_base_date(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    t = _model_time(BASE, *PREV)
+    for kind in ("tide", "surf"):
+        _ops_file(ci, "2026100700", kind, t)
+    stale = _ops_file(ci, "2026100700", "tide", 1.0, base="2026-01-01 00:00:00")
+    hot = ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}" / "stofs_2d_glo.t00z.hotstart"
+    hot.parent.mkdir(parents=True)
+    shutil.copy(stale, hot)
+    _ops_file(ci, "2026100700", "tide", t)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    assert r.returncode == 0, r.stderr + r.stdout
+    assert len((ci.stubs / "curl.urls").read_text().split()) == 2
+    with nc.Dataset(hot) as ds:
+        assert ds["time"][0] == t
+
+
+def test_ops_state_check_that_cannot_run_keeps_the_part_files(ci):
+    _live_tool(ci, 0)
+    _ops_stubs(ci)
+    _decomp(ci)
+    _stub(ci.bin / "python3", "#!/bin/bash\nexit 1\n")
+    t = _model_time(BASE, *PREV)
+    for kind in ("tide", "surf"):
+        _ops_file(ci, "2026100700", kind, t)
+    r = ci.script("stage", DATA_MODE="live", LEVEL="cycle")
+    d = ci.com / "nos" / f"stofs_2d_glo.{PREV[0]}"
+    assert r.returncode == 1 and "time check could not run (rc=1)" in r.stderr
+    assert (d / "stofs_2d_glo.t00z.hotstart.part").is_file() and (d / "stofs_2d_glo.t00z.restart.part").is_file()
+    assert not (d / "stofs_2d_glo.t00z.hotstart").exists() and not (ci.stubs / "tool.args").exists()

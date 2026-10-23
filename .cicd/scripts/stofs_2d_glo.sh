@@ -8,7 +8,7 @@
 #   stofs_2d_glo.sh verify   Verify: compare_2dglo.py against the dataset's reference / ops products
 #   stofs_2d_glo.sh seed <PDY> <CYC> [cold]   one-time, by hand: build the frozen dataset from a finished run (see below)
 # Env (Jenkinsfile): PDY CYC LEVEL DATA_MODE RT_DATA_ROOT NOS_PTMP PACKAGEROOT VENV_PATH; SLURM_CI_ACCOUNT and SLURM_CI_QOS are read by run_stage.sh;
-# optional CMP_TOL (default 1e-3), OPS_WARN_MM (default 500), OPS_STATE_SRC. MJ (10/15/26)
+# optional CMP_TOL (default 1e-3), OPS_WARN_MM (default 500). MJ (10/15/26)
 #
 # The model stages are the SECOFS Jenkins stages: Prep, Nowcast, Forecast and Post each call run_stage.sh <stage> <PDY> <CYC>, which submits one job of the
 # ops chain, waits (timeout = the job's walltime + 1 h), gates on its STAGE_SUMMARY and moves on. Then Verify calls `verify`. The jobs are the ones
@@ -25,8 +25,8 @@
 # they use the 06z-type dataset; full cold-starts and uses the 00z-type dataset. A job in a bad Slurm state, or without STAGE_SUMMARY status=PASS, fails its
 # stage. DATA_MODE=live continues from the state already in the shared com (LEVEL=full first, then cycle at +6 h) and keeps it (live only prunes other days, see below); the smoke/cycle stage
 # checks that state before it downloads, and when it has none starts from the public ops state: the .68 hotstart files of the cycle - 126 h from S3, nod_equi regenerated for their base
-# date, the decomposition reused from COMGES (stage_ops_state; run guide section 3.4; OPS_STATE_SRC=<PDY><CC> picks another source cycle). frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
-# other days' 2D dirs and the other ops_s3 cycle dirs, so a daily scheduled cold start never fills the CI storage. MJ (10/22/26)
+# date, the decomposition reused from COMGES (stage_ops_state; run guide section 3.4). frozen clears it and starts from the dataset. live keeps COMGES and the PDY and previous-cycle days but removes the
+# other days' 2D dirs and the other ops_s3 cycle dirs, so a daily scheduled build never fills the CI storage. MJ (10/22/26)
 #
 # Layout, the SECOFS one: com/, rpt/ and work/ are the shared $NOS_PTMP/$LOGNAME/{com,rpt,work}, the cards' own defaults; COMROOT_2DGLO is that com (an inherited
 # value is ignored). RUN stofs_2d_glo is unique, so the 2D-Global state sits beside SECOFS's and ATL's without touching it: COMGES is com/nos/stofs_2d_glo and a
@@ -149,9 +149,9 @@ prune_ops_s3() {
 # or frozen build). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a chain file. MJ (10/22/26)
 stage_ops_state() {
   local ges="${CI_COM}/nos/${RUN}" prevd="${CI_COM}/nos/${RUN}.${PREV:0:8}" b=https://noaa-gestofs-pds.s3.amazonaws.com bytes=1472354116
-  local src=${OPS_STATE_SRC:-$(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H)} s t f kind use base y m d h line mt
+  local s t f kind base y m d h line mt rc=0 x src
+  src=$(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H)
   local -A put=()
-  [[ "${src}" =~ ^[0-9]{8}(00|06|12|18)$ ]] || { echo "FATAL: OPS_STATE_SRC must be YYYYMMDDCC (got '${src}')" >&2; exit 1; }
   for t in "${ges}" "${prevd}"; do
     [ ! -L "${t}" ] || { echo "FATAL: refusing to write under ${t}: it is a symlink" >&2; exit 1; }
   done
@@ -159,26 +159,25 @@ stage_ops_state() {
     [ -s "${ges}/${kind}" ] || { echo "FATAL: no ${ges}/${kind}: the ops-state start reuses the 4064-rank decomposition; run one DATA_MODE=live LEVEL=full build (cold start) or a frozen 2D-Global build first" >&2; exit 1; }
   done
   mkdir -p "${ges}" "${prevd}"
+  for f in "${ges}/${RUN}_nod_equi" "${ges}/${RUN}_nod_equi.new"; do
+    [ ! -L "${f}" ] || { echo "FATAL: refusing to write ${f}: it is a symlink" >&2; exit 1; }
+  done
   setup_env
+  # A chain file already there is never trusted: both are staged through .part and replaced together after the check. MJ (10/22/26)
   for s in tide surf; do
     [ "${s}" = tide ] && kind=hotstart || kind=restart
     t="${prevd}/${RUN}.t${PREV:8:2}z.${kind}"
-    for f in "${t}" "${t}.part" "${ges}/${RUN}_nod_equi" "${ges}/${RUN}_nod_equi.new"; do
-      [ ! -L "${f}" ] || { echo "FATAL: refusing to write ${f}: it is a symlink" >&2; exit 1; }
-    done
-    if [ "$(stat -c %s "${t}" 2>/dev/null || echo 0)" = "${bytes}" ]; then use=${t}
-    else
-      if [ "$(stat -c %s "${t}.part" 2>/dev/null || echo 0)" != "${bytes}" ]; then
-        echo "downloading ${b}/${RUN}.${src:0:8}/${src:8:2}/rerun/${RUN}_${s}.68.nc -> ${t}"
-        curl -fsSL --retry 3 -C - -o "${t}.part" "${b}/${RUN}.${src:0:8}/${src:8:2}/rerun/${RUN}_${s}.68.nc" || { echo "FATAL: download of the ${s} .68 file failed" >&2; exit 1; }
-      fi
-      [ "$(stat -c %s "${t}.part" 2>/dev/null || echo 0)" = "${bytes}" ] || { echo "FATAL: ${t}.part is not ${bytes} bytes" >&2; exit 1; }
-      use=${t}.part
+    [ ! -L "${t}" ] && [ ! -L "${t}.part" ] || { echo "FATAL: refusing to write ${t}: it is a symlink" >&2; exit 1; }
+    [ "$(stat -c %s "${t}.part" 2>/dev/null || echo 0)" -le "${bytes}" ] || rm -f -- "${t}.part"
+    if [ "$(stat -c %s "${t}.part" 2>/dev/null || echo 0)" != "${bytes}" ]; then
+      echo "downloading ${b}/${RUN}.${src:0:8}/${src:8:2}/rerun/${RUN}_${s}.68.nc -> ${t}"
+      curl -fsSL --retry 3 -C - -o "${t}.part" "${b}/${RUN}.${src:0:8}/${src:8:2}/rerun/${RUN}_${s}.68.nc" || { echo "FATAL: download of the ${s} .68 file failed" >&2; exit 1; }
     fi
-    put["${t}"]=${use}
+    [ "$(stat -c %s "${t}.part" 2>/dev/null || echo 0)" = "${bytes}" ] || { echo "FATAL: ${t}.part is not ${bytes} bytes, the size for this mesh" >&2; exit 1; }
+    put["${t}"]=${t}.part
   done
-  # time of both files = the chain time minus the units base date; prints the base date as YYYY MM DD HH and the time. MJ (10/22/26)
-  base=$(python3 -I - "${PREV}" "${put[${prevd}/${RUN}.t${PREV:8:2}z.hotstart]}" "${put[${prevd}/${RUN}.t${PREV:8:2}z.restart]}" <<'PY'
+  # exit 3 = the time or base date does not match; any other failure is the check itself (no python module, a bad file). Prints the base date as YYYY MM DD HH and the time. MJ (10/22/26)
+  base=$(python3 -P - "${PREV}" "${prevd}/${RUN}.t${PREV:8:2}z.hotstart.part" "${prevd}/${RUN}.t${PREV:8:2}z.restart.part" <<'PY'
 import re, sys
 from datetime import datetime
 import netCDF4
@@ -191,21 +190,24 @@ for f in sys.argv[2:]:
         got.append((datetime.strptime(m.group(1), "%Y-%m-%d %H:%M:%S"), float(v[:].ravel()[0])))
 for (b, t), f in zip(got, sys.argv[2:]):
     print(f"{f}: base {b} time {t:.0f} s, expected {(chain - b).total_seconds():.0f} s", file=sys.stderr)
-if got[0] != got[1] or any(t != (chain - b).total_seconds() for b, t in got):
-    sys.exit(1)
+if got[0] != got[1] or any(t != (chain - b).total_seconds() or b.minute or b.second for b, t in got):
+    sys.exit(3)
 print(got[0][0].strftime("%Y %m %d %H"), int(got[0][1]))
 PY
-  ) || { rm -f -- "${prevd}"/*.part; echo "FATAL: the ops state files do not hold the model time of ${PREV} (above); nothing was staged" >&2; exit 1; }
+  ) || rc=$?
+  [ "${rc}" != 3 ] || { for f in "${!put[@]}"; do rm -f -- "${put[${f}]}"; done; echo "FATAL: the ops state files do not hold the model time of ${PREV} (above); nothing was staged" >&2; exit 1; }
+  [ "${rc}" = 0 ] || { echo "FATAL: time check could not run (rc=${rc}); the .part files are kept" >&2; exit 1; }
   read -r y m d h mt <<<"${base}"
   rm -f "${ges}/${RUN}_nod_equi.new"
   "${HOMEnos}/exec/${RUN}_tide_fac" --length 365 --year "${y}" --month "${m}" --day "${d}" --hour "${h}" --outputformat simple --outputdir "${ges}" --outputname "${RUN}_nod_equi.new" > /dev/null \
     || { rm -f "${ges}/${RUN}_nod_equi.new"; echo "FATAL: ${RUN}_tide_fac failed" >&2; exit 1; }
   read -r line < "${ges}/${RUN}_nod_equi.new" || true
   set -- ${line}
+  for x in "$@"; do [[ "${x}" =~ ^[0-9]+$ ]] || set --; done
   [ "$#" -ge 4 ] && [ "$((10#$1))" = "$((10#${h}))" ] && [ "$((10#$2))" = "$((10#${d}))" ] && [ "$((10#$3))" = "$((10#${m}))" ] && [ "$((10#$4))" = "$((10#${y}))" ] \
     || { rm -f "${ges}/${RUN}_nod_equi.new"; echo "FATAL: nod_equi line 1 is '${line}', expected '${h} ${d} ${m} ${y}'" >&2; exit 1; }
-  for f in "${!put[@]}"; do [ "${put[${f}]}" = "${f}" ] || mv -f -- "${put[${f}]}" "${f}"; done
   mv -f -- "${ges}/${RUN}_nod_equi.new" "${ges}/${RUN}_nod_equi"
+  for f in "${!put[@]}"; do mv -f -- "${put[${f}]}" "${f}"; done
   echo "ops state ${src}: base date ${y}-${m}-${d} ${h}z, model time ${mt} s at ${PREV}; chain files ${prevd}/${RUN}.t${PREV:8:2}z.{hotstart,restart}, nod_equi regenerated, decomposition kept"
 }
 
@@ -244,7 +246,7 @@ cmd_stage() {
         for f in $(input_files 1); do
           [ -s "${CI_COM}/${f}" ] || { echo "MISSING: ${CI_COM}/${f}" >&2; miss=1; }
         done
-        [ "${miss}" = 0 ] || { ops_state=1; echo "no chain state in ${CI_COM}: starting from the ops state ${OPS_STATE_SRC:-$(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H)} (cycle - 126 h)"; }
+        [ "${miss}" = 0 ] || { ops_state=1; echo "no chain state in ${CI_COM}: starting from the ops state $(date -u -d "${PDY} ${CYC}:00 126 hours ago" +%Y%m%d%H) (cycle - 126 h)"; }
       fi
       mkdir -p "${CI_COM}"
       # After the chain-state check, which reads PREV's day (kept). COMGES stays: the chain state (nod_equi, decomposition) a later live LEVEL=cycle continues from; a cold start rebuilds the decomposition itself. PDY stays so a rerun skips the download. MJ (10/22/26)
