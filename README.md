@@ -50,6 +50,7 @@ Branches: `develop` is the primary branch, with the full development tree and CI
 - [docs/stofs_2d_glo_run_guide.md](docs/stofs_2d_glo_run_guide.md)
 - [docs/ecflow_run_guide.md](docs/ecflow_run_guide.md)
 - [docs/hercules_jenkins_run_guide.md](docs/hercules_jenkins_run_guide.md)
+- [docs/ufs_wcoss2_build_guide.md](docs/ufs_wcoss2_build_guide.md)
 
 STOFS-3D-AK is documented in its launcher header.
 

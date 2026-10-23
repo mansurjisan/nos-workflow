@@ -85,13 +85,9 @@ Executables in `exec/`:
 | `nos_ofs_create_tide_fac_schism` | Fortran tide_fac. Copy from an existing nos-workflow `exec/` on WCOSS2. Required: for ATL a missing Fortran tide_fac fails prep (`STOFS-3D-ATL needs the Fortran tide_fac`); there is no Python fallback. |
 | `schism_combine_hotstart7.exe` | Copy from an existing `exec/`. |
 
-Coupled build: ufs-weather-model clone at oceanmodeling `3e5e83de23ce3b6d16207b0c4f78d7a56110b6b3` with submodules, plus two local patches applied before building:
-- `SCHISM-interface/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90`, md5 `b54e2615aa65ee1d38c385d5f7f1ea0c` after patching (`schism_esmf_cap_wcoss2_local.patch`)
-- `CMEPS-interface/CMEPS/mediator/esmFldsExchange_coastal_mod.F90`, md5 `f243b8edc027a69f84c545f7e98f975c` after patching (`cmeps_wcoss2_local.patch`)
-
-The patch files are kept outside the repo; ask the maintainer.
+Coupled build: from the maintainer's UFS source tree on WCOSS2, the same tree as the SECOFS builds (oceanmodeling `ufs-weather-model` fork at `8e4a4742be00a67fe49aca43296e93a9b69c9964`). It already carries the two ATL patches, `schism_esmf_cap_wcoss2_local.patch` (`SCHISM-interface/SCHISM-ESMF/src/schism/schism_nuopc_cap.F90`) and `cmeps_wcoss2_local.patch` (`CMEPS-interface/CMEPS/mediator/esmFldsExchange_coastal_mod.F90`). Copy the tree and load the modules as in [ufs_wcoss2_build_guide.md](ufs_wcoss2_build_guide.md), then:
 ```bash
-cd ufs-weather-model/tests
+cd $DST/tests                                  # your copy of the tree
 ./compile.sh wcoss2 "-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_TOOLS=ON -DPREC_EVAP=ON" stofs_atl_pe intel YES NO
 grep -E "PREC_EVAP|NO_PARMETIS|OLDIO|USE_ATMOS|^APP" build_fv3_stofs_atl_pe/CMakeCache.txt   # all ON, APP=CSTLS
 cp fv3_stofs_atl_pe.exe <your nos-workflow>/exec/fv3_stofs_3d_atl.exe

@@ -107,7 +107,7 @@ The grid file `*.msh` and the `.ww3` files are too large for git.
 
 ### Executables
 
-In `exec/`:
+In `exec/` (WCOSS2 build steps: [ufs_wcoss2_build_guide.md](ufs_wcoss2_build_guide.md)):
 
 | File | Needed by | How it was built |
 |---|---|---|
