@@ -575,7 +575,10 @@ def test_coupled_verify_passes_its_variant(tmp_path):
     assert _calls(ci)[0][_calls(ci)[0].index("--variant") + 1] == "coupled"
     (ci.stubs / "cmp.calls").unlink()
     assert ci.run("verify", LEVEL="full").returncode == 0
-    assert "--fail-median-mm" not in _calls(ci)[1] and _calls(ci)[1][-2:] == ["--warn-mm", "500"]
+    assert _calls(ci)[1][-4:] == ["--fail-median-mm", "15", "--fail-over-10cm", "10"]
+    (ci.stubs / "cmp.calls").unlink()
+    assert ci.run("verify", LEVEL="full", OPS_FAIL_MEDIAN_MM="8", OPS_FAIL_OVER_10CM="4").returncode == 0
+    assert _calls(ci)[1][-4:] == ["--fail-median-mm", "8", "--fail-over-10cm", "4"]
 
 
 # ---- seed ---- MJ (10/14/26)
@@ -715,7 +718,7 @@ def _atl_seed_src(ci: Ci, ofs: str):
     src = ci.tmp / "seed" / "nos-workflow"
     _touch(src / "fix" / "stofs_3d_atl_ufs" / "grid", "grid")
     _touch(src / "fix" / "secofs_ufs" / "grid", "secofs grid")
-    for e in ("stofs_3d_atl_tide_fac", "schism_combine_hotstart7.exe", "fv3_stofs_3d_atl.exe", "stofs_3d_atl_pschism_v3.1.5", "other_tool"):
+    for e in ("stofs_3d_atl_tide_fac", "schism_combine_hotstart7.exe", "fv3_stofs_3d_atl.exe", "stofs_3d_atl_pschism_v3.1.5", "combine_output11_MPI", "other_tool"):
         _stub(src / "exec" / e)
     return src
 
@@ -736,6 +739,7 @@ def test_bootstrap_atl_seeds_its_fix_and_only_its_executables(tmp_path, ofs):
     theirs = "fv3_stofs_3d_atl.exe" if ofs.endswith("standalone") else "stofs_3d_atl_pschism_v3.1.5"
     assert (ci.home / "exec" / mine).is_file() and (ci.home / "exec" / "stofs_3d_atl_tide_fac").is_file()
     assert not (ci.home / "exec" / theirs).exists() and not (ci.home / "exec" / "other_tool").exists()
+    assert (ci.home / "exec" / "combine_output11_MPI").exists() == (not ofs.endswith("standalone"))  # coupled only. MJ (10/22/26)
     var = "standalone" if ofs.endswith("standalone") else "coupled"
     assert (ci.rt / "stofs_3d_atl" / var / f"{PDY}{CYC}" / ".seeded_ok").is_file()
 
@@ -897,6 +901,46 @@ def _boot(tmp_path, ofs="stofs_3d_atl_ufs_standalone"):
     real = shutil.which("rsync")
     _stub(ci.bin / "rsync", f'#!/bin/bash\necho "$@" >> {log}\nexec {real} "$@"\n')
     return ci, src, seed_rt, log
+
+
+def _preseed(ci, ofs):
+    """A CI exec/ seeded before combine_output11_MPI was needed: sentinel, an old fv3 exe, no combiner. MJ (10/22/26)"""
+    _stub(ci.home / "exec" / "stofs_3d_atl_tide_fac")
+    _stub(ci.home / "exec" / "fv3_stofs_3d_atl.exe", "#!/bin/bash\n# old\n")
+    _touch(ci.home / "exec" / f".seeded_ok.{ofs}")
+    _touch(ci.home / "fix" / "stofs_3d_atl_ufs" / ".seeded_ok")
+
+
+def test_bootstrap_coupled_adds_a_missing_executable_without_replacing_others(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path, "stofs_3d_atl_ufs")
+    _preseed(ci, "stofs_3d_atl_ufs")
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "bootstrap: adding missing executables to exec/: combine_output11_MPI" in r.stdout
+    assert (ci.home / "exec" / "combine_output11_MPI").is_file()
+    assert "# old" in (ci.home / "exec" / "fv3_stofs_3d_atl.exe").read_text()
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert "already present, skipping exec/ seed" in r.stdout
+
+
+def test_bootstrap_standalone_with_a_sentinel_adds_nothing(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path)
+    _stub(ci.home / "exec" / "stofs_3d_atl_tide_fac")
+    _stub(ci.home / "exec" / "stofs_3d_atl_pschism_v3.1.5")
+    _touch(ci.home / "exec" / ".seeded_ok.stofs_3d_atl_ufs_standalone")
+    _touch(ci.home / "fix" / "stofs_3d_atl_ufs" / ".seeded_ok")
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 0 and "adding missing" not in r.stdout and not (ci.home / "exec" / "combine_output11_MPI").exists()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")
+def test_bootstrap_coupled_unreadable_combiner_gets_the_chmod_hint(tmp_path):
+    ci, src, seed_rt, log = _boot(tmp_path, "stofs_3d_atl_ufs")
+    _preseed(ci, "stofs_3d_atl_ufs")
+    bad = src / "exec" / "combine_output11_MPI"
+    bad.chmod(0)
+    r = ci.run(script=SCRIPTS / "bootstrap.sh", SEED_SRC=str(src), SEED_RT=str(seed_rt))
+    assert r.returncode == 1 and f"chmod o+rx {bad}" in r.stdout and not (ci.home / "exec" / "combine_output11_MPI").exists()
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can read everything")

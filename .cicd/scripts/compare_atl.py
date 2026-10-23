@@ -10,8 +10,8 @@ regress: those files of this run against the frozen reference. Per file: bitwise
 ops:     station water level (zeta) of this run against the ops public-bucket products, the cmp_points comparison: per-station max |dWL|
   over the common times, stations with |WL| > 20 m on either side skipped (the 5 out-of-mesh stations). Stations are matched by
   row order (station.in, 166 in v3.1) when the counts agree, else by exact name. Report only by default: a median above --warn-mm
-  prints WARN and still exits 0; only a missing output of this run fails. With --fail-median-mm and --fail-over-10cm (the standalone
-  variant, same model and forcing as ops) a file also FAILs when its median exceeds the first or more than the second number of
+  prints WARN and still exits 0; only a missing output of this run fails. With --fail-median-mm and --fail-over-10cm (stofs_3d_atl.sh passes
+  5 mm for standalone and 15 mm for coupled) a file also FAILs when its median exceeds the first or more than the second number of
   stations are over 100 mm, and PASSes otherwise; a file that cannot be compared (no common times, no matching
   stations, no station left, unreadable) also FAILs when the gate is on, and only WARNs without it. Exit 1 if any file fails. MJ (10/22/26)
 ops-files: the ops product names to keep under ref/ops/.
