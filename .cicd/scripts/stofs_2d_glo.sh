@@ -140,8 +140,9 @@ prune_ops_s3() {
 }
 
 # Live with no chain state in the CI com: the public ops state (run guide section 3.4). The .68 files of the cycle - 126 h are ops' state at
-# cycle + 120 h, so at the chain time PREV (cycle - 6 h). Writes only the two PREV chain files and nod_equi; the decomposition in COMGES must exist (a frozen build
-#). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a chain file. MJ (10/22/26)
+# cycle + 120 h, so at the chain time PREV (cycle - 6 h). Writes only the two PREV chain files and nod_equi; the decomposition in COMGES must exist (a frozen
+# build stages it). Each file is downloaded to <target>.part and renamed into place only after both pass the time check, so a wrong or partial file is never a
+# chain file. MJ (10/22/26)
 stage_ops_state() {
   local ges="${CI_COM}/nos/${RUN}" prevd="${CI_COM}/nos/${RUN}.${PREV:0:8}" b=https://noaa-gestofs-pds.s3.amazonaws.com bytes=1472354116
   local s t f kind base y m d h line mt rc=0 x src
