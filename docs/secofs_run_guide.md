@@ -112,13 +112,13 @@ In `exec/` (WCOSS2 build steps: [ufs_wcoss2_build_guide.md](ufs_wcoss2_build_gui
 | File | Needed by | How it was built |
 |---|---|---|
 | `fv3_coastalS.exe` | both (non-wave) | oceanmodeling `ufs-weather-model` fork, `tests/compile.sh`, app `CSTLS`. Hercules flags: `-DAPP=CSTLS -DUSE_ATMOS=ON -DNO_PARMETIS=ON -DOLDIO=ON -DBUILD_UTILS=ON` (`sorc/build_hercules.sh`). The WCOSS2 build is also `-DNO_PARMETIS=ON`, so `partition.prop` is required (section 2, fix files). |
-| `fv3_coastalSW.exe` | wave config | same fork, app `CSTLSW`, built with the `USE_WW3` flag (without it the `RADFLAG` parameters in the param.nml are ignored). Carries three local patches (one CMEPS, two WW3) that are kept outside the repo. Ask the maintainer. |
+| `fv3_coastalSW.exe` | wave config | same fork, app `CSTLSW`, built with the `USE_WW3` flag (without it the `RADFLAG` parameters in the param.nml are ignored). Carries three local patches (one CMEPS, two WW3) already applied in the WCOSS2 source tree ([ufs_wcoss2_build_guide.md](ufs_wcoss2_build_guide.md) section 2.1). |
 | `schism_combine_hotstart7.exe` | both | `combine_hotstart7` from the same build tree, renamed |
 | `combine_output11`, `combine_output11_MPI` | both | same build tree |
 | `ww3_bound` | wave config | WW3 tool (WCOSS2 copy is a wrapper that sets `LD_LIBRARY_PATH`, as of 2026-08) |
 | `nos_ofs_create_tide_fac_schism` | optional | Fortran tide_fac; without it prep uses the Python fallback |
 
-Do not build the SECOFS executable from a SCHISM tree that carries a local "ihot=1 tidal phase fix": it shifts the boundary tide by the restart time (found and removed in August 2026). A clean build has no `tidal phase fix` string in `mirror.out`.
+Do not build from `/lfs/h1/nos/estofs/noscrub/mansur.jisan/packages/ufs-weather-model`: its SCHISM carries a local "ihot=1 tidal phase fix" that shifts the boundary tide by the restart time (found and removed in August 2026). Check the executable: `strings exec/fv3_coastalS.exe | grep -c "tidal phase fix"` must print 0 ([ufs_wcoss2_build_guide.md](ufs_wcoss2_build_guide.md) section 6).
 
 ## 3. WCOSS2
 
@@ -325,7 +325,7 @@ All comparisons are against pre-operational or operational SECOFS (standalone SC
 - The WCOSS2 SECOFS cards set `COMROOT` and paths directly (no `qsub -v` override for `COMROOT`); use `COMOUT` overrides or edit the cards for a separate tree.
 - The wave config is WCOSS2 only; Hercules has no wave cards or executable.
 - Cron plus the launchers is the tested cycling mechanism. An ecFlow suite (`ecf/`) runs the same stages; it has not run on WCOSS2 yet: see `docs/ecflow_run_guide.md`.
-- The wave executable's patches are kept outside the repository.
+- The wave executable's patches are kept outside the repository (applied in the WCOSS2 source tree, [ufs_wcoss2_build_guide.md](ufs_wcoss2_build_guide.md) section 2.1).
 
 ## 9. Troubleshooting
 
